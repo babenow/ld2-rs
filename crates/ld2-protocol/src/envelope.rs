@@ -35,6 +35,10 @@ pub struct Envelope {
     /// ISO-8601 UTC; игровая истина времени — epoch-секунды в payload'ах.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts: Option<String>,
+    /// Версия состояния, которой соответствует событие (§2.3): клиент
+    /// игнорирует события с версией < уже применённой.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_version: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
 }
@@ -46,6 +50,7 @@ impl Envelope {
             msg_type: msg_type.into(),
             seq: None,
             ts: None,
+            state_version: None,
             payload,
         }
     }
@@ -70,6 +75,7 @@ impl Envelope {
             msg_type: C::TYPE.to_string(),
             seq: Some(seq),
             ts: Some(ts.into()),
+            state_version: None,
             payload: Some(serde_json::to_value(payload)?),
         })
     }
@@ -198,6 +204,7 @@ mod tests {
             msg_type: "cmd/location.move".into(),
             seq: Some(42),
             ts: Some("2026-11-03T12:00:00Z".into()),
+            state_version: None,
             payload: Some(serde_json::json!({ "exit_id": "e_north" })),
         };
         let json = original.to_json_limited().expect("сериализация");
