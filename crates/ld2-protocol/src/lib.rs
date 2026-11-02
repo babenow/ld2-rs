@@ -15,5 +15,15 @@ pub mod envelope;
 pub mod errors;
 pub mod evt;
 pub mod features;
+pub mod types;
 
-pub use envelope::{Envelope, PROTOCOL_VERSION};
+pub use cmd::Command;
+pub use envelope::{
+    Ack, AckError, AckResult, Envelope, ACK_TYPE, MAX_MESSAGE_BYTES, PROTOCOL_VERSION,
+};
+pub use errors::{ErrorCode, ProtocolError};
+pub use evt::Event;
+pub use features::SessionConfig;
+pub use types::{
+    CharacterState, CrimeStatus, Entity, Hp, ItemSnapshot, LocationSnapshot, Mp, SkillSnapshot,
+};

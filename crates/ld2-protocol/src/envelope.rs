@@ -5,13 +5,20 @@
 //! - подтверждение `ack` (сервер → клиент): эхо `seq`, `result`, `state_version`;
 //! - событие `evt/...` (сервер → клиент): `ts`, `state_version` (опц.), `payload`.
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+use crate::cmd::Command;
+use crate::errors::{ErrorCode, ProtocolError};
 
 /// Текущая wire-версия контракта (`docs/protocol.md` §11).
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Максимальный размер сообщения (64 KiB, protocol.md §1).
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
+
+/// Wire-тип подтверждения (§2.2).
+pub const ACK_TYPE: &str = "ack";
 
 /// Универсальный конверт. Типизированные payload'ы появятся в M1;
 /// в M0 `payload` — произвольный JSON (заглушка).
@@ -44,12 +51,138 @@ impl Envelope {
     }
 
     /// Сериализация с проверкой лимита 64 KiB (protocol.md §1).
-    pub fn to_json_limited(&self) -> Result<String, crate::errors::ProtocolError> {
+    pub fn to_json_limited(&self) -> Result<String, ProtocolError> {
         let json = serde_json::to_string(self)?;
         if json.len() > MAX_MESSAGE_BYTES {
-            return Err(crate::errors::ProtocolError::TooLarge(json.len()));
+            return Err(ProtocolError::TooLarge(json.len()));
         }
         Ok(json)
+    }
+
+    /// Оборачивает команду в конверт: `v = 1`, `type = C::TYPE`, `seq`, `ts`.
+    pub fn command<C: Command>(
+        seq: u32,
+        ts: impl Into<String>,
+        payload: &C,
+    ) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            v: PROTOCOL_VERSION,
+            msg_type: C::TYPE.to_string(),
+            seq: Some(seq),
+            ts: Some(ts.into()),
+            payload: Some(serde_json::to_value(payload)?),
+        })
+    }
+
+    /// Десериализация payload'а в типизированную структуру команды/события.
+    pub fn payload_as<T: DeserializeOwned>(&self) -> Result<T, ProtocolError> {
+        match &self.payload {
+            Some(value) => Ok(serde_json::from_value(value.clone())?),
+            None => Err(ProtocolError::MissingPayload),
+        }
+    }
+}
+
+/// Подтверждение команды (protocol.md §2.2): ровно одно на команду.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Ack {
+    pub v: u32,
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    /// Эхо `seq` команды.
+    pub seq: u32,
+    /// Версия состояния ПОСЛЕ команды; `null` — состояние не менялось.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_version: Option<u64>,
+    pub result: AckResult,
+    /// Результат команды (новая локация, список персонажей, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<AckError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AckResult {
+    Ok,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AckError {
+    /// `E_...` из §9; неизвестный код → [`ErrorCode::Unknown`] (§11).
+    pub code: String,
+    /// Русский текст сервера — фолбэк отображения (§9).
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_s: Option<u64>,
+}
+
+impl Ack {
+    pub fn ok(seq: u32, state_version: Option<u64>) -> Self {
+        Self {
+            v: PROTOCOL_VERSION,
+            msg_type: ACK_TYPE.to_string(),
+            seq,
+            state_version,
+            result: AckResult::Ok,
+            payload: None,
+            error: None,
+        }
+    }
+
+    pub fn ok_with_payload<T: Serialize>(
+        seq: u32,
+        state_version: Option<u64>,
+        payload: &T,
+    ) -> Result<Self, ProtocolError> {
+        let mut ack = Self::ok(seq, state_version);
+        ack.payload = Some(serde_json::to_value(payload)?);
+        Ok(ack)
+    }
+
+    pub fn error(
+        seq: u32,
+        state_version: Option<u64>,
+        code: &ErrorCode,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            v: PROTOCOL_VERSION,
+            msg_type: ACK_TYPE.to_string(),
+            seq,
+            state_version,
+            result: AckResult::Error,
+            payload: None,
+            error: Some(AckError {
+                code: code.as_str().to_string(),
+                message: message.into(),
+                retry_after_s: None,
+            }),
+        }
+    }
+
+    pub fn is_ok(&self) -> bool {
+        self.result == AckResult::Ok
+    }
+
+    /// Код ошибки из ack; `None` если `result = ok`.
+    pub fn error_code(&self) -> Option<ErrorCode> {
+        let error = self.error.as_ref()?;
+        Some(
+            error
+                .code
+                .parse()
+                .unwrap_or_else(|_| ErrorCode::Unknown(error.code.clone())),
+        )
+    }
+
+    pub fn payload_as<T: DeserializeOwned>(&self) -> Result<T, ProtocolError> {
+        match &self.payload {
+            Some(value) => Ok(serde_json::from_value(value.clone())?),
+            None => Err(ProtocolError::MissingPayload),
+        }
     }
 }
 
