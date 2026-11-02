@@ -1,0 +1,18 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+
+# macOS
+.DS_Store
+
+# Локальные конфиги и данные клиента
+*.local.toml
+client-data/
+
+# Логи
+*.log
