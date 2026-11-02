@@ -191,6 +191,13 @@ where
                         Ok(ServerMsg::Ack(ack)) => {
                             let auth_expired = ack.error_code() == Some(ErrorCode::AuthExpired);
 
+                            // Сначала применяем state_version этого ack'а —
+                            // bootstrap `state.resync` обязан нести последнюю
+                            // известную версию (§3), а не нулевую.
+                            if let Some(v) = ack.state_version {
+                                *last_state_version = v;
+                            }
+
                             // Цепочка resume → resync на том же соединении.
                             match awaiting {
                                 Some(Awaiting::Resume(s)) if ack.seq == s => {
@@ -212,9 +219,6 @@ where
                                 _ => {}
                             }
 
-                            if let Some(v) = ack.state_version {
-                                *last_state_version = v;
-                            }
                             if pending.resolve(ack.seq).is_none() {
                                 debug!("ack без pending: seq={}", ack.seq);
                             }

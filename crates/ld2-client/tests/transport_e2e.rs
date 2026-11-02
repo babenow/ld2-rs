@@ -125,11 +125,14 @@ async fn server_events_are_forwarded() {
 #[tokio::test]
 async fn reconnects_and_resyncs_within_30s() {
     let (url, knobs) = common::spawn_mock().await;
-    // Обрыв на соединении №1 после двух ack'ов: bootstrap `auth.resume` (1)
-    // и `cmd/ping` (2). Дальше — только реконнект (conn2 не рвётся).
+    // Обрыв на соединении №1 после ТРЁХ ack'ов: bootstrap `auth.resume` (1),
+    // `cmd/ping` (2) и `cmd/state.resync` (3) — в ЛЮБОМ порядке следования
+    // (при быстром loopback ресинк может обогнать ping; с бюджетом 2 ping
+    // рисковал остаться без ack → флаки на медленных раннерах).
+    // Дальше — только реконнект (conn2 не рвётся).
     knobs
         .drop_first_conn_after
-        .store(2, std::sync::atomic::Ordering::SeqCst);
+        .store(3, std::sync::atomic::Ordering::SeqCst);
 
     let (handle, mut rx) = spawn_transport(&url, |c| {
         c.refresh_token = Some("rt-1".into());
