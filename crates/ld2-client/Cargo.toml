@@ -1,0 +1,18 @@
+[package]
+name = "ld2-client"
+version.workspace = true
+edition.workspace = true
+description = "Desktop-клиент текстовой онлайн-MMORPG ld2 (eframe/egui)"
+
+[dependencies]
+ld2-protocol = { path = "../ld2-protocol" }
+eframe = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+keyring = { workspace = true }
+directories = { workspace = true }
+anyhow = { workspace = true }

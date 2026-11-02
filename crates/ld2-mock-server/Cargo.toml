@@ -1,0 +1,14 @@
+[package]
+name = "ld2-mock-server"
+version.workspace = true
+edition.workspace = true
+description = "Детерминированный мок-сервер ld2 (docs/protocol.md, PLAN-M0.md Фаза 2)"
+
+[dependencies]
+ld2-protocol = { path = "../ld2-protocol" }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

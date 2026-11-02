@@ -1,0 +1,10 @@
+[package]
+name = "ld2-protocol"
+version.workspace = true
+edition.workspace = true
+description = "Типы контракта «клиент ↔ сервер» ld2 (docs/protocol.md)"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
