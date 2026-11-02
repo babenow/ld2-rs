@@ -16,3 +16,8 @@ tracing-appender = { workspace = true }
 keyring = { workspace = true }
 directories = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+time = { version = "0.3", features = ["formatting"] }
