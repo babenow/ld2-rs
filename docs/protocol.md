@@ -190,6 +190,11 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 
 ## 6. Схемы общих типов
 
+> Дополнительные состояния контракта — `CharacterState`, `PartyState`, `GuildState`, `TradeState`,
+> `GuildLogEntry`, `CrimeLogEntry` — нормализованы в `ld2-protocol` (`types.rs`/`evt.rs`) и сверяются
+> golden-тестами (`crates/ld2-protocol/tests/golden.rs`). Поля с `…` в примерах и открытые строки
+> (`kind`, `rarity`, `severity`, `channel`) сервер может расширять — клиент обязан съедать (§11).
+
 ```jsonc
 // Hp
 { "cur": 42, "max": 60 }
@@ -355,12 +360,12 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ### Социальное
 | Событие | Payload | Назначение |
 |---|---|---|
-| `evt/chat/message` | `{ channel, from, name, text, tags[]?, sent_at }` | сообщение чата |
-| `evt/party/updated` | `{ party \| null }` | полное состояние группы (список, лидер, HP) |
-| `evt/trade/state` | `{ offer_id, version, you [], them [], you_gold, them_gold, you_locked, them_locked, value_hint? }` | каждое изменение = новый `version` |
+| `evt/chat/message` | `{ channel, from, name, text, tags[]?, sent_at (ISO-8601) }` | сообщение чата |
+| `evt/party/updated` | `{ party: PartyState \| null }` | полное состояние группы (список, лидер, HP) |
+| `evt/trade/state` | `{ offer_id, version, you: ItemSnapshot[], them: ItemSnapshot[], you_gold, them_gold, you_locked, them_locked, value_hint? }` | каждое изменение = новый `version` |
 | `evt/trade/closed` | `{ offer_id, reason: "done"\|"cancelled"\|"failed", result? }` | завершение сделки |
-| `evt/guild/updated` | `{ guild \| null }` | полное состояние гильдии |
-| `evt/guild/log` | `{ entry }` | событие гильдии (вступление, ранг) |
+| `evt/guild/updated` | `{ guild: GuildState \| null }` | полное состояние гильдии |
+| `evt/guild/log` | `{ entry: { kind, text, at, … } }` | событие гильдии (вступление, ранг), `at` — epoch |
 
 ---
 

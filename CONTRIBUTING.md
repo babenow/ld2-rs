@@ -23,9 +23,14 @@
 ```bash
 git init -b main
 # git config commit.gpgsign true       # подпись коммитов — рекомендация (ADR-001), не включается автоматически
+git config gitflow.branch.master main   # git-flow: релизная ветка называется main
+git flow init -d                        # git flow: main + develop, префиксы feature/ release/ hotfix/
 git config pull.rebase true             # локальные обновления develop — через rebase
 git remote add origin git@github.com:<org>/ld2-rs.git
 ```
+
+> **Статус (2026-11-03):** репозиторий инициализирован — git flow активен, рабочая ветка **`develop`**,
+> remote `origin` → `github.com/babenow/ld2-rs`.
 
 `.gitignore` обязателен с первого коммита: `target/`, `**/*.rs.bk`, IDE-артефакты (`.idea/`, `.vscode/` кроме общих `settings.json` по согласованию), ОС-мусор (`.DS_Store`), локальные конфиги (`*.local.toml`), логи и кэши клиента (`client-data/`).
 `Cargo.lock` — **коммитится** (у нас приложение, не библиотека).
@@ -36,7 +41,12 @@ git remote add origin git@github.com:<org>/ld2-rs.git
 
 ## 3. Модель веток: Git Flow
 
-Используем классический **Git Flow** (модель Vincent Driessen / `nvie`, реализация `git-flow-avh`). Структура:
+Используем классический **Git Flow** (модель Vincent Driessen / `nvie`, реализация `nvie/git-flow` 0.4.1). Структура:
+
+> **Статус (2026-11-03):** git flow **инициализирован** в репозитории (`git flow init -d`,
+> `gitflow.branch.master = main`). **Вся разработка ведётся в ветке `develop`** — это рабочая
+> интеграционная ветка проекта (M1 и дальше). `main` обновляется только merge'ем `release/*` или
+> `hotfix/*` и всегда соответствует последнему тегу `vX.Y.Z`.
 
 | Ветка | Назначение | Жизненный цикл |
 |---|---|---|
