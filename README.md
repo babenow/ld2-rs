@@ -51,8 +51,9 @@ ld2-rs/
 # клиент
 cargo run -p ld2-client
 
-# мок-сервер (в отдельном терминале)
-cargo run -p ld2-mock-server -- --scenario demo
+# мок-сервер (в отдельном терминале); сценарии: hello | snapshot | chaos | all
+cargo run -p ld2-mock-server -- --scenario all
+cargo run -p ld2-mock-server -- --help
 
 # тесты + статический анализ
 cargo test --workspace
