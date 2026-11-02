@@ -1,7 +1,6 @@
 # План M0 — ld2-rs (каркас и инфраструктура)
 
-**Статус:** Фазы 0–2 **выполнены локально** (2026-11-03): документы + ADR-001…003, `git init` + первый коммит, workspace из 3 crate'ов, CI-воркфлоу и хуки созданы.
-**Осталось (F1.4–F1.5):** `gh auth refresh -h github.com` → `gh repo create` → push → зелёный прогон Actions на 3 ОС.
+**Статус: M0 ВЫПОЛНЕН ПОЛНОСТЬЮ (2026-11-03).** Фазы 0–2 пройдены: документы + ADR-001…003, git-репозиторий `babenow/ld2-rs` (private) с 4 коммитами, workspace из 3 crate'ов, CI зелёный на ubuntu-22.04 / macos-14 / windows-latest (run 41532218645), DoD закрыт. **Следующий этап — M1 (v0.1 «Нить»): контракт protocol v1, ws-транспорт с reconnect/resync, мок-сценарии.**
 **Окружение (проверено):** macOS, git 2.56, cargo/rustc 1.99.1 stable, rustfmt 1.10, clippy, gh 2.103.
 **Проблема:** `gh auth` для аккаунта `babenow` — токен в keyring недействителен → пользователь обязан выполнить `gh auth refresh -h github.com` до создания репозитория (шаг F1.4).
 
@@ -114,12 +113,12 @@ ld2-rs/
 
 **DoD M0 (§10 ТЗ, дословно + расшифровка):**
 - [x] `cargo build --workspace` и `cargo run -p ld2-client` — окно стартует на macOS (Linux/Windows — проверяются CI-прогоном после push);
-- [ ] CI зелёный на 3 ОС (fmt, clippy -D warnings, test, build) — *ждёт `gh auth refresh` + push*;
+- [x] CI зелёный на 3 ОС (fmt, clippy -D warnings, test, build) — run 41532218645: ubuntu-22.04 6m19s, macos-14 1m45s, windows-latest 6m55s;
 - [x] лог пишется в файл (rolling `ld2.log.<дата>` в `<data>/logs/`), ошибки видны;
 - [x] keyring: smoke-тест записи/чтения/удаления проходит (реальный Keychain, macOS);
 - [x] `l10n` содержит ru и en таблицы (паритет ключей — тестом, en на M9 — P1);
 - [x] mock-сервер слушает 24817, отвечает эхом (проверено живым запуском);
-- [ ] git: `main` содержит документацию + код, remote запушен, CI зелёный — *локально: 2+ коммита в `main`, remote — после gh-авторизации*;
+- [x] git: `main` содержит документацию + код, remote запушен (`origin` → github.com/babenow/ld2-rs), CI зелёный;
 - [x] ADR-001…003 существуют, CONTRIBUTING §2 поправлен.
 
 ---
