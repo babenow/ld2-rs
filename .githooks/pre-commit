@@ -1,0 +1,14 @@
+#!/bin/sh
+# Локальные pre-commit проверки (CONTRIBUTING §7).
+# Подключение: git config core.hooksPath .githooks
+# CI остаётся блокирующим gate; этот хук — ранний фидбэк.
+set -e
+
+echo "[pre-commit] cargo fmt --check"
+cargo fmt --check
+
+echo "[pre-commit] cargo clippy --workspace --all-targets -- -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings
+
+echo "[pre-commit] cargo test --workspace"
+cargo test --workspace
