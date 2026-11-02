@@ -1,6 +1,7 @@
 # План M1 — ld2-rs «Нить» (контракт + транспорт + мок)
 
-**Статус:** в работе (с 2026-11-03). **Ветка интеграции:** `develop` (git flow).
+**Статус:** T1 **✓ выполнен** (2026-11-03: PR #1, squash `e0c2768`, CI green 3 ОС, 21 тест). В работе — T2 transport.
+**Ветка интеграции:** `develop` (git flow).
 **Источники норм:** `docs/protocol.md` (канон контракта), `docs/tz.md` §4/§10 (M1), `ROADMAP.md` (v0.1), `CONTRIBUTING.md`.
 
 **DoD M1 (ТЗ §10, дословно):** «demo-аккаунт → снапшот → команды с ack; обрыв сети → восстановление ≤ 30 с без ручных действий (тест)» + CI green (fmt/clippy -D warnings/test/build, 3 ОС).
@@ -11,7 +12,7 @@
 
 | # | Ветка | Содержание | Критерий готовности |
 |---|---|---|---|
-| T1 | `feature/M1-protocol` | **Полная типизация контракта v1** по `protocol.md`: `types.rs` (§6), `cmd.rs` (§7, все ~50 команд), `evt.rs` (§8, все события), `errors.rs` (§9, полный каталог `E_*`), `features.rs` (§5 `SessionConfig` c capability-flatten), хелперы `Envelope` (command/payload_as), golden round-trip тесты на каждый домен | `cargo test -p ld2-protocol` зелёный; wire-`v` заморожен = 1; ни одно поле §4 не потеряно (сверка по таблицам §7/§8) |
+| **T1 ✓** (PR #1) | `feature/M1-protocol` *(удалена)* | **Полная типизация контракта v1** по `protocol.md`: `types.rs` (§6), `cmd.rs` (§7, все 58 команд + `IDEMPOTENT`), `evt.rs` (§8, 37 событий + `PatchOp`), `errors.rs` (§9, 35 кодов + `Unknown`), `features.rs` (§5 `SessionConfig` c capability-flatten), хелперы `Envelope` (command/payload_as), `Ack`, golden round-trip тесты на каждый домен | ✅ `cargo test -p ld2-protocol` зелёный (21 тест); wire-`v` = 1; сверка таблиц §7/§8/§9 golden-тестами |
 | T2 | `feature/M1-transport` | ws-транспорт клиента: tokio-рантайм в рабочем потоке, `seq`/ack-матчер (окно 128, кэш ack), таймаут 10 с + идемпотентный повтор ×1, backoff reconnect 0.5→30 с ±20% jitter, `auth.resume` → `state.resync`, статус-машина `online/reconnecting/offline/auth_expired`, mpsc-каналы Ingress/Outbound ↔ AppStore | интеграционный тест: подключение к моку, команда→ack, обрыв→восстановление ≤ 30 с |
 | T3 | `feature/M1-mock` | Мок-сервер: держит контракт (cmd→ack c `state_version`), сценарии `hello` (auth.login demo/demo123 → session.start), `snapshot` (char.select → полный снапшот), `chaos` (случайные обрывы WS с seed), `cmd/ping`→`evt/pong`, `time.sync` | ручной прогон + автотесты сценариев; фикстуры навыков/профессий — из `docs/skills.md` §9 |
 | T4 | `feature/M1-e2e` | Сквозные тесты transport↔mock: ack-timeout, идемпотентный повтор, resync после обрыва, порядок событий; smoke `demo/demo123` → снапшот → `location.move`→ack | все тесты в CI; DoD-пункт «восстановление ≤ 30 с» закрыт автоматически |
