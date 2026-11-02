@@ -33,6 +33,7 @@ where
 {
     let fut = async {
         while let Some(ev) = rx.recv().await {
+            eprintln!("WFR {ev:?}"); // видно в логе упавшего теста
             if pred(&ev) {
                 return ev;
             }
