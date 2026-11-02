@@ -2,7 +2,7 @@
 name = "ld2-mock-server"
 version.workspace = true
 edition.workspace = true
-description = "Детерминированный мок-сервер ld2 (docs/protocol.md, PLAN-M0.md Фаза 2)"
+description = "Детерминированный мок-сервер ld2 (docs/protocol.md, PLAN-M1 T3)"
 
 [dependencies]
 ld2-protocol = { path = "../ld2-protocol" }
@@ -12,3 +12,6 @@ futures-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { version = "0.3", features = ["formatting"] }
