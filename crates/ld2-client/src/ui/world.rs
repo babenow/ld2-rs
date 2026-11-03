@@ -3,13 +3,17 @@
 //! колонка истории и журнал мира. Игровые панели по ФР ТЗ §7.1 — с M6.
 
 use eframe::egui;
-use ld2_protocol::cmd::{CombatAttack, EntityInfo, ItemUse, LocationMove, MagicRuneCast};
+use ld2_protocol::cmd::{
+    CombatAttack, CombatFlee, EntityInfo, ItemUse, LocationMove, MagicRuneCast, SkillUse,
+};
 use ld2_protocol::evt::{CharDeath, StateSnapshot};
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot};
 
 use crate::l10n::{t, Key};
-use crate::store::Act;
-use crate::ui::{log_panel, sheet, ScreenEffects, UiCtx};
+use crate::store::{filter_active_statuses, local_epoch, Act};
+use crate::ui::{
+    crime_kind_title, format_duration, log_panel, severity_color, sheet, ScreenEffects, UiCtx,
+};
 
 const RED: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x6C, 0x75);
 const ORANGE: egui::Color32 = egui::Color32::from_rgb(0xD1, 0x9A, 0x66);
@@ -62,6 +66,11 @@ pub fn game(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui) -> ScreenEffects {
     if let Some(detail) = ctx.store.entity_detail.clone() {
         examine_modal(ctx, ui, detail);
     }
+
+    // ФР-11: подтверждение забора лута трупа игрока (предупреждение о статусе).
+    if let Some((uid, name)) = ctx.store.loot_confirm.clone() {
+        loot_confirm_modal(ctx, ui, &uid, &name);
+    }
     effects
 }
 
@@ -74,10 +83,44 @@ fn resources(
     effects: &mut ScreenEffects,
 ) {
     let lang = ctx.lang;
+    // Цель (ФР-05): клик по строке сущности или Tab.
+    if let Some(target_id) = ctx.store.target.clone() {
+        if let Some(entity) = snap.location.entities.iter().find(|e| e.id == target_id) {
+            ui.group(|ui| {
+                ui.strong(format!("{}: {}", t(lang, Key::TargetLabel), entity.name));
+                if let Some(hp) = &entity.hp {
+                    let frac = (hp.cur as f32 / hp.max.max(1) as f32).clamp(0.0, 1.0);
+                    ui.add(egui::ProgressBar::new(frac).text(format!("{}/{}", hp.cur, hp.max)));
+                }
+                ui.horizontal(|ui| {
+                    if ui.small_button(t(lang, Key::Attack)).clicked() {
+                        send_attack(ctx, &entity.id);
+                    }
+                    if ui.small_button(t(lang, Key::BtnFlee)).clicked() {
+                        let cmd = CombatFlee {};
+                        match ctx.transport.send(&cmd) {
+                            Ok(_) => ctx.store.on_world_sent(Act::Attack),
+                            Err(e) => ctx.store.world_error = Some(format!("нет связи: {e}")),
+                        }
+                    }
+                });
+            });
+            ui.add_space(6.0);
+        }
+    }
+
     ui.horizontal(|ui| {
         ui.heading(snap.char.name.as_str());
-        for status in &snap.char.crime.statuses {
-            ui.colored_label(ORANGE, &status.kind);
+        // Бейджи статусов с обратным отсчётом (ФР-11): серверные сроки,
+        // now = локальное + offset (§1.1); истёвшие отфильтрованы.
+        let now = local_epoch() + ctx.store.time_offset;
+        for status in filter_active_statuses(&snap.char.crime.statuses, now) {
+            let title = crime_kind_title(ctx.store, &status.kind);
+            let left = status.expires_at - now;
+            ui.colored_label(
+                severity_color(status.severity),
+                format!("{title} · {}", format_duration(lang, left)),
+            );
         }
     });
     ui.add_space(4.0);
@@ -158,6 +201,10 @@ fn location_panel(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>, loc: &LocationSnapshot
     if let Some(err) = &ctx.store.world_error {
         ui.colored_label(RED, err);
     }
+    if let Some(notice) = &ctx.store.notice {
+        // ФР-11: тосты мира (в т.ч. «⚠ PvP-зона: активны статусы …»).
+        ui.colored_label(ORANGE, notice);
+    }
 
     // Выходы: кнопки + подсказка хоткеев (ФР-03).
     ui.horizontal_wrapped(|ui| {
@@ -231,6 +278,11 @@ fn entity_row(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>, entity: &Entity, safe: boo
         })
         .response;
 
+    // Левый клик по строке — выбор цели (ФР-05).
+    if response.clicked() && matches!(entity.kind, EntityKind::Monster | EntityKind::Player) {
+        ctx.store.select_target(entity.id.clone());
+    }
+
     response.context_menu(|ui| {
         if ui.button(t(lang, Key::Examine)).clicked() {
             send_examine(ctx, &entity.id);
@@ -268,15 +320,46 @@ fn examine_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, detail: serde_json::Val
                 ui.colored_label(ORANGE, t(lang, Key::CorpsePlayerHint));
             }
             if let Some(loot) = detail["loot"].as_array() {
+                let looted = detail["looted"] == true;
                 ui.add_space(6.0);
                 ui.strong(t(lang, Key::LootLabel));
                 for item in loot {
-                    ui.label(format!(
-                        "• {} ({})",
-                        item["name"].as_str().unwrap_or("?"),
-                        item["type"].as_str().unwrap_or("?")
-                    ));
+                    let uid = item["uid"].as_str().unwrap_or_default().to_string();
+                    let name = item["name"].as_str().unwrap_or("?").to_string();
+                    let kind = item["type"].as_str().unwrap_or("?");
+                    ui.horizontal(|ui| {
+                        ui.label(format!("• {name} ({kind})"));
+                        if looted {
+                            return;
+                        }
+                        if ui.small_button(t(lang, Key::TakeLoot)).clicked() {
+                            if detail["was_player"] == true {
+                                // ФР-11: лут трупа ИГРОКА — подтверждение о статусе.
+                                ctx.store.set_loot_confirm(uid.clone(), name.clone());
+                            } else {
+                                let cmd = ItemUse {
+                                    item_uid: uid.clone(),
+                                    target_id: None,
+                                };
+                                match ctx.transport.send(&cmd) {
+                                    Ok(_) => {
+                                        ctx.store.on_world_sent(Act::Drop);
+                                        ctx.store.entity_detail = None;
+                                    }
+                                    Err(e) => {
+                                        ctx.store.world_error = Some(format!("нет связи: {e}"))
+                                    }
+                                }
+                            }
+                        }
+                    });
                 }
+            }
+            if let Some(err) = &ctx.store.world_error {
+                ui.colored_label(RED, err);
+            }
+            if let Some(err) = &ctx.store.sheet_error {
+                ui.colored_label(RED, err);
             }
             ui.add_space(8.0);
             if ui.button(t(lang, Key::Exit)).clicked() {
@@ -307,7 +390,13 @@ fn alt_nav(ctx: &mut UiCtx<'_>, ui: &egui::Ui, loc: &LocationSnapshot) {
         }
         None
     });
-    let Some(dir) = dir else { return };
+    let Some(dir) = dir else {
+        // Tab — цикл целей по монстрам (ФР-05).
+        if ui.input(|i| i.key_pressed(egui::Key::Tab) && !i.modifiers.alt && !i.modifiers.command) {
+            ctx.store.cycle_target();
+        }
+        return;
+    };
     if let Some(exit) = loc
         .exits
         .iter()
@@ -431,6 +520,39 @@ fn hotbar(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>, snap: &StateSnapshot) {
                     }
                 }
             }
+
+            // Активка «Мощный удар» (ФР-05, skills.md §4): только кулдаун (D4).
+            let now = local_epoch() + ctx.store.time_offset;
+            let cd_left = ctx
+                .store
+                .combat_cooldowns
+                .get("power_strike")
+                .copied()
+                .unwrap_or(0)
+                - now;
+            let ready = cd_left <= 0;
+            let label = if ready {
+                t(lang, Key::PowerStrike).to_string()
+            } else {
+                format!("{} ({cd_left}с)", t(lang, Key::PowerStrike))
+            };
+            let resp = ui.add_enabled(ready, egui::Button::new(label));
+            if ready && resp.clicked() {
+                let cmd = SkillUse {
+                    skill_id: "power_strike".into(),
+                    target_id: ctx.store.target.clone(),
+                };
+                match ctx.transport.send(&cmd) {
+                    Ok(_) => ctx.store.on_world_sent(Act::Cast),
+                    Err(e) => ctx.store.world_error = Some(format!("нет связи: {e}")),
+                }
+            }
+            resp.on_hover_ui(|ui| {
+                ui.weak(t(lang, Key::TabHint));
+                if !ready {
+                    ui.colored_label(RED, format!("{cd_left}с"));
+                }
+            });
         });
     });
 }
@@ -463,4 +585,46 @@ fn death_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, death: CharDeath) {
                 ctx.store.confirm_death();
             }
         });
+}
+
+// ─── подтверждение: лут трупа игрока (ФР-11) ───────────────────────────────
+
+fn loot_confirm_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, uid: &str, name: &str) {
+    let lang = ctx.lang;
+    let mut cancel = false;
+    let mut take = false;
+    egui::Window::new(t(lang, Key::TakeLoot))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ui.ctx(), |ui| {
+            ui.colored_label(RED, t(lang, Key::LootPlayerWarn));
+            ui.weak(name);
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(t(lang, Key::Exit)).clicked() {
+                    cancel = true;
+                }
+                if ui.button(t(lang, Key::TakeLoot)).clicked() {
+                    take = true;
+                }
+            });
+        });
+
+    if take {
+        ctx.store.clear_loot_confirm();
+        let cmd = ItemUse {
+            item_uid: uid.to_string(),
+            target_id: None,
+        };
+        match ctx.transport.send(&cmd) {
+            Ok(_) => {
+                ctx.store.on_world_sent(Act::Drop);
+                ctx.store.entity_detail = None;
+            }
+            Err(e) => ctx.store.world_error = Some(format!("нет связи: {e}")),
+        }
+    } else if cancel {
+        ctx.store.clear_loot_confirm();
+    }
 }

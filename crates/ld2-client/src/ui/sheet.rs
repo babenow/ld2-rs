@@ -50,6 +50,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
             (SheetTab::Skills, Key::SheetSkills),
             (SheetTab::Attrs, Key::SheetAttrs),
             (SheetTab::Inventory, Key::SheetInventory),
+            (SheetTab::Statuses, Key::StatusesTab),
         ] {
             let selected = tab == candidate;
             if ui.selectable_label(selected, t(lang, key)).clicked() {
@@ -64,10 +65,18 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
         ui.add_space(4.0);
     }
 
+    // Вкладка «Статусы»: журнал нарушений подгружается один раз (ФР-11).
+    if tab == SheetTab::Statuses && !ctx.store.crime_log_loaded && ctx.store.snapshot.is_some() {
+        ctx.store.crime_log_loaded = true;
+        let cmd = ld2_protocol::cmd::CrimeLog { limit: Some(50) };
+        send(ctx, &cmd, Act::CrimeLog);
+    }
+
     match tab {
         SheetTab::Skills => skills(ui, ctx),
         SheetTab::Attrs => attrs(ui, ctx),
         SheetTab::Inventory => inventory(ui, ctx),
+        SheetTab::Statuses => statuses(ui, ctx),
     }
 
     // Модалка «Описание предмета» (ФР-07).
@@ -495,6 +504,50 @@ fn send<C: ld2_protocol::Command>(ctx: &mut UiCtx<'_>, cmd: &C, act: Act) {
     match ctx.transport.send(cmd) {
         Ok(_) => ctx.store.on_sheet_sent(act),
         Err(e) => ctx.store.sheet_error = Some(format!("нет связи: {e}")),
+    }
+}
+
+// ─── вкладка «Статусы» (ФР-11, M6) ─────────────────────────────────────────
+
+fn statuses(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
+    let lang = ctx.lang;
+    let Some(snap) = ctx.store.snapshot.clone() else {
+        ui.weak(t(lang, Key::Loading));
+        return;
+    };
+    // Отсчёт по серверным срокам: now = локальное + offset (§1.1).
+    let now = crate::store::local_epoch() + ctx.store.time_offset;
+    let active = crate::store::filter_active_statuses(&snap.char.crime.statuses, now);
+
+    if active.is_empty() {
+        ui.weak(t(lang, Key::NoStatuses));
+    }
+    for status in &active {
+        let title = super::crime_kind_title(ctx.store, &status.kind);
+        let color = super::severity_color(status.severity);
+        ui.horizontal(|ui| {
+            ui.colored_label(color, title.as_str());
+            ui.weak(super::format_duration(lang, status.expires_at - now));
+        });
+    }
+
+    ui.separator();
+    ui.strong(t(lang, Key::CrimeJournal));
+    if ui.button(t(lang, Key::ReloadJournal)).clicked() {
+        let cmd = ld2_protocol::cmd::CrimeLog { limit: Some(50) };
+        send(ctx, &cmd, Act::CrimeLog);
+    }
+    if ctx.store.crime_log.is_empty() {
+        ui.weak(t(lang, Key::JournalEmpty));
+    }
+    for entry in ctx.store.crime_log.iter().rev().take(60) {
+        let title = super::crime_kind_title(ctx.store, &entry.kind);
+        ui.weak(format!(
+            "{title}: +{} · {} {}",
+            super::format_duration(lang, entry.delta_s),
+            t(lang, Key::TotalLabel),
+            super::format_duration(lang, entry.total_s)
+        ));
     }
 }
 

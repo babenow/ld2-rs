@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use futures_util::{SinkExt, StreamExt};
-use ld2_protocol::cmd::{AuthResume, StateResync};
+use ld2_protocol::cmd::{AuthResume, StateResync, TimeSync};
 use ld2_protocol::{Ack, Envelope, ErrorCode, ACK_TYPE};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -180,6 +180,15 @@ where
         }
     }
 
+    // Служебная калибровка времени (§1.1): её ack поглощается транспортом,
+    // чтобы не сбивать корреляцию pending команд приложения; само событие
+    // evt/time.sync проходит в стор как обычная доставка.
+    let service_seq = {
+        let env = make_cmd(seq, &TimeSync {})?;
+        send_env(&mut sink, &env).await?;
+        Some(env.seq.expect("seq"))
+    };
+
     let result: Result<Flow, anyhow::Error> = 'session: loop {
         tokio::select! {
             incoming = stream.next() => match incoming {
@@ -189,6 +198,10 @@ where
                 Some(Ok(Message::Text(text))) => {
                     match classify(text.as_str()) {
                         Ok(ServerMsg::Ack(ack)) => {
+                            if Some(ack.seq) == service_seq {
+                                debug!("служебный time.sync ack поглощён");
+                                continue;
+                            }
                             let auth_expired = ack.error_code() == Some(ErrorCode::AuthExpired);
 
                             // Сначала применяем state_version этого ack'а —

@@ -19,13 +19,14 @@ use ld2_protocol::evt::{
     TradeClosed, TradeState, UpgradeResult,
 };
 use ld2_protocol::types::{
-    CharacterSummary, Entity, EntityKind, ItemSnapshot, PartyMember, PartyState,
-    ProfessionSnapshot, QuestState, RuneInfo, SkillSnapshot,
+    CharacterSummary, CrimeLogEntry, CrimeStatus, Entity, EntityKind, ItemSnapshot, PartyMember,
+    PartyState, ProfessionSnapshot, QuestState, RuneInfo, Severity, SkillSnapshot,
 };
 use ld2_protocol::{ErrorCode, PROTOCOL_VERSION};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use tracing::warn;
 
 use crate::fixtures;
@@ -58,6 +59,8 @@ pub struct Session {
     trade: Option<TradeState>,
     /// M5: следующее улучшение проваливается (сценарий break_on_fail).
     fail_next_upgrade: bool,
+    /// M6: трупы, лут с которых уже собран (защита от повтора).
+    looted_corpses: HashSet<String>,
 }
 
 impl Default for Session {
@@ -86,6 +89,7 @@ impl Session {
             guild: None,
             trade: None,
             fail_next_upgrade: false,
+            looted_corpses: HashSet::new(),
         }
     }
 
@@ -695,12 +699,50 @@ impl Session {
                 "сущность не найдена в локации",
             )];
         };
+        let loot = if entity.kind == EntityKind::Corpse {
+            let uid = format!("loot:{}:0", entity.id);
+            let taken = self.looted_corpses.contains(&entity.id);
+            let item = if entity.was_player.unwrap_or(false) {
+                ItemSnapshot {
+                    uid,
+                    item_type: "weapon".into(),
+                    name: "Кинжал".into(),
+                    rarity: "common".into(),
+                    upgrade: 0,
+                    stats: Default::default(),
+                    requires: None,
+                    sockets: None,
+                    qty: Some(1),
+                    gold_value: Some(40),
+                    extra: Default::default(),
+                }
+            } else {
+                ItemSnapshot {
+                    uid,
+                    item_type: "material".into(),
+                    name: format!("Трофея: {}", entity.name.trim_start_matches("Труп: ")),
+                    rarity: "common".into(),
+                    upgrade: 0,
+                    stats: Default::default(),
+                    requires: None,
+                    sockets: None,
+                    qty: Some(1),
+                    gold_value: Some(15),
+                    extra: Default::default(),
+                }
+            };
+            if taken {
+                Value::Null
+            } else {
+                json!([item])
+            }
+        } else {
+            Value::Null
+        };
         let detail = json!({
             "entity": entity,
-            "loot": if entity.kind == EntityKind::Corpse {
-                json!([ { "uid": "loot:cor_9:0", "type": "weapon", "name": "Кинжал",
-                          "rarity": "common", "upgrade": 0, "stats": {} } ])
-            } else { Value::Null },
+            "loot": loot,
+            "looted": self.looted_corpses.contains(&entity.id),
             "was_player": entity.was_player.unwrap_or(false),
         });
         vec![self.ack_ok_payload(seq, None, &detail)]
@@ -873,7 +915,21 @@ impl Session {
         let Some(target) = cmd.target_id else {
             return vec![self.ack_ok(seq, None)];
         };
-        self.hit_entity(&target, 13, CombatKind::Skill, seq)
+        let is_monster = self
+            .location
+            .entities
+            .iter()
+            .any(|e| e.id == target && e.kind == EntityKind::Monster);
+        let mut outs = self.hit_entity(&target, 13, CombatKind::Skill, seq);
+        if is_monster {
+            // ФР-05: кулдаун активки (skills.md §4: power_strike — 8 с).
+            outs.push(self.event(
+                "evt/combat/cooldown",
+                None,
+                json!({ "skill_id": cmd.skill_id, "until_epoch": fixtures::now_epoch() + 8 }),
+            ));
+        }
+        outs
     }
 
     // ── предметы ────────────────────────────────────────────────────────────
@@ -885,6 +941,10 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<ItemUse>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
+        // M6 (ФР-11): сбор лута с трупа — отдельный адресный uid `loot:*`.
+        if cmd.item_uid.starts_with("loot:") {
+            return self.take_corpse_loot(seq, &cmd.item_uid);
+        }
         let kind = self
             .char
             .as_ref()
@@ -1915,6 +1975,183 @@ impl Session {
                 serde_json::to_value(msg).unwrap_or_default(),
             ),
         ]
+    }
+
+    /// Частичное сложение сроков (§4.10): T = сумма живых сроков, вклад
+    /// нового преступления `k·t·(1 − T/T_MAX)` — растёт сублинеейно.
+    /// Возвращает события `evt/crime/added` + `evt/crime/status` (замена).
+    fn add_crime_status(&mut self, kind: &str, sv: Option<u64>) -> Vec<Out> {
+        let now = fixtures::now_epoch();
+        let config = fixtures::session_config(self.char_slot_limit);
+        let k = config.crime.blend_k;
+        let t_max = config.crime.t_max_s.max(1) as f64;
+        let base_s = config
+            .crime
+            .base
+            .get(&format!("{kind}_s"))
+            .copied()
+            .unwrap_or(3_600);
+        let severity = config
+            .crime
+            .kinds
+            .iter()
+            .find(|c| c.kind == kind)
+            .map(|c| c.severity)
+            .unwrap_or(Severity::Medium);
+
+        let (t_total, existing) = match self.char.as_ref() {
+            Some(ch) => {
+                let live: Vec<i64> = ch
+                    .crime
+                    .statuses
+                    .iter()
+                    .filter(|s| s.expires_at > now)
+                    .map(|s| s.expires_at - now)
+                    .collect();
+                let existing = ch
+                    .crime
+                    .statuses
+                    .iter()
+                    .find(|s| s.kind == kind)
+                    .map(|s| s.expires_at);
+                (live.iter().sum::<i64>(), existing)
+            }
+            None => return vec![],
+        };
+
+        // §4.10: вклад = k·t·(1 − T/T_MAX), минимум 1 секунда.
+        let delta = ((k * base_s as f64) * (1.0 - (t_total as f64 / t_max)))
+            .round()
+            .max(1.0) as i64;
+
+        let mut status_out = None;
+        if let Some(ch) = self.char.as_mut() {
+            if let Some(prev) = existing {
+                // Повторное преступление того же kind — срок растёт с убыванием.
+                if let Some(st) = ch.crime.statuses.iter_mut().find(|s| s.kind == kind) {
+                    st.expires_at = prev + delta;
+                    status_out = Some(st.clone());
+                }
+            } else {
+                let st = CrimeStatus {
+                    kind: kind.to_string(),
+                    severity,
+                    expires_at: now + delta,
+                };
+                ch.crime.statuses.push(st.clone());
+                status_out = Some(st);
+            }
+        }
+        let Some(status) = status_out else {
+            return vec![];
+        };
+
+        let entry = CrimeLogEntry {
+            kind: kind.to_string(),
+            at: now,
+            delta_s: delta,
+            total_s: t_total + delta,
+        };
+        let statuses = self
+            .char
+            .as_ref()
+            .map(|c| c.crime.statuses.clone())
+            .unwrap_or_default();
+        vec![
+            self.event(
+                "evt/crime/added",
+                sv,
+                json!({ "status": status, "log_entry": entry }),
+            ),
+            self.event(
+                "evt/crime/status",
+                sv,
+                json!({
+                    "statuses": statuses,
+                    "log_hint": format!("{}: +{}с (итого {}с)", kind, delta, t_total + delta)
+                }),
+            ),
+        ]
+    }
+
+    /// Сбор лута с трупа (ФР-11): `loot:<corpse>:<n>`; труп игрока вешает
+    /// «Мародёр» через blend §4.10; повторный сбор невозможен.
+    fn take_corpse_loot(&mut self, seq: u32, loot_uid: &str) -> Vec<Out> {
+        let parts: Vec<&str> = loot_uid.split(':').collect();
+        if parts.len() < 3 {
+            return vec![self.ack_err(seq, None, ErrorCode::ItemGone, "нет лута")];
+        }
+        let corpse_id = parts[1];
+        if self.looted_corpses.contains(corpse_id) {
+            return vec![self.ack_err(seq, None, ErrorCode::ItemGone, "лут уже собран")];
+        }
+        let Some(corpse) = self
+            .location
+            .entities
+            .iter()
+            .find(|e| e.id == corpse_id && e.kind == EntityKind::Corpse)
+            .cloned()
+        else {
+            return vec![self.ack_err(seq, None, ErrorCode::TargetGone, "трупа нет в локации")];
+        };
+        let was_player = corpse.was_player.unwrap_or(false);
+        let item = if was_player {
+            ItemSnapshot {
+                uid: loot_uid.into(),
+                item_type: "weapon".into(),
+                name: "Кинжал".into(),
+                rarity: "common".into(),
+                upgrade: 0,
+                stats: Default::default(),
+                requires: None,
+                sockets: None,
+                qty: Some(1),
+                gold_value: Some(40),
+                extra: Default::default(),
+            }
+        } else {
+            ItemSnapshot {
+                uid: loot_uid.into(),
+                item_type: "material".into(),
+                name: format!("Трофея: {}", corpse.name.trim_start_matches("Труп: ")),
+                rarity: "common".into(),
+                upgrade: 0,
+                stats: Default::default(),
+                requires: None,
+                sockets: None,
+                qty: Some(1),
+                gold_value: Some(15),
+                extra: Default::default(),
+            }
+        };
+        self.looted_corpses.insert(corpse_id.to_string());
+        let by = self.char.as_ref().map(|c| c.id.clone()).unwrap_or_default();
+        let by_name = self
+            .char
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_default();
+        if let Some(ch) = self.char.as_mut() {
+            ch.inventory.push(item.clone());
+        }
+        let sv = self.bump();
+        let mut outs = vec![self.ack_ok(seq, Some(sv))];
+        outs.push(self.event(
+            "evt/item/added",
+            Some(sv),
+            serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+        ));
+        outs.push(self.event(
+            "evt/corpse/looted",
+            Some(sv),
+            json!({ "corpse_id": corpse_id, "by": by, "by_name": by_name,
+                    "was_player": was_player }),
+        ));
+        if was_player {
+            // ФР-11: лут с трупа игрока → статус «Мародёр» (blend §4.10).
+            outs.extend(self.add_crime_status("marauder", Some(sv)));
+        }
+        outs
     }
 
     /// Сценарий M5: следующее улучшение проваливается (break_on_fail).
