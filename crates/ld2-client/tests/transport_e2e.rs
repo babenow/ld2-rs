@@ -11,7 +11,8 @@ use ld2_client::transport::{self, IngressEvent, TransportConfig, TransportStatus
 use ld2_protocol::cmd::{LocationMove, Ping};
 use tokio::sync::mpsc;
 
-const WAIT: Duration = Duration::from_secs(10);
+// Под CI-нагрузкой события могут запаздывать — щедрый запас.
+const WAIT: Duration = Duration::from_secs(15);
 
 fn spawn_transport(
     url: &str,
@@ -125,14 +126,14 @@ async fn server_events_are_forwarded() {
 #[tokio::test]
 async fn reconnects_and_resyncs_within_30s() {
     let (url, knobs) = common::spawn_mock().await;
-    // Обрыв на соединении №1 после ТРЁХ ack'ов: bootstrap `auth.resume` (1),
-    // `cmd/ping` (2) и `cmd/state.resync` (3) — в ЛЮБОМ порядке следования
-    // (при быстром loopback ресинк может обогнать ping; с бюджетом 2 ping
-    // рисковал остаться без ack → флаки на медленных раннерах).
-    // Дальше — только реконнект (conn2 не рвётся).
+    // Обрыв на соединении №1 после ЧЕТЫРЁХ записей — ВСЕЙ bootstrap-фазы:
+    // `auth.resume`, служебный `time.sync` (M6), `cmd/ping` и `state.resync`
+    // идут в недетерминированном порядке (select без biased); бюджет < 4
+    // позволял drop'у съесть одну из них до ack → флаки CI (PR #10, хук M6).
+    // Четыре слота = обрыв строго ПОСЛЕ полного bootstrap; conn2 не рвётся.
     knobs
         .drop_first_conn_after
-        .store(3, std::sync::atomic::Ordering::SeqCst);
+        .store(4, std::sync::atomic::Ordering::SeqCst);
 
     let (handle, mut rx) = spawn_transport(&url, |c| {
         c.refresh_token = Some("rt-1".into());

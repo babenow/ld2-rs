@@ -96,5 +96,21 @@ pub(super) fn t(key: Key) -> &'static str {
         InsertRune => "Insert",
         ExtractRune => "Extract",
         NoRunes => "No runes in inventory",
+        // M6: combat & statuses
+        TargetLabel => "Target",
+        BtnFlee => "Flee",
+        TabHint => "Tab — next target",
+        PowerStrike => "Power strike",
+        StatusesTab => "Statuses",
+        CrimeJournal => "Violation log",
+        ReloadJournal => "Reload",
+        TotalLabel => "total",
+        TakeLoot => "Take",
+        LootPlayerWarn => "Take PLAYER corpse loot? This grants the Marauder status",
+        NoStatuses => "No active statuses",
+        JournalEmpty => "Journal is empty",
+        DurHm => "{h}h {m}m",
+        DurMs => "{m}m {s}s",
+        DurS => "{s}s",
     }
 }

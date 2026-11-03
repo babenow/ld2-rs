@@ -494,3 +494,107 @@ async fn magic_upgrade_flow_dod() {
 
     handle.close();
 }
+
+/// DoD M6 (ТЗ §10): «формула §4.10 проверена на моке; UI показывает blend
+/// без пересчёта» — сервер считает вклад, клиент только хранит/отсчитывает.
+#[tokio::test]
+async fn crime_statuses_flow_dod() {
+    let url = start_mock().await;
+    let (handle, mut rx, mut store) = spawn_pair(&url);
+    enter_world(&handle, &mut store, &mut rx).await;
+
+    store.on_world_sent(ld2_client::store::Act::Move);
+    handle
+        .send(&LocationMove {
+            exit_id: "e_north".into(),
+        })
+        .expect("move");
+    pump(&mut store, &mut rx, |s| location_id(s) == "l_forest").await;
+
+    // Осмотр трупа игрока → подтверждение лута (как это делает UI) → сбор.
+    store.on_world_sent(ld2_client::store::Act::Examine);
+    handle
+        .send(&EntityInfo {
+            entity_id: "cor_9".into(),
+        })
+        .expect("осмотр");
+    pump(&mut store, &mut rx, |s| s.entity_detail.is_some()).await;
+    let detail = store.entity_detail.clone().expect("детали");
+    assert_eq!(detail["was_player"], true);
+    let loot_uid = detail["loot"][0]["uid"].as_str().unwrap().to_string();
+    let loot_name = detail["loot"][0]["name"].as_str().unwrap().to_string();
+
+    store.set_loot_confirm(loot_uid.clone(), loot_name);
+    store.clear_loot_confirm(); // подтверждение в окне
+    handle
+        .send(&ld2_protocol::cmd::ItemUse {
+            item_uid: loot_uid.clone(),
+            target_id: None,
+        })
+        .expect("забор лута");
+    // Статус идёт ПОСЛЕДНИМ в пачке событий (item/added → corpse/looted →
+    // crime/added → crime/status) — ждём именно его.
+    pump(&mut store, &mut rx, |s| {
+        s.snapshot
+            .as_ref()
+            .is_some_and(|sn| sn.char.crime.statuses.iter().any(|c| c.kind == "marauder"))
+    })
+    .await;
+    assert!(
+        store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .any(|i| i.uid == loot_uid),
+        "лут в инвентаре"
+    );
+
+    // 1) Статус «Мародёр» назначен сервером (blend, а не полная сумма).
+    let statuses = &store.snapshot.as_ref().unwrap().char.crime.statuses;
+    let marauder = statuses
+        .iter()
+        .find(|s| s.kind == "marauder")
+        .expect("мараудёр назначен");
+    assert!(
+        statuses.iter().any(|s| s.kind == "murderer"),
+        "был и остаётся"
+    );
+
+    // 2) Формула §4.10: журнал несёт серверный вклад k·t·(1 − T/T_MAX).
+    let entry = store
+        .crime_log
+        .iter()
+        .find(|e| e.kind == "marauder")
+        .expect("запись в журнале");
+    let before = entry.total_s - entry.delta_s;
+    let expected = (0.5_f64 * 7200.0 * (1.0 - before as f64 / 604_800.0)).round() as i64;
+    assert!(
+        (entry.delta_s - expected).abs() <= 1,
+        "вклад {} ≠ формуле {} (T={before})",
+        entry.delta_s,
+        expected
+    );
+    assert!(
+        entry.delta_s < 7200,
+        "частичное сложение: {} < 7200",
+        entry.delta_s
+    );
+
+    // 3) Клиент НЕ пересчитывает: срок равен серверному, отсчёт — только
+    // разница now/offset (живой статус виден фильтру active).
+    let now = ld2_client::store::local_epoch() + store.time_offset;
+    assert!(
+        marauder.expires_at > now,
+        "серверный срок в будущем и не изменён клиентом"
+    );
+    let active = ld2_client::store::filter_active_statuses(statuses, now);
+    assert!(
+        active.iter().any(|s| s.kind == "marauder"),
+        "бейдж виден в active-фильтре"
+    );
+
+    handle.close();
+}
