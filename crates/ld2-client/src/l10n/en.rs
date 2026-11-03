@@ -141,5 +141,18 @@ pub(super) fn t(key: Key) -> &'static str {
         ProfCook => "Cook",
         ProfHerbalist => "Herbalist",
         ProfHunter => "Hunter",
+        // M8: chat
+        ChLabel => "Chat",
+        ChSend => "Send",
+        ChReply => "Reply",
+        ChFilter => "Filter",
+        ChEmpty => "No messages",
+        ChUnknownCmd => "Unknown command: {cmd}",
+        ChSystem => "System",
+        ChLocation => "Location",
+        ChGlobal => "Global",
+        ChParty => "Party",
+        ChGuild => "Guild",
+        ChWhisper => "Whisper",
     }
 }

@@ -60,6 +60,8 @@ pub enum Act {
     CrimeLog,
     /// `craft.learn` → ack {profession} обновляет снапшот (ФР-08).
     Learn,
+    /// `chat.send` — ack несёт только ошибки (лимиты §5), события — отдельно.
+    Chat,
     /// `craft.start`/`craft.recipes` — результат крафта событиями (ФР-08).
     Craft,
     /// `quest.accept|turn_in|abandon` — результат событиями (ФР-12).
@@ -107,6 +109,10 @@ pub struct VisitedLocation {
 
 /// Ёмкость журнала мира (НФР §8: лог локации ≤ 10 000; M3 — 1000).
 const LOG_LIMIT: usize = 1000;
+/// История чата на канал — кольцевой буфер (ФР-13: 5 000/канал, NFR §8).
+const CHAT_LIMIT: usize = 5_000;
+/// Каналы чата из §5 (порядок вкладок UI).
+pub const CHAT_CHANNELS: [&str; 6] = ["system", "location", "global", "party", "guild", "whisper"];
 /// Ёмкость истории посещённых.
 const VISITED_LIMIT: usize = 50;
 
@@ -161,6 +167,12 @@ pub struct AppStore {
     pub loot_confirm: Option<(String, String)>,
     /// Трекер квестов (ФР-12): id, максимум 3, рендер с фильтром по наличию.
     pub quest_tracker: Vec<String>,
+    /// История чата по каналам (ФР-13): `channel → сообщения` (ring).
+    pub chat: std::collections::HashMap<String, std::collections::VecDeque<ChatMessage>>,
+    /// Активный канал чата (вкладка в UI, ФР-13).
+    pub chat_channel: String,
+    /// Адресат последнего whisper (ФР-13: «ответить»).
+    pub last_whisper_from: Option<String>,
     /// Рецепты крафта из `cmd/craft.recipes` (ФР-08).
     pub recipes: Vec<serde_json::Value>,
     /// Рецепты уже запрошены (вкладка грузит один раз).
@@ -209,6 +221,9 @@ impl AppStore {
             crime_log_loaded: false,
             loot_confirm: None,
             quest_tracker: Vec::new(),
+            chat: std::collections::HashMap::new(),
+            chat_channel: "location".into(),
+            last_whisper_from: None,
             recipes: Vec::new(),
             recipes_loaded: false,
             notice: None,
@@ -294,6 +309,8 @@ impl AppStore {
                 Act::CrimeLog | Act::Learn | Act::Craft | Act::Quest => {
                     self.sheet_error = Some(msg)
                 }
+                // Лимиты чата (E_RATE_LIMITED §9) — тостом (ФР-13).
+                Act::Chat => self.notice = Some(msg),
             }
             return vec![];
         }
@@ -334,7 +351,13 @@ impl AppStore {
                     }
                 }
             }
-            Act::Attack | Act::Examine | Act::Drop | Act::Upgrade | Act::Cast | Act::Quest => {
+            Act::Attack
+            | Act::Examine
+            | Act::Drop
+            | Act::Upgrade
+            | Act::Cast
+            | Act::Quest
+            | Act::Chat => {
                 // результат событиями (§8)
             }
             Act::Craft => {
@@ -987,6 +1010,20 @@ impl AppStore {
                 let Ok(msg) = serde_json::from_value::<ChatMessage>(payload) else {
                     return vec![];
                 };
+                // ФР-13: история per-channel (ring) + адресат для «ответить».
+                let my_id = self
+                    .snapshot
+                    .as_ref()
+                    .map(|sn| sn.char.id.clone())
+                    .unwrap_or_default();
+                if msg.channel == "whisper" && msg.from != my_id {
+                    self.last_whisper_from = Some(msg.name.clone());
+                }
+                let entry = self.chat.entry(msg.channel.clone()).or_default();
+                if entry.len() >= CHAT_LIMIT {
+                    entry.pop_front();
+                }
+                entry.push_back(msg.clone());
                 self.push_log(
                     LogKind::Chat,
                     format!("[{}] {}: {}", msg.channel, msg.name, msg.text),
@@ -1137,6 +1174,8 @@ impl AppStore {
         self.loot_confirm = None;
         self.quest_tracker.clear();
         self.session_login = None;
+        self.chat.clear();
+        self.last_whisper_from = None;
         login
             .map(|login| vec![Effect::ForgetSession { login }])
             .unwrap_or_default()
@@ -1183,6 +1222,9 @@ impl AppStore {
         self.upgrade = None;
         self.socketing = None;
         self.quest_tracker.clear();
+        // ФР-13: переключение персонажа сбрасывает историю чата.
+        self.chat.clear();
+        self.last_whisper_from = None;
         self.notice = None;
     }
 
@@ -1245,10 +1287,222 @@ fn apply_item_patch(ch: &mut ld2_protocol::types::CharacterState, payload: &serd
     }
 }
 
+/// Результат разбора ввода чата (ФР-13: слэш-команды).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChatDraft {
+    /// Отправить `cmd/chat.send`.
+    Send {
+        channel: String,
+        to: Option<String>,
+        text: String,
+    },
+    /// Неизвестная команда — ошибка тостом, в чат НЕ отправляется (ФР-13).
+    Unknown(String),
+}
+
+/// Разбор ввода чата: `/w Имя текст`, `/p`, `/g`, `/r` (ответ последнему
+/// whisper), `/scenario …` (passthrough-сценарии мока); обычный текст —
+/// в активный канал. `whisper_to` — адресат для `/r` («ответить»).
+pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&str>) -> ChatDraft {
+    let trimmed = input.trim();
+    // Сценарии мока — dev-команда, уходит как текст (мок перехватывает префикс).
+    if trimmed.starts_with("/scenario ") {
+        return ChatDraft::Send {
+            channel: active_channel.to_string(),
+            to: None,
+            text: trimmed.to_string(),
+        };
+    }
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        // Обычный текст — в активный канал.
+        return ChatDraft::Send {
+            channel: active_channel.to_string(),
+            to: None,
+            text: trimmed.to_string(),
+        };
+    };
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let cmd = parts.next().unwrap_or_default().to_ascii_lowercase();
+    let arg = parts.next().unwrap_or("").trim();
+    match cmd.as_str() {
+        // `/w Имя текст` → whisper адресату.
+        "w" | "whisper" => {
+            let mut it = arg.splitn(2, char::is_whitespace);
+            let to = it.next().unwrap_or("").to_string();
+            let text = it.next().unwrap_or("").trim().to_string();
+            if to.is_empty() || text.is_empty() {
+                return ChatDraft::Unknown("/w".into());
+            }
+            ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some(to),
+                text,
+            }
+        }
+        // `/r текст` → ответ последнему адресату whisper.
+        "r" | "reply" => match whisper_to {
+            Some(to) if !arg.is_empty() => ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some(to.to_string()),
+                text: arg.to_string(),
+            },
+            _ => ChatDraft::Unknown("/r".into()),
+        },
+        // `/p` / `/g` → каналы группы/гильдии.
+        "p" | "party" if !arg.is_empty() => ChatDraft::Send {
+            channel: "party".into(),
+            to: None,
+            text: arg.to_string(),
+        },
+        "g" | "guild" if !arg.is_empty() => ChatDraft::Send {
+            channel: "guild".into(),
+            to: None,
+            text: arg.to_string(),
+        },
+        _ => ChatDraft::Unknown(format!("/{cmd}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ld2_mock_server::fixtures;
+
+    // ─── M8: чат (ФР-13) ───────────────────────────────────────────────────
+
+    #[test]
+    fn slash_parse_whisper_and_channels() {
+        // `/w Имя текст` → whisper адресату.
+        assert_eq!(
+            parse_chat_input("/w Астра привет!", "location", None),
+            ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some("Астра".into()),
+                text: "привет!".into()
+            }
+        );
+        // `/p` / `/g` → каналы группы/гильдии.
+        assert_eq!(
+            parse_chat_input("/p идём в лес", "location", None),
+            ChatDraft::Send {
+                channel: "party".into(),
+                to: None,
+                text: "идём в лес".into()
+            }
+        );
+        assert_eq!(
+            parse_chat_input("/g привет гильдии", "global", None),
+            ChatDraft::Send {
+                channel: "guild".into(),
+                to: None,
+                text: "привет гильдии".into()
+            }
+        );
+        // Обычный текст — в активный канал.
+        assert_eq!(
+            parse_chat_input("просто текст", "location", None),
+            ChatDraft::Send {
+                channel: "location".into(),
+                to: None,
+                text: "просто текст".into()
+            }
+        );
+    }
+
+    #[test]
+    fn slash_parse_reply_and_unknown() {
+        // `/r` с адресатом последнего whisper.
+        assert_eq!(
+            parse_chat_input("/r тоже привет", "location", Some("Астра")),
+            ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some("Астра".into()),
+                text: "тоже привет".into()
+            }
+        );
+        // Без адресата — ошибка, не отправляется.
+        assert_eq!(
+            parse_chat_input("/r привет", "location", None),
+            ChatDraft::Unknown("/r".into())
+        );
+        // Неизвестная команда — ошибка тостом (ФР-13), текстом в чат не идёт.
+        assert_eq!(
+            parse_chat_input("/xyz ага", "location", None),
+            ChatDraft::Unknown("/xyz".into())
+        );
+        // Неполный `/w` — ошибка.
+        assert_eq!(
+            parse_chat_input("/w Астра", "location", None),
+            ChatDraft::Unknown("/w".into())
+        );
+        // Сценарии мока — passthrough (dev-команда мока).
+        assert_eq!(
+            parse_chat_input("/scenario death", "global", None),
+            ChatDraft::Send {
+                channel: "global".into(),
+                to: None,
+                text: "/scenario death".into()
+            }
+        );
+    }
+
+    #[test]
+    fn chat_history_is_ring_per_channel() {
+        let mut store = store_with_session();
+        for i in 0..(CHAT_LIMIT + 5) {
+            store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/chat/message".into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({
+                    "channel": "global", "from": "p", "name": "Марк",
+                    "text": format!("м {i}"), "sent_at": "2026-11-03T00:00:00Z"
+                })),
+            }));
+        }
+        let global = store.chat.get("global").expect("канал global");
+        assert_eq!(global.len(), CHAT_LIMIT, "ring-буфер: 5 000/канал");
+        assert_eq!(global.front().unwrap().text, "м 5", "старые вытеснены");
+        // Другой канал не тронут.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "system", "from": "srv", "name": "Сервер",
+                "text": "событие", "sent_at": "2026-11-03T00:00:00Z"
+            })),
+        }));
+        assert_eq!(store.chat.get("system").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn chat_resets_on_char_switch_and_whisper_reply_target() {
+        let mut store = store_with_session();
+        // Whisper от другого игрока запоминает адресата (ФР-13 «ответить»).
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "whisper", "from": "c2", "name": "Астра",
+                "text": "эй", "sent_at": "2026-11-03T00:00:00Z"
+            })),
+        }));
+        assert_eq!(store.last_whisper_from.as_deref(), Some("Астра"));
+        assert_eq!(store.chat.get("whisper").unwrap().len(), 1);
+
+        // Переключение персонажа сбрасывает историю (ФР-13).
+        store.back_to_characters();
+        assert!(store.chat.is_empty(), "история чата сброшена");
+        assert!(store.last_whisper_from.is_none());
+    }
 
     fn store_with_session() -> AppStore {
         let mut store = AppStore::new();

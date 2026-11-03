@@ -11,6 +11,7 @@ use crate::l10n::Key;
 use crate::store::{AppStore, Effect};
 use crate::transport::TransportHandle;
 
+pub mod chat_panel;
 pub mod log_panel;
 pub mod screens;
 pub mod sheet;
@@ -33,6 +34,16 @@ pub struct Forms {
     pub delete_target: Option<(String, String)>,
     /// Правая панель: вкладка + drag&drop (M4).
     pub sheet: SheetState,
+    /// Нижняя панель чата (ФР-13, M8): ввод и фильтр-строка.
+    pub chat: ChatForm,
+}
+
+#[derive(Default)]
+pub struct ChatForm {
+    /// Поле ввода сообщения.
+    pub input: String,
+    /// Фильтр-строка по истории (ФР-13).
+    pub filter: String,
 }
 
 #[derive(Default)]

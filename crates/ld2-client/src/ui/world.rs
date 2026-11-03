@@ -61,6 +61,10 @@ pub fn game(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui) -> ScreenEffects {
     hotbar(ui, ctx, &snap);
 
     ui.add_space(4.0);
+    // Нижняя панель чата (ФР-13, M8): каналы, история, ввод.
+    crate::ui::chat_panel::show(ui, ctx);
+
+    ui.add_space(4.0);
     log_panel::show(ui, lang, &ctx.store.log);
 
     if let Some(detail) = ctx.store.entity_detail.clone() {

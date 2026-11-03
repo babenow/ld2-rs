@@ -175,6 +175,19 @@ pub enum Key {
     ProfCook,
     ProfHerbalist,
     ProfHunter,
+    // M8: чат (ФР-13)
+    ChLabel,
+    ChSend,
+    ChReply,
+    ChFilter,
+    ChEmpty,
+    ChUnknownCmd,
+    ChSystem,
+    ChLocation,
+    ChGlobal,
+    ChParty,
+    ChGuild,
+    ChWhisper,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -328,6 +341,18 @@ mod tests {
         Key::ProfCook,
         Key::ProfHerbalist,
         Key::ProfHunter,
+        Key::ChLabel,
+        Key::ChSend,
+        Key::ChReply,
+        Key::ChFilter,
+        Key::ChEmpty,
+        Key::ChUnknownCmd,
+        Key::ChSystem,
+        Key::ChLocation,
+        Key::ChGlobal,
+        Key::ChParty,
+        Key::ChGuild,
+        Key::ChWhisper,
     ];
 
     #[test]

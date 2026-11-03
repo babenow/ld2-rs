@@ -141,5 +141,18 @@ pub(super) fn t(key: Key) -> &'static str {
         ProfCook => "Повар",
         ProfHerbalist => "Травник",
         ProfHunter => "Охотник",
+        // M8: чат
+        ChLabel => "Чат",
+        ChSend => "Отправить",
+        ChReply => "Ответить",
+        ChFilter => "Фильтр",
+        ChEmpty => "Сообщений нет",
+        ChUnknownCmd => "Неизвестная команда: {cmd}",
+        ChSystem => "Системный",
+        ChLocation => "Локация",
+        ChGlobal => "Мир",
+        ChParty => "Группа",
+        ChGuild => "Гильдия",
+        ChWhisper => "Шёпот",
     }
 }
