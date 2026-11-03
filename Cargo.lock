@@ -1989,6 +1989,7 @@ dependencies = [
  "eframe",
  "futures-util",
  "keyring",
+ "ld2-mock-server",
  "ld2-protocol",
  "serde",
  "serde_json",

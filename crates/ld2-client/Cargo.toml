@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 description = "Desktop-клиент текстовой онлайн-MMORPG ld2 (eframe/egui)"
 
+[dev-dependencies]
+ld2-mock-server = { path = "../ld2-mock-server" }
+
 [dependencies]
 ld2-protocol = { path = "../ld2-protocol" }
 eframe = { workspace = true }
