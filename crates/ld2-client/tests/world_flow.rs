@@ -7,8 +7,8 @@ use ld2_client::store::{AppStore, LogKind, Screen};
 use ld2_client::transport::{self, IngressEvent, TransportConfig, TransportStatus};
 use ld2_mock_server::{serve_with_listener, Chaos};
 use ld2_protocol::cmd::{
-    AuthLogin, CharSelect, ChatSend, CombatAttack, EntityInfo, LocationMove, MagicRuneCast,
-    UpgradePreview, UpgradeStart,
+    AuthLogin, CharSelect, CharXpInvest, ChatSend, CombatAttack, CraftStart, EntityInfo,
+    LocationMove, MagicRuneCast, QuestTurnIn, UpgradePreview, UpgradeStart,
 };
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -372,7 +372,6 @@ async fn magic_upgrade_flow_dod() {
     assert_eq!(staff_charges(&store), 7, "стартовое состояние");
     assert_eq!(store.snapshot.as_ref().unwrap().char.mp.cur, 45);
     for (expect_charges, expect_mp) in [(6, 35), (5, 25)] {
-        eprintln!("STEP cast → {expect_charges}/{expect_mp}");
         store.on_world_sent(ld2_client::store::Act::Cast);
         handle
             .send(&MagicRuneCast {
@@ -395,7 +394,6 @@ async fn magic_upgrade_flow_dod() {
         "касты в журнале"
     );
 
-    eprintln!("STEP casts done");
     // +1 посох: превью → успех → уровень 2→3.
     store.open_upgrade("i_17".into(), "Ясеневый посох".into());
     handle
@@ -404,12 +402,10 @@ async fn magic_upgrade_flow_dod() {
         })
         .expect("превью");
     store.on_sheet_sent(ld2_client::store::Act::Preview);
-    eprintln!("STEP preview sent");
     pump(&mut store, &mut rx, |s| {
         s.upgrade.as_ref().is_some_and(|v| v.preview.is_some())
     })
     .await;
-    eprintln!("STEP preview ready");
     let preview_id = store.upgrade.as_ref().unwrap().preview.as_ref().unwrap()["preview_id"]
         .as_str()
         .unwrap()
@@ -426,7 +422,6 @@ async fn magic_upgrade_flow_dod() {
         s.upgrade.is_none() && staff_upgrade(s) == 3
     })
     .await;
-    eprintln!("STEP upgrade ok");
     assert!(
         store
             .log
@@ -447,7 +442,6 @@ async fn magic_upgrade_flow_dod() {
         s.log.iter().any(|e| e.text.contains("провалится"))
     })
     .await;
-    eprintln!("STEP scenario armed");
 
     store.open_upgrade("i_17".into(), "Ясеневый посох".into());
     handle
@@ -594,6 +588,94 @@ async fn crime_statuses_flow_dod() {
     assert!(
         active.iter().any(|s| s.kind == "marauder"),
         "бейдж виден в active-фильтре"
+    );
+
+    handle.close();
+}
+
+/// DoD M7 (ТЗ §10): «сквозной прогон: квест → XP → навык → крафт».
+#[tokio::test]
+async fn quest_craft_flow_dod() {
+    let url = start_mock().await;
+    let (handle, mut rx, mut store) = spawn_pair(&url);
+    enter_world(&handle, &mut store, &mut rx).await;
+
+    // 1) Квест «Волки» 4/5 → убийство → «к сдаче».
+    store.on_world_sent(ld2_client::store::Act::Move);
+    handle
+        .send(&LocationMove {
+            exit_id: "e_north".into(),
+        })
+        .expect("move");
+    pump(&mut store, &mut rx, |s| location_id(s) == "l_forest").await;
+
+    for _ in 0..3 {
+        store.on_world_sent(ld2_client::store::Act::Attack);
+        handle
+            .send(&CombatAttack {
+                target_id: "m_3".into(),
+            })
+            .expect("attack");
+        pump(&mut store, &mut rx, |s| s.pending.is_none()).await;
+    }
+    pump(&mut store, &mut rx, |s| {
+        s.snapshot.as_ref().is_some_and(|sn| {
+            sn.char.quests.iter().any(|q| {
+                q.id == "q_wolves" && matches!(q.state, ld2_protocol::types::QuestPhase::TurnIn)
+            })
+        })
+    })
+    .await;
+
+    // 2) Сдача → пул 120 + 150 = 270.
+    handle
+        .send(&QuestTurnIn {
+            quest_id: "q_wolves".into(),
+        })
+        .expect("сдача");
+    pump(&mut store, &mut rx, |s| {
+        s.snapshot.as_ref().is_some_and(|sn| sn.char.xp_pool == 270)
+    })
+    .await;
+
+    // 3) Опыт → навык (вложение из пула).
+    handle
+        .send(&CharXpInvest {
+            skill_id: "sword".into(),
+            points: 100,
+        })
+        .expect("вложение");
+    pump(&mut store, &mut rx, |s| {
+        s.snapshot.as_ref().is_some_and(|sn| {
+            sn.char.xp_pool == 170
+                && sn
+                    .char
+                    .skills
+                    .iter()
+                    .any(|sk| sk.id == "sword" && sk.rank == 6)
+        })
+    })
+    .await;
+
+    // 4) Крафт меча из инвентарных ингредиентов (ФР-08).
+    handle
+        .send(&CraftStart {
+            recipe_id: "rec_sword_iron".into(),
+            qty: 1,
+        })
+        .expect("крафт");
+    pump(&mut store, &mut rx, |s| {
+        s.snapshot.as_ref().is_some_and(|sn| {
+            sn.char
+                .inventory
+                .iter()
+                .any(|i| i.item_type == "sword_iron")
+        })
+    })
+    .await;
+    assert!(
+        store.log.iter().any(|e| e.text.contains("Крафт готов")),
+        "крафт в журнале (ФР-17)"
     );
 
     handle.close();

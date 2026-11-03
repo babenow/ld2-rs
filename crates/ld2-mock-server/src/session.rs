@@ -20,7 +20,7 @@ use ld2_protocol::evt::{
 };
 use ld2_protocol::types::{
     CharacterSummary, CrimeLogEntry, CrimeStatus, Entity, EntityKind, ItemSnapshot, PartyMember,
-    PartyState, ProfessionSnapshot, QuestState, RuneInfo, Severity, SkillSnapshot,
+    PartyState, ProfessionSnapshot, QuestPhase, QuestState, RuneInfo, Severity, SkillSnapshot,
 };
 use ld2_protocol::{ErrorCode, PROTOCOL_VERSION};
 use serde::de::DeserializeOwned;
@@ -878,6 +878,32 @@ impl Session {
                     Some(sv),
                     serde_json::to_value(ItemAdded { item: loot }).unwrap_or_default(),
                 ));
+            }
+
+            // Прогресс квеста «Волки» (ФР-12, M7): убийство монстра двигает
+            // цель; при достижении need — состояние «к сдаче».
+            let mut progressed: Option<QuestState> = None;
+            if let Some(ch) = self.char.as_mut() {
+                if let Some(q) = ch
+                    .quests
+                    .iter_mut()
+                    .find(|q| q.id == "q_wolves" && q.state == QuestPhase::Active)
+                {
+                    if let Some(goal) = q.goals.first_mut() {
+                        let cur = goal.cur.unwrap_or(0);
+                        let need = goal.need.unwrap_or(5);
+                        if cur < need {
+                            goal.cur = Some(cur + 1);
+                            if cur + 1 >= need {
+                                q.state = QuestPhase::TurnIn;
+                            }
+                            progressed = Some(q.clone());
+                        }
+                    }
+                }
+            }
+            if let Some(quest) = progressed {
+                outs.push(self.event("evt/quest/progress", Some(sv), json!({ "quest": quest })));
             }
         }
         outs

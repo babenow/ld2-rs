@@ -58,6 +58,12 @@ pub enum Act {
     Cast,
     /// `cmd/crime.log` → журнал нарушений в правую панель (ФР-11).
     CrimeLog,
+    /// `craft.learn` → ack {profession} обновляет снапшот (ФР-08).
+    Learn,
+    /// `craft.start`/`craft.recipes` — результат крафта событиями (ФР-08).
+    Craft,
+    /// `quest.accept|turn_in|abandon` — результат событиями (ФР-12).
+    Quest,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -153,6 +159,12 @@ pub struct AppStore {
     pub crime_log_loaded: bool,
     /// Подтверждение «забрать лут трупа ИГРОКА» (ФР-11): (uid, name).
     pub loot_confirm: Option<(String, String)>,
+    /// Трекер квестов (ФР-12): id, максимум 3, рендер с фильтром по наличию.
+    pub quest_tracker: Vec<String>,
+    /// Рецепты крафта из `cmd/craft.recipes` (ФР-08).
+    pub recipes: Vec<serde_json::Value>,
+    /// Рецепты уже запрошены (вкладка грузит один раз).
+    pub recipes_loaded: bool,
     /// Нейтральное сообщение (создан/удалён/транспорт).
     pub notice: Option<String>,
     /// Логин последней попытки входа — предзаполнение формы.
@@ -196,6 +208,9 @@ impl AppStore {
             crime_log: Vec::new(),
             crime_log_loaded: false,
             loot_confirm: None,
+            quest_tracker: Vec::new(),
+            recipes: Vec::new(),
+            recipes_loaded: false,
             notice: None,
             last_login: None,
             log: VecDeque::new(),
@@ -276,7 +291,9 @@ impl AppStore {
                 | Act::Upgrade
                 | Act::Socket => self.sheet_error = Some(msg),
                 Act::Cast => self.world_error = Some(msg),
-                Act::CrimeLog => self.sheet_error = Some(msg),
+                Act::CrimeLog | Act::Learn | Act::Craft | Act::Quest => {
+                    self.sheet_error = Some(msg)
+                }
             }
             return vec![];
         }
@@ -317,8 +334,17 @@ impl AppStore {
                     }
                 }
             }
-            Act::Attack | Act::Examine | Act::Drop | Act::Upgrade | Act::Cast => {
+            Act::Attack | Act::Examine | Act::Drop | Act::Upgrade | Act::Cast | Act::Quest => {
                 // результат событиями (§8)
+            }
+            Act::Craft => {
+                // §7: ack несёт список рецептов.
+                if let Some(payload) = ack.payload.as_ref() {
+                    if let Some(recipes) = payload["recipes"].as_array() {
+                        self.recipes = recipes.clone();
+                    }
+                }
+                self.recipes_loaded = true;
             }
             Act::CrimeLog => {
                 // §7: ack несёт журнал нарушений целиком.
@@ -330,6 +356,25 @@ impl AppStore {
                         self.crime_log_loaded = true;
                     }
                 }
+            }
+            Act::Learn => {
+                // §7: ack {profession} — добавляем/обновляем в снапшоте.
+                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
+                {
+                    if let Ok(prof) = serde_json::from_value::<
+                        ld2_protocol::types::ProfessionSnapshot,
+                    >(payload["profession"].clone())
+                    {
+                        if let Some(existing) =
+                            snap.char.professions.iter_mut().find(|p| p.id == prof.id)
+                        {
+                            *existing = prof;
+                        } else {
+                            snap.char.professions.push(prof);
+                        }
+                    }
+                }
+                self.sheet_error = None;
             }
             Act::Preview => {
                 if let (Some(upgrade), Some(payload)) =
@@ -810,14 +855,79 @@ impl AppStore {
                 #[derive(serde::Deserialize)]
                 struct WithQuest {
                     quest: QuestState,
+                    #[serde(default)]
+                    pool_left: Option<i64>,
                 }
                 let Ok(w) = serde_json::from_value::<WithQuest>(payload) else {
                     return vec![];
                 };
+                // ФР-12: замена квеста в снапшоте + пул от сдачи (§7).
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(pool) = w.pool_left {
+                        snap.char.xp_pool = pool;
+                    }
+                    if let Some(q) = snap.char.quests.iter_mut().find(|q| q.id == w.quest.id) {
+                        *q = w.quest.clone();
+                    } else {
+                        snap.char.quests.push(w.quest.clone());
+                    }
+                }
                 let title = w.quest.title.unwrap_or(w.quest.id);
                 self.push_log(
                     LogKind::Quest,
                     format!("Квест «{title}»: {:?}", w.quest.state),
+                );
+                vec![]
+            }
+            "evt/craft/result" => {
+                let Ok(result) = serde_json::from_value::<ld2_protocol::evt::CraftResult>(payload)
+                else {
+                    return vec![];
+                };
+                if result.ok {
+                    let made: Vec<String> = result
+                        .made
+                        .iter()
+                        .map(|m| format!("{}×{}", m.uid, m.qty))
+                        .collect();
+                    self.push_log(
+                        LogKind::Loot,
+                        format!("Крафт готов: {} → {}", result.recipe_id, made.join(", ")),
+                    );
+                } else {
+                    self.push_log(
+                        LogKind::Loot,
+                        format!("Крафт провален: {}", result.recipe_id),
+                    );
+                }
+                vec![]
+            }
+            "evt/craft/profession" => {
+                #[derive(serde::Deserialize)]
+                struct WithProfession {
+                    profession: ld2_protocol::types::ProfessionSnapshot,
+                }
+                let Ok(w) = serde_json::from_value::<WithProfession>(payload) else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(p) = snap
+                        .char
+                        .professions
+                        .iter_mut()
+                        .find(|p| p.id == w.profession.id)
+                    {
+                        *p = w.profession.clone();
+                    } else {
+                        snap.char.professions.push(w.profession.clone());
+                    }
+                }
+                self.push_log(
+                    LogKind::Loot,
+                    format!(
+                        "Профессия «{}»: ранг {}",
+                        w.profession.id, w.profession.rank
+                    ),
                 );
                 vec![]
             }
@@ -985,6 +1095,15 @@ impl AppStore {
         self.target = Some(next);
     }
 
+    /// Трекер квестов (ФР-12): переключение, максимум 3.
+    pub fn toggle_quest_tracker(&mut self, quest_id: &str) {
+        if let Some(pos) = self.quest_tracker.iter().position(|q| q == quest_id) {
+            self.quest_tracker.remove(pos);
+        } else if self.quest_tracker.len() < 3 {
+            self.quest_tracker.push(quest_id.to_string());
+        }
+    }
+
     /// Подтверждение «забрать лут трупа игрока» (ФР-11).
     pub fn set_loot_confirm(&mut self, uid: String, name: String) {
         self.loot_confirm = Some((uid, name));
@@ -1016,6 +1135,7 @@ impl AppStore {
         self.socketing = None;
         self.target = None;
         self.loot_confirm = None;
+        self.quest_tracker.clear();
         self.session_login = None;
         login
             .map(|login| vec![Effect::ForgetSession { login }])
@@ -1062,6 +1182,7 @@ impl AppStore {
         self.death = None;
         self.upgrade = None;
         self.socketing = None;
+        self.quest_tracker.clear();
         self.notice = None;
     }
 
@@ -1958,6 +2079,32 @@ mod tests {
         assert_eq!(active.len(), 1, "истёвший скрыт (ФР-11 fallback)");
         assert_eq!(active[0].kind, "fresh");
         assert_eq!(statuses.len(), 2, "источник не мутирован");
+    }
+
+    #[test]
+    fn debug_quest_updated_applies_pool() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/quest/updated",
+            serde_json::json!({
+                "quest": {
+                    "id": "q_wolves", "title": "Волки", "state": "done",
+                    "goals": [ { "text": "Волков убито", "cur": 5, "need": 5 } ],
+                    "reward_preview": { "items": [], "xp": 450 }
+                },
+                "pool_left": 270,
+                "award": 150
+            }),
+        ));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.xp_pool,
+            270,
+            "пул из quest/updated"
+        );
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.quests[0].state,
+            ld2_protocol::types::QuestPhase::Done
+        );
     }
 
     #[test]

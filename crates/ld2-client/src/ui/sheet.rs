@@ -3,10 +3,12 @@
 
 use eframe::egui;
 use ld2_protocol::cmd::{
-    CharXpInvest, ItemDrop, ItemEquip, ItemUnequip, ItemUse, SocketExtract, SocketInsert,
-    UpgradePreview, UpgradeStart,
+    CharXpInvest, CraftLearn, CraftRecipes, CraftStart, ItemDrop, ItemEquip, ItemUnequip, ItemUse,
+    QuestAbandon, QuestAccept, QuestTurnIn, SocketExtract, SocketInsert, UpgradePreview,
+    UpgradeStart,
 };
 use ld2_protocol::evt::StateSnapshot;
+use ld2_protocol::types::QuestPhase;
 use ld2_protocol::types::{CharacterState, ItemSnapshot};
 
 use super::{DragFrom, SheetTab};
@@ -45,12 +47,16 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
     let lang = ctx.lang;
     let tab = ctx.forms.sheet.tab;
 
+    tracker_block(ui, ctx);
+
     ui.horizontal(|ui| {
         for (candidate, key) in [
             (SheetTab::Skills, Key::SheetSkills),
             (SheetTab::Attrs, Key::SheetAttrs),
             (SheetTab::Inventory, Key::SheetInventory),
             (SheetTab::Statuses, Key::StatusesTab),
+            (SheetTab::Quests, Key::QuestsTab),
+            (SheetTab::Professions, Key::ProfessionsTab),
         ] {
             let selected = tab == candidate;
             if ui.selectable_label(selected, t(lang, key)).clicked() {
@@ -71,12 +77,20 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
         let cmd = ld2_protocol::cmd::CrimeLog { limit: Some(50) };
         send(ctx, &cmd, Act::CrimeLog);
     }
+    // Вкладка «Профессии»: рецепты загружаются один раз (ФР-08).
+    if tab == SheetTab::Professions && !ctx.store.recipes_loaded && ctx.store.snapshot.is_some() {
+        ctx.store.recipes_loaded = true;
+        let cmd = CraftRecipes { profession: None };
+        send(ctx, &cmd, Act::Craft);
+    }
 
     match tab {
         SheetTab::Skills => skills(ui, ctx),
         SheetTab::Attrs => attrs(ui, ctx),
         SheetTab::Inventory => inventory(ui, ctx),
         SheetTab::Statuses => statuses(ui, ctx),
+        SheetTab::Quests => quests(ui, ctx),
+        SheetTab::Professions => professions(ui, ctx),
     }
 
     // Модалка «Описание предмета» (ФР-07).
@@ -548,6 +562,284 @@ fn statuses(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
             t(lang, Key::TotalLabel),
             super::format_duration(lang, entry.total_s)
         ));
+    }
+}
+
+// ─── трекер квестов (ФР-12) ─────────────────────────────────────────────────
+
+fn tracker_block(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
+    let lang = ctx.lang;
+    if ctx.store.quest_tracker.is_empty() {
+        return;
+    }
+    let Some(snap) = ctx.store.snapshot.clone() else {
+        return;
+    };
+    ui.group(|ui| {
+        ui.weak(t(lang, Key::TrackerLabel));
+        for id in &ctx.store.quest_tracker {
+            if let Some(q) = snap.char.quests.iter().find(|q| &q.id == id) {
+                ui.horizontal(|ui| {
+                    ui.label(q.title.clone().unwrap_or_else(|| q.id.clone()));
+                    ui.weak(goals_summary(q));
+                });
+            }
+        }
+    });
+    ui.separator();
+}
+
+/// Сводка целей: «Волков убито 4/5» или текст цели.
+fn goals_summary(q: &ld2_protocol::types::QuestState) -> String {
+    q.goals
+        .iter()
+        .map(|g| match (g.cur, g.need) {
+            (Some(cur), Some(need)) => format!("{} {cur}/{need}", g.text),
+            _ => g.text.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// ─── вкладка «Квесты» (ФР-12) ──────────────────────────────────────────────
+
+fn quests(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
+    let lang = ctx.lang;
+    let Some(snap) = ctx.store.snapshot.clone() else {
+        ui.weak(t(lang, Key::Loading));
+        return;
+    };
+    if snap.char.quests.is_empty() {
+        ui.weak(t(lang, Key::NoQuests));
+        return;
+    }
+
+    for quest in &snap.char.quests {
+        let tracked = ctx.store.quest_tracker.contains(&quest.id);
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                let (state_key, color) = match quest.state {
+                    QuestPhase::Available => (
+                        Key::StateAvailable,
+                        egui::Color32::from_rgb(0x98, 0xC3, 0x79),
+                    ),
+                    QuestPhase::Active => {
+                        (Key::StateActive, egui::Color32::from_rgb(0xAB, 0xB2, 0xBF))
+                    }
+                    QuestPhase::TurnIn => {
+                        (Key::StateTurnIn, egui::Color32::from_rgb(0xD1, 0x9A, 0x66))
+                    }
+                    QuestPhase::Done => (Key::StateDone, egui::Color32::from_rgb(0x61, 0xAF, 0xEF)),
+                };
+                ui.colored_label(color, t(lang, state_key));
+                ui.strong(quest.title.clone().unwrap_or_else(|| quest.id.clone()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Трекер (ФР-12): максимум 3, переключение.
+                    let label = if tracked {
+                        t(lang, Key::TrackedBtn)
+                    } else {
+                        t(lang, Key::TrackBtn)
+                    };
+                    if ui.selectable_label(tracked, label).clicked() {
+                        ctx.store.toggle_quest_tracker(&quest.id);
+                    }
+                    match quest.state {
+                        QuestPhase::Available => {
+                            if ui.small_button(t(lang, Key::BtnAccept)).clicked() {
+                                let cmd = QuestAccept {
+                                    quest_id: quest.id.clone(),
+                                };
+                                send(ctx, &cmd, Act::Quest);
+                            }
+                        }
+                        QuestPhase::TurnIn => {
+                            if ui.small_button(t(lang, Key::BtnTurnIn)).clicked() {
+                                let cmd = QuestTurnIn {
+                                    quest_id: quest.id.clone(),
+                                };
+                                send(ctx, &cmd, Act::Quest);
+                            }
+                        }
+                        QuestPhase::Active => {
+                            if ui.small_button(t(lang, Key::BtnAbandon)).clicked() {
+                                let cmd = QuestAbandon {
+                                    quest_id: quest.id.clone(),
+                                };
+                                send(ctx, &cmd, Act::Quest);
+                            }
+                        }
+                        QuestPhase::Done => {}
+                    }
+                });
+            });
+            if !quest.goals.is_empty() {
+                ui.weak(format!("• {}", goals_summary(quest)));
+            }
+            if let Some(reward) = &quest.reward_preview {
+                if let Some(xp) = reward.xp {
+                    ui.weak(format!("{}: {xp} XP", t(lang, Key::RewardLabel)));
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
+    if let Some(err) = &ctx.store.sheet_error {
+        ui.colored_label(RED, err);
+    }
+}
+
+// ─── вкладка «Профессии» (ФР-08) ───────────────────────────────────────────
+
+/// Демо-каталог профессий для обучения (skills.md §5; сервер валидирует:
+/// `E_PROFESSION_LIMIT`/`E_INTERNAL` — ошибки видны в sheet_error).
+const LEARN_CATALOG: [(&str, Key); 7] = [
+    ("blacksmith", Key::ProfBlacksmith),
+    ("alchemist", Key::ProfAlchemist),
+    ("woodcarver", Key::ProfWoodcarver),
+    ("tailor", Key::ProfTailor),
+    ("cook", Key::ProfCook),
+    ("herbalist", Key::ProfHerbalist),
+    ("hunter", Key::ProfHunter),
+];
+
+/// Название профессии: l10n-ключ по id, фолбэк — сам id.
+fn prof_label(lang: crate::l10n::Lang, id: &str) -> String {
+    use crate::l10n::Key as K;
+    let key = match id {
+        "blacksmith" => Some(K::ProfBlacksmith),
+        "alchemist" => Some(K::ProfAlchemist),
+        "scribe" => Some(K::ProfScribe),
+        "woodcarver" => Some(K::ProfWoodcarver),
+        "tailor" => Some(K::ProfTailor),
+        "cook" => Some(K::ProfCook),
+        "herbalist" => Some(K::ProfHerbalist),
+        "hunter" => Some(K::ProfHunter),
+        _ => None,
+    };
+    key.map(|k| t(lang, k).to_string())
+        .unwrap_or_else(|| id.to_string())
+}
+
+fn professions(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
+    let lang = ctx.lang;
+    let Some(snap) = ctx.store.snapshot.clone() else {
+        ui.weak(t(lang, Key::Loading));
+        return;
+    };
+
+    // Изученные профессии: ранги и XP (ФР-08).
+    for prof in &snap.char.professions {
+        ui.horizontal(|ui| {
+            ui.label(prof_label(lang, &prof.id));
+            ui.weak(t(lang, Key::RankFmt).replace("{r}", &prof.rank.to_string()));
+            let frac = if prof.xp_to_next > 0 {
+                (prof.xp as f32 / prof.xp_to_next as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            ui.add(egui::ProgressBar::new(frac).text(format!("{}/{}", prof.xp, prof.xp_to_next)));
+        });
+    }
+
+    // Обучение новым (демо-каталог).
+    let available: Vec<(&'static str, Key)> = LEARN_CATALOG
+        .iter()
+        .copied()
+        .filter(|(id, _)| !snap.char.professions.iter().any(|p| p.id == *id))
+        .collect();
+    if !available.is_empty() {
+        ui.add_space(4.0);
+        egui::ComboBox::from_label(t(lang, Key::LearnLabel)).show_ui(ui, |ui| {
+            for (id, key) in &available {
+                if ui.selectable_label(false, t(lang, *key)).clicked() {
+                    let cmd = CraftLearn {
+                        profession_id: id.to_string(),
+                    };
+                    send(ctx, &cmd, Act::Learn);
+                }
+            }
+        });
+    }
+
+    if let Some(err) = &ctx.store.sheet_error {
+        ui.colored_label(RED, err);
+        ui.add_space(4.0);
+    }
+
+    ui.separator();
+    ui.strong(t(lang, Key::RecipesLabel));
+    if ctx.store.recipes.is_empty() {
+        ui.weak(t(lang, Key::NoRecipes));
+    }
+
+    // Рецепты: требования, ингредиенты (красные при нехватке — ФР-08), крафт.
+    let recipes = ctx.store.recipes.clone();
+    for recipe in &recipes {
+        let recipe_id = recipe["id"].as_str().unwrap_or_default().to_string();
+        let name = recipe["name"].as_str().unwrap_or("?");
+        let profession = recipe["profession"].as_str().unwrap_or("");
+        let rank = recipe["rank"].as_i64().unwrap_or(0);
+        let station = recipe["station_label"].as_str().unwrap_or("");
+
+        let mut ingredients_ok = true;
+        let mut ingredient_lines: Vec<(String, bool)> = Vec::new();
+        if let Some(inputs) = recipe["inputs"].as_array() {
+            for input in inputs {
+                let need_type = input["type"].as_str().unwrap_or_default();
+                let need_qty = input["qty"].as_i64().unwrap_or(1);
+                let have: i64 = snap
+                    .char
+                    .inventory
+                    .iter()
+                    .filter(|i| i.item_type == need_type)
+                    .map(|i| i.qty.unwrap_or(1))
+                    .sum();
+                let ok = have >= need_qty;
+                if !ok {
+                    ingredients_ok = false;
+                }
+                ingredient_lines.push((format!("{need_type}: {have}/{need_qty}"), ok));
+            }
+        }
+
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(name);
+                ui.weak(format!(
+                    "· {} · {}",
+                    prof_label(lang, profession),
+                    t(lang, Key::RankFmt).replace("{r}", &rank.to_string())
+                ));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let pending = ctx.store.pending == Some(Act::Craft);
+                    if ui
+                        .add_enabled(
+                            ingredients_ok && !pending,
+                            egui::Button::new(t(lang, Key::BtnCraft)),
+                        )
+                        .clicked()
+                    {
+                        let cmd = CraftStart {
+                            recipe_id: recipe_id.clone(),
+                            qty: 1,
+                        };
+                        send(ctx, &cmd, Act::Craft);
+                    }
+                });
+            });
+            ui.weak(station);
+            for (line, ok) in ingredient_lines {
+                if ok {
+                    ui.weak(format!("• {line}"));
+                } else {
+                    ui.colored_label(
+                        RED,
+                        format!("• {}: {}", t(lang, Key::MissingIngredients), line),
+                    );
+                }
+            }
+        });
+        ui.add_space(4.0);
     }
 }
 
