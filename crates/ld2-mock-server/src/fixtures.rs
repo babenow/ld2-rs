@@ -372,19 +372,21 @@ pub fn character(id: &str, name: &str) -> CharacterState {
                 expires_at: now_epoch() + 21_600,
             }],
         },
-        quests: vec![quest_boars()],
+        quests: vec![quest_wolves()],
         extra: Default::default(),
     }
 }
 
-pub fn quest_boars() -> QuestState {
+/// Квест «Волки» (M7): цель 4/5 — одно убийство доводит до «к сдаче».
+/// (Golden `ld2-protocol` использует собственный JSON и от фикстур не зависит.)
+pub fn quest_wolves() -> QuestState {
     QuestState {
-        id: "q_boars".into(),
-        title: Some("Кабаны".into()),
+        id: "q_wolves".into(),
+        title: Some("Волки".into()),
         state: ld2_protocol::types::QuestPhase::Active,
         goals: vec![QuestGoal {
-            text: "Кабанов убито".into(),
-            cur: Some(2),
+            text: "Волков убито".into(),
+            cur: Some(4),
             need: Some(5),
         }],
         reward_preview: Some(ld2_protocol::types::RewardPreview {
