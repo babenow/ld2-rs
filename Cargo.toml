@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/ld2-protocol", "crates/ld2-mock-server", "crates/ld2-client"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [workspace.dependencies]

@@ -167,7 +167,7 @@ impl eframe::App for App {
         let effects = match screen {
             Screen::Login => ui::screens::login(&mut ctx, ui),
             Screen::Characters => ui::screens::characters(&mut ctx, ui),
-            Screen::Game => ui::screens::game(&mut ctx, ui),
+            Screen::Game => ui::world::game(&mut ctx, ui),
         };
         self.exec_effects(effects);
 

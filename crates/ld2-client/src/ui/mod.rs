@@ -1,4 +1,5 @@
-//! UI-слой M2 (ФР-01, ФР-02): экраны входа/персонажей/заглушки «Игра».
+//! UI-слой M2–M3 (ФР-01…ФР-03, ФР-17): экраны входа/персонажей, игровой
+//! мир (локация/сущности/история) и журнал.
 //!
 //! Экраны — проекция [`AppStore`] (см. `store.rs`): они читают состояние,
 //! отправляют команды через [`TransportHandle`] и возвращают [`Effect`]'ы
@@ -8,7 +9,9 @@ use crate::l10n::Key;
 use crate::store::{AppStore, Effect};
 use crate::transport::TransportHandle;
 
+pub mod log_panel;
 pub mod screens;
+pub mod world;
 
 /// Контекст экрана: всё, что нужно функции отрисовки.
 pub struct UiCtx<'a> {
