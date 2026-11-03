@@ -13,9 +13,10 @@ use ld2_protocol::cmd::{
 };
 use ld2_protocol::envelope::{Ack, Envelope};
 use ld2_protocol::evt::{
-    CastSource, CharXp, ChatMessage, CombatHit, CombatKind, CraftProfession, CraftResult, EntityHp,
-    GuildLogEntry, GuildUpdated, ItemAdded, ItemRemoved, LocationChanged, MagicCast, PartyUpdated,
-    Pong, TimeSync as TimeSyncEvent, TradeCloseReason, TradeClosed, TradeState, UpgradeResult,
+    CastSource, CharDeath, CharXp, ChatMessage, CombatHit, CombatKind, CraftProfession,
+    CraftResult, EntityHp, GuildLogEntry, GuildUpdated, ItemAdded, ItemRemoved, LocationChanged,
+    LostItem, MagicCast, PartyUpdated, Pong, Respawn, TimeSync as TimeSyncEvent, TradeCloseReason,
+    TradeClosed, TradeState, UpgradeResult,
 };
 use ld2_protocol::types::{
     CharacterSummary, Entity, EntityKind, ItemSnapshot, PartyMember, PartyState,
@@ -810,6 +811,29 @@ impl Session {
                 Some(sv),
                 json!({ "entity": corpse, "loot_count": 1 }),
             ));
+
+            // Лут с монстра — автодобавление в инвентарь (ФР-07).
+            if let Some(ch) = self.char.as_mut() {
+                let loot = ItemSnapshot {
+                    uid: format!("loot_{target_id}"),
+                    item_type: "material".into(),
+                    name: format!("Трофея: {target_name}"),
+                    rarity: "common".into(),
+                    upgrade: 0,
+                    stats: Default::default(),
+                    requires: None,
+                    sockets: None,
+                    qty: Some(1),
+                    gold_value: Some(15),
+                    extra: Default::default(),
+                };
+                ch.inventory.push(loot.clone());
+                outs.push(self.event(
+                    "evt/item/added",
+                    Some(sv),
+                    serde_json::to_value(ItemAdded { item: loot }).unwrap_or_default(),
+                ));
+            }
         }
         outs
     }
@@ -1786,6 +1810,19 @@ impl Session {
                 format!("сообщение длиннее {max_len} символов"),
             )];
         }
+        // Сценарии мока (PLAN-M4, см. --help): тестовые триггеры — это обычный
+        // текст чата, контракт (§7) их не специфицирует, интерпретация внутренняя.
+        if cmd.text.starts_with("/scenario ") {
+            return match cmd.text.as_str() {
+                "/scenario death" => self.scenario_death(seq),
+                other => vec![self.ack_err(
+                    seq,
+                    None,
+                    ErrorCode::Internal,
+                    format!("неизвестный сценарий: {other}"),
+                )],
+            };
+        }
         let (name, tags) = match self.char.as_ref() {
             Some(c) => (
                 c.name.clone(),
@@ -1816,6 +1853,89 @@ impl Session {
                 serde_json::to_value(msg).unwrap_or_default(),
             ),
         ]
+    }
+
+    /// Сценарий смерти (DoD M4): сводка утраченного → **полная потеря лута**
+    /// (инвентарь + экипировка) → респаун в деревне с полным hp/mp.
+    /// Триггер: чат `/scenario death` (см. `--help` мока).
+    fn scenario_death(&mut self, seq: u32) -> Vec<Out> {
+        let (lost, lost_uids, hp, mp) = match self.char.as_mut() {
+            Some(ch) => {
+                let lost: Vec<LostItem> = ch
+                    .inventory
+                    .iter()
+                    .map(|i| LostItem {
+                        uid: i.uid.clone(),
+                        name: i.name.clone(),
+                        rarity: Some(i.rarity.clone()),
+                        extra: Default::default(),
+                    })
+                    .collect();
+                let uids: Vec<String> = ch.inventory.iter().map(|i| i.uid.clone()).collect();
+                ch.inventory.clear();
+                ch.equip.clear();
+                ch.hp.cur = ch.hp.max;
+                ch.mp.cur = ch.mp.max;
+                (lost, uids, ch.hp, ch.mp)
+            }
+            None => {
+                return vec![self.ack_err(seq, None, ErrorCode::Internal, "нет персонажа")];
+            }
+        };
+        self.location = fixtures::village();
+        let sv = self.bump();
+
+        let mut outs = vec![self.ack_ok(seq, Some(sv))];
+        // ФР-06: окно «Вы погибли» со сводкой утраченного.
+        outs.push(
+            self.event(
+                "evt/char/death",
+                Some(sv),
+                serde_json::to_value(CharDeath {
+                    victim_char: true,
+                    lost_items: lost,
+                    corpse: "cor_self".into(),
+                    respawn: Respawn {
+                        location_id: "l_village".into(),
+                        delay_s: 0,
+                        extra: Default::default(),
+                    },
+                    extra: Default::default(),
+                })
+                .unwrap_or_default(),
+            ),
+        );
+        // Каждый утерянный предмет — отдельным событием (§8).
+        for uid in lost_uids {
+            outs.push(
+                self.event(
+                    "evt/item/removed",
+                    Some(sv),
+                    serde_json::to_value(ItemRemoved {
+                        uid,
+                        reason: ld2_protocol::evt::ItemRemovalReason::LostOnDeath,
+                    })
+                    .unwrap_or_default(),
+                ),
+            );
+        }
+        // Респаун: ресурсы и локация.
+        outs.push(self.event(
+            "evt/char/stats",
+            Some(sv),
+            json!({ "patch": { "hp": hp, "mp": mp } }),
+        ));
+        outs.push(
+            self.event(
+                "evt/location/changed",
+                Some(sv),
+                serde_json::to_value(LocationChanged {
+                    location: self.location.clone(),
+                })
+                .unwrap_or_default(),
+            ),
+        );
+        outs
     }
 
     // ── группа ──────────────────────────────────────────────────────────────

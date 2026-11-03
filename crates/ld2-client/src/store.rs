@@ -8,9 +8,9 @@
 use std::collections::VecDeque;
 
 use ld2_protocol::evt::{
-    CharXp, ChatMessage, CombatHit, CorpseCreated, CorpseLooted, CrimeAdded, CrimeStatusUpdate,
-    EntityDespawn, EntityHp, EntityMove, EntitySpawn, ItemAdded, ItemRemoved, LocationChanged,
-    MagicCast, StateSnapshot,
+    CharDeath, CharStats, CharXp, ChatMessage, CombatHit, CorpseCreated, CorpseLooted, CrimeAdded,
+    CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove, EntitySpawn, ItemAdded, ItemRemoved,
+    LocationChanged, MagicCast, StateSnapshot,
 };
 use ld2_protocol::types::{CharacterSummary, Hp, LocationSnapshot, QuestState};
 use ld2_protocol::{ErrorCode, SessionConfig};
@@ -38,6 +38,13 @@ pub enum Act {
     Attack,
     /// `entity.info` → `entity_detail`.
     Examine,
+    /// `char.xp_invest` → `pool_left` в снапшоте.
+    Invest,
+    /// `item.equip`/`item.unequip` — ack несёт обновлённый `char` (§7).
+    Equip,
+    Unequip,
+    /// `item.use`/`item.drop` — результат приходит событиями (§8).
+    Drop,
 }
 
 /// Цветовой тип строки журнала мира (ФР-17; палитра §7.4 — в UI).
@@ -102,6 +109,12 @@ pub struct AppStore {
     pub select_error: Option<String>,
     /// Ошибки действий мира (move/attack/examine), ФР-03.
     pub world_error: Option<String>,
+    /// Ошибки действий листа/инвентаря (invest/equip/…), ФР-04/ФР-07.
+    pub sheet_error: Option<String>,
+    /// Модалка смерти (ФР-06): закрывается только подтверждением.
+    pub death: Option<ld2_protocol::evt::CharDeath>,
+    /// Описание предмета (ФР-07 «показать описание»).
+    pub item_detail: Option<serde_json::Value>,
     /// Нейтральное сообщение (создан/удалён/транспорт).
     pub notice: Option<String>,
     /// Логин последней попытки входа — предзаполнение формы.
@@ -134,6 +147,9 @@ impl AppStore {
             create_error: None,
             select_error: None,
             world_error: None,
+            sheet_error: None,
+            death: None,
+            item_detail: None,
             notice: None,
             last_login: None,
             log: VecDeque::new(),
@@ -206,6 +222,7 @@ impl AppStore {
                 Act::Select => self.select_error = Some(msg),
                 Act::Delete => self.notice = Some(msg),
                 Act::Move | Act::Attack | Act::Examine => self.world_error = Some(msg),
+                Act::Invest | Act::Equip | Act::Unequip | Act::Drop => self.sheet_error = Some(msg),
             }
             return vec![];
         }
@@ -215,6 +232,26 @@ impl AppStore {
             Act::Login => {}
             Act::Select => {}
             Act::Delete => {}
+            Act::Invest => {
+                // §7: ack несёт остаток пула.
+                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
+                {
+                    if let Some(pool) = payload["pool_left"].as_i64() {
+                        snap.char.xp_pool = pool;
+                    }
+                }
+            }
+            Act::Equip | Act::Unequip => {
+                // §7: ack несёт обновлённый `char` — события на смену экипировки нет.
+                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
+                {
+                    if let Ok(ch) = serde_json::from_value::<ld2_protocol::types::CharacterState>(
+                        payload["char"].clone(),
+                    ) {
+                        snap.char = ch;
+                    }
+                }
+            }
             Act::Move => {
                 // ack несёт локацию (§7): применяем сразу, событие дойдёт позже.
                 if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
@@ -226,7 +263,7 @@ impl AppStore {
                     }
                 }
             }
-            Act::Attack | Act::Examine => {} // результат — событиями / payload ниже
+            Act::Attack | Act::Examine | Act::Drop => {} // событиями / payload ниже
             Act::Create => {
                 // Аддитивное подтверждение: дополняем список персонажей (§7).
                 if let (Some(session), Some(payload)) =
@@ -455,11 +492,67 @@ impl AppStore {
                 let Ok(xp) = serde_json::from_value::<CharXp>(payload) else {
                     return vec![];
                 };
+                // Обновляем лист: навык и остаток пула (ФР-04).
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(pool) = xp.pool_left {
+                        snap.char.xp_pool = pool;
+                    }
+                    if let Some(skill) = snap.char.skills.iter_mut().find(|s| s.id == xp.skill_id) {
+                        skill.xp = xp.skill_xp;
+                        if let Some(rank) = xp.rank {
+                            skill.rank = rank;
+                        }
+                        if let Some(next) = xp.xp_to_next {
+                            skill.xp_to_next = next;
+                        }
+                    }
+                }
                 let text = match xp.rank {
                     Some(rank) => format!("+{} XP → {} — ранг {rank}!", xp.amount, xp.skill_id),
                     None => format!("+{} XP → {}", xp.amount, xp.skill_id),
                 };
                 self.push_log(LogKind::Xp, text);
+                vec![]
+            }
+            "evt/char/stats" => {
+                // Патч ресурсов/атрибутов (respawn, зелья) — ФР-06/ФР-07.
+                let Ok(stats) = serde_json::from_value::<CharStats>(payload) else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(hp) = stats.patch.get("hp") {
+                        if let Ok(hp) = serde_json::from_value::<Hp>(hp.clone()) {
+                            snap.char.hp = hp;
+                        }
+                    }
+                    if let Some(mp) = stats.patch.get("mp") {
+                        if let Ok(mp) = serde_json::from_value::<Hp>(mp.clone()) {
+                            snap.char.mp = mp;
+                        }
+                    }
+                    if let Some(attrs) = stats.patch.get("attrs").and_then(|v| v.as_object()) {
+                        for (key, value) in attrs {
+                            if let Some(n) = value.as_i64() {
+                                snap.char.attrs.insert(key.clone(), n);
+                            }
+                        }
+                    }
+                }
+                vec![]
+            }
+            "evt/char/death" => {
+                // ФР-06: сводка утраченного — модалка, закрывается подтверждением.
+                let Ok(death) = serde_json::from_value::<CharDeath>(payload) else {
+                    return vec![];
+                };
+                self.push_log(
+                    LogKind::Crime,
+                    format!(
+                        "ВЫ ПОГИБЛИ — утрачено предметов: {}",
+                        death.lost_items.len()
+                    ),
+                );
+                self.death = Some(death);
                 vec![]
             }
             "evt/magic/cast" => {
@@ -478,6 +571,12 @@ impl AppStore {
                 let Ok(added) = serde_json::from_value::<ItemAdded>(payload) else {
                     return vec![];
                 };
+                // Лут приходит сервером уже добавленным — синхронизируем снапшот.
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if !snap.char.inventory.iter().any(|i| i.uid == added.item.uid) {
+                        snap.char.inventory.push(added.item.clone());
+                    }
+                }
                 self.push_log(LogKind::Loot, format!("Получено: {}", added.item.name));
                 vec![]
             }
@@ -485,6 +584,13 @@ impl AppStore {
                 let Ok(removed) = serde_json::from_value::<ItemRemoved>(payload) else {
                     return vec![];
                 };
+                // ФР-06/ФР-07: убыль из инвентаря и из слотов экипировки.
+                if let Some(snap) = self.snapshot.as_mut() {
+                    snap.char.inventory.retain(|i| i.uid != removed.uid);
+                    snap.char
+                        .equip
+                        .retain(|_, slot| slot.as_deref() != Some(removed.uid.as_str()));
+                }
                 self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
                 vec![]
             }
@@ -575,6 +681,18 @@ impl AppStore {
         self.pending = Some(act);
     }
 
+    /// Отправка команды листа/инвентаря (ФР-04/ФР-07).
+    pub fn on_sheet_sent(&mut self, act: Act) {
+        self.sheet_error = None;
+        self.pending = Some(act);
+    }
+
+    /// Подтверждение смерти (ФР-06): окно «Вы погибли» закрывается
+    /// **только** этим действием — молча закрыть нельзя.
+    pub fn confirm_death(&mut self) {
+        self.death = None;
+    }
+
     /// Сброс в экран входа с очисткой сессии/персонажа (чистый сброс, DoD M2).
     fn reset_to_login(&mut self, reason: Option<String>) -> Vec<Effect> {
         let login = self
@@ -588,6 +706,11 @@ impl AppStore {
         self.login_error = reason;
         self.create_error = None;
         self.select_error = None;
+        self.world_error = None;
+        self.sheet_error = None;
+        self.death = None;
+        self.item_detail = None;
+        self.entity_detail = None;
         self.session_login = None;
         login
             .map(|login| vec![Effect::ForgetSession { login }])
@@ -628,7 +751,10 @@ impl AppStore {
         self.snapshot = None;
         self.select_error = None;
         self.world_error = None;
+        self.sheet_error = None;
         self.entity_detail = None;
+        self.item_detail = None;
+        self.death = None;
         self.notice = None;
     }
 
@@ -988,6 +1114,157 @@ mod tests {
         let last = store.log.back().expect("лог");
         assert_eq!(last.kind, LogKind::Crime);
         assert!(last.text.contains("Мародёр"), "{}", last.text);
+    }
+
+    // ─── M4: лист, инвентарь, смерть ────────────────────────────────────────
+
+    #[test]
+    fn death_sets_modal_and_confirm_clears_it() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/char/death",
+            serde_json::json!({
+                "victim_char": true,
+                "lost_items": [
+                    { "uid": "i_17", "name": "Ясеневый посох", "rarity": "rare" },
+                    { "uid": "s_1", "name": "Свиток огненного шара", "rarity": "common" }
+                ],
+                "corpse": "cor_self",
+                "respawn": { "location_id": "l_village", "delay_s": 0 }
+            }),
+        ));
+        let death = store.death.as_ref().expect("модалка смерти");
+        assert_eq!(death.lost_items.len(), 2, "сводка утраченного (ФР-06)");
+        let last = store.log.back().expect("лог");
+        assert_eq!(last.kind, LogKind::Crime);
+        assert!(last.text.contains("ВЫ ПОГИБЛИ"));
+
+        // Закрыть можно только подтверждением.
+        store.confirm_death();
+        assert!(store.death.is_none());
+    }
+
+    #[test]
+    fn item_removed_clears_inventory_and_equip_slot() {
+        let mut store = in_game();
+        assert!(store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .any(|i| i.uid == "i_17"));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.equip.get("staff"),
+            Some(&Some("i_17".to_string()))
+        );
+
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "lost_on_death" }),
+        ));
+        let snap = store.snapshot.as_ref().unwrap();
+        assert!(
+            !snap.char.inventory.iter().any(|i| i.uid == "i_17"),
+            "предмет убран из инвентаря"
+        );
+        assert!(
+            snap.char.equip.get("staff").is_none_or(|v| v.is_none()),
+            "слот экипировки освобождён"
+        );
+    }
+
+    #[test]
+    fn item_added_appends_to_inventory() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/item/added",
+            serde_json::json!({
+                "item": { "uid": "loot_m_3", "type": "material", "name": "Трофея: Волк",
+                          "rarity": "common", "upgrade": 0, "stats": {}, "qty": 1 }
+            }),
+        ));
+        assert!(store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .any(|i| i.uid == "loot_m_3"));
+        assert_eq!(store.log.back().unwrap().kind, LogKind::Loot);
+    }
+
+    #[test]
+    fn char_stats_patch_applies_hp_and_mp() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/char/stats",
+            serde_json::json!({ "patch": { "hp": { "cur": 60, "max": 60 },
+                                           "mp": { "cur": 60, "max": 60 } } }),
+        ));
+        let snap = store.snapshot.as_ref().unwrap();
+        assert_eq!(snap.char.hp.cur, 60, "hp после респауна");
+        assert_eq!(snap.char.mp.cur, 60, "mp после респауна");
+    }
+
+    #[test]
+    fn equip_ack_replaces_character_state() {
+        let mut store = in_game();
+        let mut ch = fixtures::character("c1", "Ким");
+        ch.equip.insert("body".into(), Some("loot_m_3".into()));
+        store.on_sheet_sent(Act::Equip);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            11,
+            Some(1010),
+            &serde_json::json!({ "char": ch, "item": serde_json::Value::Null }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.equip.get("body"),
+            Some(&Some("loot_m_3".to_string())),
+            "экипировка применена из ack (нет событий на смену слота)"
+        );
+        assert!(store.sheet_error.is_none() && store.pending.is_none());
+    }
+
+    #[test]
+    fn equip_ack_error_goes_to_sheet_error() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Equip);
+        let ack = ld2_protocol::Ack::error(12, None, &ErrorCode::ItemGone, "предмета нет");
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.sheet_error.as_deref(), Some("предмета нет"));
+        assert!(store.world_error.is_none(), "ошибки листа не в мире");
+    }
+
+    #[test]
+    fn invest_ack_and_xp_event_update_pool_and_skill() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Invest);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            13,
+            Some(1011),
+            &serde_json::json!({ "pool_left": 70 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.snapshot.as_ref().unwrap().char.xp_pool, 70);
+
+        store.apply(evt(
+            "evt/char/xp",
+            serde_json::json!({
+                "skill_id": "sword", "amount": 50, "skill_xp": 662,
+                "rank": 3, "xp_to_next": 480, "pool_left": 70
+            }),
+        ));
+        let snap = store.snapshot.as_ref().unwrap();
+        let sword = snap.char.skills.iter().find(|s| s.id == "sword").unwrap();
+        assert_eq!(sword.xp, 662, "прогресс навыка обновлён (ФР-04)");
+        assert_eq!(snap.char.xp_pool, 70);
+        assert_eq!(store.log.back().unwrap().kind, LogKind::Xp);
     }
 
     #[test]

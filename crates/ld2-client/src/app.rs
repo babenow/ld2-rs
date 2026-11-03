@@ -90,12 +90,20 @@ impl App {
                     login,
                     refresh_token,
                 } => {
-                    if let Err(e) = secrets::set_token(&self.config.host, &login, &refresh_token) {
-                        tracing::warn!("keyring: не удалось сохранить токен: {e}");
-                    }
-                    self.config.last_login = Some(login);
-                    if let Err(e) = self.config_store.save(&self.config) {
-                        tracing::warn!("не удалось сохранить конфиг: {e:#}");
+                    if login.trim().is_empty() {
+                        // Не храним пустой логин: иначе keyring-ключ `<host>:` —
+                        // мусор, а чтение может упереться в диалог доступа macOS.
+                        tracing::warn!("PersistSession с пустым логином — пропускаю");
+                    } else {
+                        if let Err(e) =
+                            secrets::set_token(&self.config.host, &login, &refresh_token)
+                        {
+                            tracing::warn!("keyring: не удалось сохранить токен: {e}");
+                        }
+                        self.config.last_login = Some(login);
+                        if let Err(e) = self.config_store.save(&self.config) {
+                            tracing::warn!("не удалось сохранить конфиг: {e:#}");
+                        }
                     }
                 }
                 Effect::ForgetSession { login } => {

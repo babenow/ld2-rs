@@ -4,11 +4,12 @@
 
 use eframe::egui;
 use ld2_protocol::cmd::{CombatAttack, EntityInfo, LocationMove};
+use ld2_protocol::evt::CharDeath;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot};
 
 use crate::l10n::{t, Key};
 use crate::store::Act;
-use crate::ui::{log_panel, ScreenEffects, UiCtx};
+use crate::ui::{log_panel, sheet, ScreenEffects, UiCtx};
 
 const RED: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x6C, 0x75);
 const ORANGE: egui::Color32 = egui::Color32::from_rgb(0xD1, 0x9A, 0x66);
@@ -17,6 +18,13 @@ const GREEN: egui::Color32 = egui::Color32::from_rgb(0x98, 0xC3, 0x79);
 pub fn game(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui) -> ScreenEffects {
     let mut effects = vec![];
     let lang = ctx.lang;
+
+    // ФР-06: пока открыта модалка смерти — мир закрыт, закрыть можно
+    // только подтверждением («Возродиться»).
+    if let Some(death) = ctx.store.death.clone() {
+        death_modal(ctx, ui, death);
+        return effects;
+    }
 
     let Some(snap) = ctx.store.snapshot.clone() else {
         ui.vertical_centered(|ui| {
@@ -30,15 +38,19 @@ pub fn game(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui) -> ScreenEffects {
     alt_nav(ctx, ui, &snap.location);
 
     ui.add_space(6.0);
-    ui.columns(2, |cols| {
+    ui.columns(3, |cols| {
         let left = &mut cols[0];
         left.set_max_width(210.0);
         resources(left, ctx, &snap, &mut effects);
         left.add_space(10.0);
         history(left, ctx);
 
-        let right = &mut cols[1];
-        location_panel(right, ctx, &snap.location);
+        let center = &mut cols[1];
+        location_panel(center, ctx, &snap.location);
+
+        // Правая колонка — лист персонажа (ФР-04/ФР-07).
+        let right = &mut cols[2];
+        sheet::show(right, ctx);
     });
 
     ui.add_space(4.0);
@@ -330,4 +342,34 @@ fn send_attack(ctx: &mut UiCtx<'_>, entity_id: &str) {
         Ok(_) => ctx.store.on_world_sent(Act::Attack),
         Err(e) => ctx.store.world_error = Some(format!("нет связи: {e}")),
     }
+}
+
+// ─── модалка смерти (ФР-06) ────────────────────────────────────────────────
+
+fn death_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, death: CharDeath) {
+    let lang = ctx.lang;
+    egui::Window::new(t(lang, Key::DeathTitle))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ui.ctx(), |ui| {
+            ui.colored_label(RED, t(lang, Key::DeathTitle));
+            ui.add_space(6.0);
+            ui.weak(t(lang, Key::DeathLost));
+            for item in &death.lost_items {
+                ui.label(format!(
+                    "• {} ({})",
+                    item.name,
+                    item.rarity.as_deref().unwrap_or("-")
+                ));
+            }
+            ui.add_space(10.0);
+            // Закрыть можно только подтверждением — крестика и Esc нет.
+            if ui
+                .add_sized([180.0, 34.0], egui::Button::new(t(lang, Key::DeathConfirm)))
+                .clicked()
+            {
+                ctx.store.confirm_death();
+            }
+        });
 }
