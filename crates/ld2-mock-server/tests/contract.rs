@@ -143,13 +143,32 @@ impl Client {
 
     /// Сценарий snapshot: select c1 → ack + полный снапшот.
     async fn select(&mut self) -> Value {
+        self.select_char("c1").await
+    }
+
+    /// Выбор конкретного персонажа (два аккаунта — c1/c2, DoD M8).
+    async fn select_char(&mut self, char_id: &str) -> Value {
         let seq = self
-            .send("cmd/char.select", json!({ "char_id": "c1" }))
+            .send("cmd/char.select", json!({ "char_id": char_id }))
             .await;
         let ack = self.ack(seq).await;
-        assert_eq!(ack["result"], "ok", "select: {ack}");
+        assert_eq!(ack["result"], "ok", "select {char_id}: {ack}");
         assert!(ack["state_version"].is_number(), "select меняет состояние");
         self.wait(|v| v["type"] == "evt/state/snapshot").await
+    }
+
+    /// Вход произвольным аккаунтом (demo / demo2 — DoD M8 «2 клиента»).
+    async fn login_as(&mut self, login: &str, password: &str) -> Value {
+        let seq = self
+            .send(
+                "cmd/auth.login",
+                json!({ "login": login, "password": password }),
+            )
+            .await;
+        let ack = self.ack(seq).await;
+        assert_eq!(ack["result"], "ok", "login {login}: {ack}");
+        let start = self.wait(|v| v["type"] == "evt/session.start").await;
+        start["payload"].clone()
     }
 }
 
@@ -965,4 +984,278 @@ async fn quest_progress_then_turn_in_awards_pool() {
         updated["payload"]["pool_left"], 270,
         "пул: 120 стартовых + 150 награды"
     );
+}
+
+// ─── M8: 2 клиента против мока (DoD: party + сделка + whisper) ──────────────
+
+/// Два соединения с разными аккаунтами: состояния не перетирают друг друга
+/// (до M8 мок делил одну Session на все соединения).
+#[tokio::test]
+async fn m8_two_accounts_do_not_clobber_each_other() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut a = Client::connect(&url).await;
+    let mut b = Client::connect(&url).await;
+
+    let start_a = a.login().await; // demo → c1 «Ким»
+    let start_b = b.login_as("demo2", "demo123").await; // demo2 → c2 «Астра»
+
+    let names = |start: &Value| -> Vec<String> {
+        start["characters"]
+            .as_array()
+            .expect("characters")
+            .iter()
+            .map(|c| c["name"].as_str().expect("name").to_string())
+            .collect()
+    };
+    assert_eq!(names(&start_a), vec!["Ким"], "аккаунт demo → только c1");
+    assert_eq!(names(&start_b), vec!["Астра"], "аккаунт demo2 → только c2");
+
+    let snap_a = a.select().await;
+    let snap_b = b.select_char("c2").await;
+    assert_eq!(snap_a["payload"]["char"]["name"], "Ким");
+    assert_eq!(snap_b["payload"]["char"]["name"], "Астра");
+
+    // A продолжает быть собой: его снапшот после входа B не изменился.
+    let seq = a.send("cmd/location.look", json!({})).await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "A жив после входа B: {ack}");
+}
+
+/// Whitelist DoD: whisper A → B доставляется адресату (роутинг по имени).
+#[tokio::test]
+async fn m8_whisper_routed_to_second_client() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut a = Client::connect(&url).await;
+    let mut b = Client::connect(&url).await;
+    a.login().await;
+    b.login_as("demo2", "demo123").await;
+    a.select().await;
+    b.select_char("c2").await;
+
+    let seq = a
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "whisper", "to": "Астра", "text": "привет!" }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "whisper: {ack}");
+
+    // Эхо — отправителю.
+    let echo = a.wait(|v| v["type"] == "evt/chat/message").await;
+    assert_eq!(echo["payload"]["text"], "привет!");
+    // И адресату — B получает своё событие.
+    let got = b.wait(|v| v["type"] == "evt/chat/message").await;
+    assert_eq!(got["payload"]["channel"], "whisper");
+    assert_eq!(got["payload"]["from"], "c1");
+    assert_eq!(got["payload"]["name"], "Ким");
+    assert_eq!(got["payload"]["text"], "привет!");
+}
+
+/// Глобальный чат слышат все подключённые клиенты (broadcast).
+#[tokio::test]
+async fn m8_global_chat_broadcasts_to_others() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut a = Client::connect(&url).await;
+    let mut b = Client::connect(&url).await;
+    a.login().await;
+    b.login_as("demo2", "demo123").await;
+    a.select().await;
+    b.select_char("c2").await;
+
+    let seq = a
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "global", "text": "всем привет" }),
+        )
+        .await;
+    a.ack(seq).await;
+    a.wait(|v| v["type"] == "evt/chat/message").await; // эхо A
+    let got = b.wait(|v| v["type"] == "evt/chat/message").await;
+    assert_eq!(got["payload"]["text"], "всем привет");
+}
+
+/// Resume по refresh-токену восстанавливает персонажа после обрыва (§4.5):
+/// состояние аккаунта переживает новое соединение.
+#[tokio::test]
+async fn m8_resume_restores_character_after_disconnect() {
+    let url = start_server(Chaos::disabled()).await;
+    let start = {
+        let mut c = Client::connect(&url).await;
+        let start = c.login().await;
+        c.select().await;
+        // Обрыв: клиент уходит, Drop сессии сохраняет состояние аккаунта.
+        c.sink.send(Message::Close(None)).await.expect("close");
+        drop(c);
+        start
+    };
+    // Даём серверу обработать закрытие и drop сессии до нового подключения.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let refresh = start["session"]["refresh"]["token"]
+        .as_str()
+        .expect("refresh-токен из session.start");
+
+    // Новое соединение: resume → персонаж на месте.
+    let mut c2 = Client::connect(&url).await;
+    let seq = c2
+        .send("cmd/auth.resume", json!({ "refresh_token": refresh }))
+        .await;
+    let ack = c2.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "resume: {ack}");
+    c2.wait(|v| v["type"] == "evt/session.start").await;
+    let seq = c2
+        .send(
+            "cmd/state.resync",
+            json!({ "last_state_version": ack["state_version"] }),
+        )
+        .await;
+    c2.ack(seq).await;
+    let snap = c2.wait(|v| v["type"] == "evt/state/snapshot").await;
+    assert_eq!(
+        snap["payload"]["char"]["name"], "Ким",
+        "resume вернул персонажа без повторного char.select"
+    );
+}
+
+/// Группа: A создаёт и приглашает B → B принимает → оба видят состав (ФР-14).
+#[tokio::test]
+async fn m8_party_invite_accept_two_clients() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut a = Client::connect(&url).await;
+    let mut b = Client::connect(&url).await;
+    a.login().await;
+    b.login_as("demo2", "demo123").await;
+    a.select().await;
+    b.select_char("c2").await;
+
+    // A создаёт группу.
+    let seq = a.send("cmd/party.create", json!({})).await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "create: {ack}");
+    assert_eq!(ack["payload"]["party"]["leader"], "c1");
+    let ev = a.wait(|v| v["type"] == "evt/party/updated").await;
+    assert_eq!(ev["payload"]["party"]["members"][0]["id"], "c1");
+
+    // A приглашает B (по char_id) → B получает приглашение.
+    let seq = a
+        .send("cmd/party.invite", json!({ "player_id": "c2" }))
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "invite: {ack}");
+    let inv = b
+        .wait(|v| v["type"] == "evt/party/updated" && v["payload"]["invite"].is_object())
+        .await;
+    let invite_id = inv["payload"]["invite"]["invite_id"]
+        .as_str()
+        .expect("invite_id")
+        .to_string();
+    assert_eq!(inv["payload"]["invite"]["from_name"], "Ким");
+
+    // B принимает → ack {party} + событие обеим сторонам.
+    let seq = b
+        .send("cmd/party.accept", json!({ "invite_id": invite_id }))
+        .await;
+    let ack = b.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "accept: {ack}");
+    let members = |v: &Value| -> Vec<String> {
+        v["payload"]["party"]["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .map(|m| m["id"].as_str().expect("id").to_string())
+            .collect()
+    };
+    let mine = b.wait(|v| v["type"] == "evt/party/updated").await;
+    assert_eq!(members(&mine), vec!["c1", "c2"], "B видит состав");
+    let theirs = a.wait(|v| v["type"] == "evt/party/updated").await;
+    assert_eq!(members(&theirs), vec!["c1", "c2"], "A видит состав");
+}
+
+/// Сделка между двумя клиентами: зеркало you/them, общая версия, обмен (ФР-15).
+#[tokio::test]
+async fn m8_trade_mirrored_versioned_exchange_two_clients() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut a = Client::connect(&url).await;
+    let mut b = Client::connect(&url).await;
+    a.login().await;
+    b.login_as("demo2", "demo123").await;
+    a.select().await;
+    b.select_char("c2").await;
+
+    // A открывает сделку с B.
+    let seq = a.send("cmd/trade.open", json!({ "player_id": "c2" })).await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "open: {ack}");
+    let offer_id = ack["payload"]["offer_id"]
+        .as_str()
+        .expect("offer_id")
+        .to_string();
+    let own = a.wait(|v| v["type"] == "evt/trade/state").await;
+    assert_eq!(own["payload"]["version"], 1);
+    // B тоже получил открытие сделки (зеркало).
+    let theirs = b.wait(|v| v["type"] == "evt/trade/state").await;
+    assert_eq!(theirs["payload"]["offer_id"], offer_id);
+    assert_eq!(theirs["payload"]["version"], 1);
+
+    // A кладёт предмет (слиток m_1) → версия растёт, B видит в `them`.
+    let seq = a
+        .send(
+            "cmd/trade.add_item",
+            json!({ "offer_id": offer_id, "item_uid": "m_1" }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "add_item: {ack}");
+    let mine = a.wait(|v| v["type"] == "evt/trade/state").await;
+    assert_eq!(mine["payload"]["you"][0]["uid"], "m_1");
+    assert_eq!(mine["payload"]["you"].as_array().unwrap().len(), 1);
+    let seen_by_b = b.wait(|v| v["type"] == "evt/trade/state").await;
+    assert_eq!(
+        seen_by_b["payload"]["them"][0]["uid"], "m_1",
+        "зеркало: у B предмет A в `them`"
+    );
+    assert!(seen_by_b["payload"]["you"].as_array().unwrap().is_empty());
+    let version = seen_by_b["payload"]["version"].as_u64().expect("version");
+
+    // Сверка версии: устаревшая версия → E_TRADE_STALE (§9).
+    let seq = a
+        .send(
+            "cmd/trade.propose",
+            json!({ "offer_id": offer_id, "version": 1 }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "error");
+    assert_eq!(ack["error"]["code"], "E_TRADE_STALE");
+
+    // Обе стороны фиксируют актуальную версию → done + обмен предметами.
+    let seq = a
+        .send(
+            "cmd/trade.propose",
+            json!({ "offer_id": offer_id, "version": version }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "propose: {ack}");
+    a.wait(|v| v["type"] == "evt/trade/state").await; // фиксация A
+
+    let seq = b
+        .send(
+            "cmd/trade.accept",
+            json!({ "offer_id": offer_id, "version": version + 1 }),
+        )
+        .await;
+    let ack = b.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "accept: {ack}");
+
+    let closed_a = a.wait(|v| v["type"] == "evt/trade/closed").await;
+    assert_eq!(closed_a["payload"]["reason"], "done");
+    let closed_b = b.wait(|v| v["type"] == "evt/trade/closed").await;
+    assert_eq!(closed_b["payload"]["reason"], "done");
+
+    // Обмен: B получил слиток m_1, A — потеряв его, имеет событие removed.
+    let added_b = b.wait(|v| v["type"] == "evt/item/added").await;
+    assert_eq!(added_b["payload"]["item"]["uid"], "m_1");
+    let removed_a = a.wait(|v| v["type"] == "evt/item/removed").await;
+    assert_eq!(removed_a["payload"]["item_uid"], "m_1");
 }

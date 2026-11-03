@@ -19,6 +19,10 @@ use serde_json::{json, Value};
 pub const LOGIN: &str = "demo";
 pub const PASSWORD: &str = "demo123";
 pub const REFRESH_TOKEN: &str = "rt_mock_refresh";
+/// Второй аккаунт (DoD M8: «2 клиента против мока») — свой персонаж `c2`.
+pub const LOGIN2: &str = "demo2";
+/// Пароль тот же — тестам удобнее, логин разный.
+pub const PASSWORD2: &str = "demo123";
 
 /// Стоимость каста руны в мане (D4: руна тратит ману + заряд).
 pub const RUNE_MP_COST: i64 = 10;
@@ -34,6 +38,33 @@ pub const PROFILES: &[&str] = &["warrior", "rogue", "mage"];
 
 /// `evt/session.start` — дословно по protocol.md §5 (лимит слотов — параметр).
 pub fn session_config(char_slot_limit: u32) -> SessionConfig {
+    session_config_for(LOGIN, char_slot_limit)
+}
+
+/// Конфиг сессии для конкретного аккаунта: список персонажей и refresh-токен
+/// свои (DoD M8 — второй клиент со своим персонажем `c2`).
+pub fn session_config_for(login: &str, char_slot_limit: u32) -> SessionConfig {
+    let mut cfg = session_config_impl(char_slot_limit);
+    cfg.characters = chars_for(login);
+    cfg.session.refresh.token = crate::world::refresh_token_for(login);
+    cfg
+}
+
+/// Персонажи аккаунта (список слотов §5 `characters[]`).
+pub fn chars_for(login: &str) -> Vec<CharacterSummary> {
+    if login == LOGIN2 {
+        vec![character_summary2()]
+    } else {
+        vec![character_summary()]
+    }
+}
+
+/// Проверка учётных данных любого из аккаунтов мока.
+pub fn account(login: &str, password: &str) -> bool {
+    (login == LOGIN && password == PASSWORD) || (login == LOGIN2 && password == PASSWORD2)
+}
+
+fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
     let mut features = serde_json::Map::new();
     features.insert("loot.roll".into(), json!(false));
     features.insert("respawn.inn".into(), json!(true));
@@ -137,6 +168,19 @@ pub fn character_summary() -> CharacterSummary {
         location: "Черный лес".into(),
         summary: Some("Навыки: меч 5, аркана 1".into()),
         crime: vec!["murderer".into()],
+        online: true,
+        extra: Default::default(),
+    }
+}
+
+/// Персонаж второго аккаунта (DoD M8: второй клиент, адресат whisper/сделки).
+pub fn character_summary2() -> CharacterSummary {
+    CharacterSummary {
+        id: "c2".into(),
+        name: "Астра".into(),
+        location: "Черный лес".into(),
+        summary: Some("Навыки: лук 3".into()),
+        crime: vec![],
         online: true,
         extra: Default::default(),
     }

@@ -14,8 +14,8 @@ use ld2_protocol::cmd::{
 use ld2_protocol::envelope::{Ack, Envelope};
 use ld2_protocol::evt::{
     CastSource, CharDeath, CharXp, ChatMessage, CombatHit, CombatKind, CraftProfession,
-    CraftResult, EntityHp, GuildLogEntry, GuildUpdated, ItemAdded, ItemRemoved, LocationChanged,
-    LostItem, MagicCast, PartyUpdated, Pong, Respawn, TimeSync as TimeSyncEvent, TradeCloseReason,
+    CraftResult, EntityHp, GuildLogEntry, ItemAdded, ItemRemoved, LocationChanged, LostItem,
+    MagicCast, PartyUpdated, Pong, Respawn, TimeSync as TimeSyncEvent, TradeCloseReason,
     TradeClosed, TradeState, UpgradeResult,
 };
 use ld2_protocol::types::{
@@ -38,13 +38,29 @@ pub enum Out {
     Close,
 }
 
+impl Out {
+    /// Текст конверта (для рассылки через [`crate::world::World`] другим
+    /// соединениям); [`Out::Close`] не несёт текста.
+    pub fn into_text(self) -> String {
+        match self {
+            Out::Text(t) => t,
+            Out::Close => String::new(),
+        }
+    }
+}
+
 /// Данные превью улучшения (§7 `upgrade.preview` → `upgrade.start`).
 struct Preview {
     item_uid: String,
 }
 
 pub struct Session {
-    state_version: u64,
+    /// Общее состояние сервера (версии, рассылка, межигровое) — см. [`crate::world`].
+    world: std::sync::Arc<std::sync::Mutex<crate::world::World>>,
+    /// Идентификатор этого WS-соединения (ключ в реестре World).
+    conn_id: String,
+    /// Логин аккаунта сессии (для сохранения состояния при отключении).
+    login: Option<String>,
     authenticated: bool,
     /// Лимит слотов персонажей из конфига/CLI (D6; DoD M2 — без правки кода).
     char_slot_limit: u32,
@@ -54,43 +70,44 @@ pub struct Session {
     crime_log: Vec<ld2_protocol::types::CrimeLogEntry>,
     previews: HashMap<String, Preview>,
     preview_counter: u64,
-    party: Option<PartyState>,
-    guild: Option<ld2_protocol::types::GuildState>,
-    trade: Option<TradeState>,
     /// M5: следующее улучшение проваливается (сценарий break_on_fail).
     fail_next_upgrade: bool,
     /// M6: трупы, лут с которых уже собран (защита от повтора).
     looted_corpses: HashSet<String>,
 }
 
-impl Default for Session {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Session {
-    pub fn new() -> Self {
-        Self::with_char_slot_limit(fixtures::CHAR_SLOT_LIMIT)
-    }
-
-    pub fn with_char_slot_limit(char_slot_limit: u32) -> Self {
+    /// Своя сессия на каждое WS-соединение; общее состояние — в [`crate::world::World`].
+    pub fn new(
+        world: std::sync::Arc<std::sync::Mutex<crate::world::World>>,
+        conn_id: String,
+        char_slot_limit: u32,
+    ) -> Self {
         Self {
-            state_version: 1_000,
+            world,
+            conn_id,
+            login: None,
             authenticated: false,
             char_slot_limit,
-            chars: vec![fixtures::character_summary()],
+            chars: Vec::new(),
             char: None,
             location: fixtures::village(),
             crime_log: fixtures::crime_log(),
             previews: HashMap::new(),
             preview_counter: 0,
-            party: None,
-            guild: None,
-            trade: None,
             fail_next_upgrade: false,
             looted_corpses: HashSet::new(),
         }
+    }
+
+    /// Короткий лок общего состояния (дисциплина: только session → world).
+    fn w(&self) -> std::sync::MutexGuard<'_, crate::world::World> {
+        self.world.lock().expect("mutex мира мока")
+    }
+
+    /// Отправляет событие (собранный конверт) другому соединению/игроку.
+    fn w_event(ty: &str, state_version: Option<u64>, payload: Value) -> String {
+        out_event(ty, state_version, payload).into_text()
     }
 
     /// Обработка входящего текста → список исходящих сообщений (ack → events).
@@ -111,9 +128,8 @@ impl Session {
 
     // ── низкоуровневые помощники ────────────────────────────────────────────
 
-    fn bump(&mut self) -> u64 {
-        self.state_version += 1;
-        self.state_version
+    fn bump(&self) -> u64 {
+        self.w().bump()
     }
 
     fn ack_ok(&self, seq: u32, state_version: Option<u64>) -> Out {
@@ -305,33 +321,19 @@ impl Session {
             // чат
             "cmd/chat.send" => return self.chat_send(env, seq),
 
-            // группа
+            // группа (состояние общее для всех соединений — §8, ФР-14)
             "cmd/party.create" => return self.party_create(seq),
             "cmd/party.invite" => return self.party_invite(env, seq),
-            "cmd/party.leave" => {
-                self.party = None;
-                let sv = self.bump();
-                return vec![
-                    self.ack_ok(seq, Some(sv)),
-                    self.event("evt/party/updated", Some(sv), json!({ "party": null })),
-                ];
-            }
+            "cmd/party.leave" => return self.party_leave(seq),
             "cmd/party.kick" => return self.party_kick(env, seq),
-            "cmd/party.accept" | "cmd/party.decline" => {
-                return vec![self.ack_err(
-                    seq,
-                    None,
-                    ErrorCode::Internal,
-                    "нет входящих приглашений (заглушка мока M1)",
-                )];
-            }
+            "cmd/party.accept" => return self.party_answer(env, seq, true),
+            "cmd/party.decline" => return self.party_answer(env, seq, false),
 
             // торговля
             "cmd/trade.open" => return self.trade_open(env, seq),
             "cmd/trade.add_item" => return self.trade_add_item(env, seq),
             "cmd/trade.set_gold" => return self.trade_set_gold(env, seq),
-            "cmd/trade.propose" => return self.trade_lock(env, seq, true),
-            "cmd/trade.accept" => return self.trade_lock(env, seq, false),
+            "cmd/trade.propose" | "cmd/trade.accept" => return self.trade_lock(env, seq),
             "cmd/trade.cancel" => return self.trade_cancel(env, seq),
 
             // гильдия
@@ -344,50 +346,11 @@ impl Session {
                 )];
             }
             "cmd/guild.create" => return self.guild_create(env, seq),
-            "cmd/guild.join" => {
-                self.guild = Some(fixtures::guild_fixture());
-                let sv = self.bump();
-                return vec![
-                    self.ack_ok(seq, Some(sv)),
-                    self.event(
-                        "evt/guild/updated",
-                        Some(sv),
-                        json!({ "guild": self.guild }),
-                    ),
-                ];
-            }
-            "cmd/guild.leave" => {
-                self.guild = None;
-                let sv = self.bump();
-                return vec![
-                    self.ack_ok(seq, Some(sv)),
-                    self.event("evt/guild/updated", Some(sv), json!({ "guild": null })),
-                ];
-            }
-            "cmd/guild.invite" | "cmd/guild.kick" => {
-                // Заглушка M1: контракт требует ack, семантика — M8 (ФР-16).
-                let _ = env.payload;
-                return vec![self.ack_ok(seq, None)];
-            }
-            "cmd/guild.rank_set" => {
-                if let Some(err) = Self::payload_of::<GuildRankSet>(env, seq).err() {
-                    return vec![err];
-                }
-                let sv = self.bump();
-                return vec![
-                    self.ack_ok(seq, Some(sv)),
-                    self.event(
-                        "evt/guild/log",
-                        Some(sv),
-                        json!({ "entry": GuildLogEntry {
-                            kind: "rank_change".into(),
-                            text: "Ранг изменён (мок)".into(),
-                            at: fixtures::now_epoch(),
-                            extra: Default::default(),
-                        } }),
-                    ),
-                ];
-            }
+            "cmd/guild.join" => return self.guild_join(seq),
+            "cmd/guild.leave" => return self.guild_leave(seq),
+            "cmd/guild.invite" => return self.guild_invite(env, seq),
+            "cmd/guild.kick" => return self.guild_kick(env, seq),
+            "cmd/guild.rank_set" => return self.guild_rank_set(env, seq),
 
             // состояние / сервис
             "cmd/state.resync" => return self.state_resync(env, seq),
@@ -438,7 +401,7 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<AuthLogin>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        if cmd.login != fixtures::LOGIN || cmd.password != fixtures::PASSWORD {
+        if !fixtures::account(&cmd.login, &cmd.password) {
             return vec![self.ack_err(
                 seq,
                 None,
@@ -446,9 +409,15 @@ impl Session {
                 "неверный логин или пароль",
             )];
         }
+        // Аккаунт определяет список персонажей и refresh-токен (§5).
+        self.login = Some(cmd.login.clone());
         self.authenticated = true;
+        self.chars = fixtures::chars_for(&cmd.login);
+        self.restore_home(&cmd.login);
+        let refresh = crate::world::refresh_token_for(&cmd.login);
+        self.w().bind_token(&refresh, &cmd.login);
         let sv = self.bump();
-        let config = fixtures::session_config(self.char_slot_limit);
+        let config = fixtures::session_config_for(&cmd.login, self.char_slot_limit);
         vec![
             self.ack_ok_payload(
                 seq,
@@ -476,8 +445,23 @@ impl Session {
             )];
         }
         self.authenticated = true;
+        // §4.5: resume по токену восстанавливает аккаунт (персонаж переживает
+        // обрыв); неизвестный токен — resume без состояния (так и раньше).
+        let login = self.w().login_by_token(&cmd.refresh_token);
         let sv = self.bump();
-        let config = fixtures::session_config(self.char_slot_limit);
+        let config = match &login {
+            Some(login) => {
+                self.login = Some(login.clone());
+                let home = self.w().load_home(login);
+                self.chars = home
+                    .as_ref()
+                    .map(|h| h.chars.clone())
+                    .unwrap_or_else(|| fixtures::chars_for(login));
+                self.restore_home(login);
+                fixtures::session_config_for(login, self.char_slot_limit)
+            }
+            None => fixtures::session_config_for(fixtures::LOGIN, self.char_slot_limit),
+        };
         vec![
             self.ack_ok(seq, Some(sv)),
             self.event(
@@ -486,6 +470,16 @@ impl Session {
                 serde_json::to_value(&config).unwrap_or_default(),
             ),
         ]
+    }
+
+    /// Восстанавливает персонажа/локацию/журнал сохранённого аккаунта.
+    fn restore_home(&mut self, login: &str) {
+        let home = self.w().load_home(login);
+        if let Some(home) = home {
+            self.char = home.char;
+            self.location = home.location;
+            self.crime_log = home.crime_log;
+        }
     }
 
     // ── персонажи ───────────────────────────────────────────────────────────
@@ -522,7 +516,8 @@ impl Session {
             )];
         }
         let character = CharacterSummary {
-            id: format!("c{}", self.chars.len() + 1),
+            // Уникальный id из общего счётчика (два аккаунта: c1/c2 заняты).
+            id: self.w().next_char_id(),
             name: cmd.name.clone(),
             location: self.location.name.clone(),
             summary: Some(format!("Профиль: {}", cmd.profile)),
@@ -547,6 +542,13 @@ impl Session {
         };
         self.char = Some(fixtures::character(&summary.id, &summary.name));
         self.location = fixtures::village();
+        // Реестр игроков: роутинг whisper/приглашений (ФР-13/14, DoD M8).
+        self.w().bind_player(
+            &self.conn_id.clone(),
+            &summary.id,
+            &summary.name,
+            &self.location.id.clone(),
+        );
         let sv = self.bump();
         let snap = fixtures::snapshot(sv, self.char.as_ref().expect("выше"), &self.location);
         vec![
@@ -1985,22 +1987,83 @@ impl Session {
             None => ("Аноним".to_string(), None),
         };
         let msg = ChatMessage {
-            channel: cmd.channel,
+            channel: cmd.channel.clone(),
             from: self.char.as_ref().map(|c| c.id.clone()).unwrap_or_default(),
-            name,
-            text: cmd.text,
+            name: name.clone(),
+            text: cmd.text.clone(),
             tags,
             sent_at: fixtures::now_rfc3339(),
             extra: Default::default(),
         };
-        vec![
-            self.ack_ok(seq, None),
-            self.event(
-                "evt/chat/message",
-                None,
-                serde_json::to_value(msg).unwrap_or_default(),
-            ),
-        ]
+        let echo = serde_json::to_value(&msg).unwrap_or_default();
+        let mut outs = vec![self.ack_ok(seq, None)];
+
+        // Доставка адресатам (§8; порядок «ack → событие» для вызвавшего).
+        match cmd.channel.as_str() {
+            // Whisper (ФР-13): только адресат по `to` (имя), себе — эхо.
+            "whisper" => {
+                let to = cmd.to.clone().unwrap_or_default();
+                let target = {
+                    let w = self.w();
+                    w.player_by_name(&to).cloned()
+                };
+                match target {
+                    Some(p) if p.char_id != msg.from => {
+                        let text = Self::w_event("evt/chat/message", None, echo.clone());
+                        self.w().send_to_conn(&p.conn_id, text);
+                    }
+                    // Нет адресата — эхо себе (как и любой канал), без ошибки:
+                    // §7 не специфицирует E_* для «не в сети».
+                    _ => {}
+                }
+            }
+            // Гильдейский канал — участникам гильдии; групповой — участникам
+            // группы; остальные (system/location/global) — все в локации/мир.
+            "guild" => {
+                let text = Self::w_event("evt/chat/message", None, echo);
+                let w = self.w();
+                if let Some(g) = w.guild.as_ref() {
+                    for m in &g.members {
+                        if m.id != msg.from {
+                            w.send_to_player(&m.id, text.clone());
+                        }
+                    }
+                }
+            }
+            "party" => {
+                let text = Self::w_event("evt/chat/message", None, echo);
+                let w = self.w();
+                for conn in w.party_member_conns() {
+                    if conn != self.conn_id {
+                        w.send_to_conn(&conn, text.clone());
+                    }
+                }
+            }
+            "location" => {
+                // В локации — тем, кто в ней же; для мока — все онлайн-игроки
+                // в этой локации (DoD M8).
+                let text = Self::w_event("evt/chat/message", None, echo);
+                let my_loc = self.location.id.clone();
+                let w = self.w();
+                for p in w.online_players() {
+                    if p.location_id == my_loc && p.char_id != msg.from {
+                        w.send_to_conn(&p.conn_id, text.clone());
+                    }
+                }
+            }
+            // system/global — общий мир.
+            _ => {
+                let text = Self::w_event("evt/chat/message", None, echo);
+                let w = self.w();
+                w.broadcast(text, Some(&self.conn_id));
+            }
+        }
+        outs.push(self.event(
+            "evt/chat/message",
+            None,
+            serde_json::to_value(msg).unwrap_or_default(),
+        ));
+        outs
     }
 
     /// Частичное сложение сроков (§4.10): T = сумма живых сроков, вклад
@@ -2285,14 +2348,26 @@ impl Session {
         outs
     }
 
-    // ── группа ──────────────────────────────────────────────────────────────
+    // ── группа (состояние в [`crate::world::World`], рассылка участникам) ──
+
+    /// Рассылка `evt/party/updated` всем участникам (свой клиент — через
+    /// возвращаемый `Out`, чужие — в их сокеты, порядок §2.4 не нарушен).
+    fn party_broadcast(&self, sv: u64, payload: Value) {
+        let text = Self::w_event("evt/party/updated", Some(sv), payload);
+        let w = self.w();
+        for conn in w.party_member_conns() {
+            if conn != self.conn_id {
+                w.send_to_conn(&conn, text.clone());
+            }
+        }
+    }
 
     fn party_create(&mut self, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_char(seq) {
             return vec![err];
         }
-        let (id, name) = match self.char.as_ref() {
-            Some(c) => (c.id.clone(), c.name.clone()),
+        let (id, name, hp, loc) = match self.char.as_ref() {
+            Some(c) => (c.id.clone(), c.name.clone(), c.hp, self.location.id.clone()),
             None => return vec![self.ack_err(seq, None, ErrorCode::Internal, "нет персонажа")],
         };
         let party = PartyState {
@@ -2301,15 +2376,19 @@ impl Session {
             members: vec![PartyMember {
                 id,
                 name,
-                hp: self.char.as_ref().map(|c| c.hp),
-                location_id: Some(self.location.id.clone()),
+                hp: Some(hp),
+                location_id: Some(loc),
                 ready: Some(true),
                 extra: Default::default(),
             }],
             extra: Default::default(),
         };
-        self.party = Some(party.clone());
         let sv = self.bump();
+        {
+            let mut w = self.w();
+            w.party = Some(party.clone());
+        }
+        self.party_broadcast(sv, json!({ "party": party }));
         vec![
             self.ack_ok_payload(seq, Some(sv), &json!({ "party": party })),
             self.event(
@@ -2320,6 +2399,9 @@ impl Session {
         ]
     }
 
+    /// Приглашение (§7): онлайн-игрок получает `evt/party/updated` c
+    /// опциональным полем `invite` (§11 — новое поле совместимо без bump);
+    /// не-онлайн (NPC-сущность в локации) — добавляется сразу, как раньше.
     fn party_invite(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_char(seq) {
             return vec![err];
@@ -2327,40 +2409,154 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<PartyInvite>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        if self.party.is_none() {
-            return vec![self.ack_err(
-                seq,
-                None,
-                ErrorCode::Internal,
-                "группы нет — сначала party.create",
-            )];
+        let my_char = self.char.as_ref().map(|c| c.id.clone()).unwrap_or_default();
+        let sv = self.bump();
+
+        // Онлайн-путь (DoD M8): приглашение второму клиенту.
+        let online = {
+            let w = self.w();
+            w.player_by_char(&cmd.player_id).cloned()
+        };
+        if let Some(target) = online {
+            if self.w().party.is_none() {
+                // Приглашаем в несуществующую группу — сначала создать нельзя:
+                // контракт (§7) не специфицирует ошибку, повторяем M1-семантику
+                // «сначала party.create».
+                return vec![self.ack_err(
+                    seq,
+                    None,
+                    ErrorCode::Internal,
+                    "группы нет — сначала party.create",
+                )];
+            }
+            let invite_id = self.w().new_invite(&my_char, &target.char_id);
+            let payload = json!({
+                "party": serde_json::Value::Null,
+                "invite": {
+                    "invite_id": invite_id,
+                    "from": my_char,
+                    "from_name": self.char.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+                }
+            });
+            let text = Self::w_event("evt/party/updated", Some(sv), payload.clone());
+            self.w().send_to_conn(&target.conn_id, text);
+            return vec![self.ack_ok(seq, Some(sv))];
         }
+
+        // Фолбэк: фиктивный NPC-участник (контрактные/одиночные сценарии).
         let name = if cmd.player_id == "p_77" {
             "Марк"
         } else {
             "Гость"
         };
-        if let Some(party) = self.party.as_mut() {
-            if !party.members.iter().any(|m| m.id == cmd.player_id) {
-                party.members.push(PartyMember {
-                    id: cmd.player_id,
-                    name: name.into(),
-                    hp: Some(ld2_protocol::types::Hp { cur: 30, max: 55 }),
-                    location_id: Some("l_forest".into()),
-                    ready: None,
-                    extra: Default::default(),
-                });
+        {
+            let mut w = self.w();
+            if w.party.is_none() {
+                return vec![self.ack_err(
+                    seq,
+                    None,
+                    ErrorCode::Internal,
+                    "группы нет — сначала party.create",
+                )];
+            }
+            if let Some(party) = w.party.as_mut() {
+                if !party.members.iter().any(|m| m.id == cmd.player_id) {
+                    party.members.push(PartyMember {
+                        id: cmd.player_id,
+                        name: name.into(),
+                        hp: Some(ld2_protocol::types::Hp { cur: 30, max: 55 }),
+                        location_id: Some("l_forest".into()),
+                        ready: None,
+                        extra: Default::default(),
+                    });
+                }
             }
         }
-        let sv = self.bump();
-        let party = self.party.clone();
+        let payload = json!({ "party": self.w().party.clone() });
+        self.party_broadcast(sv, payload.clone());
         vec![
             self.ack_ok(seq, Some(sv)),
-            self.event(
-                "evt/party/updated",
-                Some(sv),
-                serde_json::to_value(PartyUpdated { party }).unwrap_or_default(),
-            ),
+            self.event("evt/party/updated", Some(sv), payload),
+        ]
+    }
+
+    /// Ответ на приглашение (§7 `party.accept/decline {invite_id}`).
+    fn party_answer(&mut self, env: &Envelope, seq: u32, accept: bool) -> Vec<Out> {
+        if let Some(err) = self.require_char(seq) {
+            return vec![err];
+        }
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            invite_id: String,
+        }
+        let Ok(cmd) = Self::payload_of::<Answer>(env, seq) else {
+            return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
+        };
+        let me = self.char.as_ref().map(|c| c.id.clone()).unwrap_or_default();
+        let invite = self.w().take_invite(&cmd.invite_id);
+        let Some(_invite) = invite.filter(|i| i.to == me) else {
+            return vec![self.ack_err(seq, None, ErrorCode::TargetGone, "приглашение не найдено")];
+        };
+        let sv = self.bump();
+        {
+            let mut w = self.w();
+            if accept {
+                if w.party.is_none() {
+                    // Инициатор вышел, пока приглашение висело.
+                    return vec![self.ack_err(
+                        seq,
+                        None,
+                        ErrorCode::TargetGone,
+                        "группа распущена",
+                    )];
+                }
+                if let Some(party) = w.party.as_mut() {
+                    if !party.members.iter().any(|m| m.id == me) {
+                        party.members.push(PartyMember {
+                            id: me,
+                            name: self
+                                .char
+                                .as_ref()
+                                .map(|c| c.name.clone())
+                                .unwrap_or_default(),
+                            hp: self.char.as_ref().map(|c| c.hp),
+                            location_id: Some(self.location.id.clone()),
+                            ready: Some(true),
+                            extra: Default::default(),
+                        });
+                    }
+                }
+            }
+        }
+        let payload = json!({ "party": self.w().party.clone() });
+        self.party_broadcast(sv, payload.clone());
+        vec![
+            self.ack_ok_payload(seq, Some(sv), &payload),
+            self.event("evt/party/updated", Some(sv), payload),
+        ]
+    }
+
+    /// Выход из группы: при оставшихся участниках — рассылка, при пустой —
+    /// `party: null` участникам и себе.
+    fn party_leave(&mut self, seq: u32) -> Vec<Out> {
+        let me = self.char.as_ref().map(|c| c.id.clone()).unwrap_or_default();
+        let sv = self.bump();
+        {
+            let mut w = self.w();
+            if let Some(party) = w.party.as_mut() {
+                party.members.retain(|m| m.id != me);
+                if party.members.is_empty() {
+                    w.party = None;
+                } else if party.leader == me {
+                    party.leader = party.members[0].id.clone();
+                }
+            }
+        }
+        let payload = json!({ "party": self.w().party.clone() });
+        self.party_broadcast(sv, payload.clone());
+        vec![
+            self.ack_ok(seq, Some(sv)),
+            self.event("evt/party/updated", Some(sv), payload),
         ]
     }
 
@@ -2371,25 +2567,119 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<PartyKick>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        if self.party.is_none() {
-            return vec![self.ack_err(seq, None, ErrorCode::Internal, "группы нет")];
-        }
-        if let Some(party) = self.party.as_mut() {
-            party.members.retain(|m| m.id != cmd.player_id);
-        }
         let sv = self.bump();
-        let party = self.party.clone();
+        {
+            let mut w = self.w();
+            if w.party.is_none() {
+                return vec![self.ack_err(seq, None, ErrorCode::Internal, "группы нет")];
+            }
+            if let Some(party) = w.party.as_mut() {
+                party.members.retain(|m| m.id != cmd.player_id);
+                if party.members.is_empty() {
+                    w.party = None;
+                }
+            }
+        }
+        let payload = json!({ "party": self.w().party.clone() });
+        self.party_broadcast(sv, payload.clone());
         vec![
             self.ack_ok(seq, Some(sv)),
-            self.event(
-                "evt/party/updated",
-                Some(sv),
-                serde_json::to_value(PartyUpdated { party }).unwrap_or_default(),
-            ),
+            self.event("evt/party/updated", Some(sv), payload),
         ]
     }
 
-    // ── торговля (минимальная state-machine версий, ФР-15) ─────────────────
+    // ── торговля (общая на сервер, зеркало you/them, версии — §8/ФР-15) ────
+
+    /// Зеркальная перспектива сделки для своей стороны.
+    fn trade_view(&self, my_char: &str) -> Option<TradeState> {
+        let w = self.w();
+        let t = w.trade.as_ref()?;
+        let (me, them) = if t.a.char_id == my_char {
+            (&t.a, &t.b)
+        } else {
+            (&t.b, &t.a)
+        };
+        Some(TradeState {
+            offer_id: t.offer_id.clone(),
+            version: t.version,
+            you: me.items.clone(),
+            them: them.items.clone(),
+            you_gold: me.gold,
+            them_gold: them.gold,
+            you_locked: me.locked,
+            them_locked: them.locked,
+            // §5: `trade.value_hint` — оценка стоимости (сумма gold_value).
+            value_hint: Some(
+                me.items
+                    .iter()
+                    .chain(them.items.iter())
+                    .filter_map(|i| i.gold_value)
+                    .sum::<i64>()
+                    + me.gold
+                    + them.gold,
+            ),
+            extra: Default::default(),
+        })
+    }
+
+    /// Рассылка `evt/trade/state` обеим сторонам (каждой — её зеркало);
+    /// вызывающая сторона получает свой текст через возвращаемый `Out`.
+    fn trade_broadcast_state(&self, sv: u64) {
+        let (a_char, b_char, a_conn, b_conn) = {
+            let w = self.w();
+            let Some(t) = w.trade.as_ref() else {
+                return;
+            };
+            (
+                t.a.char_id.clone(),
+                t.b.char_id.clone(),
+                t.a.conn_id.clone(),
+                t.b.conn_id.clone(),
+            )
+        };
+        let w = self.w();
+        for (view_char, conn) in [(a_char, a_conn), (b_char, b_conn)] {
+            if conn == self.conn_id || conn.is_empty() {
+                continue; // свой клиент — через Out (порядок §2.4)
+            }
+            if let Some(v) = self.trade_view_for(&w, &view_char) {
+                if let Ok(v) = serde_json::to_value(v) {
+                    let text = Self::w_event("evt/trade/state", Some(sv), v);
+                    w.send_to_conn(&conn, text);
+                }
+            }
+        }
+    }
+
+    /// Перспектива для произвольного char_id (через готовый мир).
+    fn trade_view_for(&self, w: &crate::world::World, my_char: &str) -> Option<TradeState> {
+        let t = w.trade.as_ref()?;
+        let (me, them) = if t.a.char_id == my_char {
+            (&t.a, &t.b)
+        } else {
+            (&t.b, &t.a)
+        };
+        Some(TradeState {
+            offer_id: t.offer_id.clone(),
+            version: t.version,
+            you: me.items.clone(),
+            them: them.items.clone(),
+            you_gold: me.gold,
+            them_gold: them.gold,
+            you_locked: me.locked,
+            them_locked: them.locked,
+            value_hint: Some(
+                me.items
+                    .iter()
+                    .chain(them.items.iter())
+                    .filter_map(|i| i.gold_value)
+                    .sum::<i64>()
+                    + me.gold
+                    + them.gold,
+            ),
+            extra: Default::default(),
+        })
+    }
 
     fn trade_open(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_char(seq) {
@@ -2398,27 +2688,74 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<TradeOpen>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        let offer_id = format!("of_{}", cmd.player_id);
-        let trade = TradeState {
-            offer_id: offer_id.clone(),
-            version: 1,
-            you: vec![],
-            them: vec![],
-            you_gold: 0,
-            them_gold: 0,
-            you_locked: false,
-            them_locked: false,
-            value_hint: None,
-            extra: Default::default(),
+        let me = self.char.as_ref().map(|c| c.id.clone()).unwrap_or_default();
+        let my_conn = self.conn_id.clone();
+        // Партнёр должен быть онлайн (DoD M8: два клиента) — иначе фолбэк
+        // на «мок-партнёра» (старое одиночное поведение без `them`).
+        let partner = {
+            let w = self.w();
+            w.player_by_char(&cmd.player_id).cloned()
         };
-        self.trade = Some(trade.clone());
+        // Проверка «в одной локации» (ФР-15): сервер — истина.
+        if let Some(p) = partner.as_ref() {
+            if p.char_id != me && p.location_id != self.location.id {
+                return vec![self.ack_err(
+                    seq,
+                    None,
+                    ErrorCode::NotInLocation,
+                    "партнёр в другой локации",
+                )];
+            }
+        }
         let sv = self.bump();
+        let offer_id = format!("of_{me}");
+        let (partner_char, partner_conn) = match partner {
+            Some(p) if p.char_id != me => (p.char_id, p.conn_id),
+            // Фолбэк: одиночная сделка с фиктивным партнёром (M1-семантика).
+            _ => ("npc".into(), String::new()),
+        };
+        let (own_view, partner_view) = {
+            let mut w = self.w();
+            w.trade = Some(crate::world::TradeShared {
+                offer_id: offer_id.clone(),
+                a: crate::world::TradeSide {
+                    char_id: me.clone(),
+                    conn_id: my_conn.clone(),
+                    items: vec![],
+                    gold: 0,
+                    locked: false,
+                },
+                b: crate::world::TradeSide {
+                    char_id: partner_char.clone(),
+                    conn_id: partner_conn.clone(),
+                    items: vec![],
+                    gold: 0,
+                    locked: false,
+                },
+                opener: me.clone(),
+                version: 1,
+            });
+            let own = self.trade_view_for(&w, &me);
+            let theirs = if partner_conn.is_empty() {
+                None
+            } else {
+                self.trade_view_for(&w, &partner_char)
+            };
+            (own, theirs)
+        };
+        // Партнёру — его зеркало сразу (свой клиент получит через Out).
+        if let (Some(v), true) = (partner_view, !partner_conn.is_empty()) {
+            if let Ok(v) = serde_json::to_value(v) {
+                let text = Self::w_event("evt/trade/state", Some(sv), v);
+                self.w().send_to_conn(&partner_conn, text);
+            }
+        }
         vec![
             self.ack_ok_payload(seq, Some(sv), &json!({ "offer_id": offer_id })),
             self.event(
                 "evt/trade/state",
                 Some(sv),
-                serde_json::to_value(trade).unwrap_or_default(),
+                serde_json::to_value(own_view).unwrap_or_default(),
             ),
         ]
     }
@@ -2430,9 +2767,7 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<TradeAddItem>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        if self.trade.is_none() {
-            return vec![self.ack_err(seq, None, ErrorCode::TradePartnerGone, "нет сделки")];
-        }
+        let me = self.char.as_ref().map(|c| c.id.clone()).unwrap_or_default();
         let item = self
             .char
             .as_ref()
@@ -2441,18 +2776,28 @@ impl Session {
         let Some(item) = item else {
             return vec![self.ack_err(seq, None, ErrorCode::ItemGone, "предмета нет")];
         };
-        if let Some(trade) = self.trade.as_mut() {
-            trade.you.push(item);
-            trade.version += 1;
-        }
         let sv = self.bump();
-        let trade = self.trade.clone().unwrap();
+        {
+            let mut w = self.w();
+            let Some(t) = w.trade.as_mut() else {
+                return vec![self.ack_err(seq, None, ErrorCode::TradePartnerGone, "нет сделки")];
+            };
+            let side = if t.a.char_id == me {
+                &mut t.a
+            } else {
+                &mut t.b
+            };
+            side.items.push(item);
+            t.version += 1;
+        }
+        let view = self.trade_view(&me);
+        self.trade_broadcast_state(sv);
         vec![
             self.ack_ok(seq, Some(sv)),
             self.event(
                 "evt/trade/state",
                 Some(sv),
-                serde_json::to_value(trade).unwrap_or_default(),
+                serde_json::to_value(view).unwrap_or_default(),
             ),
         ]
     }
@@ -2464,30 +2809,39 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<TradeSetGold>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        if self.trade.is_none() {
-            return vec![self.ack_err(seq, None, ErrorCode::TradePartnerGone, "нет сделки")];
-        }
         if cmd.gold < 0 {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "золото < 0")];
         }
-        if let Some(trade) = self.trade.as_mut() {
-            trade.you_gold = cmd.gold;
-            trade.version += 1;
-        }
+        let me = self.char.as_ref().map(|c| c.id.clone()).unwrap_or_default();
         let sv = self.bump();
-        let trade = self.trade.clone().unwrap();
+        {
+            let mut w = self.w();
+            let Some(t) = w.trade.as_mut() else {
+                return vec![self.ack_err(seq, None, ErrorCode::TradePartnerGone, "нет сделки")];
+            };
+            let side = if t.a.char_id == me {
+                &mut t.a
+            } else {
+                &mut t.b
+            };
+            side.gold = cmd.gold;
+            t.version += 1;
+        }
+        let view = self.trade_view(&me);
+        self.trade_broadcast_state(sv);
         vec![
             self.ack_ok(seq, Some(sv)),
             self.event(
                 "evt/trade/state",
                 Some(sv),
-                serde_json::to_value(trade).unwrap_or_default(),
+                serde_json::to_value(view).unwrap_or_default(),
             ),
         ]
     }
 
-    /// `propose` — фиксирует «мою» сторону, `accept` — «их» (мок-партнёр).
-    fn trade_lock(&mut self, env: &Envelope, seq: u32, mine: bool) -> Vec<Out> {
+    /// `propose`/`accept`: сверка общей версии (§8), фиксация своей стороны;
+    /// обе стороны зафиксированы → обмен + `evt/trade/closed {done}`.
+    fn trade_lock(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_char(seq) {
             return vec![err];
         }
@@ -2499,55 +2853,111 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<Lock>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        if self.trade.is_none() {
-            return vec![self.ack_err(seq, None, ErrorCode::TradePartnerGone, "нет сделки")];
-        }
-        let trade = self.trade.as_mut().expect("проверено выше");
-        if trade.offer_id != cmd.offer_id || trade.version != cmd.version {
-            let actual = trade.version;
-            return vec![self.ack_err(
-                seq,
-                None,
-                ErrorCode::TradeStale,
-                format!("версия сделки устарела (сейчас {actual})"),
-            )];
-        }
-        if mine {
-            trade.you_locked = true;
-        } else {
-            trade.them_locked = true;
-        }
-        trade.version += 1;
-        let both_locked = trade.you_locked && trade.them_locked;
-        let offer_id = cmd.offer_id.clone();
+        let me = self.char.as_ref().map(|c| c.id.clone()).unwrap_or_default();
         let sv = self.bump();
 
-        if both_locked {
-            // Сделка состоялась: закрываем (§8 `evt/trade/closed`).
-            self.trade = None;
-            return vec![
-                self.ack_ok(seq, Some(sv)),
-                self.event(
-                    "evt/trade/closed",
-                    Some(sv),
-                    serde_json::to_value(TradeClosed {
-                        offer_id,
-                        reason: TradeCloseReason::Done,
-                        result: None,
-                    })
-                    .unwrap_or_default(),
-                ),
-            ];
+        // Расчёт обмена при завершении: что я отдаю/получаю.
+        let mut apply: Option<crate::world::SessionCmd> = None;
+        let mut done: Option<String> = None;
+        {
+            let mut w = self.w();
+            let Some(t) = w.trade.as_mut() else {
+                return vec![self.ack_err(seq, None, ErrorCode::TradePartnerGone, "нет сделки")];
+            };
+            if t.offer_id != cmd.offer_id || t.version != cmd.version {
+                let actual = t.version;
+                return vec![self.ack_err(
+                    seq,
+                    None,
+                    ErrorCode::TradeStale,
+                    format!("версия сделки устарела (сейчас {actual})"),
+                )];
+            }
+            let side = if t.a.char_id == me {
+                &mut t.a
+            } else {
+                &mut t.b
+            };
+            side.locked = true;
+            t.version += 1;
+            if t.a.locked && t.b.locked {
+                // Обмен: мои items → партнёру, его items → мне (§8 result).
+                let (a_id, _b_id, a_conn, b_conn, offer_id) = (
+                    t.a.char_id.clone(),
+                    t.b.char_id.clone(),
+                    t.a.conn_id.clone(),
+                    t.b.conn_id.clone(),
+                    t.offer_id.clone(),
+                );
+                let (a_items, b_items) = (t.a.items.clone(), t.b.items.clone());
+                let a_loss: Vec<String> = a_items.iter().map(|i| i.uid.clone()).collect();
+                let b_loss: Vec<String> = b_items.iter().map(|i| i.uid.clone()).collect();
+                // Своё применение (эта сессия).
+                let mine_gain = if a_id == me {
+                    b_items.clone()
+                } else {
+                    a_items.clone()
+                };
+                let mine_loss = if a_id == me {
+                    a_loss.clone()
+                } else {
+                    b_loss.clone()
+                };
+                apply = Some(crate::world::SessionCmd::TradeApply {
+                    gain: mine_gain,
+                    loss: mine_loss,
+                });
+                // Партнёру — его команда в его сокет.
+                let partner_gain = if a_id == me { a_items } else { b_items };
+                let partner_loss = if a_id == me { b_loss } else { a_loss };
+                let partner_conn = if a_id == me { b_conn } else { a_conn };
+                if !partner_conn.is_empty() {
+                    w.send_cmd(
+                        &partner_conn,
+                        crate::world::SessionCmd::TradeApply {
+                            gain: partner_gain,
+                            loss: partner_loss,
+                        },
+                    );
+                }
+                done = Some(offer_id);
+                w.trade = None;
+            }
         }
-        let trade_state = self.trade.clone().expect("сделка активна");
-        vec![
-            self.ack_ok(seq, Some(sv)),
-            self.event(
+
+        let closed_text = done.as_ref().map(|offer_id| {
+            Self::w_event(
+                "evt/trade/closed",
+                Some(sv),
+                serde_json::to_value(TradeClosed {
+                    offer_id: offer_id.clone(),
+                    reason: TradeCloseReason::Done,
+                    result: None,
+                })
+                .unwrap_or_default(),
+            )
+        });
+
+        let mut outs = vec![self.ack_ok(seq, Some(sv))];
+        if let Some(text) = closed_text {
+            // Рассылка `done` партнёру, свой клиент — через Out.
+            let w = self.w();
+            w.broadcast(text.clone(), Some(&self.conn_id));
+            outs.push(Out::Text(text));
+        } else {
+            let view = self.trade_view(&me);
+            self.trade_broadcast_state(sv);
+            outs.push(self.event(
                 "evt/trade/state",
                 Some(sv),
-                serde_json::to_value(trade_state).unwrap_or_default(),
-            ),
-        ]
+                serde_json::to_value(view).unwrap_or_default(),
+            ));
+        }
+        // Применение обмена к своему персонажу (после событий, §2.4).
+        if let Some(cmd) = apply {
+            self.apply_session_cmd(cmd);
+        }
+        outs
     }
 
     fn trade_cancel(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
@@ -2561,24 +2971,72 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<Only>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        self.trade = None;
         let sv = self.bump();
-        vec![
-            self.ack_ok(seq, Some(sv)),
-            self.event(
-                "evt/trade/closed",
-                Some(sv),
-                serde_json::to_value(TradeClosed {
-                    offer_id: cmd.offer_id,
-                    reason: TradeCloseReason::Cancelled,
-                    result: None,
-                })
-                .unwrap_or_default(),
-            ),
-        ]
+        {
+            let mut w = self.w();
+            w.trade = None;
+        }
+        let closed = Self::w_event(
+            "evt/trade/closed",
+            Some(sv),
+            serde_json::to_value(TradeClosed {
+                offer_id: cmd.offer_id,
+                reason: TradeCloseReason::Cancelled,
+                result: None,
+            })
+            .unwrap_or_default(),
+        );
+        let w = self.w();
+        w.broadcast(closed.clone(), Some(&self.conn_id));
+        vec![self.ack_ok(seq, Some(sv)), Out::Text(closed)]
     }
 
-    // ── гильдия ─────────────────────────────────────────────────────────────
+    /// Публичная точка для сервера: применение команды из [`crate::world::World`]
+    /// (вызывается в `select!`-цикле соединения).
+    pub fn apply_cmd(&mut self, cmd: crate::world::SessionCmd) -> Vec<Out> {
+        self.apply_session_cmd(cmd);
+        Vec::new() // события ушли в свой сокет через World (порядок §2.4)
+    }
+
+    /// Применение [`crate::world::SessionCmd`] к своему персонажу: обмен по
+    /// сделке → события `evt/item/removed|added` в свой сокет.
+    fn apply_session_cmd(&mut self, cmd: crate::world::SessionCmd) {
+        match cmd {
+            crate::world::SessionCmd::TradeApply { gain, loss } => {
+                let mut evs: Vec<String> = Vec::new();
+                if let Some(ch) = self.char.as_mut() {
+                    ch.inventory.retain(|i| !loss.contains(&i.uid));
+                }
+                for uid in &loss {
+                    evs.push(Self::w_event(
+                        "evt/item/removed",
+                        None,
+                        json!({ "item_uid": uid }),
+                    ));
+                }
+                for item in &gain {
+                    let ev = Self::w_event(
+                        "evt/item/added",
+                        None,
+                        serde_json::to_value(ld2_protocol::evt::ItemAdded { item: item.clone() })
+                            .unwrap_or_default(),
+                    );
+                    evs.push(ev);
+                    if let Some(ch) = self.char.as_mut() {
+                        ch.inventory.push(item.clone());
+                    }
+                }
+                // Свой сокет: через World (порядок removed → added сохранён).
+                let conn = self.conn_id.clone();
+                let w = self.w();
+                for ev in evs {
+                    w.send_to_conn(&conn, ev);
+                }
+            }
+        }
+    }
+
+    // ── гильдия (состояние в World, рассылка участникам, ФР-16) ────────────
 
     fn guild_create(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_char(seq) {
@@ -2593,14 +3051,166 @@ impl Session {
         };
         let mut guild = fixtures::guild_fixture();
         guild.name = cmd.name;
-        self.guild = Some(guild.clone());
         let sv = self.bump();
+        {
+            let mut w = self.w();
+            w.guild = Some(guild.clone());
+        }
+        let payload = json!({ "guild": guild });
+        let text = Self::w_event("evt/guild/updated", Some(sv), payload.clone());
+        {
+            let w = self.w();
+            w.broadcast(text, Some(&self.conn_id));
+        }
         vec![
             self.ack_ok_payload(seq, Some(sv), &json!({ "guild": guild })),
+            self.event("evt/guild/updated", Some(sv), payload),
+        ]
+    }
+
+    fn guild_join(&mut self, seq: u32) -> Vec<Out> {
+        let sv = self.bump();
+        {
+            let mut w = self.w();
+            w.guild = Some(fixtures::guild_fixture());
+        }
+        let payload = json!({ "guild": self.w().guild.clone() });
+        let text = Self::w_event("evt/guild/updated", Some(sv), payload.clone());
+        {
+            let w = self.w();
+            w.broadcast(text, Some(&self.conn_id));
+        }
+        vec![
+            self.ack_ok(seq, Some(sv)),
+            self.event("evt/guild/updated", Some(sv), payload),
+        ]
+    }
+
+    fn guild_leave(&mut self, seq: u32) -> Vec<Out> {
+        let sv = self.bump();
+        {
+            let mut w = self.w();
+            w.guild = None;
+        }
+        let text = Self::w_event("evt/guild/updated", Some(sv), json!({ "guild": null }));
+        {
+            let w = self.w();
+            w.broadcast(text, Some(&self.conn_id));
+        }
+        vec![
+            self.ack_ok(seq, Some(sv)),
+            self.event("evt/guild/updated", Some(sv), json!({ "guild": null })),
+        ]
+    }
+
+    /// Приглашение в гильдию (§7): онлайн-игрок получает `evt/guild/updated`
+    /// c опциональным полем `invite` (§11 — совместимо без bump).
+    fn guild_invite(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_char(seq) {
+            return vec![err];
+        }
+        #[derive(serde::Deserialize)]
+        struct Only {
+            player_id: String,
+        }
+        let Ok(cmd) = Self::payload_of::<Only>(env, seq) else {
+            return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
+        };
+        let sv = self.bump();
+        let target = {
+            let w = self.w();
+            w.player_by_char(&cmd.player_id).cloned()
+        };
+        match target {
+            Some(p) => {
+                let payload = json!({
+                    "guild": serde_json::Value::Null,
+                    "invite": {
+                        "guild_id": self.w().guild.as_ref().map(|g| g.id.clone()).unwrap_or_else(|| "g_1".into()),
+                        "guild_name": self.w().guild.as_ref().map(|g| g.name.clone()).unwrap_or_else(|| "Стальные волки".into()),
+                        "from_name": self.char.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+                    }
+                });
+                let text = Self::w_event("evt/guild/updated", Some(sv), payload);
+                self.w().send_to_conn(&p.conn_id, text);
+                vec![self.ack_ok(seq, Some(sv))]
+            }
+            None => vec![self.ack_err(seq, None, ErrorCode::TargetGone, "игрок не в сети")],
+        }
+    }
+
+    /// Исключение из гильдии: участнику — `guild: null`, остальным — обновление.
+    fn guild_kick(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_char(seq) {
+            return vec![err];
+        }
+        #[derive(serde::Deserialize)]
+        struct Only {
+            player_id: String,
+        }
+        let Ok(cmd) = Self::payload_of::<Only>(env, seq) else {
+            return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
+        };
+        let sv = self.bump();
+        // Мок-гильдия одностранична: исключение = выгрузка жертвы + журнал.
+        let text_null = Self::w_event("evt/guild/updated", Some(sv), json!({ "guild": null }));
+        let text_log = Self::w_event(
+            "evt/guild/log",
+            None,
+            json!({ "entry": GuildLogEntry {
+                kind: "leave".into(),
+                text: format!("Исключён игрок {}", cmd.player_id),
+                at: fixtures::now_epoch(),
+                extra: Default::default(),
+            }}),
+        );
+        {
+            let w = self.w();
+            if let Some(p) = w.player_by_char(&cmd.player_id) {
+                w.send_to_conn(&p.conn_id, text_null);
+            }
+            w.broadcast(text_log, Some(&self.conn_id));
+        }
+        vec![self.ack_ok(seq, Some(sv))]
+    }
+
+    fn guild_rank_set(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = Self::payload_of::<GuildRankSet>(env, seq).err() {
+            return vec![err];
+        }
+        let cmd = Self::payload_of::<GuildRankSet>(env, seq).expect("проверено выше");
+        let sv = self.bump();
+        // Реальная смена ранга в состоянии (§7 атомарно, ФР-16).
+        {
+            let mut w = self.w();
+            if let Some(g) = w.guild.as_mut() {
+                if let Some(m) = g.members.iter_mut().find(|m| m.id == cmd.player_id) {
+                    m.rank = cmd.rank.clone();
+                }
+            }
+        }
+        let entry = GuildLogEntry {
+            kind: "rank_change".into(),
+            text: format!("Ранг {} → {}", cmd.player_id, cmd.rank),
+            at: fixtures::now_epoch(),
+            extra: Default::default(),
+        };
+        let text_log = Self::w_event("evt/guild/log", Some(sv), json!({ "entry": entry }));
+        {
+            let w = self.w();
+            w.broadcast(text_log, Some(&self.conn_id));
+        }
+        vec![
+            self.ack_ok(seq, Some(sv)),
             self.event(
-                "evt/guild/updated",
+                "evt/guild/log",
                 Some(sv),
-                serde_json::to_value(GuildUpdated { guild: Some(guild) }).unwrap_or_default(),
+                json!({ "entry": GuildLogEntry {
+                    kind: "rank_change".into(),
+                    text: format!("Ранг {} → {}", cmd.player_id, cmd.rank),
+                    at: fixtures::now_epoch(),
+                    extra: Default::default(),
+                }}),
             ),
         ]
     }
@@ -2614,17 +3224,44 @@ impl Session {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
         }
-        let mut outs = vec![self.ack_ok(seq, Some(self.state_version))];
+        let sv = self.w().version();
+        let mut outs = vec![self.ack_ok(seq, Some(sv))];
         if let Some(ch) = self.char.as_ref() {
             // §3: mock без дельт — всегда полный снапшот.
-            let snap = fixtures::snapshot(self.state_version, ch, &self.location);
+            let mut snap = fixtures::snapshot(sv, ch, &self.location);
+            // §7: снапшот несёт межигровое состояние (общее для клиентов).
+            {
+                let w = self.w();
+                snap.party = w.party.clone();
+                snap.guild = w.guild.clone();
+            }
             outs.push(self.event(
                 "evt/state/snapshot",
-                Some(self.state_version),
+                Some(sv),
                 serde_json::to_value(snap).unwrap_or_default(),
             ));
         }
         outs
+    }
+}
+
+/// Отключение соединения: сохраняем состояние аккаунта (персонаж переживает
+/// обрыв — §4.5) и отвязываем канал от [`crate::world::World`].
+impl Drop for Session {
+    fn drop(&mut self) {
+        let mut w = self.world.lock().expect("mutex мира");
+        if let Some(login) = self.login.clone() {
+            w.save_home(
+                &login,
+                crate::world::Home {
+                    chars: self.chars.clone(),
+                    char: self.char.clone(),
+                    location: self.location.clone(),
+                    crime_log: self.crime_log.clone(),
+                },
+            );
+        }
+        w.unregister_conn(&self.conn_id);
     }
 }
 
