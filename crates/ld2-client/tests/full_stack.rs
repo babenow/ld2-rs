@@ -165,11 +165,13 @@ async fn full_stack_login_select_move() {
 #[tokio::test]
 async fn full_stack_reconnect_within_30s() {
     let (url, knobs) = start_mock().await;
-    // Соединение №1 рвётся после двух сообщений: bootstrap resume + resync
-    // (их порядок детерминирован — resync пишется только после resume-ack).
+    // Соединение №1 рвётся после ТРЁХ записей bootstrap-фазы: resume,
+    // служебный time.sync (M6) и resync (пишется после resume-ack) — в
+    // недетерминированном порядке; бюджет 2 позволял drop'у съесть одну из
+    // них до ack (флаки CI). Три слота = полная фаза, conn2 не рвётся.
     knobs
         .drop_first_conn_after
-        .store(2, std::sync::atomic::Ordering::SeqCst);
+        .store(3, std::sync::atomic::Ordering::SeqCst);
 
     let (handle, mut rx) = spawn_transport(&url, |c| {
         c.refresh_token = Some("rt_e2e".into());
