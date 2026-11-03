@@ -83,5 +83,18 @@ pub(super) fn t(key: Key) -> &'static str {
         DeathConfirm => "Возродиться",
         ItemDescTitle => "Описание предмета",
         ReqLabel => "Требует",
+        // M5: hotbar/улучшение/инкрустация
+        HotbarLabel => "Панель действий",
+        NoCharge => "нет зарядов",
+        NotEnoughMp => "не хватает маны",
+        UpgradeTitle => "Улучшение предмета",
+        UpgradeBtn => "Улучшить",
+        ChanceLabel => "Шанс",
+        CostLabel => "Стоимость",
+        BtnSocketing => "Инкрустация",
+        SocketingTitle => "Инкрустация посоха",
+        InsertRune => "Вставить",
+        ExtractRune => "Извлечь",
+        NoRunes => "Рун нет в инвентаре",
     }
 }

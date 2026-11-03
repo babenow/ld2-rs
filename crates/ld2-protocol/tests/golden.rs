@@ -45,7 +45,7 @@ const SESSION_START_JSON: &str = r#"{
   "inventory": { "slots": 40, "equip_slots": ["head","body","main_hand","staff","feet"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
-             "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0 } },
+             "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "characters": [
     { "id": "c1", "name": "Ким", "location": "Черный лес",
       "summary": "Навыки: меч 3, аркана 1", "crime": ["murderer"], "online": true }
@@ -67,6 +67,10 @@ fn session_start_matches_doc_example() {
     assert_eq!(cfg.chat.channels.len(), 6);
     assert!((cfg.chat.cooldown_s - 1.5).abs() < f64::EPSILON);
     assert_eq!(cfg.magic.mana.regen_out_s, 45, "D4: конфиг маны");
+    assert_eq!(
+        cfg.magic.mana.rune_cost, 10,
+        "M5: стоимость каста в мане (ФР-09)"
+    );
     assert_eq!(cfg.characters[0].id, "c1");
     assert_eq!(cfg.characters[0].crime, vec!["murderer".to_string()]);
     // Capability-доступ и незнакомые ключи

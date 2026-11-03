@@ -45,6 +45,23 @@ pub enum Act {
     Unequip,
     /// `item.use`/`item.drop` — результат приходит событиями (§8).
     Drop,
+    /// `upgrade.preview` → payload превью в `upgrade.preview`.
+    Preview,
+    /// `upgrade.start` → результат событием (ФР-10).
+    Upgrade,
+    /// `socket.insert`/`socket.extract` → ack несёт посох/руну (§7).
+    Socket,
+    /// Каст из hotbar (ФР-09) — ошибки в мир (`E_NOT_ENOUGH_MP`…).
+    Cast,
+}
+
+/// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpgradeView {
+    pub item_uid: String,
+    pub item_name: String,
+    /// payload `upgrade.preview`: `{preview_id, delta, cost, chance}`.
+    pub preview: Option<serde_json::Value>,
 }
 
 /// Цветовой тип строки журнала мира (ФР-17; палитра §7.4 — в UI).
@@ -115,6 +132,10 @@ pub struct AppStore {
     pub death: Option<ld2_protocol::evt::CharDeath>,
     /// Описание предмета (ФР-07 «показать описание»).
     pub item_detail: Option<serde_json::Value>,
+    /// Модалка улучшения (ФР-10).
+    pub upgrade: Option<UpgradeView>,
+    /// Открытая инкрустация (ФР-09): uid посоха.
+    pub socketing: Option<String>,
     /// Нейтральное сообщение (создан/удалён/транспорт).
     pub notice: Option<String>,
     /// Логин последней попытки входа — предзаполнение формы.
@@ -150,6 +171,8 @@ impl AppStore {
             sheet_error: None,
             death: None,
             item_detail: None,
+            upgrade: None,
+            socketing: None,
             notice: None,
             last_login: None,
             log: VecDeque::new(),
@@ -222,7 +245,14 @@ impl AppStore {
                 Act::Select => self.select_error = Some(msg),
                 Act::Delete => self.notice = Some(msg),
                 Act::Move | Act::Attack | Act::Examine => self.world_error = Some(msg),
-                Act::Invest | Act::Equip | Act::Unequip | Act::Drop => self.sheet_error = Some(msg),
+                Act::Invest
+                | Act::Equip
+                | Act::Unequip
+                | Act::Drop
+                | Act::Preview
+                | Act::Upgrade
+                | Act::Socket => self.sheet_error = Some(msg),
+                Act::Cast => self.world_error = Some(msg),
             }
             return vec![];
         }
@@ -263,7 +293,23 @@ impl AppStore {
                     }
                 }
             }
-            Act::Attack | Act::Examine | Act::Drop => {} // событиями / payload ниже
+            Act::Attack | Act::Examine | Act::Drop | Act::Upgrade | Act::Cast => {
+                // результат событиями (§8)
+            }
+            Act::Preview => {
+                if let (Some(upgrade), Some(payload)) =
+                    (self.upgrade.as_mut(), ack.payload.as_ref())
+                {
+                    upgrade.preview = Some(payload.clone());
+                }
+            }
+            Act::Socket => {
+                // §7: ack извлекаемого несёт {staff, rune}, вставки — {staff}.
+                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
+                {
+                    apply_item_patch(&mut snap.char, payload);
+                }
+            }
             Act::Create => {
                 // Аддитивное подтверждение: дополняем список персонажей (§7).
                 if let (Some(session), Some(payload)) =
@@ -559,6 +605,17 @@ impl AppStore {
                 let Ok(cast) = serde_json::from_value::<MagicCast>(payload) else {
                     return vec![];
                 };
+                // D4: свой каст тратит ману — бар обновляем по mp_left (§8);
+                // заряды приходят патчем evt/item/state.
+                if cast.ok {
+                    if let Some(mp_left) = cast.mp_left {
+                        if let Some(snap) = self.snapshot.as_mut() {
+                            if snap.char.id == cast.by {
+                                snap.char.mp.cur = mp_left as i64;
+                            }
+                        }
+                    }
+                }
                 let text = if cast.ok {
                     format!("{}: {} ({:?})", cast.by_name, cast.spell, cast.what)
                 } else {
@@ -592,6 +649,79 @@ impl AppStore {
                         .retain(|_, slot| slot.as_deref() != Some(removed.uid.as_str()));
                 }
                 self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
+                vec![]
+            }
+            "evt/item/state" => {
+                // Патч предмета (upgrade/sockets/qty) — ФР-09/ФР-10.
+                #[derive(serde::Deserialize)]
+                struct ItemPatch {
+                    uid: String,
+                    patch: serde_json::Map<String, serde_json::Value>,
+                }
+                let Ok(update) = serde_json::from_value::<ItemPatch>(payload) else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(item) = snap.char.inventory.iter_mut().find(|i| i.uid == update.uid)
+                    {
+                        if let Some(full) = update.patch.get("item") {
+                            if let Ok(replaced) = serde_json::from_value::<
+                                ld2_protocol::types::ItemSnapshot,
+                            >(full.clone())
+                            {
+                                *item = replaced;
+                            }
+                        } else if let Some(up) =
+                            update.patch.get("upgrade").and_then(|v| v.as_i64())
+                        {
+                            item.upgrade = up as i32;
+                        } else if let Some(sockets) = update.patch.get("sockets") {
+                            if let Ok(sockets) = serde_json::from_value::<
+                                Vec<ld2_protocol::types::Socket>,
+                            >(sockets.clone())
+                            {
+                                item.sockets = Some(sockets);
+                            }
+                        } else if let Some(qty) = update.patch.get("qty").and_then(|v| v.as_i64()) {
+                            item.qty = Some(qty);
+                        }
+                    }
+                }
+                vec![]
+            }
+            "evt/upgrade/result" => {
+                // ФР-10: результат — событием; модалка закрывается.
+                let Ok(result) =
+                    serde_json::from_value::<ld2_protocol::evt::UpgradeResult>(payload)
+                else {
+                    return vec![];
+                };
+                let name = self
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| {
+                        s.char
+                            .inventory
+                            .iter()
+                            .find(|i| i.uid == result.uid)
+                            .map(|i| i.name.clone())
+                    })
+                    .unwrap_or_else(|| result.uid.clone());
+                if result.ok {
+                    let n = result.new_upgrade.unwrap_or_default();
+                    self.push_log(LogKind::Loot, format!("Улучшение: «{name}» → +{n}"));
+                } else if result.item_destroyed == Some(true) {
+                    self.push_log(
+                        LogKind::Crime,
+                        format!("ПРОВАЛ улучшения — «{name}» РАЗРУШЕН"),
+                    );
+                } else {
+                    self.push_log(
+                        LogKind::Loot,
+                        format!("Провал улучшения: «{name}» (без изменений)"),
+                    );
+                }
+                self.upgrade = None;
                 vec![]
             }
             "evt/quest/progress" | "evt/quest/updated" => {
@@ -693,6 +823,30 @@ impl AppStore {
         self.death = None;
     }
 
+    /// Открыть модалку улучшения (ФР-10); превью придёт от сервера.
+    pub fn open_upgrade(&mut self, item_uid: String, item_name: String) {
+        self.sheet_error = None;
+        self.upgrade = Some(UpgradeView {
+            item_uid,
+            item_name,
+            preview: None,
+        });
+    }
+
+    pub fn close_upgrade(&mut self) {
+        self.upgrade = None;
+    }
+
+    /// Открыть инкрустацию посоха (ФР-09).
+    pub fn open_socketing(&mut self, staff_uid: String) {
+        self.sheet_error = None;
+        self.socketing = Some(staff_uid);
+    }
+
+    pub fn close_socketing(&mut self) {
+        self.socketing = None;
+    }
+
     /// Сброс в экран входа с очисткой сессии/персонажа (чистый сброс, DoD M2).
     fn reset_to_login(&mut self, reason: Option<String>) -> Vec<Effect> {
         let login = self
@@ -711,6 +865,8 @@ impl AppStore {
         self.death = None;
         self.item_detail = None;
         self.entity_detail = None;
+        self.upgrade = None;
+        self.socketing = None;
         self.session_login = None;
         login
             .map(|login| vec![Effect::ForgetSession { login }])
@@ -755,6 +911,8 @@ impl AppStore {
         self.entity_detail = None;
         self.item_detail = None;
         self.death = None;
+        self.upgrade = None;
+        self.socketing = None;
         self.notice = None;
     }
 
@@ -775,6 +933,27 @@ impl AppStore {
             .map(|s| s.char_slot_limit)
             .unwrap_or(0);
         (used, limit)
+    }
+}
+
+/// Применение `payload` ack'а `socket.*`: `{staff, rune?}` → инвентарь.
+fn apply_item_patch(ch: &mut ld2_protocol::types::CharacterState, payload: &serde_json::Value) {
+    if let Some(staff) = payload.get("staff").filter(|v| !v.is_null()) {
+        if let Ok(staff) =
+            serde_json::from_value::<ld2_protocol::types::ItemSnapshot>(staff.clone())
+        {
+            if let Some(slot) = ch.inventory.iter_mut().find(|i| i.uid == staff.uid) {
+                *slot = staff;
+            }
+        }
+    }
+    if let Some(rune) = payload.get("rune").filter(|v| !v.is_null()) {
+        if let Ok(rune) = serde_json::from_value::<ld2_protocol::types::ItemSnapshot>(rune.clone())
+        {
+            if !ch.inventory.iter().any(|i| i.uid == rune.uid) {
+                ch.inventory.push(rune);
+            }
+        }
     }
 }
 
@@ -1265,6 +1444,161 @@ mod tests {
         assert_eq!(sword.xp, 662, "прогресс навыка обновлён (ФР-04)");
         assert_eq!(snap.char.xp_pool, 70);
         assert_eq!(store.log.back().unwrap().kind, LogKind::Xp);
+    }
+
+    // ─── M5: улучшение, инкрустация, патчи предметов ────────────────────────
+
+    #[test]
+    fn upgrade_lifecycle_open_preview_result() {
+        let mut store = in_game();
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        let view = store.upgrade.as_ref().expect("модалка открыта");
+        assert!(view.preview.is_none(), "превью ещё не пришло");
+
+        // ack превью заполняет view.
+        store.on_sheet_sent(Act::Preview);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            21,
+            None,
+            &serde_json::json!({
+                "preview_id": "pv_7",
+                "delta": { "upgrade": "+3" },
+                "cost": { "gold": 300, "materials": { "rune_dust": 2 } },
+                "chance": 0.75
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let view = store.upgrade.as_ref().expect("view");
+        assert_eq!(view.item_uid, "i_17");
+        assert_eq!(view.preview.as_ref().unwrap()["preview_id"], "pv_7");
+
+        // Результат закрывает модалку и пишет лог.
+        store.apply(evt(
+            "evt/upgrade/result",
+            serde_json::json!({
+                "uid": "i_17", "ok": true, "new_upgrade": 3,
+                "item_destroyed": false, "cost": { "gold": 300 }
+            }),
+        ));
+        assert!(store.upgrade.is_none(), "модалка закрыта по результату");
+        let last = store.log.back().expect("лог");
+        assert_eq!(last.kind, LogKind::Loot);
+        assert!(last.text.contains("+3"), "{}", last.text);
+    }
+
+    #[test]
+    fn upgrade_failure_destroys_and_logs_crime() {
+        let mut store = in_game();
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.apply(evt(
+            "evt/upgrade/result",
+            serde_json::json!({
+                "uid": "i_17", "ok": false, "item_destroyed": true, "cost": {}
+            }),
+        ));
+        assert!(store.upgrade.is_none());
+        let last = store.log.back().expect("лог");
+        assert_eq!(
+            last.kind,
+            LogKind::Crime,
+            "разрушение — в журнал преступлений/потерь"
+        );
+        assert!(last.text.contains("РАЗРУШЕН"), "{}", last.text);
+    }
+
+    #[test]
+    fn item_state_patch_updates_upgrade_and_sockets() {
+        let mut store = in_game();
+        // Патч уровня (+N).
+        store.apply(evt(
+            "evt/item/state",
+            serde_json::json!({ "uid": "i_17", "patch": { "upgrade": 3 } }),
+        ));
+        let item = store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == "i_17")
+            .unwrap();
+        assert_eq!(item.upgrade, 3, "уровень обновлён");
+
+        // Патч целым предметом (сокеты после инкрустации).
+        let mut full = fixtures::staff_item();
+        full.sockets.as_mut().unwrap()[1].rune = Some(ld2_protocol::types::RuneInfo {
+            name: "Руна льда".into(),
+            spell: "ice_shard".into(),
+            charges: 5,
+            max: 5,
+        });
+        store.apply(evt(
+            "evt/item/state",
+            serde_json::json!({ "uid": "i_17", "patch": { "item": full } }),
+        ));
+        let item = store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == "i_17")
+            .unwrap();
+        assert_eq!(
+            item.sockets.as_ref().unwrap()[1]
+                .rune
+                .as_ref()
+                .unwrap()
+                .name,
+            "Руна льда",
+            "сокет применён"
+        );
+    }
+
+    #[test]
+    fn socket_ack_applies_staff_and_rune() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Socket);
+        // Ack извлечения: посох обновлён + руна добавлена в инвентарь.
+        let mut staff = fixtures::staff_item();
+        staff.sockets.as_mut().unwrap()[0].rune = None;
+        let rune = fixtures::rune_item("rune_i_17_0");
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            22,
+            Some(1020),
+            &serde_json::json!({ "staff": staff, "rune": rune }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let snap = store.snapshot.as_ref().unwrap();
+        let staff = snap
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == "i_17")
+            .unwrap();
+        assert!(
+            staff.sockets.as_ref().unwrap()[0].rune.is_none(),
+            "сокет пуст"
+        );
+        assert!(
+            snap.char.inventory.iter().any(|i| i.uid == "rune_i_17_0"),
+            "руна в инвентаре"
+        );
+        assert!(store.sheet_error.is_none());
+    }
+
+    #[test]
+    fn cast_error_goes_to_world_error_not_sheet() {
+        let mut store = in_game();
+        store.on_world_sent(Act::Cast);
+        let ack = ld2_protocol::Ack::error(23, None, &ErrorCode::NotEnoughMp, "не хватает маны");
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.world_error.as_deref(), Some("не хватает маны"));
+        assert!(store.sheet_error.is_none(), "каст — не лист");
     }
 
     #[test]

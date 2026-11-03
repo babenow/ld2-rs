@@ -112,6 +112,11 @@ pub struct MagicConfig {
 pub struct ManaConfig {
     pub regen_out_s: u64,
     pub regen_in_pct_s: f64,
+    /// Стоимость каста руны в мане (ФР-09: тултип hotbar).
+    /// 0/отсутствие — стоимость неизвестна, тултип скрывает (аддитивная
+    /// совместимость со старыми серверами, §11).
+    #[serde(default)]
+    pub rune_cost: i64,
 }
 
 impl SessionConfig {
