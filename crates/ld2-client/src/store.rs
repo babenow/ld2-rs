@@ -5,14 +5,17 @@
 //! Побочные эффекты (keyring, токен в транспорт) возвращаются из [`AppStore::apply`]
 //! и исполняются слоем приложения — редьюсер остаётся детерминированным.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use ld2_protocol::evt::{
-    CharDeath, CharStats, CharXp, ChatMessage, CombatHit, CorpseCreated, CorpseLooted, CrimeAdded,
-    CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove, EntitySpawn, ItemAdded, ItemRemoved,
-    LocationChanged, MagicCast, StateSnapshot,
+    CharDeath, CharStats, CharXp, ChatMessage, CombatCooldown, CombatHit, CorpseCreated,
+    CorpseLooted, CrimeAdded, CrimeRemoved, CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove,
+    EntitySpawn, ItemAdded, ItemRemoved, LocationChanged, MagicCast, StateSnapshot,
+    TimeSync as TimeSyncEvent,
 };
-use ld2_protocol::types::{CharacterSummary, Hp, LocationSnapshot, QuestState};
+use ld2_protocol::types::{
+    CharacterSummary, CrimeLogEntry, CrimeStatus, Hp, LocationSnapshot, QuestState,
+};
 use ld2_protocol::{ErrorCode, SessionConfig};
 
 use crate::transport::{IngressEvent, TransportStatus};
@@ -53,6 +56,8 @@ pub enum Act {
     Socket,
     /// Каст из hotbar (ФР-09) — ошибки в мир (`E_NOT_ENOUGH_MP`…).
     Cast,
+    /// `cmd/crime.log` → журнал нарушений в правую панель (ФР-11).
+    CrimeLog,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -136,6 +141,18 @@ pub struct AppStore {
     pub upgrade: Option<UpgradeView>,
     /// Открытая инкрустация (ФР-09): uid посоха.
     pub socketing: Option<String>,
+    /// Смещение часов сервера (evt/time.sync): server = local + offset.
+    pub time_offset: i64,
+    /// Выбранная цель (ФР-05): клик по строке / Tab.
+    pub target: Option<String>,
+    /// Кулдауны активных навыков: skill_id → until epoch (ФР-05).
+    pub combat_cooldowns: BTreeMap<String, i64>,
+    /// Журнал нарушений из `cmd/crime.log` (ФР-11).
+    pub crime_log: Vec<CrimeLogEntry>,
+    /// Журнал уже загружен (вкладка «Статусы» запрашивает один раз).
+    pub crime_log_loaded: bool,
+    /// Подтверждение «забрать лут трупа ИГРОКА» (ФР-11): (uid, name).
+    pub loot_confirm: Option<(String, String)>,
     /// Нейтральное сообщение (создан/удалён/транспорт).
     pub notice: Option<String>,
     /// Логин последней попытки входа — предзаполнение формы.
@@ -173,6 +190,12 @@ impl AppStore {
             item_detail: None,
             upgrade: None,
             socketing: None,
+            time_offset: 0,
+            target: None,
+            combat_cooldowns: BTreeMap::new(),
+            crime_log: Vec::new(),
+            crime_log_loaded: false,
+            loot_confirm: None,
             notice: None,
             last_login: None,
             log: VecDeque::new(),
@@ -253,6 +276,7 @@ impl AppStore {
                 | Act::Upgrade
                 | Act::Socket => self.sheet_error = Some(msg),
                 Act::Cast => self.world_error = Some(msg),
+                Act::CrimeLog => self.sheet_error = Some(msg),
             }
             return vec![];
         }
@@ -295,6 +319,17 @@ impl AppStore {
             }
             Act::Attack | Act::Examine | Act::Drop | Act::Upgrade | Act::Cast => {
                 // результат событиями (§8)
+            }
+            Act::CrimeLog => {
+                // §7: ack несёт журнал нарушений целиком.
+                if let Some(payload) = ack.payload.as_ref() {
+                    if let Ok(entries) =
+                        serde_json::from_value::<Vec<CrimeLogEntry>>(payload["entries"].clone())
+                    {
+                        self.crime_log = entries;
+                        self.crime_log_loaded = true;
+                    }
+                }
             }
             Act::Preview => {
                 if let (Some(upgrade), Some(payload)) =
@@ -339,6 +374,28 @@ impl AppStore {
             return vec![];
         };
         match msg_type {
+            "evt/time.sync" => {
+                // §1.1: server = local + offset — база всех обратных отсчётов.
+                let Ok(sync) = serde_json::from_value::<TimeSyncEvent>(payload) else {
+                    return vec![];
+                };
+                let local = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                self.time_offset = sync.server_ts - local;
+                vec![]
+            }
+            "evt/combat/cooldown" => {
+                // ФР-05: блокировка действия до until_epoch.
+                let Ok(cd) = serde_json::from_value::<CombatCooldown>(payload) else {
+                    return vec![];
+                };
+                if let Some(skill) = cd.skill_id {
+                    self.combat_cooldowns.insert(skill, cd.until_epoch);
+                }
+                vec![]
+            }
             "evt/session.start" => {
                 let Ok(cfg) = serde_json::from_value::<SessionConfig>(payload) else {
                     tracing::warn!("некорректный evt/session.start — игнор");
@@ -390,6 +447,26 @@ impl AppStore {
                     return vec![];
                 };
                 let name = changed.location.name.clone();
+                let pvp = changed.location.flags.iter().any(|f| f == "pvp");
+                let active: Vec<String> = {
+                    let now = local_epoch() + self.time_offset;
+                    self.snapshot
+                        .as_ref()
+                        .map(|s| {
+                            filter_active_statuses(&s.char.crime.statuses, now)
+                                .iter()
+                                .map(|s| s.kind.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                // Смена локации — новый контекст: старые тосты устарели.
+                self.notice = None;
+                if pvp && !active.is_empty() {
+                    // ФР-11: предупреждение при входе в PvP-зону со статусом.
+                    self.notice =
+                        Some(format!("⚠ PvP-зона: активны статусы {}", active.join(", ")));
+                }
                 self.push_visited(&changed.location);
                 if let Some(snap) = self.snapshot.as_mut() {
                     snap.location = changed.location;
@@ -474,6 +551,10 @@ impl AppStore {
                 }
                 if let Some(name) = name {
                     self.push_log(LogKind::System, format!("{name} исчезает"));
+                }
+                // ФР-05: авто-сброс цели при исчезновении.
+                if self.target.as_deref() == Some(gone.entity_id.as_str()) {
+                    self.target = None;
                 }
                 vec![]
             }
@@ -599,6 +680,7 @@ impl AppStore {
                     ),
                 );
                 self.death = Some(death);
+                self.target = None;
                 vec![]
             }
             "evt/magic/cast" => {
@@ -743,6 +825,10 @@ impl AppStore {
                 let Ok(update) = serde_json::from_value::<CrimeStatusUpdate>(payload) else {
                     return vec![];
                 };
+                // ФР-11: полная замена списка — клиент НЕ пересчитывает blend (§4.10).
+                if let Some(snap) = self.snapshot.as_mut() {
+                    snap.char.crime.statuses = update.statuses.clone();
+                }
                 let text = update.log_hint.unwrap_or_else(|| {
                     let kinds: Vec<&str> =
                         update.statuses.iter().map(|s| s.kind.as_str()).collect();
@@ -759,6 +845,15 @@ impl AppStore {
                 let Ok(added) = serde_json::from_value::<CrimeAdded>(payload) else {
                     return vec![];
                 };
+                // Журнал + обновление бейджей (досерверный срок — как есть).
+                self.crime_log.push(added.log_entry.clone());
+                if let Some(snap) = self.snapshot.as_mut() {
+                    snap.char
+                        .crime
+                        .statuses
+                        .retain(|s| s.kind != added.status.kind);
+                    snap.char.crime.statuses.push(added.status);
+                }
                 self.push_log(
                     LogKind::Crime,
                     format!(
@@ -766,6 +861,16 @@ impl AppStore {
                         added.log_entry.kind, added.log_entry.delta_s, added.log_entry.total_s
                     ),
                 );
+                vec![]
+            }
+            "evt/crime/removed" => {
+                let Ok(removed) = serde_json::from_value::<CrimeRemoved>(payload) else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    snap.char.crime.statuses.retain(|s| s.kind != removed.kind);
+                }
+                self.push_log(LogKind::Crime, format!("Статус «{}» снят", removed.kind));
                 vec![]
             }
             "evt/chat/message" => {
@@ -847,6 +952,48 @@ impl AppStore {
         self.socketing = None;
     }
 
+    /// Выбор цели кликом по строке сущности (ФР-05).
+    pub fn select_target(&mut self, entity_id: impl Into<String>) {
+        self.target = Some(entity_id.into());
+    }
+
+    /// Цикл целей по Tab: первый монстр → следующий → (wrap) (ФР-05).
+    pub fn cycle_target(&mut self) {
+        let Some(snap) = self.snapshot.as_ref() else {
+            self.target = None;
+            return;
+        };
+        let monsters: Vec<&str> = snap
+            .location
+            .entities
+            .iter()
+            .filter(|e| e.kind == ld2_protocol::types::EntityKind::Monster)
+            .map(|e| e.id.as_str())
+            .collect();
+        if monsters.is_empty() {
+            self.target = None;
+            return;
+        }
+        let next = match self
+            .target
+            .as_deref()
+            .and_then(|t| monsters.iter().position(|m| *m == t))
+        {
+            Some(pos) => monsters[(pos + 1) % monsters.len()].to_string(),
+            None => monsters[0].to_string(),
+        };
+        self.target = Some(next);
+    }
+
+    /// Подтверждение «забрать лут трупа игрока» (ФР-11).
+    pub fn set_loot_confirm(&mut self, uid: String, name: String) {
+        self.loot_confirm = Some((uid, name));
+    }
+
+    pub fn clear_loot_confirm(&mut self) {
+        self.loot_confirm = None;
+    }
+
     /// Сброс в экран входа с очисткой сессии/персонажа (чистый сброс, DoD M2).
     fn reset_to_login(&mut self, reason: Option<String>) -> Vec<Effect> {
         let login = self
@@ -867,6 +1014,8 @@ impl AppStore {
         self.entity_detail = None;
         self.upgrade = None;
         self.socketing = None;
+        self.target = None;
+        self.loot_confirm = None;
         self.session_login = None;
         login
             .map(|login| vec![Effect::ForgetSession { login }])
@@ -934,6 +1083,24 @@ impl AppStore {
             .unwrap_or(0);
         (used, limit)
     }
+}
+
+/// Локальное время в epoch-секундах.
+pub fn local_epoch() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Активные статусы на момент `now` (epoch): истёвшие скрываются локально —
+/// fallback без событий (ФР-11). Клиент НЕ пересчитывает сроки (§4.10).
+pub fn filter_active_statuses(statuses: &[CrimeStatus], now: i64) -> Vec<CrimeStatus> {
+    statuses
+        .iter()
+        .filter(|s| s.expires_at > now)
+        .cloned()
+        .collect()
 }
 
 /// Применение `payload` ack'а `socket.*`: `{staff, rune?}` → инвентарь.
@@ -1599,6 +1766,198 @@ mod tests {
         store.apply(IngressEvent::Ack(ack));
         assert_eq!(store.world_error.as_deref(), Some("не хватает маны"));
         assert!(store.sheet_error.is_none(), "каст — не лист");
+    }
+
+    // ─── M6: время, цель, кулдауны, статусы ─────────────────────────────────
+
+    #[test]
+    fn time_sync_calibrates_offset() {
+        let mut store = in_game();
+        let server_ts = local_epoch() + 1000;
+        store.apply(evt(
+            "evt/time.sync",
+            serde_json::json!({ "server_ts": server_ts, "rtt_hint_ms": 1 }),
+        ));
+        assert!(
+            (990..=1010).contains(&store.time_offset),
+            "offset ≈ +1000: {}",
+            store.time_offset
+        );
+    }
+
+    #[test]
+    fn target_cycle_in_forest_and_autoclear() {
+        let mut store = in_game(); // деревня: только NPC — монстров нет
+        store.cycle_target();
+        assert!(store.target.is_none(), "в деревне монстров нет");
+
+        let payload = serde_json::to_value(LocationChanged {
+            location: fixtures::forest(),
+        })
+        .unwrap();
+        store.apply(evt("evt/location/changed", payload));
+
+        store.select_target("p_77");
+        assert_eq!(store.target.as_deref(), Some("p_77"));
+
+        store.cycle_target(); // монстр → цель
+        assert_eq!(store.target.as_deref(), Some("m_3"));
+        store.cycle_target(); // один монстр → wrap на себя
+        assert_eq!(store.target.as_deref(), Some("m_3"));
+
+        // Гибель цели → авто-сброс (ФР-05).
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({ "entity_id": "m_3", "location_id": "l_forest" }),
+        ));
+        assert!(store.target.is_none(), "цель исчезла → сброс");
+    }
+
+    #[test]
+    fn combat_cooldown_recorded() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/combat/cooldown",
+            serde_json::json!({ "skill_id": "power_strike", "until_epoch": 123 }),
+        ));
+        assert_eq!(store.combat_cooldowns.get("power_strike"), Some(&123));
+    }
+
+    #[test]
+    fn crime_statuses_replace_add_remove_without_recalculation() {
+        let mut store = in_game();
+        // Полная замена (§8): клиент хранит как есть, без пересчёта blend (§4.10).
+        let server_expiry = local_epoch() + 5000;
+        store.apply(evt(
+            "evt/crime/status",
+            serde_json::json!({
+                "statuses": [
+                    { "kind": "murderer", "severity": "high", "expires_at": server_expiry },
+                    { "kind": "marauder", "severity": "medium", "expires_at": local_epoch() + 2000 }
+                ],
+                "log_hint": null
+            }),
+        ));
+        let statuses = &store.snapshot.as_ref().unwrap().char.crime.statuses;
+        assert_eq!(statuses.len(), 2);
+        assert_eq!(
+            statuses[0].expires_at, server_expiry,
+            "срок сервера не изменён клиентом"
+        );
+
+        // Добавление: журнал дополняется, бейдж обновляется по kind.
+        store.apply(evt(
+            "evt/crime/added",
+            serde_json::json!({
+                "status": { "kind": "thief", "severity": "medium", "expires_at": local_epoch() + 1000 },
+                "log_entry": { "kind": "thief", "at": local_epoch(), "delta_s": 1000, "total_s": 8000 }
+            }),
+        ));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.crime.statuses.len(),
+            3
+        );
+        assert_eq!(store.crime_log.len(), 1, "журнал дополнен");
+
+        // Снятие статуса.
+        store.apply(evt(
+            "evt/crime/removed",
+            serde_json::json!({ "kind": "marauder" }),
+        ));
+        let kinds: Vec<String> = store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .crime
+            .statuses
+            .iter()
+            .map(|s| s.kind.clone())
+            .collect();
+        assert_eq!(kinds, vec!["murderer".to_string(), "thief".to_string()]);
+    }
+
+    #[test]
+    fn pvp_entry_with_active_status_notices() {
+        let mut store = in_game();
+        // Активный статус (серверный срок в будущем).
+        store.apply(evt(
+            "evt/crime/status",
+            serde_json::json!({
+                "statuses": [{ "kind": "murderer", "severity": "high",
+                               "expires_at": local_epoch() + 5000 }]
+            }),
+        ));
+
+        let payload = serde_json::to_value(LocationChanged {
+            location: fixtures::forest(), // flags: ["pvp"]
+        })
+        .unwrap();
+        store.apply(evt("evt/location/changed", payload));
+        let notice = store.notice.clone().expect("предупреждение о PvP");
+        assert!(notice.contains("PvP"), "{notice}");
+        assert!(notice.contains("murderer"), "{notice}");
+
+        // Без статусов (после снятия) — тоста нет.
+        store.apply(evt(
+            "evt/crime/removed",
+            serde_json::json!({ "kind": "murderer" }),
+        ));
+        store.apply(evt(
+            "evt/location/changed",
+            serde_json::to_value(LocationChanged {
+                location: fixtures::village(),
+            })
+            .unwrap(),
+        ));
+        store.apply(evt(
+            "evt/location/changed",
+            serde_json::to_value(LocationChanged {
+                location: fixtures::forest(),
+            })
+            .unwrap(),
+        ));
+        assert!(store.notice.is_none(), "нет статусов → нет тоста");
+    }
+
+    #[test]
+    fn crime_log_loaded_from_ack() {
+        let mut store = in_game();
+        assert!(!store.crime_log_loaded);
+        store.on_sheet_sent(Act::CrimeLog);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            30,
+            None,
+            &serde_json::json!({
+                "entries": [{ "kind": "marauder", "at": 100, "delta_s": 3471, "total_s": 25071 }]
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.crime_log_loaded);
+        assert_eq!(store.crime_log.len(), 1);
+        assert_eq!(store.crime_log[0].delta_s, 3471);
+    }
+
+    #[test]
+    fn filter_active_statuses_hides_expired() {
+        let now = 1000;
+        let statuses = vec![
+            CrimeStatus {
+                kind: "old".into(),
+                severity: ld2_protocol::types::Severity::High,
+                expires_at: now - 1,
+            },
+            CrimeStatus {
+                kind: "fresh".into(),
+                severity: ld2_protocol::types::Severity::Medium,
+                expires_at: now + 60,
+            },
+        ];
+        let active = filter_active_statuses(&statuses, now);
+        assert_eq!(active.len(), 1, "истёвший скрыт (ФР-11 fallback)");
+        assert_eq!(active[0].kind, "fresh");
+        assert_eq!(statuses.len(), 2, "источник не мутирован");
     }
 
     #[test]

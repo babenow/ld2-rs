@@ -130,6 +130,22 @@ pub enum Key {
     InsertRune,
     ExtractRune,
     NoRunes,
+    // M6: бой и статусы (ФР-05, ФР-11)
+    TargetLabel,
+    BtnFlee,
+    TabHint,
+    PowerStrike,
+    StatusesTab,
+    CrimeJournal,
+    ReloadJournal,
+    TotalLabel,
+    TakeLoot,
+    LootPlayerWarn,
+    NoStatuses,
+    JournalEmpty,
+    DurHm,
+    DurMs,
+    DurS,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -240,6 +256,21 @@ mod tests {
         Key::InsertRune,
         Key::ExtractRune,
         Key::NoRunes,
+        Key::TargetLabel,
+        Key::BtnFlee,
+        Key::TabHint,
+        Key::PowerStrike,
+        Key::StatusesTab,
+        Key::CrimeJournal,
+        Key::ReloadJournal,
+        Key::TotalLabel,
+        Key::TakeLoot,
+        Key::LootPlayerWarn,
+        Key::NoStatuses,
+        Key::JournalEmpty,
+        Key::DurHm,
+        Key::DurMs,
+        Key::DurS,
     ];
 
     #[test]

@@ -96,5 +96,21 @@ pub(super) fn t(key: Key) -> &'static str {
         InsertRune => "Вставить",
         ExtractRune => "Извлечь",
         NoRunes => "Рун нет в инвентаре",
+        // M6: бой и статусы
+        TargetLabel => "Цель",
+        BtnFlee => "Отступить",
+        TabHint => "Tab — смена цели",
+        PowerStrike => "Мощный удар",
+        StatusesTab => "Статусы",
+        CrimeJournal => "Журнал нарушений",
+        ReloadJournal => "Обновить журнал",
+        TotalLabel => "итого",
+        TakeLoot => "Забрать",
+        LootPlayerWarn => "Забрать лут трупа ИГРОКА? Вы получите статус «Мародёр»",
+        NoStatuses => "Активных статусов нет",
+        JournalEmpty => "Журнал пока пуст",
+        DurHm => "{h}ч{m}м",
+        DurMs => "{m}м{s}с",
+        DurS => "{s}с",
     }
 }

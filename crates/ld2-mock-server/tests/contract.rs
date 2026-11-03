@@ -814,3 +814,114 @@ async fn socket_extract_insert_roundtrip() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_NO_RUNE_SLOT", "сокет 1 пуст");
 }
+
+// ─── M6: преступность и бой ─────────────────────────────────────────────────
+
+/// **DoD M6:** формула §4.10 на моке — сбор лута трупа игрока вешает
+/// «Мародёр» со сроком `k·t·(1 − T/T_MAX)` (частичное сложение, НЕ полное).
+#[tokio::test]
+async fn corpse_loot_maraduer_partial_summation_formula() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    c.login().await;
+    c.select().await;
+    c.send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    c.ack(c.seq).await;
+
+    // Осмотр трупа игрока: лут доступен.
+    let seq = c
+        .send("cmd/entity.info", json!({ "entity_id": "cor_9" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["payload"]["was_player"], true);
+    assert_eq!(ack["payload"]["looted"], false);
+    let loot_uid = ack["payload"]["loot"][0]["uid"]
+        .as_str()
+        .expect("uid лута")
+        .to_string();
+
+    // Сбор лута → статус «Мародёр».
+    let seq = c
+        .send("cmd/item.use", json!({ "item_uid": loot_uid }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "сбор лута: {ack}");
+
+    let _added = c.wait(|v| v["type"] == "evt/item/added").await;
+    let looted = c.wait(|v| v["type"] == "evt/corpse/looted").await;
+    assert_eq!(looted["payload"]["was_player"], true);
+
+    let added = c.wait(|v| v["type"] == "evt/crime/added").await;
+    let entry = &added["payload"]["log_entry"];
+    assert_eq!(entry["kind"], "marauder");
+    let delta = entry["delta_s"].as_i64().expect("вклад");
+    let total = entry["total_s"].as_i64().expect("итог");
+    let before = total - delta;
+
+    // Формула §4.10: delta = round(k · t · (1 − T/T_MAX)), k=0.5, t=7200.
+    let expected = (0.5_f64 * 7200.0 * (1.0 - before as f64 / 604_800.0)).round() as i64;
+    assert!(
+        (delta - expected).abs() <= 1,
+        "вклад {delta} ≠ формуле {expected} (T={before})"
+    );
+    assert!(
+        delta < 7200,
+        "частичное сложение: вклад {delta} < базы 7200 (§4.10)"
+    );
+    assert_eq!(total, before + delta, "итог = T + вклад");
+
+    // Статус применён сервером (полная замена §8).
+    let status = c.wait(|v| v["type"] == "evt/crime/status").await;
+    let marauder = status["payload"]["statuses"]
+        .as_array()
+        .expect("статусы")
+        .iter()
+        .find(|s| s["kind"] == "marauder")
+        .expect("мараудёр назначен");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let expires = marauder["expires_at"].as_i64().expect("срок");
+    assert!((expires - now - delta).abs() <= 2, "срок ≈ now + вклад");
+
+    // Повторный сбор невозможен.
+    let seq = c
+        .send("cmd/item.use", json!({ "item_uid": loot_uid }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_ITEM_GONE", "лут уже собран");
+}
+
+/// ФР-05: активка шлёт hit + evt/combat/cooldown (требует sword ≥ 5 —
+/// фикстура M6 обновлена до rank 5).
+#[tokio::test]
+async fn skill_use_emits_hit_and_cooldown() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    c.login().await;
+    c.select().await;
+    c.send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    c.ack(c.seq).await;
+
+    let seq = c
+        .send(
+            "cmd/skill.use",
+            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["result"], "ok",
+        "активка проходит требование rank 5: {ack}"
+    );
+
+    let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
+    assert_eq!(hit["payload"]["amount"], 13, "урон активки");
+    let cd = c.wait(|v| v["type"] == "evt/combat/cooldown").await;
+    assert_eq!(cd["payload"]["skill_id"], "power_strike");
+    let until = cd["payload"]["until_epoch"].as_i64().expect("до");
+    assert!(until > 0, "кулдаун в будущем");
+}

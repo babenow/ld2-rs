@@ -135,7 +135,7 @@ pub fn character_summary() -> CharacterSummary {
         id: "c1".into(),
         name: "Ким".into(),
         location: "Черный лес".into(),
-        summary: Some("Навыки: меч 3, аркана 1".into()),
+        summary: Some("Навыки: меч 5, аркана 1".into()),
         crime: vec!["murderer".into()],
         online: true,
         extra: Default::default(),
@@ -332,9 +332,11 @@ pub fn character(id: &str, name: &str) -> CharacterState {
             SkillSnapshot {
                 id: "sword".into(),
                 name: Some("Владение мечом".into()),
-                rank: 3,
+                // rank 5 — открывает активку «Мощный удар» (skills.md §4);
+                // порог формулы §2.2: round(120 · 1.32^5) = 1471.
+                rank: 5,
                 xp: 612,
-                xp_to_next: 480,
+                xp_to_next: 1471,
             },
             SkillSnapshot {
                 id: "arcana".into(),
@@ -365,7 +367,9 @@ pub fn character(id: &str, name: &str) -> CharacterState {
             statuses: vec![CrimeStatus {
                 kind: "murderer".into(),
                 severity: Severity::High,
-                expires_at: 1_762_150_000,
+                // Динамический срок (M6): фикстура 2025 уже истекла бы —
+                // живой отсчёт = now + murderer_s (конфиг §5).
+                expires_at: now_epoch() + 21_600,
             }],
         },
         quests: vec![quest_boars()],
