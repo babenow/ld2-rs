@@ -1982,7 +1982,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
 name = "ld2-client"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -2005,7 +2005,7 @@ dependencies = [
 
 [[package]]
 name = "ld2-mock-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "ld2-protocol"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
