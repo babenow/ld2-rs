@@ -925,3 +925,44 @@ async fn skill_use_emits_hit_and_cooldown() {
     let until = cd["payload"]["until_epoch"].as_i64().expect("до");
     assert!(until > 0, "кулдаун в будущем");
 }
+
+// ─── M7: квесты ─────────────────────────────────────────────────────────────
+
+/// M7: убийство двигает цель квеста «к сдаче», сдача начисляет пул опыта
+/// (evt/quest/updated {pool_left} — §7, ФР-12).
+#[tokio::test]
+async fn quest_progress_then_turn_in_awards_pool() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    c.login().await;
+    c.select().await;
+    c.send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    c.ack(c.seq).await;
+
+    // Убийство волка (4/5 → 5/5 «к сдаче»).
+    for _ in 0..3 {
+        let seq = c
+            .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+            .await;
+        let ack = c.ack(seq).await;
+        assert_eq!(ack["result"], "ok");
+    }
+    let progress = c.wait(|v| v["type"] == "evt/quest/progress").await;
+    assert_eq!(progress["payload"]["quest"]["id"], "q_wolves");
+    assert_eq!(progress["payload"]["quest"]["state"], "turn_in");
+    assert_eq!(progress["payload"]["quest"]["goals"][0]["cur"], 5);
+
+    // Сдача: пул 120 + 150 = 270 (§7).
+    let seq = c
+        .send("cmd/quest.turn_in", json!({ "quest_id": "q_wolves" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "сдача: {ack}");
+    let updated = c.wait(|v| v["type"] == "evt/quest/updated").await;
+    assert_eq!(updated["payload"]["quest"]["state"], "done");
+    assert_eq!(
+        updated["payload"]["pool_left"], 270,
+        "пул: 120 стартовых + 150 награды"
+    );
+}
