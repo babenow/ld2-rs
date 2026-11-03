@@ -66,5 +66,22 @@ pub(super) fn t(key: Key) -> &'static str {
         LootLabel => "Лут",
         NoExits => "Выходов нет",
         CorpsePlayerHint => "труп игрока: лут вешает статус «Мародёр»",
+        // M4: лист/инвентарь/смерть
+        SheetSkills => "Навыки",
+        SheetAttrs => "Атрибуты",
+        SheetInventory => "Инвентарь",
+        MaxLabel => "макс",
+        EquipLabel => "Экипировка",
+        EmptySlot => "пусто",
+        MenuUse => "Использовать",
+        MenuEquip => "Надеть",
+        MenuUnequip => "Снять",
+        MenuDrop => "Выбросить",
+        MenuDesc => "Описание",
+        DeathTitle => "Вы погибли",
+        DeathLost => "Утрачено:",
+        DeathConfirm => "Возродиться",
+        ItemDescTitle => "Описание предмета",
+        ReqLabel => "Требует",
     }
 }

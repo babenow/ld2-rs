@@ -100,6 +100,23 @@ pub enum Key {
     LootLabel,
     NoExits,
     CorpsePlayerHint,
+    // M4: лист/инвентарь/смерть (ФР-04, ФР-06, ФР-07)
+    SheetSkills,
+    SheetAttrs,
+    SheetInventory,
+    MaxLabel,
+    EquipLabel,
+    EmptySlot,
+    MenuUse,
+    MenuEquip,
+    MenuUnequip,
+    MenuDrop,
+    MenuDesc,
+    DeathTitle,
+    DeathLost,
+    DeathConfirm,
+    ItemDescTitle,
+    ReqLabel,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -182,6 +199,22 @@ mod tests {
         Key::LootLabel,
         Key::NoExits,
         Key::CorpsePlayerHint,
+        Key::SheetSkills,
+        Key::SheetAttrs,
+        Key::SheetInventory,
+        Key::MaxLabel,
+        Key::EquipLabel,
+        Key::EmptySlot,
+        Key::MenuUse,
+        Key::MenuEquip,
+        Key::MenuUnequip,
+        Key::MenuDrop,
+        Key::MenuDesc,
+        Key::DeathTitle,
+        Key::DeathLost,
+        Key::DeathConfirm,
+        Key::ItemDescTitle,
+        Key::ReqLabel,
     ];
 
     #[test]

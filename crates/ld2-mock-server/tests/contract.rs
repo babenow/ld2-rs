@@ -597,3 +597,95 @@ async fn chaos_drops_connection_after_first_message() {
     // …потом соединение рвётся (клиент уйдёт в reconnect — T2/T4).
     c.wait_close().await;
 }
+
+// ─── M4.1: лут и смерть ─────────────────────────────────────────────────────
+
+/// Лут с монстра — автодобавление в инвентарь (ФР-07).
+#[tokio::test]
+async fn kill_drops_loot_into_inventory() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    c.login().await;
+    c.select().await;
+    c.send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    c.ack(c.seq).await;
+
+    for i in 0..3 {
+        let seq = c
+            .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+            .await;
+        let ack = c.ack(seq).await;
+        assert_eq!(ack["result"], "ok", "удар {i}");
+        if i == 2 {
+            let added = c.wait(|v| v["type"] == "evt/item/added").await;
+            let name = added["payload"]["item"]["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            assert!(name.contains("Волк"), "трофея с волка: {name}");
+        }
+    }
+
+    // Предмет реально в инвентаре: его можно надеть (иначе E_ITEM_GONE).
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": "loot_m_3", "slot": "body" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "трофея надевается: {ack}");
+}
+
+/// DoD M4-контракт: смерть → сводка утраченного → полная потеря → респаун.
+#[tokio::test]
+async fn death_scenario_loses_everything_and_respawns() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    c.login().await;
+    c.select().await;
+
+    let seq = c
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "location", "text": "/scenario death" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "триггер сценария: {ack}");
+
+    // ФР-06: сводка утраченного (посох, свиток, ингредиенты — стартовый набор).
+    let death = c.wait(|v| v["type"] == "evt/char/death").await;
+    assert_eq!(death["payload"]["victim_char"], true);
+    assert_eq!(death["payload"]["respawn"]["location_id"], "l_village");
+    let lost = death["payload"]["lost_items"].as_array().expect("сводка");
+    assert!(
+        lost.len() >= 4,
+        "утрачено всё: {} предметов, первый — {}",
+        lost.len(),
+        lost[0]["name"]
+    );
+
+    // Ресурсы восстановлены и респаун в деревню.
+    let stats = c.wait(|v| v["type"] == "evt/char/stats").await;
+    assert_eq!(
+        stats["payload"]["patch"]["hp"]["cur"], stats["payload"]["patch"]["hp"]["max"],
+        "hp полный после респауна"
+    );
+    let changed = c.wait(|v| v["type"] == "evt/location/changed").await;
+    assert_eq!(changed["payload"]["location"]["id"], "l_village");
+
+    // Инвентарь пуст — прежний предмет недоступен.
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": "i_17", "slot": "staff" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_ITEM_GONE",
+        "посох потерян при смерти"
+    );
+}

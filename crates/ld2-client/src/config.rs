@@ -28,6 +28,17 @@ pub struct Config {
     pub last_login: Option<String>,
 }
 
+impl Config {
+    /// Защита: пустой логин — не логин (иначе keyring ищет мусорную запись,
+    /// а macOS может зависнуть на диалоге доступа — M4-инцидент).
+    pub fn sanitize(mut self) -> Self {
+        if self.last_login.as_deref() == Some("") {
+            self.last_login = None;
+        }
+        self
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -62,7 +73,7 @@ impl ConfigStore {
             .with_context(|| format!("чтение конфига {}", self.path.display()))?;
         let cfg: Config = toml::from_str(&text)
             .with_context(|| format!("разбор конфига {}", self.path.display()))?;
-        Ok(cfg)
+        Ok(cfg.sanitize())
     }
 
     pub fn save(&self, cfg: &Config) -> Result<()> {
@@ -79,6 +90,16 @@ impl ConfigStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M4-инцидент: пустой last_login вёл к мусорному ключу keyring и
+    /// зависанию на диалоге доступа macOS — санитайзим при чтении.
+    #[test]
+    fn empty_last_login_is_sanitized_to_none() {
+        let parsed: Config =
+            toml::from_str("host = \"ws://127.0.0.1:24817/ws\"\nlang = \"ru\"\nlast_login = \"\"")
+                .expect("разбор");
+        assert_eq!(parsed.sanitize().last_login, None, "пустой логин → None");
+    }
 
     #[test]
     fn default_config_round_trip() {

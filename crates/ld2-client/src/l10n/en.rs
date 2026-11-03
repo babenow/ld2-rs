@@ -66,5 +66,22 @@ pub(super) fn t(key: Key) -> &'static str {
         LootLabel => "Loot",
         NoExits => "No exits",
         CorpsePlayerHint => "player corpse: looting applies Marauder status",
+        // M4: sheet/inventory/death
+        SheetSkills => "Skills",
+        SheetAttrs => "Attributes",
+        SheetInventory => "Inventory",
+        MaxLabel => "max",
+        EquipLabel => "Equipment",
+        EmptySlot => "empty",
+        MenuUse => "Use",
+        MenuEquip => "Equip",
+        MenuUnequip => "Unequip",
+        MenuDrop => "Drop",
+        MenuDesc => "Details",
+        DeathTitle => "You died",
+        DeathLost => "Lost:",
+        DeathConfirm => "Respawn",
+        ItemDescTitle => "Item details",
+        ReqLabel => "Requires",
     }
 }
