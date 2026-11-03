@@ -11,11 +11,14 @@
 //! - `cmd/ping` → `ack` + `evt/pong`, `cmd/time.sync` → `evt/time.sync`.
 //!
 //! Фикстуры — из канонических примеров документации (см. [`fixtures`]).
+//! Сквозные e2e-тесты управляют сервером через [`Knobs`].
 
 pub mod chaos;
 pub mod fixtures;
+pub mod knobs;
 pub mod server;
 pub mod session;
 
 pub use chaos::Chaos;
-pub use server::{serve, serve_with_listener, MockOptions};
+pub use knobs::Knobs;
+pub use server::{serve, serve_with_knobs, serve_with_listener, MockOptions};
