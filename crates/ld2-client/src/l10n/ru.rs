@@ -51,5 +51,20 @@ pub(super) fn t(key: Key) -> &'static str {
         HpLabel => "Здоровье",
         MpLabel => "Мана",
         XpPoolLabel => "Очки опыта",
+        // M3: мир
+        ExitsLabel => "Выходы",
+        PlayersLabel => "Игроки",
+        MonstersLabel => "Монстры",
+        NpcsLabel => "НПС",
+        CorpsesLabel => "Трупы",
+        HistoryLabel => "История",
+        LogLabel => "Лог мира",
+        Examine => "Осмотреть",
+        Attack => "Атаковать",
+        EntityDetailTitle => "Осмотр",
+        AltNavHint => "Alt+↑↓←→ — переходы",
+        LootLabel => "Лут",
+        NoExits => "Выходов нет",
+        CorpsePlayerHint => "труп игрока: лут вешает статус «Мародёр»",
     }
 }

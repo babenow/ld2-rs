@@ -5,8 +5,14 @@
 //! Побочные эффекты (keyring, токен в транспорт) возвращаются из [`AppStore::apply`]
 //! и исполняются слоем приложения — редьюсер остаётся детерминированным.
 
-use ld2_protocol::evt::StateSnapshot;
-use ld2_protocol::types::CharacterSummary;
+use std::collections::VecDeque;
+
+use ld2_protocol::evt::{
+    CharXp, ChatMessage, CombatHit, CorpseCreated, CorpseLooted, CrimeAdded, CrimeStatusUpdate,
+    EntityDespawn, EntityHp, EntityMove, EntitySpawn, ItemAdded, ItemRemoved, LocationChanged,
+    MagicCast, StateSnapshot,
+};
+use ld2_protocol::types::{CharacterSummary, Hp, LocationSnapshot, QuestState};
 use ld2_protocol::{ErrorCode, SessionConfig};
 
 use crate::transport::{IngressEvent, TransportStatus};
@@ -26,7 +32,48 @@ pub enum Act {
     Create,
     Select,
     Delete,
+    /// `location.move` — ошибки (закрытый выход) → `world_error`.
+    Move,
+    /// `combat.attack` → `world_error`.
+    Attack,
+    /// `entity.info` → `entity_detail`.
+    Examine,
 }
+
+/// Цветовой тип строки журнала мира (ФР-17; палитра §7.4 — в UI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogKind {
+    System,
+    Location,
+    /// Нападение персонажа (исходящий урон).
+    CombatOut,
+    /// Урон по персонажу (входящий).
+    CombatIn,
+    Magic,
+    Loot,
+    Crime,
+    Quest,
+    Xp,
+    Chat,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LogEntry {
+    pub kind: LogKind,
+    pub text: String,
+}
+
+/// Посещённая локация (ФР-03: кэш для истории; граф — v1.1, D9).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisitedLocation {
+    pub id: String,
+    pub name: String,
+}
+
+/// Ёмкость журнала мира (НФР §8: лог локации ≤ 10 000; M3 — 1000).
+const LOG_LIMIT: usize = 1000;
+/// Ёмкость истории посещённых.
+const VISITED_LIMIT: usize = 50;
 
 /// Побочные эффекты — исполняет слой приложения (не редьюсер).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,10 +100,18 @@ pub struct AppStore {
     pub login_error: Option<String>,
     pub create_error: Option<String>,
     pub select_error: Option<String>,
+    /// Ошибки действий мира (move/attack/examine), ФР-03.
+    pub world_error: Option<String>,
     /// Нейтральное сообщение (создан/удалён/транспорт).
     pub notice: Option<String>,
     /// Логин последней попытки входа — предзаполнение формы.
     pub last_login: Option<String>,
+    /// Журнал мира (ФР-17): ring-буфер [`LOG_LIMIT`].
+    pub log: VecDeque<LogEntry>,
+    /// История посещённых локаций (ФР-03), свежие в конце.
+    pub visited: Vec<VisitedLocation>,
+    /// Результат `entity.info` — модалка осмотра (включая лут трупа).
+    pub entity_detail: Option<serde_json::Value>,
     /// Логин текущей сессии — для ключа keyring (`<host>:<login>`).
     session_login: Option<String>,
 }
@@ -78,8 +133,12 @@ impl AppStore {
             login_error: None,
             create_error: None,
             select_error: None,
+            world_error: None,
             notice: None,
             last_login: None,
+            log: VecDeque::new(),
+            visited: Vec::new(),
+            entity_detail: None,
             session_login: None,
         }
     }
@@ -146,6 +205,7 @@ impl AppStore {
                 Act::Create => self.create_error = Some(msg),
                 Act::Select => self.select_error = Some(msg),
                 Act::Delete => self.notice = Some(msg),
+                Act::Move | Act::Attack | Act::Examine => self.world_error = Some(msg),
             }
             return vec![];
         }
@@ -155,6 +215,18 @@ impl AppStore {
             Act::Login => {}
             Act::Select => {}
             Act::Delete => {}
+            Act::Move => {
+                // ack несёт локацию (§7): применяем сразу, событие дойдёт позже.
+                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
+                {
+                    if let Ok(location) =
+                        serde_json::from_value::<LocationSnapshot>(payload["location"].clone())
+                    {
+                        snap.location = location;
+                    }
+                }
+            }
+            Act::Attack | Act::Examine => {} // результат — событиями / payload ниже
             Act::Create => {
                 // Аддитивное подтверждение: дополняем список персонажей (§7).
                 if let (Some(session), Some(payload)) =
@@ -170,6 +242,11 @@ impl AppStore {
                 }
                 self.notice = Some("Персонаж создан".into());
             }
+        }
+
+        // Осмотр: payload ack'а — детали сущности (включая лут трупа, ФР-03/ФР-11).
+        if act == Act::Examine {
+            self.entity_detail = ack.payload;
         }
         vec![]
     }
@@ -211,14 +288,291 @@ impl AppStore {
                     tracing::warn!("некорректный evt/state/snapshot — игнор");
                     return vec![];
                 };
+                self.push_visited(&snap.location);
+                self.push_log(
+                    LogKind::Location,
+                    format!("Вход в мир: {}", snap.location.name),
+                );
                 self.snapshot = Some(snap);
                 self.screen = Screen::Game;
                 self.select_error = None;
+                self.world_error = None;
+                self.entity_detail = None;
                 self.notice = None;
                 vec![]
             }
-            _ => vec![], // остальные события M2 не нужны (M3+)
+            // ── события мира (M3: ФР-03, ФР-17) ─────────────────────────────
+            "evt/location/changed" => {
+                let Ok(changed) = serde_json::from_value::<LocationChanged>(payload) else {
+                    return vec![];
+                };
+                let name = changed.location.name.clone();
+                self.push_visited(&changed.location);
+                if let Some(snap) = self.snapshot.as_mut() {
+                    snap.location = changed.location;
+                }
+                self.entity_detail = None;
+                self.world_error = None;
+                self.push_log(LogKind::Location, format!("Вы вошли в {name}"));
+                vec![]
+            }
+            "evt/entity/spawn" => {
+                let Ok(spawn) = serde_json::from_value::<EntitySpawn>(payload) else {
+                    return vec![];
+                };
+                let mut added = None;
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if snap.location.id == spawn.location_id
+                        && !snap
+                            .location
+                            .entities
+                            .iter()
+                            .any(|e| e.id == spawn.entity.id)
+                    {
+                        added = Some(spawn.entity.name.clone());
+                        snap.location.entities.push(spawn.entity);
+                    }
+                }
+                if let Some(name) = added {
+                    self.push_log(LogKind::System, format!("{name} появляется"));
+                }
+                vec![]
+            }
+            "evt/entity/move" => {
+                let Ok(moved) = serde_json::from_value::<EntityMove>(payload) else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == moved.entity_id)
+                    {
+                        if let Some(hp) = moved.patch.get("hp") {
+                            if let Ok(hp) = serde_json::from_value::<Hp>(hp.clone()) {
+                                entity.hp = Some(hp);
+                            }
+                        }
+                    }
+                }
+                vec![]
+            }
+            "evt/entity/hp" => {
+                let Ok(update) = serde_json::from_value::<EntityHp>(payload) else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == update.entity_id)
+                    {
+                        entity.hp = Some(update.hp);
+                    }
+                }
+                vec![]
+            }
+            "evt/entity/despawn" => {
+                let Ok(gone) = serde_json::from_value::<EntityDespawn>(payload) else {
+                    return vec![];
+                };
+                let mut name = None;
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(idx) = snap
+                        .location
+                        .entities
+                        .iter()
+                        .position(|e| e.id == gone.entity_id)
+                    {
+                        name = Some(snap.location.entities.remove(idx).name);
+                    }
+                }
+                if let Some(name) = name {
+                    self.push_log(LogKind::System, format!("{name} исчезает"));
+                }
+                vec![]
+            }
+            "evt/combat/hit" => {
+                let Ok(hit) = serde_json::from_value::<CombatHit>(payload) else {
+                    return vec![];
+                };
+                let mine = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.char.id == hit.source);
+                self.push_log(
+                    if mine {
+                        LogKind::CombatOut
+                    } else {
+                        LogKind::CombatIn
+                    },
+                    hit.text,
+                );
+                vec![]
+            }
+            "evt/corpse/created" => {
+                let Ok(corpse) = serde_json::from_value::<CorpseCreated>(payload) else {
+                    return vec![];
+                };
+                let mut added = false;
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if !snap
+                        .location
+                        .entities
+                        .iter()
+                        .any(|e| e.id == corpse.entity.id)
+                    {
+                        added = true;
+                        snap.location.entities.push(corpse.entity);
+                    }
+                }
+                if added {
+                    self.push_log(LogKind::Loot, format!("Труп — лута: {}", corpse.loot_count));
+                }
+                vec![]
+            }
+            "evt/corpse/looted" => {
+                let Ok(looted) = serde_json::from_value::<CorpseLooted>(payload) else {
+                    return vec![];
+                };
+                if looted.was_player {
+                    // ФР-11: лут с трупа игрока — статус «Мародёр».
+                    self.push_log(
+                        LogKind::Crime,
+                        format!(
+                            "{} собирает лут с трупа ИГРОКА — статус «Мародёр»",
+                            looted.by_name
+                        ),
+                    );
+                } else {
+                    self.push_log(LogKind::Loot, format!("{} собирает лут", looted.by_name));
+                }
+                vec![]
+            }
+            "evt/char/xp" => {
+                let Ok(xp) = serde_json::from_value::<CharXp>(payload) else {
+                    return vec![];
+                };
+                let text = match xp.rank {
+                    Some(rank) => format!("+{} XP → {} — ранг {rank}!", xp.amount, xp.skill_id),
+                    None => format!("+{} XP → {}", xp.amount, xp.skill_id),
+                };
+                self.push_log(LogKind::Xp, text);
+                vec![]
+            }
+            "evt/magic/cast" => {
+                let Ok(cast) = serde_json::from_value::<MagicCast>(payload) else {
+                    return vec![];
+                };
+                let text = if cast.ok {
+                    format!("{}: {} ({:?})", cast.by_name, cast.spell, cast.what)
+                } else {
+                    format!("{}: {} — сбой", cast.by_name, cast.spell)
+                };
+                self.push_log(LogKind::Magic, text);
+                vec![]
+            }
+            "evt/item/added" => {
+                let Ok(added) = serde_json::from_value::<ItemAdded>(payload) else {
+                    return vec![];
+                };
+                self.push_log(LogKind::Loot, format!("Получено: {}", added.item.name));
+                vec![]
+            }
+            "evt/item/removed" => {
+                let Ok(removed) = serde_json::from_value::<ItemRemoved>(payload) else {
+                    return vec![];
+                };
+                self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
+                vec![]
+            }
+            "evt/quest/progress" | "evt/quest/updated" => {
+                #[derive(serde::Deserialize)]
+                struct WithQuest {
+                    quest: QuestState,
+                }
+                let Ok(w) = serde_json::from_value::<WithQuest>(payload) else {
+                    return vec![];
+                };
+                let title = w.quest.title.unwrap_or(w.quest.id);
+                self.push_log(
+                    LogKind::Quest,
+                    format!("Квест «{title}»: {:?}", w.quest.state),
+                );
+                vec![]
+            }
+            "evt/crime/status" => {
+                let Ok(update) = serde_json::from_value::<CrimeStatusUpdate>(payload) else {
+                    return vec![];
+                };
+                let text = update.log_hint.unwrap_or_else(|| {
+                    let kinds: Vec<&str> =
+                        update.statuses.iter().map(|s| s.kind.as_str()).collect();
+                    if kinds.is_empty() {
+                        "Статусы преступления сняты".to_string()
+                    } else {
+                        format!("Статусы: {}", kinds.join(", "))
+                    }
+                });
+                self.push_log(LogKind::Crime, text);
+                vec![]
+            }
+            "evt/crime/added" => {
+                let Ok(added) = serde_json::from_value::<CrimeAdded>(payload) else {
+                    return vec![];
+                };
+                self.push_log(
+                    LogKind::Crime,
+                    format!(
+                        "{}: +{}с (итого {}с)",
+                        added.log_entry.kind, added.log_entry.delta_s, added.log_entry.total_s
+                    ),
+                );
+                vec![]
+            }
+            "evt/chat/message" => {
+                let Ok(msg) = serde_json::from_value::<ChatMessage>(payload) else {
+                    return vec![];
+                };
+                self.push_log(
+                    LogKind::Chat,
+                    format!("[{}] {}: {}", msg.channel, msg.name, msg.text),
+                );
+                vec![]
+            }
+            _ => vec![], // неизвестные/ненужные события транспорт уже залогировал
         }
+    }
+
+    // ── журнал и история (ФР-17, ФР-03) ────────────────────────────────────
+
+    fn push_log(&mut self, kind: LogKind, text: impl Into<String>) {
+        if self.log.len() >= LOG_LIMIT {
+            self.log.pop_front();
+        }
+        self.log.push_back(LogEntry {
+            kind,
+            text: text.into(),
+        });
+    }
+
+    fn push_visited(&mut self, location: &LocationSnapshot) {
+        self.visited.retain(|v| v.id != location.id);
+        if self.visited.len() >= VISITED_LIMIT {
+            self.visited.remove(0);
+        }
+        self.visited.push(VisitedLocation {
+            id: location.id.clone(),
+            name: location.name.clone(),
+        });
+    }
+
+    /// Отправка команды мира: сброс ошибки + фиксация pending (ФР-03).
+    pub fn on_world_sent(&mut self, act: Act) {
+        self.world_error = None;
+        self.pending = Some(act);
     }
 
     /// Сброс в экран входа с очисткой сессии/персонажа (чистый сброс, DoD M2).
@@ -268,10 +622,13 @@ impl AppStore {
 
     /// Hot-switch: вернуться к выбору персонажей БЕЗ ре-логина (ФР-02).
     /// Снимок персонажа выгружается — следующий вход соберёт чистые сторы (DoD M2).
+    /// Журнал и история — общий журнал аккаунта, переживают переключение.
     pub fn back_to_characters(&mut self) {
         self.screen = Screen::Characters;
         self.snapshot = None;
         self.select_error = None;
+        self.world_error = None;
+        self.entity_detail = None;
         self.notice = None;
     }
 
@@ -464,5 +821,188 @@ mod tests {
             .iter()
             .any(|e| matches!(e, Effect::ForgetSession { .. })));
         assert!(store.notice.is_some(), "пользователь видит причину");
+    }
+
+    // ─── M3: мир, журнал, история ──────────────────────────────────────────
+
+    fn evt(ty: &str, payload: serde_json::Value) -> IngressEvent {
+        IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: ty.to_string(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(payload),
+        })
+    }
+
+    fn in_game() -> AppStore {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        assert_eq!(store.screen, Screen::Game);
+        store
+    }
+
+    #[test]
+    fn location_changed_updates_location_visited_and_log() {
+        let mut store = in_game();
+        assert_eq!(store.visited.len(), 1, "деревня при входе в мир");
+
+        let payload = serde_json::to_value(LocationChanged {
+            location: fixtures::forest(),
+        })
+        .unwrap();
+        store.apply(evt("evt/location/changed", payload));
+
+        let snap = store.snapshot.as_ref().unwrap();
+        assert_eq!(snap.location.id, "l_forest");
+        assert_eq!(store.visited.len(), 2, "история: деревня + лес");
+        assert_eq!(store.visited[1].name, "Черный лес");
+        let last = store.log.back().expect("запись лога");
+        assert_eq!(last.kind, LogKind::Location);
+        assert!(last.text.contains("Черный лес"), "{}", last.text);
+        assert!(store.entity_detail.is_none());
+
+        // Возврат в деревню: дедуп истории (свежая в конце, без дублей).
+        let payload = serde_json::to_value(LocationChanged {
+            location: fixtures::village(),
+        })
+        .unwrap();
+        store.apply(evt("evt/location/changed", payload));
+        assert_eq!(store.visited.len(), 2, "дедуп по id");
+        assert_eq!(store.visited[1].id, "l_village");
+    }
+
+    #[test]
+    fn combat_hit_logged_by_direction() {
+        let mut store = in_game();
+        let char_id = "c1".to_string();
+
+        let hit = |source: &str| {
+            serde_json::json!({
+                "source": source, "source_name": "Ким", "target": "m_3", "target_name": "Волк",
+                "kind": "melee", "amount": 7, "crit": false, "miss": false,
+                "text": format!("удар от {source}")
+            })
+        };
+        store.apply(evt("evt/combat/hit", hit(&char_id)));
+        store.apply(evt("evt/combat/hit", hit("m_3")));
+
+        let kinds: Vec<LogKind> = store.log.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![LogKind::Location, LogKind::CombatOut, LogKind::CombatIn],
+            "свой урон — исходящий, чужой — входящий (ФР-05)"
+        );
+    }
+
+    #[test]
+    fn entity_despawn_removes_and_logs() {
+        let mut store = in_game();
+        assert!(store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .location
+            .entities
+            .iter()
+            .any(|e| e.id == "npc_elder"));
+
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({ "entity_id": "npc_elder", "location_id": "l_village" }),
+        ));
+        assert!(
+            !store
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .location
+                .entities
+                .iter()
+                .any(|e| e.id == "npc_elder"),
+            "сущность удалена"
+        );
+        let last = store.log.back().expect("лог");
+        assert!(last.text.contains("Староста"), "{}", last.text);
+    }
+
+    #[test]
+    fn move_ack_ok_applies_location_and_error_sets_world_error() {
+        let mut store = in_game();
+        store.on_world_sent(Act::Move);
+
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            5,
+            Some(1003),
+            &serde_json::json!({ "location": fixtures::forest() }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().location.id,
+            "l_forest",
+            "ack несёт новую локацию"
+        );
+        assert!(store.pending.is_none() && store.world_error.is_none());
+
+        store.on_world_sent(Act::Move);
+        let ack = ld2_protocol::Ack::error(6, None, &ErrorCode::ExitBlocked, "выход завален");
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.world_error.as_deref(), Some("выход завален"));
+    }
+
+    #[test]
+    fn examine_ack_sets_entity_detail_with_loot() {
+        let mut store = in_game();
+        store.on_world_sent(Act::Examine);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            7,
+            None,
+            &serde_json::json!({
+                "entity": fixtures::forest().entities[2], // cor_9 — труп игрока
+                "loot": [ { "uid": "loot:cor_9:0", "type": "weapon", "name": "Кинжал" } ],
+                "was_player": true
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let detail = store.entity_detail.as_ref().expect("осмотр");
+        assert_eq!(
+            detail["was_player"], true,
+            "⚠ труп игрока виден при осмотре"
+        );
+        assert!(detail["loot"].as_array().expect("лут").len() == 1);
+        assert!(store.pending.is_none());
+    }
+
+    #[test]
+    fn corpse_looted_was_player_logs_crime() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/corpse/looted",
+            serde_json::json!({
+                "corpse_id": "cor_9", "by": "c1", "by_name": "Марк", "was_player": true
+            }),
+        ));
+        let last = store.log.back().expect("лог");
+        assert_eq!(last.kind, LogKind::Crime);
+        assert!(last.text.contains("Мародёр"), "{}", last.text);
+    }
+
+    #[test]
+    fn log_ring_buffer_capped() {
+        let mut store = in_game();
+        for i in 0..1005 {
+            store.apply(evt(
+                "evt/chat/message",
+                serde_json::json!({
+                    "channel": "location", "from": "p", "name": "Марк",
+                    "text": format!("м {i}"), "sent_at": "2026-11-03T00:00:00Z"
+                }),
+            ));
+        }
+        assert_eq!(store.log.len(), 1000, "ring-буфер журнала (НФР §8)");
+        assert!(store.log.front().expect("старейшая").text.contains("м 5"));
     }
 }

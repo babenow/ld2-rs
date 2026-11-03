@@ -85,6 +85,21 @@ pub enum Key {
     HpLabel,
     MpLabel,
     XpPoolLabel,
+    // M3: мир (ФР-03, ФР-17)
+    ExitsLabel,
+    PlayersLabel,
+    MonstersLabel,
+    NpcsLabel,
+    CorpsesLabel,
+    HistoryLabel,
+    LogLabel,
+    Examine,
+    Attack,
+    EntityDetailTitle,
+    AltNavHint,
+    LootLabel,
+    NoExits,
+    CorpsePlayerHint,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -153,6 +168,20 @@ mod tests {
         Key::HpLabel,
         Key::MpLabel,
         Key::XpPoolLabel,
+        Key::ExitsLabel,
+        Key::PlayersLabel,
+        Key::MonstersLabel,
+        Key::NpcsLabel,
+        Key::CorpsesLabel,
+        Key::HistoryLabel,
+        Key::LogLabel,
+        Key::Examine,
+        Key::Attack,
+        Key::EntityDetailTitle,
+        Key::AltNavHint,
+        Key::LootLabel,
+        Key::NoExits,
+        Key::CorpsePlayerHint,
     ];
 
     #[test]

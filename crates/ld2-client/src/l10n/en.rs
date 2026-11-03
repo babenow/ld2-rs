@@ -51,5 +51,20 @@ pub(super) fn t(key: Key) -> &'static str {
         HpLabel => "Health",
         MpLabel => "Mana",
         XpPoolLabel => "Experience points",
+        // M3: world
+        ExitsLabel => "Exits",
+        PlayersLabel => "Players",
+        MonstersLabel => "Monsters",
+        NpcsLabel => "NPCs",
+        CorpsesLabel => "Corpses",
+        HistoryLabel => "History",
+        LogLabel => "World log",
+        Examine => "Examine",
+        Attack => "Attack",
+        EntityDetailTitle => "Examine",
+        AltNavHint => "Alt+arrows — move",
+        LootLabel => "Loot",
+        NoExits => "No exits",
+        CorpsePlayerHint => "player corpse: looting applies Marauder status",
     }
 }
