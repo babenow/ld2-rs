@@ -21,6 +21,8 @@ pub struct MockOptions {
     pub chaos: Chaos,
     /// Подпись в логе/помощи.
     pub scenario: String,
+    /// Лимит слотов персонажей в `evt/session.start` (D6, DoD M2).
+    pub char_slot_limit: u32,
 }
 
 /// Основной цикл: слушаем `opts.bind` вечно.
@@ -28,15 +30,16 @@ pub async fn serve(opts: MockOptions) -> anyhow::Result<()> {
     let listener = TcpListener::bind(&opts.bind).await?;
     let addr = listener.local_addr()?;
     info!(
-        "мок-сервер слушает ws://{addr} (сценарий: {}, chaos: {})",
+        "мок-сервер слушает ws://{addr} (сценарий: {}, chaos: {}, слотов: {})",
         opts.scenario,
         if opts.scenario == "chaos" {
             "вкл"
         } else {
             "выкл"
-        }
+        },
+        opts.char_slot_limit
     );
-    serve_with_listener(listener, opts.chaos).await
+    serve_configured(listener, opts.chaos, Knobs::active(), opts.char_slot_limit).await
 }
 
 /// Вариант для контрактных тестов: свой listener (эфемерный порт), свой chaos.
@@ -55,7 +58,23 @@ pub async fn serve_with_knobs(
     chaos: Chaos,
     knobs: Arc<Knobs>,
 ) -> anyhow::Result<()> {
-    let session = Arc::new(std::sync::Mutex::new(Session::new()));
+    serve_configured(listener, chaos, knobs, crate::fixtures::CHAR_SLOT_LIMIT).await
+}
+
+/// Полная конфигурация: лимит слотов задаётся здесь (DoD M2 — конфиг, а не код).
+///
+/// `Session` **общая для всех соединений** (как у реального сервера):
+/// состояние персонажа и монотонный `state_version` переживают reconnect —
+/// без этого `state.resync` после обрыва бессмыслен (§3).
+pub async fn serve_configured(
+    listener: TcpListener,
+    chaos: Chaos,
+    knobs: Arc<Knobs>,
+    char_slot_limit: u32,
+) -> anyhow::Result<()> {
+    let session = Arc::new(std::sync::Mutex::new(Session::with_char_slot_limit(
+        char_slot_limit,
+    )));
     loop {
         let (stream, peer) = listener.accept().await?;
         let chaos = chaos.clone();
