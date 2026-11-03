@@ -1,0 +1,458 @@
+//! Фикстуры мока — из канонических примеров:
+//! `docs/protocol.md` §5 (session.start, дословно), §6 (типы),
+//! `docs/tz.md` §4.8.2 (снапшот), `docs/skills.md` §9 (рецепты/профессии).
+
+use std::collections::BTreeMap;
+
+use ld2_protocol::evt::StateSnapshot;
+use ld2_protocol::features::{
+    ChatConfig, CrimeConfig, CrimeKind, InventoryConfig, MagicConfig, ManaConfig, RefreshToken,
+    ServerInfo, SessionConfig, SessionTokens, UpgradeConfig,
+};
+use ld2_protocol::types::{
+    CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, Exit,
+    GuildState, Hp, ItemSnapshot, LocationSnapshot, Mp, ProfessionSnapshot, QuestGoal, QuestState,
+    Severity, SkillSnapshot, Socket,
+};
+use serde_json::{json, Value};
+
+pub const LOGIN: &str = "demo";
+pub const PASSWORD: &str = "demo123";
+pub const REFRESH_TOKEN: &str = "rt_mock_refresh";
+
+/// Стоимость каста руны в мане (D4: руна тратит ману + заряд).
+pub const RUNE_MP_COST: i64 = 10;
+/// Лимит первичных профессий (D10, §5).
+pub const PROFESSION_LIMIT: u32 = 2;
+/// Лимит персонажей по умолчанию; переопределяется CLI (`--char-slots`) и,
+/// в реальном сервере, полем конфига (D6, DoD M2 — «без правки кода»).
+pub const CHAR_SLOT_LIMIT: u32 = 8;
+pub const UPGRADE_MAX: u32 = 9;
+
+/// Профили персонажей (D3, ADR-003).
+pub const PROFILES: &[&str] = &["warrior", "rogue", "mage"];
+
+/// `evt/session.start` — дословно по protocol.md §5 (лимит слотов — параметр).
+pub fn session_config(char_slot_limit: u32) -> SessionConfig {
+    let mut features = serde_json::Map::new();
+    features.insert("loot.roll".into(), json!(false));
+    features.insert("respawn.inn".into(), json!(true));
+    features.insert("guild.bank".into(), json!(false));
+    features.insert("upgrade.rules".into(), json!("break_on_fail"));
+    features.insert("trade.value_hint".into(), json!(true));
+    features.insert("chat.slash".into(), json!(true));
+
+    let mut base = BTreeMap::new();
+    base.insert("murderer_s".to_string(), 21600);
+    base.insert("marauder_s".to_string(), 7200);
+
+    SessionConfig {
+        server: ServerInfo {
+            name: "ld2-dev".into(),
+            region: Some("ru".into()),
+            min_client: None,
+        },
+        session: SessionTokens {
+            access_token: "at_mock".into(),
+            expires_in_s: 900,
+            refresh: RefreshToken {
+                token: REFRESH_TOKEN.into(),
+                expires_in_s: 2_592_000,
+            },
+        },
+        char_slot_limit,
+        profession_limit: PROFESSION_LIMIT,
+        features,
+        crime: CrimeConfig {
+            t_max_s: 604_800,
+            blend_k: 0.5,
+            base,
+            kinds: vec![
+                CrimeKind {
+                    kind: "murderer".into(),
+                    title: "Убийца".into(),
+                    severity: Severity::High,
+                    extra: Default::default(),
+                },
+                CrimeKind {
+                    kind: "marauder".into(),
+                    title: "Мародёр".into(),
+                    severity: Severity::Medium,
+                    extra: Default::default(),
+                },
+                CrimeKind {
+                    kind: "thief".into(),
+                    title: "Вор".into(),
+                    severity: Severity::Medium,
+                    extra: Default::default(),
+                },
+            ],
+        },
+        chat: ChatConfig {
+            server_history: 200,
+            channels: vec![
+                "system".into(),
+                "location".into(),
+                "global".into(),
+                "party".into(),
+                "guild".into(),
+                "whisper".into(),
+            ],
+            max_len: 500,
+            cooldown_s: 1.5,
+        },
+        inventory: InventoryConfig {
+            slots: 40,
+            equip_slots: vec![
+                "head".into(),
+                "body".into(),
+                "main_hand".into(),
+                "staff".into(),
+                "feet".into(),
+            ],
+        },
+        upgrade: UpgradeConfig {
+            max_level: UPGRADE_MAX,
+            preview: true,
+            shows_chance: true,
+        },
+        magic: MagicConfig {
+            rune_recharge: "item".into(),
+            scroll_requires_target: true,
+            mana: ManaConfig {
+                regen_out_s: 45,
+                regen_in_pct_s: 1.0,
+            },
+        },
+        characters: vec![character_summary()],
+        extra: Default::default(),
+    }
+}
+
+pub fn character_summary() -> CharacterSummary {
+    CharacterSummary {
+        id: "c1".into(),
+        name: "Ким".into(),
+        location: "Черный лес".into(),
+        summary: Some("Навыки: меч 3, аркана 1".into()),
+        crime: vec!["murderer".into()],
+        online: true,
+        extra: Default::default(),
+    }
+}
+
+// ─── Локации ────────────────────────────────────────────────────────────────
+
+pub fn village() -> LocationSnapshot {
+    LocationSnapshot {
+        id: "l_village".into(),
+        name: "Деревня Изба".into(),
+        flags: vec!["safe".into()],
+        text: "Тесная деревня на опушке. Дым из труб, крики петухов. \
+               На север уходит тропа в лес."
+            .into(),
+        exits: vec![Exit {
+            id: "e_north".into(),
+            label: "тропа на север".into(),
+            dir: Some("north".into()),
+        }],
+        entities: vec![Entity {
+            id: "npc_elder".into(),
+            kind: ld2_protocol::types::EntityKind::Npc,
+            name: "Староста".into(),
+            hp: None,
+            tags: None,
+            was_player: None,
+            aggro: None,
+        }],
+        extra: Default::default(),
+    }
+}
+
+pub fn forest() -> LocationSnapshot {
+    LocationSnapshot {
+        id: "l_forest".into(),
+        name: "Черный лес".into(),
+        flags: vec!["pvp".into()],
+        text: "Сосны давят тьмою… Тропа вьётся на юг, к деревне.".into(),
+        exits: vec![Exit {
+            id: "e_south".into(),
+            label: "тропа на юг".into(),
+            dir: Some("south".into()),
+        }],
+        entities: vec![
+            Entity {
+                id: "m_3".into(),
+                kind: ld2_protocol::types::EntityKind::Monster,
+                name: "Волк".into(),
+                hp: Some(Hp { cur: 18, max: 18 }),
+                tags: Some(vec!["aggro".into()]),
+                was_player: None,
+                aggro: Some(true),
+            },
+            Entity {
+                id: "p_77".into(),
+                kind: ld2_protocol::types::EntityKind::Player,
+                name: "Марк".into(),
+                hp: Some(Hp { cur: 30, max: 55 }),
+                tags: Some(vec!["marauder".into()]),
+                was_player: None,
+                aggro: None,
+            },
+            Entity {
+                id: "cor_9".into(),
+                kind: ld2_protocol::types::EntityKind::Corpse,
+                name: "Труп: Ким-младший".into(),
+                hp: None,
+                tags: None,
+                was_player: Some(true),
+                aggro: None,
+            },
+        ],
+        extra: Default::default(),
+    }
+}
+
+/// Куда ведёт выход из текущей локации (для `cmd/location.move`).
+pub fn exit_target(location_id: &str, exit_id: &str) -> Option<LocationSnapshot> {
+    match (location_id, exit_id) {
+        ("l_village", "e_north") => Some(forest()),
+        ("l_forest", "e_south") => Some(village()),
+        _ => None,
+    }
+}
+
+// ─── Персонаж и снапшот ─────────────────────────────────────────────────────
+
+pub fn staff_item() -> ItemSnapshot {
+    let mut stats = serde_json::Map::new();
+    stats.insert("spell".into(), json!("fire_dart"));
+    stats.insert("dmg".into(), json!("3..5"));
+    ItemSnapshot {
+        uid: "i_17".into(),
+        item_type: "staff".into(),
+        name: "Ясеневый посох".into(),
+        rarity: "rare".into(),
+        upgrade: 2,
+        stats,
+        requires: None,
+        sockets: Some(vec![
+            Socket {
+                index: 0,
+                rune: Some(ld2_protocol::types::RuneInfo {
+                    name: "Руна огня".into(),
+                    spell: "fire_dart".into(),
+                    charges: 7,
+                    max: 10,
+                }),
+            },
+            Socket {
+                index: 1,
+                rune: None,
+            },
+        ]),
+        qty: None,
+        gold_value: Some(120),
+        extra: Default::default(),
+    }
+}
+
+pub fn scroll_item() -> ItemSnapshot {
+    let mut stats = serde_json::Map::new();
+    stats.insert("spell".into(), json!("fireball"));
+    ItemSnapshot {
+        uid: "s_1".into(),
+        item_type: "scroll".into(),
+        name: "Свиток огненного шара".into(),
+        rarity: "common".into(),
+        upgrade: 0,
+        stats,
+        requires: None,
+        sockets: None,
+        qty: Some(1),
+        gold_value: Some(30),
+        extra: Default::default(),
+    }
+}
+
+/// Ингредиенты для рецепта `rec_sword_iron` (skills.md §5.4).
+pub fn ingredients() -> Vec<ItemSnapshot> {
+    ["ingot_iron", "wood_oak"]
+        .iter()
+        .enumerate()
+        .map(|(i, ty)| ItemSnapshot {
+            uid: format!("m_{}", i + 1),
+            item_type: (*ty).into(),
+            name: if *ty == "ingot_iron" {
+                "Железный слиток"
+            } else {
+                "Дубовая доска"
+            }
+            .into(),
+            rarity: "common".into(),
+            upgrade: 0,
+            stats: Default::default(),
+            requires: None,
+            sockets: None,
+            qty: Some(3),
+            gold_value: Some(5),
+            extra: Default::default(),
+        })
+        .collect()
+}
+
+pub fn character(id: &str, name: &str) -> CharacterState {
+    CharacterState {
+        id: id.into(),
+        name: name.into(),
+        attrs: BTreeMap::from([("str".to_string(), 14i64), ("int".to_string(), 9i64)]),
+        skills: vec![
+            SkillSnapshot {
+                id: "sword".into(),
+                name: Some("Владение мечом".into()),
+                rank: 3,
+                xp: 612,
+                xp_to_next: 480,
+            },
+            SkillSnapshot {
+                id: "arcana".into(),
+                name: Some("Аркана".into()),
+                rank: 1,
+                xp: 40,
+                xp_to_next: 480,
+            },
+        ],
+        professions: vec![ProfessionSnapshot {
+            id: "scribe".into(),
+            rank: 2,
+            xp: 140,
+            xp_to_next: 200,
+            extra: Default::default(),
+        }],
+        hp: Hp { cur: 42, max: 60 },
+        mp: Mp { cur: 45, max: 60 },
+        xp_pool: 120,
+        equip: BTreeMap::from([("staff".to_string(), Some("i_17".to_string()))]),
+        inventory: vec![
+            staff_item(),
+            scroll_item(),
+            ingredients()[0].clone(),
+            ingredients()[1].clone(),
+        ],
+        crime: CrimeState {
+            statuses: vec![CrimeStatus {
+                kind: "murderer".into(),
+                severity: Severity::High,
+                expires_at: 1_762_150_000,
+            }],
+        },
+        quests: vec![quest_boars()],
+        extra: Default::default(),
+    }
+}
+
+pub fn quest_boars() -> QuestState {
+    QuestState {
+        id: "q_boars".into(),
+        title: Some("Кабаны".into()),
+        state: ld2_protocol::types::QuestPhase::Active,
+        goals: vec![QuestGoal {
+            text: "Кабанов убито".into(),
+            cur: Some(2),
+            need: Some(5),
+        }],
+        reward_preview: Some(ld2_protocol::types::RewardPreview {
+            xp: Some(450),
+            items: vec![],
+        }),
+        extra: Default::default(),
+    }
+}
+
+pub fn snapshot(
+    state_version: u64,
+    char: &CharacterState,
+    location: &LocationSnapshot,
+) -> StateSnapshot {
+    StateSnapshot {
+        state_version,
+        char: char.clone(),
+        location: location.clone(),
+        party: None,
+        guild: None,
+        server_ts: now_epoch(),
+        extra: Default::default(),
+    }
+}
+
+// ─── Рецепты (skills.md §5.4) ───────────────────────────────────────────────
+
+pub fn recipes() -> Vec<Value> {
+    vec![
+        json!({
+            "id": "rec_sword_iron", "name": "Железный меч",
+            "profession": "blacksmith", "rank": 3,
+            "station": "forge", "station_label": "Кузница (город)",
+            "tool": { "item_type": "hammer" },
+            "requires": { "attr": { "str": 10 } },
+            "inputs": [ { "type": "ingot_iron", "qty": 3 }, { "type": "wood_oak", "qty": 1 } ],
+            "time_s": 20, "xp": { "profession": 85 },
+            "output": { "type": "sword_iron", "qty": 1, "quality_by": "rank" }
+        }),
+        json!({
+            "id": "rec_potion_hp", "name": "Зелье лечения",
+            "profession": "alchemist", "rank": 1,
+            "station": "alchemy_table", "station_label": "Алхимический стол",
+            "inputs": [ { "type": "herb", "qty": 2 } ],
+            "time_s": 8, "xp": { "profession": 30 },
+            "output": { "type": "potion_hp", "qty": 1 }
+        }),
+    ]
+}
+
+// ─── Прочее ─────────────────────────────────────────────────────────────────
+
+pub fn crime_log() -> Vec<CrimeLogEntry> {
+    vec![
+        CrimeLogEntry {
+            kind: "murderer".into(),
+            at: 1_762_140_311,
+            delta_s: 21_600,
+            total_s: 21_600,
+        },
+        CrimeLogEntry {
+            kind: "marauder".into(),
+            at: 1_762_143_911,
+            delta_s: 3_141,
+            total_s: 24_741,
+        },
+    ]
+}
+
+pub fn guild_fixture() -> GuildState {
+    GuildState {
+        id: "g_1".into(),
+        name: "Стальные волки".into(),
+        members: vec![ld2_protocol::types::GuildMember {
+            id: "c1".into(),
+            name: "Ким".into(),
+            rank: "master".into(),
+            online: true,
+            extra: Default::default(),
+        }],
+        extra: Default::default(),
+    }
+}
+
+pub fn now_epoch() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+pub fn now_rfc3339() -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}

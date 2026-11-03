@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 description = "Desktop-клиент текстовой онлайн-MMORPG ld2 (eframe/egui)"
 
+[dev-dependencies]
+ld2-mock-server = { path = "../ld2-mock-server" }
+
 [dependencies]
 ld2-protocol = { path = "../ld2-protocol" }
 eframe = { workspace = true }
@@ -16,3 +19,8 @@ tracing-appender = { workspace = true }
 keyring = { workspace = true }
 directories = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+time = { version = "0.3", features = ["formatting"] }

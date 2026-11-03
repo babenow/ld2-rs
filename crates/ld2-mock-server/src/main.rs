@@ -1,61 +1,95 @@
-//! Мок-сервер ld2 — M0: WS-слушатель с эхо-ответами.
-//!
-//! Назначение (PLAN-M0.md Фаза 2, `docs/protocol.md` §5 ТЗ): давать клиенту
-//! живой адрес `ws://127.0.0.1:24817/ws` до появления контракта M1.
-//!
-//! Объём M1 (ТЗ §5): скриптованные сценарии (`hello`, `snapshot`, `death`,
-//! `crime`, `trade`, `chaos`), команды `cmd/*` c `ack`, события `evt/*`,
-//! фикстуры навыков/профессий из `docs/skills.md`.
+//! CLI мок-сервера (PLAN-M1 T3).
 
-use anyhow::Result;
-use futures_util::{SinkExt, StreamExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::tungstenite::Message;
+use ld2_mock_server::{serve, Chaos, MockOptions};
 use tracing_subscriber::EnvFilter;
 
-const MOCK_ADDR: &str = "127.0.0.1:24817";
+const HELP: &str = "\
+ld2-mock-server — детерминированный мок-сервер ld2 (docs/protocol.md)
+
+Использование:
+  ld2-mock-server [--bind ADDR] [--scenario NAME] [--seed N] [--chaos-every N]
+                  [--char-slots N]
+
+  --bind           адрес (по умолчанию 127.0.0.1:24817)
+  --scenario       hello | snapshot | chaos | all (по умолчанию all)
+                     hello    — auth/demo + session.start (всегда доступен)
+                     snapshot — char.select + снапшот (всегда доступен)
+                     chaos    — включает случайные обрывы WS
+                     all      — все сценарии без chaos
+  --seed           seed chaos-последовательности (по умолчанию 42)
+  --chaos-every    1/N — шанс обрыва после сообщения (по умолчанию 5)
+  --char-slots     лимит слотов персонажей в session.start (по умолчанию 8);
+                   DoD M2: меняется конфигом, без правки кода клиента
+";
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
-    let listener = TcpListener::bind(MOCK_ADDR).await?;
-    tracing::info!("мок-сервер слушает ws://{MOCK_ADDR}/ws (эхо-режим M0)");
+    let mut bind = "127.0.0.1:24817".to_string();
+    let mut scenario = "all".to_string();
+    let mut seed: u64 = 42;
+    let mut chaos_every: u32 = 5;
+    let mut char_slots: u32 = ld2_mock_server::fixtures::CHAR_SLOT_LIMIT;
 
-    loop {
-        let (stream, peer) = listener.accept().await?;
-        tracing::info!("подключение: {peer}");
-        tokio::spawn(async move {
-            if let Err(e) = echo_connection(stream).await {
-                tracing::warn!("соединение {peer} завершено с ошибкой: {e}");
-            } else {
-                tracing::info!("соединение {peer} закрыто");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut i = 0;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        let next = |i: &mut usize| -> Option<String> {
+            *i += 1;
+            args.get(*i).cloned()
+        };
+        match flag {
+            "--bind" => {
+                bind = next(&mut i).ok_or_else(|| anyhow::anyhow!("нет значения --bind"))?
             }
-        });
-    }
-}
-
-/// Эхо: любое входящее текстовое сообщение возвращается как есть (M0).
-async fn echo_connection(stream: TcpStream) -> Result<()> {
-    let mut ws = tokio_tungstenite::accept_async(stream).await?;
-    while let Some(msg) = ws.next().await {
-        match msg? {
-            Message::Text(text) => {
-                tracing::debug!("эхо {} байт", text.len());
-                ws.send(Message::Text(text)).await?;
+            "--scenario" => {
+                scenario = next(&mut i).ok_or_else(|| anyhow::anyhow!("нет значения --scenario"))?
             }
-            Message::Ping(payload) => ws.send(Message::Pong(payload)).await?,
-            Message::Close(_) => break,
-            Message::Binary(_) => {
-                // protocol.md §1: бинарные фреймы = ошибка протокола.
-                tracing::warn!("бинарный фрейм — закрываю соединение");
-                ws.close(None).await?;
-                break;
+            "--seed" => {
+                let v = next(&mut i).ok_or_else(|| anyhow::anyhow!("нет значения --seed"))?;
+                seed = v
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("--seed: число ожидалось"))?;
             }
-            _ => {}
+            "--chaos-every" => {
+                let v =
+                    next(&mut i).ok_or_else(|| anyhow::anyhow!("нет значения --chaos-every"))?;
+                chaos_every = v
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("--chaos-every: число ожидалось"))?;
+            }
+            "--char-slots" => {
+                let v = next(&mut i).ok_or_else(|| anyhow::anyhow!("нет значения --char-slots"))?;
+                char_slots = v
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("--char-slots: число ожидалось"))?;
+                if char_slots == 0 {
+                    anyhow::bail!("--char-slots: должен быть > 0");
+                }
+            }
+            "--help" | "-h" => {
+                print!("{HELP}");
+                return Ok(());
+            }
+            other => anyhow::bail!("неизвестный аргумент {other} (см. --help)"),
         }
+        i += 1;
     }
-    Ok(())
+
+    if !["hello", "snapshot", "chaos", "all"].contains(&scenario.as_str()) {
+        anyhow::bail!("неизвестный сценарий {scenario} (см. --help)");
+    }
+
+    let chaos_enabled = scenario == "chaos";
+    serve(MockOptions {
+        bind,
+        chaos: Chaos::new(chaos_enabled, chaos_every, seed),
+        scenario,
+        char_slot_limit: char_slots,
+    })
+    .await
 }

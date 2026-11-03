@@ -3,8 +3,7 @@
 //! не пишутся в конфиги и логи (protocol.md §4).
 //!
 //! В M0 — только smoke-тест DoD; публичный API задействуется с M1 (ФР-01,
-//! экран входа и `auth.resume`).
-#![allow(dead_code)] // API включается в M1 (ФР-01); в M0 используется только тестом.
+//! экран входа и `auth.resume` — `transport` использует refresh-токен).
 
 const SERVICE: &str = "ld2.client";
 
