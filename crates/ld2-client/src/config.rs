@@ -23,6 +23,9 @@ pub struct Config {
     pub host: String,
     /// Код языка UI: `ru` | `en` (D8: таблицы ru/en с M0).
     pub lang: String,
+    /// Последний логин — предзаполнение формы и ключ keyring (ФР-01).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_login: Option<String>,
 }
 
 impl Default for Config {
@@ -30,6 +33,7 @@ impl Default for Config {
         Self {
             host: DEFAULT_HOST.to_string(),
             lang: "ru".to_string(),
+            last_login: None,
         }
     }
 }

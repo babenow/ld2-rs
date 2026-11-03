@@ -21,4 +21,4 @@ pub mod session;
 
 pub use chaos::Chaos;
 pub use knobs::Knobs;
-pub use server::{serve, serve_with_knobs, serve_with_listener, MockOptions};
+pub use server::{serve, serve_configured, serve_with_knobs, serve_with_listener, MockOptions};

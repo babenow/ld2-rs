@@ -44,6 +44,8 @@ struct Preview {
 pub struct Session {
     state_version: u64,
     authenticated: bool,
+    /// Лимит слотов персонажей из конфига/CLI (D6; DoD M2 — без правки кода).
+    char_slot_limit: u32,
     chars: Vec<CharacterSummary>,
     char: Option<ld2_protocol::types::CharacterState>,
     location: ld2_protocol::types::LocationSnapshot,
@@ -63,9 +65,14 @@ impl Default for Session {
 
 impl Session {
     pub fn new() -> Self {
+        Self::with_char_slot_limit(fixtures::CHAR_SLOT_LIMIT)
+    }
+
+    pub fn with_char_slot_limit(char_slot_limit: u32) -> Self {
         Self {
             state_version: 1_000,
             authenticated: false,
+            char_slot_limit,
             chars: vec![fixtures::character_summary()],
             char: None,
             location: fixtures::village(),
@@ -433,7 +440,7 @@ impl Session {
         }
         self.authenticated = true;
         let sv = self.bump();
-        let config = fixtures::session_config();
+        let config = fixtures::session_config(self.char_slot_limit);
         vec![
             self.ack_ok_payload(
                 seq,
@@ -462,7 +469,7 @@ impl Session {
         }
         self.authenticated = true;
         let sv = self.bump();
-        let config = fixtures::session_config();
+        let config = fixtures::session_config(self.char_slot_limit);
         vec![
             self.ack_ok(seq, Some(sv)),
             self.event(
@@ -482,7 +489,7 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<CharCreate>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        if self.chars.len() as u32 >= fixtures::CHAR_SLOT_LIMIT {
+        if self.chars.len() as u32 >= self.char_slot_limit {
             return vec![self.ack_err(
                 seq,
                 None,
@@ -895,7 +902,9 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<ItemEquip>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        let slots = fixtures::session_config().inventory.equip_slots;
+        let slots = fixtures::session_config(self.char_slot_limit)
+            .inventory
+            .equip_slots;
         if !slots.contains(&cmd.slot) {
             return vec![self.ack_err(
                 seq,
@@ -1759,7 +1768,7 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<ChatSend>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        let channels = &fixtures::session_config().chat.channels;
+        let channels = &fixtures::session_config(self.char_slot_limit).chat.channels;
         if !channels.contains(&cmd.channel) {
             return vec![self.ack_err(
                 seq,
@@ -1768,7 +1777,7 @@ impl Session {
                 format!("нет канала {}", cmd.channel),
             )];
         }
-        let max_len = fixtures::session_config().chat.max_len as usize;
+        let max_len = fixtures::session_config(self.char_slot_limit).chat.max_len as usize;
         if cmd.text.chars().count() > max_len {
             return vec![self.ack_err(
                 seq,

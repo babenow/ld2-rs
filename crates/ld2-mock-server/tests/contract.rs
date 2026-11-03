@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use ld2_mock_server::{serve_with_listener, Chaos};
+use ld2_mock_server::{serve_configured, serve_with_listener, Chaos, Knobs};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -18,6 +18,16 @@ async fn start_server(chaos: Chaos) -> String {
     let addr = listener.local_addr().expect("addr");
     tokio::spawn(async move {
         let _ = serve_with_listener(listener, chaos).await;
+    });
+    format!("ws://{addr}")
+}
+
+/// Сервер с настроенным лимитом слотов (DoD M2: конфиг, не код).
+async fn start_server_with_slots(limit: u32) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = serve_configured(listener, Chaos::disabled(), Knobs::active(), limit).await;
     });
     format!("ws://{addr}")
 }
@@ -102,8 +112,9 @@ impl Client {
             .expect("таймаут ожидания Close");
     }
 
-    /// Сценарий hello: login demo/demo123 → ack + session.start.
-    async fn login(&mut self) {
+    /// Сценарий hello: login demo/demo123 → ack + session.start (payload
+    /// наружу — лимит слотов проверяют сами тесты, он конфигурируемый).
+    async fn login(&mut self) -> Value {
         let seq = self
             .send(
                 "cmd/auth.login",
@@ -113,10 +124,6 @@ impl Client {
         let ack = self.ack(seq).await;
         assert_eq!(ack["result"], "ok", "login: {ack}");
         let start = self.wait(|v| v["type"] == "evt/session.start").await;
-        assert_eq!(
-            start["payload"]["char_slot_limit"], 8,
-            "D6: лимит из конфига"
-        );
         assert_eq!(start["payload"]["profession_limit"], 2, "D10");
         let kinds = start["payload"]["crime"]["kinds"]
             .as_array()
@@ -127,6 +134,7 @@ impl Client {
             start["payload"]["magic"]["mana"]["regen_out_s"], 45,
             "D4: конфиг маны"
         );
+        start["payload"].clone()
     }
 
     /// Сценарий snapshot: select c1 → ack + полный снапшот.
@@ -147,7 +155,55 @@ impl Client {
 async fn hello_scenario_login_grants_session_config() {
     let url = start_server(Chaos::disabled()).await;
     let mut c = Client::connect(&url).await;
-    c.login().await;
+    let start = c.login().await;
+    assert_eq!(
+        start["char_slot_limit"], 8,
+        "D6: дефолтный лимит из конфига"
+    );
+}
+
+/// DoD M2: лимит слотов задаётся конфигом мока (`--char-slots` / CLI),
+/// без правки кода клиента: лимит 3 → 4-й персонаж отклоняется.
+#[tokio::test]
+async fn char_slot_limit_comes_from_config() {
+    let url = start_server_with_slots(3).await;
+    let mut c = Client::connect(&url).await;
+    let start = c.login().await;
+    assert_eq!(
+        start["char_slot_limit"], 3,
+        "лимит пришёл из конфига сервера, не из кода"
+    );
+
+    // c1 уже есть в фикстурах → создаём ещё два, четвёртый — отбой.
+    for name in ["Арн", "Бор"] {
+        let seq = c
+            .send(
+                "cmd/char.create",
+                json!({ "name": name, "profile": "warrior" }),
+            )
+            .await;
+        let ack = c.ack(seq).await;
+        assert_eq!(ack["result"], "ok", "создание {name}: {ack}");
+    }
+    let seq = c
+        .send(
+            "cmd/char.create",
+            json!({ "name": "Вест", "profile": "mage" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_CHAR_LIMIT",
+        "4-й персонаж при лимите 3"
+    );
+
+    // Список отражает лимит
+    let seq = c.send("cmd/char.list", json!({})).await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["payload"]["characters"].as_array().expect("list").len(),
+        3
+    );
 }
 
 #[tokio::test]

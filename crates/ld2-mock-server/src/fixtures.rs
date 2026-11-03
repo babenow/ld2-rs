@@ -24,14 +24,16 @@ pub const REFRESH_TOKEN: &str = "rt_mock_refresh";
 pub const RUNE_MP_COST: i64 = 10;
 /// Лимит первичных профессий (D10, §5).
 pub const PROFESSION_LIMIT: u32 = 2;
+/// Лимит персонажей по умолчанию; переопределяется CLI (`--char-slots`) и,
+/// в реальном сервере, полем конфига (D6, DoD M2 — «без правки кода»).
 pub const CHAR_SLOT_LIMIT: u32 = 8;
 pub const UPGRADE_MAX: u32 = 9;
 
 /// Профили персонажей (D3, ADR-003).
 pub const PROFILES: &[&str] = &["warrior", "rogue", "mage"];
 
-/// `evt/session.start` — дословно по protocol.md §5.
-pub fn session_config() -> SessionConfig {
+/// `evt/session.start` — дословно по protocol.md §5 (лимит слотов — параметр).
+pub fn session_config(char_slot_limit: u32) -> SessionConfig {
     let mut features = serde_json::Map::new();
     features.insert("loot.roll".into(), json!(false));
     features.insert("respawn.inn".into(), json!(true));
@@ -58,7 +60,7 @@ pub fn session_config() -> SessionConfig {
                 expires_in_s: 2_592_000,
             },
         },
-        char_slot_limit: CHAR_SLOT_LIMIT,
+        char_slot_limit,
         profession_limit: PROFESSION_LIMIT,
         features,
         crime: CrimeConfig {
