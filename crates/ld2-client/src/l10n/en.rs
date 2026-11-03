@@ -83,5 +83,18 @@ pub(super) fn t(key: Key) -> &'static str {
         DeathConfirm => "Respawn",
         ItemDescTitle => "Item details",
         ReqLabel => "Requires",
+        // M5: hotbar/upgrade/socketing
+        HotbarLabel => "Hotbar",
+        NoCharge => "no charges",
+        NotEnoughMp => "not enough mana",
+        UpgradeTitle => "Item upgrade",
+        UpgradeBtn => "Upgrade",
+        ChanceLabel => "Chance",
+        CostLabel => "Cost",
+        BtnSocketing => "Socketing",
+        SocketingTitle => "Staff socketing",
+        InsertRune => "Insert",
+        ExtractRune => "Extract",
+        NoRunes => "No runes in inventory",
     }
 }

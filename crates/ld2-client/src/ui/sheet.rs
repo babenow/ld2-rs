@@ -2,13 +2,16 @@
 //! инвентарь/экипировка/drag&drop/требования). Состояние — `Forms.sheet`.
 
 use eframe::egui;
-use ld2_protocol::cmd::{CharXpInvest, ItemDrop, ItemEquip, ItemUnequip, ItemUse};
+use ld2_protocol::cmd::{
+    CharXpInvest, ItemDrop, ItemEquip, ItemUnequip, ItemUse, SocketExtract, SocketInsert,
+    UpgradePreview, UpgradeStart,
+};
 use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{CharacterState, ItemSnapshot};
 
 use super::{DragFrom, SheetTab};
 use crate::l10n::{t, Key};
-use crate::store::Act;
+use crate::store::{Act, UpgradeView};
 use crate::ui::UiCtx;
 
 const RED: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x6C, 0x75);
@@ -70,6 +73,13 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
     // Модалка «Описание предмета» (ФР-07).
     if let Some(detail) = ctx.store.item_detail.clone() {
         item_modal(ctx, ui, detail);
+    }
+    // Модалки M5 (ФР-09/ФР-10).
+    if let Some(view) = ctx.store.upgrade.clone() {
+        upgrade_modal(ctx, ui, &view);
+    }
+    if let Some(staff_uid) = ctx.store.socketing.clone() {
+        socketing_modal(ctx, ui, &staff_uid);
     }
 }
 
@@ -322,6 +332,30 @@ fn inventory_tile(
                 ui.close();
             }
         }
+        // Улучшение (ФР-10): до максимума из конфига сервера.
+        let max_level = ctx
+            .store
+            .session
+            .as_ref()
+            .map(|s| s.upgrade.max_level)
+            .unwrap_or(9) as i32;
+        let upgradable = matches!(item.item_type.as_str(), "weapon" | "armor" | "staff");
+        if upgradable && item.upgrade < max_level && ui.button(t(lang, Key::UpgradeBtn)).clicked() {
+            ctx.store.open_upgrade(item.uid.clone(), item.name.clone());
+            let cmd = UpgradePreview {
+                item_uid: item.uid.clone(),
+            };
+            send(ctx, &cmd, Act::Preview);
+            ui.close();
+        }
+        // Инкрустация (ФР-09): только посох с сокетами.
+        if item.item_type == "staff"
+            && item.sockets.is_some()
+            && ui.button(t(lang, Key::BtnSocketing)).clicked()
+        {
+            ctx.store.open_socketing(item.uid.clone());
+            ui.close();
+        }
         if ui.button(t(lang, Key::MenuDesc)).clicked() {
             ctx.store.item_detail = Some(serde_json::to_value(item).unwrap_or_default());
             ui.close();
@@ -511,5 +545,175 @@ fn item_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, detail: serde_json::Value)
         });
     if close {
         ctx.store.item_detail = None;
+    }
+}
+
+// ─── модалка улучшения (ФР-10) ──────────────────────────────────────────────
+
+fn upgrade_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, view: &UpgradeView) {
+    let lang = ctx.lang;
+    let mut close = false;
+    let pending_upgrade = ctx.store.pending == Some(Act::Upgrade);
+
+    egui::Window::new(t(lang, Key::UpgradeTitle))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ui.ctx(), |ui| {
+            ui.heading(view.item_name.as_str());
+
+            let Some(preview) = &view.preview else {
+                ui.weak(t(lang, Key::Loading));
+                if ui.button(t(lang, Key::Exit)).clicked() {
+                    close = true;
+                }
+                return;
+            };
+
+            // «сейчас +N → после +M» (дельта от сервера, §7).
+            let current = ctx
+                .store
+                .snapshot
+                .as_ref()
+                .and_then(|s| {
+                    s.char
+                        .inventory
+                        .iter()
+                        .find(|i| i.uid == view.item_uid)
+                        .map(|i| i.upgrade)
+                })
+                .unwrap_or(0);
+            let delta = preview["delta"]["upgrade"].as_str().unwrap_or("+?");
+            ui.label(format!("+{current} → {delta}"));
+
+            if let Some(chance) = preview["chance"].as_f64() {
+                ui.weak(format!(
+                    "{}: {:.0}%",
+                    t(lang, Key::ChanceLabel),
+                    chance * 100.0
+                ));
+            }
+            if let Some(gold) = preview["cost"]["gold"].as_i64() {
+                ui.weak(format!("{}: {} зол.", t(lang, Key::CostLabel), gold));
+            }
+            if let Some(materials) = preview["cost"]["materials"].as_object() {
+                for (name, qty) in materials {
+                    ui.weak(format!("  • {name}: {qty}"));
+                }
+            }
+            if let Some(err) = &ctx.store.sheet_error {
+                ui.colored_label(RED, err);
+            }
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                if ui.button(t(lang, Key::Exit)).clicked() {
+                    close = true;
+                }
+                let preview_id = preview["preview_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let can_start = !preview_id.is_empty() && !pending_upgrade;
+                if ui
+                    .add_enabled(can_start, egui::Button::new(t(lang, Key::UpgradeBtn)))
+                    .clicked()
+                {
+                    let cmd = UpgradeStart {
+                        item_uid: view.item_uid.clone(),
+                        preview_id,
+                    };
+                    send(ctx, &cmd, Act::Upgrade);
+                }
+                if pending_upgrade {
+                    ui.weak(t(lang, Key::Loading));
+                }
+            });
+        });
+
+    if close {
+        ctx.store.close_upgrade();
+    }
+}
+
+// ─── модалка инкрустации (ФР-09) ────────────────────────────────────────────
+
+fn socketing_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, staff_uid: &str) {
+    let lang = ctx.lang;
+    let mut close = false;
+
+    let Some(snap) = ctx.store.snapshot.clone() else {
+        return;
+    };
+    let Some(staff) = snap
+        .char
+        .inventory
+        .iter()
+        .find(|i| i.uid == staff_uid)
+        .cloned()
+    else {
+        ctx.store.close_socketing();
+        return;
+    };
+    let runes: Vec<ItemSnapshot> = snap
+        .char
+        .inventory
+        .iter()
+        .filter(|i| i.item_type == "rune")
+        .cloned()
+        .collect();
+
+    egui::Window::new(t(lang, Key::SocketingTitle))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ui.ctx(), |ui| {
+            ui.heading(staff.name.as_str());
+
+            for socket in staff.sockets.iter().flatten() {
+                ui.horizontal(|ui| {
+                    ui.weak(format!("◈ {}", socket.index));
+                    match &socket.rune {
+                        Some(rune) => {
+                            ui.label(format!("{} ({}/{})", rune.name, rune.charges, rune.max));
+                            if ui.small_button(t(lang, Key::ExtractRune)).clicked() {
+                                let cmd = SocketExtract {
+                                    staff_uid: staff.uid.clone(),
+                                    socket_index: socket.index,
+                                };
+                                send(ctx, &cmd, Act::Socket);
+                            }
+                        }
+                        None => {
+                            if runes.is_empty() {
+                                ui.weak(t(lang, Key::NoRunes));
+                            }
+                            for rune in &runes {
+                                let label = format!("{}: {}", t(lang, Key::InsertRune), rune.name);
+                                if ui.small_button(label).clicked() {
+                                    let cmd = SocketInsert {
+                                        staff_uid: staff.uid.clone(),
+                                        socket_index: socket.index,
+                                        rune_uid: rune.uid.clone(),
+                                    };
+                                    send(ctx, &cmd, Act::Socket);
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            if let Some(err) = &ctx.store.sheet_error {
+                ui.colored_label(RED, err);
+            }
+            ui.add_space(8.0);
+            if ui.button(t(lang, Key::Exit)).clicked() {
+                close = true;
+            }
+        });
+
+    if close {
+        ctx.store.close_socketing();
     }
 }

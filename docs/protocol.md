@@ -175,7 +175,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "inventory": { "slots": 40, "equip_slots": ["head","body","main_hand","staff","feet"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
-             "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0 } },
+             "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "characters": [
     { "id": "c1", "name": "Ким", "location": "Черный лес",
       "summary": "Навыки: меч 3, аркана 1", "crime": ["murderer"], "online": true }

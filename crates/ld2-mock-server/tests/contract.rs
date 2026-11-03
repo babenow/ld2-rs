@@ -134,6 +134,10 @@ impl Client {
             start["payload"]["magic"]["mana"]["regen_out_s"], 45,
             "D4: конфиг маны"
         );
+        assert_eq!(
+            start["payload"]["magic"]["mana"]["rune_cost"], 10,
+            "M5: стоимость каста в мане"
+        );
         start["payload"].clone()
     }
 
@@ -688,4 +692,125 @@ async fn death_scenario_loses_everything_and_respawns() {
         ack["error"]["code"], "E_ITEM_GONE",
         "посох потерян при смерти"
     );
+}
+
+// ─── M5: улучшение и инкрустация ────────────────────────────────────────────
+
+/// DoD M5-мок: /scenario upgrade_fail → провал по break_on_fail,
+/// предмет разрушен (событие результата + удаление из инвентаря).
+#[tokio::test]
+async fn upgrade_fail_scenario_destroys_item() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    c.login().await;
+    c.select().await;
+
+    // Триггер сценария — обычный текст чата.
+    let seq = c
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "location", "text": "/scenario upgrade_fail" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok");
+    let notice = c.wait(|v| v["type"] == "evt/chat/message").await;
+    assert!(
+        notice["payload"]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("провалится"),
+        "сервер предупреждает о сценарии"
+    );
+
+    // Превью → старт → провал.
+    let seq = c
+        .send("cmd/upgrade.preview", json!({ "item_uid": "i_17" }))
+        .await;
+    let ack = c.ack(seq).await;
+    let preview_id = ack["payload"]["preview_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let seq = c
+        .send(
+            "cmd/upgrade.start",
+            json!({ "item_uid": "i_17", "preview_id": preview_id }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["result"], "ok",
+        "команда прошла — результат событием (ФР-10)"
+    );
+
+    let result = c.wait(|v| v["type"] == "evt/upgrade/result").await;
+    assert_eq!(result["payload"]["ok"], false, "провал");
+    assert_eq!(result["payload"]["item_destroyed"], true, "break_on_fail");
+    let removed = c.wait(|v| v["type"] == "evt/item/removed").await;
+    assert_eq!(removed["payload"]["uid"], "i_17");
+
+    // Предмета больше нет: новое превью — ошибка.
+    let seq = c
+        .send("cmd/upgrade.preview", json!({ "item_uid": "i_17" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_ITEM_GONE");
+}
+
+/// Инкрустация: извлечь руну из сокета и вставить обрати (ФР-09).
+#[tokio::test]
+async fn socket_extract_insert_roundtrip() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    c.login().await;
+    c.select().await;
+
+    let seq = c
+        .send(
+            "cmd/socket.extract",
+            json!({ "staff_uid": "i_17", "socket_index": 0 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "извлечение: {ack}");
+    let rune = &ack["payload"]["rune"];
+    assert_eq!(rune["name"], "Руна огня");
+    assert_eq!(rune["stats"]["charges"], 7, "заряды в stats предмета");
+    let staff = &ack["payload"]["staff"];
+    assert!(staff["sockets"][0]["rune"].is_null(), "сокет 0 освобождён");
+
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": "i_17", "socket_index": 0, "rune_uid": "rune_i_17_0" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "вставка: {ack}");
+    let staff = &ack["payload"]["staff"];
+    assert_eq!(staff["sockets"][0]["rune"]["charges"], 7, "руна на месте");
+
+    // Руна потреблена при вставке (удалена из инвентаря) — повтор невозможен.
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": "i_17", "socket_index": 0, "rune_uid": "rune_i_17_0" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_ITEM_GONE",
+        "предмет-руна потреблён при вставке"
+    );
+
+    // Извлечение из пустого сокета → E_NO_RUNE_SLOT.
+    let seq = c
+        .send(
+            "cmd/socket.extract",
+            json!({ "staff_uid": "i_17", "socket_index": 1 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_NO_RUNE_SLOT", "сокет 1 пуст");
 }

@@ -43,15 +43,14 @@ impl App {
         // транспорт сам сделает auth.resume → session.start (§4.5).
         if let Some(login) = &config.last_login {
             forms.login.login = login.clone();
-            match secrets::get_token(&config.host, login) {
-                Ok(token) => {
-                    tcfg.refresh_token = Some(token);
-                    tracing::info!("keyring: resume-токен найден ({login})");
-                }
-                Err(keyring::Error::NoEntry) => {
-                    tracing::debug!("keyring: токена нет — нужен вход");
-                }
-                Err(e) => tracing::warn!("keyring: ошибка чтения: {e}"),
+            // Чтение keyring с таймаутом: на macOS запрос к keychain может
+            // ждать диалога доступа для нового бинаря (инцидент M4/M5) —
+            // приложение обязано стартовать, а не виснуть до ответа.
+            if let Some(token) =
+                read_token_with_timeout(&config.host, login, Duration::from_secs(2))
+            {
+                tcfg.refresh_token = Some(token);
+                tracing::info!("keyring: resume-токен найден ({login})");
             }
         }
 
@@ -160,6 +159,39 @@ impl App {
     }
 }
 
+/// Чтение токена keyring с таймаутом: зависший диалог доступа macOS не должен
+/// блокировать запуск (украденное время — только этот вызов).
+fn read_token_with_timeout(
+    host: &str,
+    login: &str,
+    timeout: std::time::Duration,
+) -> Option<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let host = host.to_string();
+    let login = login.to_string();
+    std::thread::spawn(move || {
+        let _ = tx.send(secrets::get_token(&host, &login));
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(token)) => Some(token),
+        Ok(Err(keyring::Error::NoEntry)) => {
+            tracing::debug!("keyring: токена нет — нужен вход");
+            None
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("keyring: ошибка чтения: {e}");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                "keyring: нет ответа за {timeout:?} — стартую без resume \
+                 (диалог доступа macOS отложен)"
+            );
+            None
+        }
+    }
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.drain_ingress();
@@ -181,5 +213,28 @@ impl eframe::App for App {
 
         // Опрашиваем ingress раз в 100 мс: событий может не быть долго.
         ui.ctx().request_repaint_after(Duration::from_millis(100));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Обёртка чтения keyring обязана вернуться за таймаут даже при
+    /// зависшем диалоге доступа (инцидент M4/M5).
+    #[test]
+    fn keyring_timeout_wrapper_returns_none_for_missing_entry() {
+        let start = std::time::Instant::now();
+        let token = read_token_with_timeout(
+            "ws://test-never:1/ws",
+            "no-such-login",
+            Duration::from_secs(2),
+        );
+        assert!(token.is_none(), "нет записи → None");
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "обёртка не зависает: {:?}",
+            start.elapsed()
+        );
     }
 }

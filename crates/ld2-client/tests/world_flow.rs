@@ -6,7 +6,10 @@ use std::time::Duration;
 use ld2_client::store::{AppStore, LogKind, Screen};
 use ld2_client::transport::{self, IngressEvent, TransportConfig, TransportStatus};
 use ld2_mock_server::{serve_with_listener, Chaos};
-use ld2_protocol::cmd::{AuthLogin, CharSelect, ChatSend, CombatAttack, EntityInfo, LocationMove};
+use ld2_protocol::cmd::{
+    AuthLogin, CharSelect, ChatSend, CombatAttack, EntityInfo, LocationMove, MagicRuneCast,
+    UpgradePreview, UpgradeStart,
+};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
@@ -327,6 +330,167 @@ async fn death_flow_loses_everything_and_respawns() {
     assert!(store.death.is_none());
     assert_eq!(store.screen, Screen::Game, "мир снова доступен");
     assert_eq!(location_id(&store), "l_village");
+
+    handle.close();
+}
+
+/// DoD M5 (ТЗ §10): «руна огня ×7 → 2 каста → +1 посох → провал улучшения
+/// по правилу break».
+#[tokio::test]
+async fn magic_upgrade_flow_dod() {
+    let url = start_mock().await;
+    let (handle, mut rx, mut store) = spawn_pair(&url);
+    enter_world(&handle, &mut store, &mut rx).await;
+
+    let staff_charges = |s: &AppStore| -> i32 {
+        s.snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == "i_17")
+            .and_then(|i| i.sockets.as_ref())
+            .and_then(|sockets| sockets.first())
+            .and_then(|s| s.rune.as_ref())
+            .map(|r| r.charges)
+            .unwrap_or(-1)
+    };
+    let staff_upgrade = |s: &AppStore| -> i32 {
+        s.snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == "i_17")
+            .map(|i| i.upgrade)
+            .unwrap_or(-1)
+    };
+
+    // Руна ×7: два каста → заряды 7→5, мана 45→25 (D4: мана И заряд).
+    assert_eq!(staff_charges(&store), 7, "стартовое состояние");
+    assert_eq!(store.snapshot.as_ref().unwrap().char.mp.cur, 45);
+    for (expect_charges, expect_mp) in [(6, 35), (5, 25)] {
+        eprintln!("STEP cast → {expect_charges}/{expect_mp}");
+        store.on_world_sent(ld2_client::store::Act::Cast);
+        handle
+            .send(&MagicRuneCast {
+                staff_uid: "i_17".into(),
+                socket_index: 0,
+                target_id: None,
+            })
+            .expect("каст руны");
+        pump(&mut store, &mut rx, |s| {
+            staff_charges(s) == expect_charges
+                && s.snapshot.as_ref().unwrap().char.mp.cur == expect_mp
+        })
+        .await;
+    }
+    assert!(
+        store
+            .log
+            .iter()
+            .any(|e| e.kind == ld2_client::store::LogKind::Magic),
+        "касты в журнале"
+    );
+
+    eprintln!("STEP casts done");
+    // +1 посох: превью → успех → уровень 2→3.
+    store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+    handle
+        .send(&UpgradePreview {
+            item_uid: "i_17".into(),
+        })
+        .expect("превью");
+    store.on_sheet_sent(ld2_client::store::Act::Preview);
+    eprintln!("STEP preview sent");
+    pump(&mut store, &mut rx, |s| {
+        s.upgrade.as_ref().is_some_and(|v| v.preview.is_some())
+    })
+    .await;
+    eprintln!("STEP preview ready");
+    let preview_id = store.upgrade.as_ref().unwrap().preview.as_ref().unwrap()["preview_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    store.on_sheet_sent(ld2_client::store::Act::Upgrade);
+    handle
+        .send(&UpgradeStart {
+            item_uid: "i_17".into(),
+            preview_id,
+        })
+        .expect("улучшение");
+    pump(&mut store, &mut rx, |s| {
+        s.upgrade.is_none() && staff_upgrade(s) == 3
+    })
+    .await;
+    eprintln!("STEP upgrade ok");
+    assert!(
+        store
+            .log
+            .iter()
+            .any(|e| e.kind == ld2_client::store::LogKind::Loot && e.text.contains("+3")),
+        "успешное улучшение в журнале"
+    );
+
+    // Провал по break_on_fail: сценарий → превью → старт → предмет разрушен.
+    handle
+        .send(&ChatSend {
+            channel: "location".into(),
+            text: "/scenario upgrade_fail".into(),
+            to: None,
+        })
+        .expect("сценарий");
+    pump(&mut store, &mut rx, |s| {
+        s.log.iter().any(|e| e.text.contains("провалится"))
+    })
+    .await;
+    eprintln!("STEP scenario armed");
+
+    store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+    handle
+        .send(&UpgradePreview {
+            item_uid: "i_17".into(),
+        })
+        .expect("превью 2");
+    store.on_sheet_sent(ld2_client::store::Act::Preview);
+    pump(&mut store, &mut rx, |s| {
+        s.upgrade.as_ref().is_some_and(|v| v.preview.is_some())
+    })
+    .await;
+    let preview_id = store.upgrade.as_ref().unwrap().preview.as_ref().unwrap()["preview_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    store.on_sheet_sent(ld2_client::store::Act::Upgrade);
+    handle
+        .send(&UpgradeStart {
+            item_uid: "i_17".into(),
+            preview_id,
+        })
+        .expect("улучшение 2");
+    pump(&mut store, &mut rx, |s| {
+        s.upgrade.is_none()
+            && !s
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .char
+                .inventory
+                .iter()
+                .any(|i| i.uid == "i_17")
+    })
+    .await;
+    assert!(
+        store
+            .log
+            .iter()
+            .any(|e| e.kind == ld2_client::store::LogKind::Crime && e.text.contains("РАЗРУШЕН")),
+        "провал по break в журнале"
+    );
 
     handle.close();
 }
