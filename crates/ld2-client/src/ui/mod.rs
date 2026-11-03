@@ -11,6 +11,7 @@ use crate::transport::TransportHandle;
 
 pub mod log_panel;
 pub mod screens;
+pub mod sheet;
 pub mod world;
 
 /// Контекст экрана: всё, что нужно функции отрисовки.
@@ -28,6 +29,8 @@ pub struct Forms {
     pub create: CreateForm,
     /// `(id, name)` персонажа, выбранного на удаление.
     pub delete_target: Option<(String, String)>,
+    /// Правая панель: вкладка + drag&drop (M4).
+    pub sheet: SheetState,
 }
 
 #[derive(Default)]
@@ -88,6 +91,38 @@ impl CreateForm {
 
     pub fn name_valid(&self) -> bool {
         self.name.trim().chars().count() >= 2
+    }
+}
+
+/// Вкладка правой панели (лист персонажа, ФР-04/ФР-07).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SheetTab {
+    #[default]
+    Skills,
+    Attrs,
+    Inventory,
+}
+
+/// Источник перетаскивания в инвентаре (drag&drop, ФР-07).
+#[derive(Debug, Clone, PartialEq)]
+pub enum DragFrom {
+    /// Перетаскивается предмет из сетки инвентаря.
+    Inventory(String),
+    /// Перетаскивается предмет из слота экипировки.
+    Slot(String),
+}
+
+/// Состояние правой панели — живёт между кадрами.
+#[derive(Default)]
+pub struct SheetState {
+    pub tab: SheetTab,
+    pub drag: Option<DragFrom>,
+}
+
+impl Forms {
+    /// Начать перетаскивание (сброс предыдущего).
+    pub fn start_drag(&mut self, from: DragFrom) {
+        self.sheet.drag = Some(from);
     }
 }
 

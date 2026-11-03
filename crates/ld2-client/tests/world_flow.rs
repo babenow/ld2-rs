@@ -6,7 +6,7 @@ use std::time::Duration;
 use ld2_client::store::{AppStore, LogKind, Screen};
 use ld2_client::transport::{self, IngressEvent, TransportConfig, TransportStatus};
 use ld2_mock_server::{serve_with_listener, Chaos};
-use ld2_protocol::cmd::{AuthLogin, CharSelect, CombatAttack, EntityInfo, LocationMove};
+use ld2_protocol::cmd::{AuthLogin, CharSelect, ChatSend, CombatAttack, EntityInfo, LocationMove};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
@@ -232,6 +232,101 @@ async fn blocked_exit_surfaces_world_error() {
         "текст ошибки сервера показан"
     );
     assert_eq!(location_id(&store), "l_village", "остались в деревне");
+
+    handle.close();
+}
+
+/// DoD M4 (ТЗ §10): бой → лут в инвентаре → смерть → ВСЁ потеряно →
+/// респаун в деревне с полным hp → подтверждение закрывает модалку.
+#[tokio::test]
+async fn death_flow_loses_everything_and_respawns() {
+    let url = start_mock().await;
+    let (handle, mut rx, mut store) = spawn_pair(&url);
+    enter_world(&handle, &mut store, &mut rx).await;
+
+    // Переход в лес и убийство волка → лут в инвентарь (ФР-07).
+    store.on_world_sent(ld2_client::store::Act::Move);
+    handle
+        .send(&LocationMove {
+            exit_id: "e_north".into(),
+        })
+        .expect("move");
+    pump(&mut store, &mut rx, |s| location_id(s) == "l_forest").await;
+
+    for _ in 0..3 {
+        store.on_world_sent(ld2_client::store::Act::Attack);
+        handle
+            .send(&CombatAttack {
+                target_id: "m_3".into(),
+            })
+            .expect("attack");
+        pump(&mut store, &mut rx, |s| s.pending.is_none()).await;
+    }
+    pump(&mut store, &mut rx, |s| {
+        s.snapshot
+            .as_ref()
+            .is_some_and(|sn| sn.char.inventory.iter().any(|i| i.uid == "loot_m_3"))
+    })
+    .await;
+    assert!(
+        store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .any(|i| i.name.contains("Волк")),
+        "трофея с волка в инвентаре"
+    );
+
+    // Смерть (сценарий мока через чат).
+    handle
+        .send(&ChatSend {
+            channel: "location".into(),
+            text: "/scenario death".into(),
+            to: None,
+        })
+        .expect("death trigger");
+    pump(&mut store, &mut rx, |s| s.death.is_some()).await;
+
+    // Сводка утраченного — и там лут с волка, и стартовый набор (ФР-06).
+    let lost: Vec<String> = store
+        .death
+        .as_ref()
+        .unwrap()
+        .lost_items
+        .iter()
+        .map(|i| i.name.clone())
+        .collect();
+    assert!(
+        lost.iter().any(|n| n.contains("Волк")) && lost.iter().any(|n| n.contains("посох")),
+        "утрачено всё: {lost:?}"
+    );
+    assert!(
+        store.log.iter().any(|e| e.text.contains("ВЫ ПОГИБЛИ")),
+        "смерть в журнале"
+    );
+
+    // Респаун: деревня, ресурсы полные, инвентарь пуст (применены removals/stats).
+    pump(&mut store, &mut rx, |s| location_id(s) == "l_village").await;
+    let snap = store.snapshot.as_ref().unwrap();
+    assert!(
+        snap.char.inventory.is_empty(),
+        "инвентарь пуст после смерти"
+    );
+    assert_eq!(snap.char.hp.cur, snap.char.hp.max, "hp полный");
+    assert!(
+        snap.char.equip.values().flatten().next().is_none(),
+        "экипировка снята"
+    );
+    assert!(store.death.is_some(), "модалка открыта до подтверждения");
+
+    // Закрыть можно только подтверждением (ФР-06).
+    store.confirm_death();
+    assert!(store.death.is_none());
+    assert_eq!(store.screen, Screen::Game, "мир снова доступен");
+    assert_eq!(location_id(&store), "l_village");
 
     handle.close();
 }
