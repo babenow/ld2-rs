@@ -117,6 +117,19 @@ pub enum Key {
     DeathConfirm,
     ItemDescTitle,
     ReqLabel,
+    // M5: hotbar/улучшение/инкрустация (ФР-09, ФР-10)
+    HotbarLabel,
+    NoCharge,
+    NotEnoughMp,
+    UpgradeTitle,
+    UpgradeBtn,
+    ChanceLabel,
+    CostLabel,
+    BtnSocketing,
+    SocketingTitle,
+    InsertRune,
+    ExtractRune,
+    NoRunes,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -215,6 +228,18 @@ mod tests {
         Key::DeathConfirm,
         Key::ItemDescTitle,
         Key::ReqLabel,
+        Key::HotbarLabel,
+        Key::NoCharge,
+        Key::NotEnoughMp,
+        Key::UpgradeTitle,
+        Key::UpgradeBtn,
+        Key::ChanceLabel,
+        Key::CostLabel,
+        Key::BtnSocketing,
+        Key::SocketingTitle,
+        Key::InsertRune,
+        Key::ExtractRune,
+        Key::NoRunes,
     ];
 
     #[test]

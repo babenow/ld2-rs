@@ -280,6 +280,7 @@ mp_per_int = 4
 mp_per_arcana = 5
 regen_out_of_combat_s = 45           # полный бар вне боя
 regen_in_combat_pct_per_s = 1.0      # медленный тик в бою
+rune_cost = 10                       # стоимость каста руны (тултип hotbar, ФР-09)
 
 [crimes]                             # связка с pickpocket, protocol.md §5 kinds
 kinds_thief = { enabled = true }     # D5: статус «Вор» активен в моке

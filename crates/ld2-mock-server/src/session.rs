@@ -56,6 +56,8 @@ pub struct Session {
     party: Option<PartyState>,
     guild: Option<ld2_protocol::types::GuildState>,
     trade: Option<TradeState>,
+    /// M5: следующее улучшение проваливается (сценарий break_on_fail).
+    fail_next_upgrade: bool,
 }
 
 impl Default for Session {
@@ -83,6 +85,7 @@ impl Session {
             party: None,
             guild: None,
             trade: None,
+            fail_next_upgrade: false,
         }
     }
 
@@ -1280,7 +1283,7 @@ impl Session {
         }
 
         let sv = self.bump();
-        let mut outs = Vec::new();
+        let mut staff_value = None;
         if let Some(ch) = self.char.as_mut() {
             ch.inventory.retain(|i| i.uid != cmd.rune_uid);
             if let Some(staff) = ch.inventory.iter_mut().find(|i| i.uid == cmd.staff_uid) {
@@ -1292,21 +1295,27 @@ impl Session {
                     socket.rune = rune_info;
                 }
             }
-            let staff_value = ch
+            staff_value = ch
                 .inventory
                 .iter()
                 .find(|i| i.uid == cmd.staff_uid)
                 .cloned()
                 .map(serde_json::to_value)
                 .and_then(Result::ok);
-            outs.push(self.ack_ok(seq, Some(sv)));
-            if let Some(staff_value) = staff_value {
+        }
+
+        let mut outs = Vec::new();
+        match staff_value {
+            // §7: ack несёт обновлённый посох (как в socket.extract).
+            Some(staff_value) => {
+                outs.push(self.ack_ok_payload(seq, Some(sv), &json!({ "staff": staff_value })));
                 outs.push(self.event(
                     "evt/item/state",
                     Some(sv),
                     json!({ "uid": cmd.staff_uid, "patch": { "item": staff_value } }),
                 ));
             }
+            None => outs.push(self.ack_ok(seq, Some(sv))),
         }
         outs
     }
@@ -1459,6 +1468,58 @@ impl Session {
                 ErrorCode::UpgradePreviewStale,
                 "превью от другого предмета",
             )];
+        }
+
+        // Сценарий M5 (break_on_fail): предмет разрушается — по ТЗ ФР-10
+        // «предмет разрушается»; результат — событием, не ack.
+        if self.fail_next_upgrade {
+            self.fail_next_upgrade = false;
+            let removed = match self.char.as_mut() {
+                Some(ch) => {
+                    let found = ch.inventory.iter().any(|i| i.uid == cmd.item_uid);
+                    if found {
+                        ch.inventory.retain(|i| i.uid != cmd.item_uid);
+                        ch.equip
+                            .retain(|_, v| v.as_deref() != Some(cmd.item_uid.as_str()));
+                    }
+                    found
+                }
+                None => false,
+            };
+            if !removed {
+                return vec![self.ack_err(seq, None, ErrorCode::ItemGone, "предмета нет")];
+            }
+            let sv = self.bump();
+            let mut outs = vec![self.ack_ok(seq, Some(sv))];
+            outs.push(
+                self.event(
+                    "evt/upgrade/result",
+                    Some(sv),
+                    serde_json::to_value(UpgradeResult {
+                        uid: cmd.item_uid.clone(),
+                        ok: false,
+                        new_upgrade: None,
+                        item_destroyed: Some(true),
+                        cost: serde_json::Map::from_iter([
+                            ("gold".to_string(), json!(300)),
+                            ("materials".to_string(), json!({ "rune_dust": 2 })),
+                        ]),
+                    })
+                    .unwrap_or_default(),
+                ),
+            );
+            outs.push(
+                self.event(
+                    "evt/item/removed",
+                    Some(sv),
+                    serde_json::to_value(ItemRemoved {
+                        uid: cmd.item_uid,
+                        reason: ld2_protocol::evt::ItemRemovalReason::Consumed,
+                    })
+                    .unwrap_or_default(),
+                ),
+            );
+            return outs;
         }
 
         let mut new_upgrade = None;
@@ -1815,6 +1876,7 @@ impl Session {
         if cmd.text.starts_with("/scenario ") {
             return match cmd.text.as_str() {
                 "/scenario death" => self.scenario_death(seq),
+                "/scenario upgrade_fail" => self.scenario_upgrade_fail(seq),
                 other => vec![self.ack_err(
                     seq,
                     None,
@@ -1842,6 +1904,28 @@ impl Session {
             name,
             text: cmd.text,
             tags,
+            sent_at: fixtures::now_rfc3339(),
+            extra: Default::default(),
+        };
+        vec![
+            self.ack_ok(seq, None),
+            self.event(
+                "evt/chat/message",
+                None,
+                serde_json::to_value(msg).unwrap_or_default(),
+            ),
+        ]
+    }
+
+    /// Сценарий M5: следующее улучшение проваливается (break_on_fail).
+    fn scenario_upgrade_fail(&mut self, seq: u32) -> Vec<Out> {
+        self.fail_next_upgrade = true;
+        let msg = ChatMessage {
+            channel: "system".into(),
+            from: "server".into(),
+            name: "Сценарий".into(),
+            text: "следующее улучшение предмета провалится (break_on_fail)".into(),
+            tags: None,
             sent_at: fixtures::now_rfc3339(),
             extra: Default::default(),
         };

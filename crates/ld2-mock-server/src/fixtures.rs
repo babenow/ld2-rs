@@ -122,6 +122,7 @@ pub fn session_config(char_slot_limit: u32) -> SessionConfig {
             mana: ManaConfig {
                 regen_out_s: 45,
                 regen_in_pct_s: 1.0,
+                rune_cost: 10,
             },
         },
         characters: vec![character_summary()],
@@ -271,6 +272,27 @@ pub fn scroll_item() -> ItemSnapshot {
         sockets: None,
         qty: Some(1),
         gold_value: Some(30),
+        extra: Default::default(),
+    }
+}
+
+/// Руна-предмет (M5: инкрустация/тесты) — `uid` параметризован.
+pub fn rune_item(uid: &str) -> ItemSnapshot {
+    let mut stats = serde_json::Map::new();
+    stats.insert("spell".into(), json!("ice_shard"));
+    stats.insert("charges".into(), json!(5));
+    stats.insert("max".into(), json!(5));
+    ItemSnapshot {
+        uid: uid.to_string(),
+        item_type: "rune".into(),
+        name: "Руна льда".into(),
+        rarity: "common".into(),
+        upgrade: 0,
+        stats,
+        requires: None,
+        sockets: None,
+        qty: Some(1),
+        gold_value: Some(20),
         extra: Default::default(),
     }
 }

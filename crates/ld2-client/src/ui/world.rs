@@ -3,8 +3,8 @@
 //! колонка истории и журнал мира. Игровые панели по ФР ТЗ §7.1 — с M6.
 
 use eframe::egui;
-use ld2_protocol::cmd::{CombatAttack, EntityInfo, LocationMove};
-use ld2_protocol::evt::CharDeath;
+use ld2_protocol::cmd::{CombatAttack, EntityInfo, ItemUse, LocationMove, MagicRuneCast};
+use ld2_protocol::evt::{CharDeath, StateSnapshot};
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot};
 
 use crate::l10n::{t, Key};
@@ -52,6 +52,9 @@ pub fn game(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui) -> ScreenEffects {
         let right = &mut cols[2];
         sheet::show(right, ctx);
     });
+
+    ui.add_space(4.0);
+    hotbar(ui, ctx, &snap);
 
     ui.add_space(4.0);
     log_panel::show(ui, lang, &ctx.store.log);
@@ -342,6 +345,94 @@ fn send_attack(ctx: &mut UiCtx<'_>, entity_id: &str) {
         Ok(_) => ctx.store.on_world_sent(Act::Attack),
         Err(e) => ctx.store.world_error = Some(format!("нет связи: {e}")),
     }
+}
+
+// ─── панель действий (ФР-05/ФР-09): руны посоха + свитки/зелья ────────────
+
+fn hotbar(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>, snap: &StateSnapshot) {
+    let lang = ctx.lang;
+    // Стоимость каста в мане — из конфига сервера (§5, M5.0).
+    let rune_cost = ctx
+        .store
+        .session
+        .as_ref()
+        .map(|s| s.magic.mana.rune_cost)
+        .unwrap_or(0);
+
+    ui.group(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.strong(t(lang, Key::HotbarLabel));
+
+            // Руны экипированного посоха: бейдж зарядов ×N (ФР-09).
+            if let Some(staff_uid) = snap.char.equip.get("staff").cloned().flatten() {
+                if let Some(staff) = snap.char.inventory.iter().find(|i| i.uid == staff_uid) {
+                    for socket in staff.sockets.iter().flatten() {
+                        let Some(rune) = &socket.rune else { continue };
+                        let charges_ok = rune.charges > 0;
+                        let mp_ok = rune_cost <= 0 || snap.char.mp.cur >= rune_cost;
+                        let enabled = charges_ok && mp_ok;
+                        let label = format!("{} ×{}", rune.name, rune.charges);
+                        let resp = ui.add_enabled(enabled, egui::Button::new(label));
+                        if enabled && resp.clicked() {
+                            let cmd = MagicRuneCast {
+                                staff_uid: staff_uid.clone(),
+                                socket_index: socket.index,
+                                target_id: None,
+                            };
+                            match ctx.transport.send(&cmd) {
+                                Ok(_) => ctx.store.on_world_sent(Act::Cast),
+                                Err(e) => ctx.store.world_error = Some(format!("нет связи: {e}")),
+                            }
+                        }
+                        // Тултип: заряды и стоимость в мане (ФР-09).
+                        resp.on_hover_ui(|ui| {
+                            ui.strong(rune.name.as_str());
+                            ui.weak(format!("{}/{}", rune.charges, rune.max));
+                            if rune_cost > 0 {
+                                ui.label(format!(
+                                    "{}: {} маны",
+                                    t(lang, Key::CostLabel),
+                                    rune_cost
+                                ));
+                            }
+                            if !charges_ok {
+                                ui.colored_label(RED, t(lang, Key::NoCharge));
+                            }
+                            if !mp_ok {
+                                ui.colored_label(RED, t(lang, Key::NotEnoughMp));
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Свитки и зелья из инвентаря (свиток — без маны, D4).
+            let consumables: Vec<_> = snap
+                .char
+                .inventory
+                .iter()
+                .filter(|i| matches!(i.item_type.as_str(), "scroll" | "potion"))
+                .cloned()
+                .collect();
+            for item in consumables {
+                let label = format!("{} ×{}", item.name, item.qty.unwrap_or(1));
+                if ui
+                    .button(label)
+                    .on_hover_text(item.item_type.as_str())
+                    .clicked()
+                {
+                    let cmd = ItemUse {
+                        item_uid: item.uid.clone(),
+                        target_id: None,
+                    };
+                    match ctx.transport.send(&cmd) {
+                        Ok(_) => ctx.store.on_world_sent(Act::Cast),
+                        Err(e) => ctx.store.world_error = Some(format!("нет связи: {e}")),
+                    }
+                }
+            }
+        });
+    });
 }
 
 // ─── модалка смерти (ФР-06) ────────────────────────────────────────────────
