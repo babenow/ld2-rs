@@ -12,8 +12,9 @@ use ld2_core::config::{host_allowed, Config, ConfigStore};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
 use ld2_core::store::{Act, AppStore, Effect, Screen};
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
-use ld2_protocol::cmd::{AuthLogin, CharSelect, LocationMove};
+use ld2_protocol::cmd::{AuthLogin, LocationMove};
 
+mod chars;
 mod chat;
 mod game;
 mod sheet;
@@ -39,7 +40,6 @@ enum Click {
     ChatLimit(i64),
     ToggleNotify,
     ApplyHost,
-    SelectChar(String),
     MoveExit(String),
     OpenReleases,
     // M10.4: игровой экран
@@ -106,6 +106,12 @@ pub struct Root {
     trade_gold: Entity<TextInput>,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
     party_collapsed: bool,
+    /// M10.6: создание/удаление персонажей (ФР-02).
+    create_name: Entity<TextInput>,
+    create_profile: ld2_core::store::Profile,
+    create_open: bool,
+    create_submitted: bool,
+    delete_target: Option<(String, String)>,
 }
 
 impl Root {
@@ -121,6 +127,7 @@ impl Root {
         });
         let password_input = cx.new(|cx| TextInput::new(cx, t(shell.lang, Key::FieldPassword)));
         let guild_input = cx.new(|cx| TextInput::new(cx, "…"));
+        let create_name = cx.new(|cx| TextInput::new(cx, t(shell.lang, Key::FieldCharName)));
         let chat_input = cx.new(|cx| TextInput::new(cx, ""));
         let chat_filter = cx.new(|cx| TextInput::new(cx, t(shell.lang, Key::ChFilter)));
         let trade_gold = cx.new(|cx| {
@@ -156,6 +163,11 @@ impl Root {
             chat_channel: "location".into(),
             trade_gold,
             party_collapsed,
+            create_name,
+            create_profile: ld2_core::store::Profile::default(),
+            create_open: false,
+            create_submitted: false,
+            delete_target: None,
         }
     }
 
@@ -265,14 +277,6 @@ impl Root {
         match self.transport.send(&cmd) {
             Ok(_) => self.store.on_login_sent(&login),
             Err(e) => self.store.login_error = Some(format!("нет связи: {e}")),
-        }
-    }
-
-    fn select_char(&mut self, char_id: String) {
-        let cmd = CharSelect { char_id };
-        match self.transport.send(&cmd) {
-            Ok(_) => self.store.on_select_sent(),
-            Err(e) => self.store.select_error = Some(format!("нет связи: {e}")),
         }
     }
 
@@ -411,7 +415,6 @@ impl Root {
                 }
                 self.settings_open = false;
             }
-            Click::SelectChar(id) => self.select_char(id),
             Click::MoveExit(exit_id) => {
                 let cmd = LocationMove { exit_id };
                 match self.transport.send(&cmd) {
@@ -617,83 +620,6 @@ impl Root {
                     .text_color(rgb(pal.muted))
                     .child("demo/demo123 · demo2/demo123"),
             )
-    }
-
-    fn characters_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let lang = self.lang;
-        let mut root = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .size_full()
-            .p(px(12.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(18.0))
-                    .child(t(lang, Key::CharactersTitle)),
-            );
-        if let Some(err) = self.store.select_error.clone() {
-            root = root.child(div().text_color(rgb(pal.danger)).child(err));
-        }
-        if let Some(session) = self.store.session.clone() {
-            let (used, max) = self.store.slot_usage();
-            root = root.child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(format!("{} {used}/{max}", t(lang, Key::SlotsUsed))),
-            );
-            for character in &session.characters {
-                let id = character.id.clone();
-                let name = character.name.clone();
-                let location = character.location.clone();
-                let summary = character.summary.clone().unwrap_or_default();
-                root = root.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .gap_2()
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .bg(rgb(pal.panel))
-                        .border_1()
-                        .border_color(rgb(pal.border))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .child(
-                                    div()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .child(name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(12.0))
-                                        .text_color(rgb(pal.muted))
-                                        .child(format!("{location} · {summary}")),
-                                ),
-                        )
-                        .child(btn(
-                            cx,
-                            t(lang, Key::BtnEnter).to_string(),
-                            pal.accent,
-                            pal.accent_text,
-                            Click::SelectChar(id),
-                        )),
-                );
-            }
-        }
-        root.child(btn(
-            cx,
-            t(lang, Key::BtnLogout).to_string(),
-            pal.panel,
-            pal.danger,
-            Click::Logout,
-        ))
     }
 
     /// Окно настроек (ФР-19) — как отдельный экран с кнопкой закрытия.

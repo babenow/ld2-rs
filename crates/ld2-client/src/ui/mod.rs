@@ -7,7 +7,6 @@
 
 use eframe::egui;
 
-use crate::l10n::Key;
 use crate::store::{AppStore, Effect};
 use crate::transport::TransportHandle;
 
@@ -83,38 +82,8 @@ pub struct LoginForm {
     pub password: String,
 }
 
-/// Профиль персонажа (D3: Воин/Вор/Маг — wire-значения для `char.create`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Profile {
-    #[default]
-    Warrior,
-    Rogue,
-    Mage,
-}
-
-impl Profile {
-    pub fn all() -> [Profile; 3] {
-        [Profile::Warrior, Profile::Rogue, Profile::Mage]
-    }
-
-    /// Wire-значение `cmd/char.create.profile`.
-    pub fn value(self) -> &'static str {
-        match self {
-            Profile::Warrior => "warrior",
-            Profile::Rogue => "rogue",
-            Profile::Mage => "mage",
-        }
-    }
-
-    /// Локализованное название профиля.
-    pub fn label_key(self) -> Key {
-        match self {
-            Profile::Warrior => Key::ProfileWarrior,
-            Profile::Rogue => Key::ProfileRogue,
-            Profile::Mage => Key::ProfileMage,
-        }
-    }
-}
+/// Профиль персонажа — переедал в `ld2-core` (D12, общий с gpui).
+pub use ld2_core::store::Profile;
 
 #[derive(Default)]
 pub struct CreateForm {

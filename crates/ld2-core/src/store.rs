@@ -1605,6 +1605,41 @@ pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&s
     }
 }
 
+/// Профиль персонажа (D3: Воин/Вор/Маг — wire-значения для `char.create`).
+/// Общий для обоих клиентов (D12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Profile {
+    #[default]
+    Warrior,
+    Rogue,
+    Mage,
+}
+
+impl Profile {
+    pub fn all() -> [Profile; 3] {
+        [Profile::Warrior, Profile::Rogue, Profile::Mage]
+    }
+
+    /// Wire-значение `cmd/char.create.profile`.
+    pub fn value(self) -> &'static str {
+        match self {
+            Profile::Warrior => "warrior",
+            Profile::Rogue => "rogue",
+            Profile::Mage => "mage",
+        }
+    }
+
+    /// Локализованное название профиля.
+    pub fn label_key(self) -> crate::l10n::Key {
+        use crate::l10n::Key;
+        match self {
+            Profile::Warrior => Key::ProfileWarrior,
+            Profile::Rogue => Key::ProfileRogue,
+            Profile::Mage => Key::ProfileMage,
+        }
+    }
+}
+
 /// Заголовок преступления из конфига сервера (§5 kinds), фолбэк — kind.
 pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
     store
