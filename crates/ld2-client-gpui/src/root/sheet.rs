@@ -8,7 +8,7 @@
 //! `Root::sheet_tab` (персистентно в config, ФР-19).
 
 use ely::overlays::Dialog;
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton};
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, SharedString};
 use ld2_core::l10n::{format_duration, t, Key, Lang};
 use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, Act, UpgradeView};
 use ld2_protocol::cmd::{
@@ -20,6 +20,7 @@ use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
 
 use crate::palette::Palette;
 use ely::forms::{Choice, Input, Select};
+use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 
 use super::{act_btn, Root};
@@ -447,9 +448,7 @@ impl Root {
         if snap.char.inventory.is_empty() {
             col = col.child(div().text_color(rgb(pal.muted)).child("…"));
         }
-        let menu_for = self.item_menu.clone();
         for item in &snap.char.inventory {
-            let selected = menu_for.as_deref() == Some(item.uid.as_str());
             let uid = item.uid.clone();
             let detail = serde_json::to_value(item).unwrap_or_default();
             let tile = div()
@@ -460,7 +459,7 @@ impl Root {
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(if selected { pal.selection } else { pal.panel }))
+                .bg(rgb(pal.panel))
                 .border_1()
                 .border_color(rgb(pal.border))
                 .cursor_pointer()
@@ -471,18 +470,7 @@ impl Root {
                         let detail = detail.clone();
                         move |this, _, _, cx| {
                             // Левый клик — описание (паритет тултипа egui).
-                            this.item_menu = None;
                             this.store.item_detail = Some(detail.clone());
-                            cx.notify();
-                        }
-                    }),
-                )
-                .on_mouse_up(
-                    MouseButton::Right,
-                    cx.listener({
-                        let uid = uid.clone();
-                        move |this, _, _, cx| {
-                            this.item_menu = Some(uid.clone());
                             cx.notify();
                         }
                     }),
@@ -492,54 +480,39 @@ impl Root {
                         .text_color(rgb(rarity_color(&item.rarity, pal)))
                         .child(format!("{} {}", item.name, badges(item))),
                 );
-            col = col.child(tile);
-
-            // Меню действий (паритет контекстного меню egui).
-            if selected {
-                col = col.child(self.item_actions(cx, pal, &snap.char, item));
-            }
+            // M11.4: ПКМ по предмету — контекстное меню Ely (полный набор
+            // действий egui-паритета; инлайн-раскрытие M10 снято).
+            col = col.child(
+                ContextMenu::new(
+                    format!("ld2-item-ctx-{uid}"),
+                    self.item_actions(cx, pal, &snap.char, item),
+                )
+                .child(tile),
+            );
         }
         col
     }
 
-    /// Действия предмета — те же, что в контекстном меню egui (ФР-07/09/10).
+    /// Действия предмета — контекстное меню Ely (ФР-07/09/10, egui-паритет).
     fn item_actions(
         &mut self,
         cx: &mut Context<'_, Self>,
-        pal: &Palette,
+        _pal: &Palette,
         ch: &CharacterState,
         item: &ItemSnapshot,
-    ) -> Div {
+    ) -> Menu {
         let lang = self.lang;
-        let mut menu = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .ml(px(12.0))
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(pal.panel))
-            .border_1()
-            .border_color(rgb(pal.accent));
+        let mut menu = Menu::new();
 
         // Использовать (свиток/зелье/…).
         let uid = item.uid.clone();
-        menu = menu.child(act_btn(
-            cx,
-            t(lang, Key::MenuUse),
-            pal.panel,
-            pal.text,
-            move |this, cx| {
-                let cmd = ItemUse {
-                    item_uid: uid.clone(),
-                    target_id: None,
-                };
-                this.send_cmd(&cmd, Act::Drop);
-                this.item_menu = None;
-                let _ = cx;
-            },
-        ));
+        menu = menu.item(menu_item(cx, t(lang, Key::MenuUse), move |this, _cx| {
+            let cmd = ItemUse {
+                item_uid: uid.clone(),
+                target_id: None,
+            };
+            this.send_cmd(&cmd, Act::Drop);
+        }));
 
         // Экипировать (гейт клиента по типу; сервер — истина, §7).
         if let Some(slot) = slot_for(&item.item_type) {
@@ -547,21 +520,13 @@ impl Root {
             if !equipped {
                 let uid = item.uid.clone();
                 let slot = slot.to_string();
-                menu = menu.child(act_btn(
-                    cx,
-                    t(lang, Key::MenuEquip),
-                    pal.panel,
-                    pal.text,
-                    move |this, cx| {
-                        let cmd = ItemEquip {
-                            item_uid: uid.clone(),
-                            slot: slot.clone(),
-                        };
-                        this.send_cmd(&cmd, Act::Equip);
-                        this.item_menu = None;
-                        let _ = cx;
-                    },
-                ));
+                menu = menu.item(menu_item(cx, t(lang, Key::MenuEquip), move |this, _cx| {
+                    let cmd = ItemEquip {
+                        item_uid: uid.clone(),
+                        slot: slot.clone(),
+                    };
+                    this.send_cmd(&cmd, Act::Equip);
+                }));
             }
         }
 
@@ -576,68 +541,40 @@ impl Root {
         if upgradable && item.upgrade < max_level {
             let uid = item.uid.clone();
             let name = item.name.clone();
-            menu = menu.child(act_btn(
-                cx,
-                t(lang, Key::UpgradeBtn),
-                pal.panel,
-                pal.text,
-                move |this, cx| {
-                    this.store.open_upgrade(uid.clone(), name.clone());
-                    let cmd = UpgradePreview {
-                        item_uid: uid.clone(),
-                    };
-                    this.send_cmd(&cmd, Act::Preview);
-                    this.item_menu = None;
-                    let _ = cx;
-                },
-            ));
+            menu = menu.item(menu_item(cx, t(lang, Key::UpgradeBtn), move |this, _cx| {
+                this.store.open_upgrade(uid.clone(), name.clone());
+                let cmd = UpgradePreview {
+                    item_uid: uid.clone(),
+                };
+                this.send_cmd(&cmd, Act::Preview);
+            }));
         }
 
         // Инкрустация (ФР-09): только посох с сокетами.
         if item.item_type == "staff" && item.sockets.is_some() {
             let uid = item.uid.clone();
-            menu = menu.child(act_btn(
+            menu = menu.item(menu_item(
                 cx,
                 t(lang, Key::BtnSocketing),
-                pal.panel,
-                pal.text,
-                move |this, cx| {
+                move |this, _cx| {
                     this.store.open_socketing(uid.clone());
-                    this.item_menu = None;
-                    let _ = cx;
                 },
             ));
         }
 
         // Описание / Выбросить.
         let detail = serde_json::to_value(item).unwrap_or_default();
-        menu = menu.child(act_btn(
-            cx,
-            t(lang, Key::MenuDesc),
-            pal.panel,
-            pal.text,
-            move |this, cx| {
-                this.store.item_detail = Some(detail.clone());
-                this.item_menu = None;
-                let _ = cx;
-            },
-        ));
+        menu = menu.item(menu_item(cx, t(lang, Key::MenuDesc), move |this, _cx| {
+            this.store.item_detail = Some(detail.clone());
+        }));
         let uid = item.uid.clone();
-        menu = menu.child(act_btn(
-            cx,
-            t(lang, Key::MenuDrop),
-            pal.panel,
-            pal.danger,
-            move |this, cx| {
-                let cmd = ItemDrop {
-                    item_uid: uid.clone(),
-                    qty: None,
-                };
-                this.send_cmd(&cmd, Act::Drop);
-                this.item_menu = None;
-                let _ = cx;
-            },
-        ));
+        menu = menu.item(menu_item(cx, t(lang, Key::MenuDrop), move |this, _cx| {
+            let cmd = ItemDrop {
+                item_uid: uid.clone(),
+                qty: None,
+            };
+            this.send_cmd(&cmd, Act::Drop);
+        }));
         menu
     }
 
@@ -1647,6 +1584,23 @@ fn badges(item: &ItemSnapshot) -> String {
 }
 
 /// Редкость → цвет (палитра §7.4).
+/// MenuItem с действием над Root (запись через entity: замыкания `on_click`
+/// должны быть `'static`, а `&mut Root` живёт только в цикле сборки).
+fn menu_item(
+    cx: &mut Context<'_, Root>,
+    label: impl Into<SharedString>,
+    body: impl Fn(&mut Root, &mut Context<'_, Root>) + 'static,
+) -> MenuItem {
+    let this = cx.entity();
+    MenuItem::new(label).on_click(move |_window, acx| {
+        this.update(acx, |root, rcx| {
+            body(root, rcx);
+            rcx.notify();
+        });
+    })
+}
+
+/// Цвет редкости предмета (палитра §7.4).
 fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
     match rarity {
         "common" => pal.muted,

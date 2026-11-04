@@ -30,7 +30,7 @@ const RELEASE: bool = !cfg!(debug_assertions);
 /// Что делать по клику (замыкания в listener должны быть `Fn` — действуем
 /// по копируемому перечислению).
 #[derive(Clone)]
-enum Click {
+pub(crate) enum Click {
     Login,
     Logout,
     Exit,
@@ -91,10 +91,7 @@ pub struct Root {
     host_input: Option<Entity<TextInput>>,
     settings_open: bool,
     first_frame: bool,
-    /// Открытое контекстное меню сущности (id строки, ПКМ).
-    ctx_menu: Option<String>,
-    /// Открытое меню предмета в инвентаре (uid, ПКМ).
-    item_menu: Option<String>,
+
     /// Поле имени новой гильдии (ФР-16).
     guild_input: Option<Entity<TextInput>>,
     /// Открытая вкладка листа (ФР-19: персистентна в config).
@@ -137,8 +134,6 @@ impl Root {
             host_input: None,
             settings_open: false,
             first_frame: true,
-            ctx_menu: None,
-            item_menu: None,
             guild_input: None,
             sheet_tab,
             chat_input: None,
@@ -421,7 +416,7 @@ impl Root {
         }
     }
 
-    fn on_click(&mut self, click: Click, cx: &mut Context<'_, Self>) {
+    pub(crate) fn on_click(&mut self, click: Click, cx: &mut Context<'_, Self>) {
         match click {
             Click::Login => self.send_login(cx),
             Click::Logout => self.logout(),
@@ -482,7 +477,6 @@ impl Root {
                     Ok(_) => self.store.on_world_sent(Act::Attack),
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
-                self.ctx_menu = None;
             }
             Click::Flee => {
                 let cmd = ld2_protocol::cmd::CombatFlee {};
@@ -490,7 +484,6 @@ impl Root {
                     Ok(_) => self.store.on_world_sent(Act::Attack),
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
-                self.ctx_menu = None;
             }
             Click::Examine(id) => {
                 let cmd = ld2_protocol::cmd::EntityInfo { entity_id: id };
@@ -498,7 +491,6 @@ impl Root {
                     Ok(_) => self.store.on_world_sent(Act::Examine),
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
-                self.ctx_menu = None;
             }
             Click::PartyInvite(player_id) => {
                 let cmd = ld2_protocol::cmd::PartyInvite { player_id };
@@ -506,7 +498,6 @@ impl Root {
                     Ok(_) => self.store.on_sheet_sent(Act::Party),
                     Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
                 }
-                self.ctx_menu = None;
             }
             Click::TradeOpen(player_id) => {
                 let cmd = ld2_protocol::cmd::TradeOpen { player_id };
@@ -514,7 +505,6 @@ impl Root {
                     Ok(_) => self.store.on_sheet_sent(Act::Trade),
                     Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
                 }
-                self.ctx_menu = None;
             }
             Click::RuneCast {
                 staff_uid,

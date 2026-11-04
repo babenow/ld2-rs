@@ -14,6 +14,7 @@ use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
 
 use crate::palette::Palette;
+use ely::menus::{ContextMenu, Menu, MenuItem};
 
 use super::{btn, Click, Root};
 
@@ -113,7 +114,7 @@ impl Root {
         // Виджет группы (ФР-14) — сверху слева, как в egui.
         col = col.child(self.party_widget(cx, pal));
 
-        // Цель (ФР-05): HP + атака/отступ.
+        // ´.
         if let Some(target_id) = self.store.target.clone() {
             if let Some(entity) = snap.location.entities.iter().find(|e| e.id == target_id) {
                 let name = entity.name.clone();
@@ -387,11 +388,10 @@ impl Root {
         pal: &Palette,
         entity: Entity,
         safe: bool,
-    ) -> Div {
+    ) -> AnyElement {
         let lang = self.lang;
         let player_corpse = entity.kind == EntityKind::Corpse && entity.was_player.unwrap_or(false);
         let selected = self.store.target.as_deref() == Some(entity.id.as_str());
-        let menu_open = self.ctx_menu.as_deref() == Some(entity.id.as_str());
         let id = entity.id.clone();
 
         let mut row = div()
@@ -402,11 +402,7 @@ impl Root {
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(rgb(if selected || menu_open {
-                pal.selection
-            } else {
-                pal.panel
-            }))
+            .bg(rgb(if selected { pal.selection } else { pal.panel }))
             .border_1()
             .border_color(rgb(pal.border))
             .cursor_pointer()
@@ -416,7 +412,6 @@ impl Root {
                 cx.listener({
                     let id = id.clone();
                     move |this, _, _, cx| {
-                        this.ctx_menu = None;
                         if matches!(
                             this.store
                                 .snapshot
@@ -427,17 +422,6 @@ impl Root {
                         ) {
                             this.store.select_target(id.clone());
                         }
-                        cx.notify();
-                    }
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener({
-                    let id = id.clone();
-                    move |this, _, _, cx| {
-                        // ПКМ — меню действий (паритет egui context_menu).
-                        this.ctx_menu = Some(id.clone());
                         cx.notify();
                     }
                 }),
@@ -464,64 +448,42 @@ impl Root {
             );
         }
 
-        if !menu_open {
-            return row;
-        }
-
-        // Меню действий (инлайн под строкой; egui — попап по курсору).
+        // M11.4: правый клик — контекстное меню Ely (попап по курсору;
+        // паритет egui context_menu, инлайн-раскрытие M10 убрано).
         let attackable = !safe && matches!(entity.kind, EntityKind::Monster | EntityKind::Player);
-        let mut menu = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .ml(px(16.0))
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(pal.panel))
-            .border_1()
-            .border_color(rgb(pal.accent));
-        menu = menu.child(btn(
-            cx,
+        let this = cx.entity();
+        let mk = |label: String, click: Click| {
+            let this = this.clone();
+            MenuItem::new(label).on_click(move |_window, acx| {
+                this.update(acx, |root, cx| root.on_click(click.clone(), cx));
+            })
+        };
+        let mut menu = Menu::new().item(mk(
             t(lang, Key::Examine).to_string(),
-            pal.panel,
-            pal.text,
             Click::Examine(id.clone()),
         ));
         if attackable {
-            menu = menu.child(btn(
-                cx,
+            menu = menu.item(mk(
                 t(lang, Key::Attack).to_string(),
-                pal.panel,
-                pal.danger,
                 Click::Attack(id.clone()),
             ));
         }
         if entity.kind == EntityKind::Player {
-            menu = menu.child(btn(
-                cx,
+            menu = menu.item(mk(
                 t(lang, Key::PartyInviteBtn).to_string(),
-                pal.panel,
-                pal.text,
                 Click::PartyInvite(id.clone()),
             ));
-            menu = menu.child(btn(
-                cx,
+            menu = menu.item(mk(
                 t(lang, Key::TradeBtn).to_string(),
-                pal.panel,
-                pal.text,
                 Click::TradeOpen(id.clone()),
             ));
         }
         if player_corpse {
-            menu = menu.child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(rgb(pal.warn))
-                    .child(t(lang, Key::CorpsePlayerHint)),
-            );
+            menu = menu.item(MenuItem::new(t(lang, Key::CorpsePlayerHint)).disabled(true));
         }
-        div().flex().flex_col().child(row).child(menu)
+        ContextMenu::new(format!("ld2-ctx-{}", entity.id), menu)
+            .child(row)
+            .into_any_element()
     }
 
     // ── hotbar (ФР-05/09) ─────────────────────────────────────────────────
