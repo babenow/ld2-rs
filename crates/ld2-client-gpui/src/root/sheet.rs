@@ -20,6 +20,7 @@ use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
 
 use crate::palette::Palette;
 use ely::forms::{Choice, Input, Select};
+use ely::navigation::Tabs;
 
 use super::{act_btn, Root};
 
@@ -149,20 +150,25 @@ impl Root {
 
         col = col.children(self.tracker_block(pal));
 
-        // Вкладки (wrapped — 7 штук, риск тесноты учтён в M7).
-        let mut tabs = div().flex().flex_row().flex_wrap().gap_1();
-        for (candidate, key) in SheetTab::all() {
-            let selected = tab == candidate;
-            let bg = if selected { pal.accent } else { pal.panel };
-            let fg = if selected { pal.accent_text } else { pal.text };
-            tabs = tabs.child(act_btn(cx, t(lang, key), bg, fg, move |this, cx| {
-                this.sheet_tab = candidate;
-                this.config.sheet_tab = candidate.as_str().to_string();
-                this.save_config();
-                let _ = cx;
-            }));
-        }
-        col = col.child(tabs);
+        // M11.4: вкладки листа — Tabs Ely (выбор + клавиатурная навигация).
+        let choices: Vec<Choice> = SheetTab::all()
+            .iter()
+            .map(|(candidate, key)| Choice::new(candidate.as_str(), t(lang, *key)))
+            .collect();
+        let this = cx.entity();
+        col = col.child(
+            Tabs::new("ld2-sheet-tabs", choices, tab.as_str()).on_change(
+                move |value, _window, acx| {
+                    let value = value.to_string();
+                    this.update(acx, |root, cx| {
+                        root.sheet_tab = SheetTab::parse(&value);
+                        root.config.sheet_tab = value;
+                        root.save_config();
+                        cx.notify();
+                    });
+                },
+            ),
+        );
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
 
         if let Some(err) = &self.store.sheet_error {

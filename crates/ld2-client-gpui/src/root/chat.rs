@@ -8,7 +8,8 @@ use ld2_core::store::{parse_chat_input, Act, ChatDraft, CHAT_CHANNELS};
 use ld2_protocol::cmd::ChatSend;
 
 use crate::palette::{palette, Palette};
-use ely::forms::{Input, SearchInput};
+use ely::forms::{Choice, Input, SearchInput};
+use ely::navigation::Tabs;
 
 use super::{act_btn, Root};
 
@@ -31,26 +32,31 @@ impl Root {
             .border_1()
             .border_color(rgb(pal.border));
 
-        // ── вкладки каналов + фильтр (ФР-13) ──
-        let mut tabs = div().flex().flex_row().flex_wrap().gap_1().items_center();
-        for channel in CHAT_CHANNELS {
-            let count = self.store.chat.get(channel).map(|h| h.len()).unwrap_or(0);
-            let selected = active == channel;
-            let label = format!("{} ({count})", t(lang, channel_key(channel)));
-            let color = channel_color(channel, dark);
-            let ch = channel.to_string();
-            // Выбранная вкладка — акцент, цвет канала — на тексте.
-            let (bg, fg) = if selected {
-                (pal.accent, pal.accent_text)
-            } else {
-                (pal.panel, color)
-            };
-            tabs = tabs.child(act_btn(cx, label, bg, fg, move |this, cx| {
-                this.chat_channel = ch.clone();
-                let _ = cx;
-            }));
-        }
-        tabs = tabs.child(div().flex_grow_1().child(SearchInput::new(
+        // ── вкладки каналов (ФР-13): Tabs Ely + фильтр ──
+        let choices: Vec<Choice> = CHAT_CHANNELS
+            .iter()
+            .map(|channel| {
+                let count = self.store.chat.get(*channel).map(|h| h.len()).unwrap_or(0);
+                Choice::new(
+                    *channel,
+                    format!("{} ({count})", t(lang, channel_key(channel))),
+                )
+            })
+            .collect();
+        let this = cx.entity();
+        let mut tabs = div().flex().flex_row().gap_2().items_center();
+        tabs = tabs.child(
+            Tabs::new("ld2-chat-channels", choices, active.clone()).on_change(
+                move |value, _window, acx| {
+                    let value = value.to_string();
+                    this.update(acx, |root, cx| {
+                        root.chat_channel = value;
+                        cx.notify();
+                    });
+                },
+            ),
+        );
+        tabs = tabs.child(div().flex_grow_1().w(px(140.0)).child(SearchInput::new(
             "ld2-chat-filter",
             self.ti(&self.chat_filter),
         )));
