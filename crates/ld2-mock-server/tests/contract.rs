@@ -1257,5 +1257,6 @@ async fn m8_trade_mirrored_versioned_exchange_two_clients() {
     let added_b = b.wait(|v| v["type"] == "evt/item/added").await;
     assert_eq!(added_b["payload"]["item"]["uid"], "m_1");
     let removed_a = a.wait(|v| v["type"] == "evt/item/removed").await;
-    assert_eq!(removed_a["payload"]["item_uid"], "m_1");
+    assert_eq!(removed_a["payload"]["uid"], "m_1");
+    assert_eq!(removed_a["payload"]["reason"], "traded", "§8 ItemRemoved");
 }

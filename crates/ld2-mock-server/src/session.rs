@@ -3011,7 +3011,7 @@ impl Session {
                     evs.push(Self::w_event(
                         "evt/item/removed",
                         None,
-                        json!({ "item_uid": uid }),
+                        json!({ "uid": uid, "reason": "traded" }),
                     ));
                 }
                 for item in &gain {
