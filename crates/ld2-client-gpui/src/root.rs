@@ -828,6 +828,17 @@ impl Root {
     }
 }
 
+/// Текущая ОС — для разрешения `secondary-` в Keystroke::parse_with_os.
+fn host_os() -> gpui::OperatingSystem {
+    if cfg!(target_os = "macos") {
+        gpui::OperatingSystem::Mac
+    } else if cfg!(windows) {
+        gpui::OperatingSystem::Windows
+    } else {
+        gpui::OperatingSystem::Linux
+    }
+}
+
 /// Нажатие → спецификация (`alt+up`) для записи в config (ФР-19).
 fn spec_from_keystroke(ks: &gpui::Keystroke) -> Option<String> {
     let name = ks.key.to_lowercase();
@@ -855,7 +866,9 @@ fn spec_from_keystroke(ks: &gpui::Keystroke) -> Option<String> {
 /// Спецификации из config.toml парсятся gpui-синтаксисом (`alt-up`).
 fn keystroke_matches(spec: &str, ks: &gpui::Keystroke) -> bool {
     let normalized = spec.replace('+', "-");
-    match gpui::Keystroke::parse(&normalized) {
+    // gpui-pre 0.3.10: parse требует &'static str — динамические строки
+    // из config.toml парсятся через parse_with_os (документированный путь).
+    match gpui::Keystroke::parse_with_os(&normalized, host_os()) {
         Ok(want) => {
             want.modifiers.alt == ks.modifiers.alt
                 && want.modifiers.control == ks.modifiers.control
@@ -1060,7 +1073,8 @@ mod tests {
     #[test]
     fn hotkey_spec_round_trip() {
         for spec in ["alt+up", "tab", "shift+left", "ctrl+f5", "alt+left"] {
-            let ks = gpui::Keystroke::parse(&spec.replace('+', "-")).expect(spec);
+            let ks =
+                gpui::Keystroke::parse_with_os(&spec.replace('+', "-"), host_os()).expect(spec);
             assert_eq!(
                 spec_from_keystroke(&ks).as_deref(),
                 Some(spec),
@@ -1070,11 +1084,11 @@ mod tests {
         }
         assert!(!keystroke_matches(
             "alt+up",
-            &gpui::Keystroke::parse("up").unwrap()
+            &gpui::Keystroke::parse_with_os("up", host_os()).unwrap()
         ));
         assert!(!keystroke_matches(
             "bogus+key",
-            &gpui::Keystroke::parse("up").unwrap()
+            &gpui::Keystroke::parse_with_os("up", host_os()).unwrap()
         ));
     }
 }

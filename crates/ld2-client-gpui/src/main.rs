@@ -1,4 +1,5 @@
-//! gpui-клиент ld2 — точка входа (M10.3: шелл, экраны, настройки).
+//! gpui-клиент ld2 — точка входа (M10.3: шелл, экраны, настройки;
+//! M11.1: gpui-pre + каркас Ely — ADR-004).
 //!
 //! Логика игры — в `ld2-core` (D12): здесь только gpui-рендер, опрос
 //! ingress-канала транспорта и исполнение эффектов (см. [`crate::root`]).
@@ -10,6 +11,7 @@ mod text_input;
 use std::borrow::Cow;
 use std::time::Duration;
 
+use ely::{theme::Mode, theme::Theme, Assets};
 use gpui::{px, size, App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions};
 use gpui_platform::application;
 use ld2_core::config::ConfigStore;
@@ -54,6 +56,9 @@ fn main() -> anyhow::Result<()> {
     // НФР §8/ФР-19: лимит истории чата — из конфига.
     app_store.chat_limit = config.chat_limit;
 
+    // M11.5: тема Ely ↔ config (ФР-19). Light — только «light», иначе dark.
+    let theme_light = config.theme == "light";
+
     let shell = Shell {
         store: app_store,
         config,
@@ -64,7 +69,14 @@ fn main() -> anyhow::Result<()> {
         update_rx,
     };
 
-    application().run(move |cx: &mut App| {
+    // D16/M11.1: gpui-pre 0.3.10 + ассеты Ely (шрифты Inter/JetBrains Mono,
+    // Lucide-иконки, PLEX для svg-рендерера) — `init` грузит их через AssetSource.
+    application().with_assets(Assets).run(move |cx: &mut App| {
+        // Ely: шрифты+тема+Tab-биндинги — «call once, first» (README).
+        ely::init(cx).expect("Ely init");
+        // Тема из config (ФР-19): без фейда при старте.
+        Theme::set_mode_now(if theme_light { Mode::Light } else { Mode::Dark }, cx);
+
         // §13: embedded-шрифт с кириллицей (PT Sans, OFL) — без системных.
         let fonts = [
             Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Regular.ttf").as_slice()),

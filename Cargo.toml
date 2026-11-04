@@ -1,7 +1,5 @@
 [workspace]
 resolver = "2"
-# Стаб gpui_web (wasm-only) — вне workspace, патчится в [patch] ниже.
-exclude = ["vendor/gpui_web"]
 members = [
     "crates/ld2-protocol",
     "crates/ld2-mock-server",
@@ -35,16 +33,15 @@ anyhow = "1"
 
 # UI
 eframe = "0.37"
-# gpui (D11: git-pin тега Zed — официальный crates.io устарел до platform-split).
+# gpui (D16/ADR-004: crates.io-снапшот gpui Zed, жёсткий пин =0.3.10 —
+# ровно столько требует Ely 0.1.x; git-пин v1.26.2 снят вместе со стабом
+# gpui_web: wasm-бэкенд из графа уходит, конфликт unicode-properties неактуален).
 # gpui_platform: font-kit (macOS), wayland/x11 (Linux) — «safe cross-platform
 # default» из README gpui; Windows фичи не требуются (Win32/DirectWrite).
-gpui = { git = "https://github.com/zed-industries/zed", tag = "v1.26.2" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", tag = "v1.26.2", features = ["font-kit", "wayland", "x11"] }
-
-# Замена wasm-бэкенда Zed стабом: его пин unicode-properties =0.1.3
-# конфликтует с epaint/egui 0.37 (^0.1.4) — см. vendor/gpui_web/Cargo.toml.
-[patch."https://github.com/zed-industries/zed"]
-gpui_web = { path = "vendor/gpui_web" }
+gpui = { package = "gpui-pre", version = "=0.3.10" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["font-kit", "wayland", "x11"] }
+# Ely (D17/M11): компонентная библиотека поверх gpui — Dialog/Tooltip/формы/тема.
+ely = { package = "ely-gpui-component", version = "=0.1.1" }
 
 [profile.dev]
 debug = 1

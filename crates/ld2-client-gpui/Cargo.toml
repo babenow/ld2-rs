@@ -14,6 +14,7 @@ serde_json = { workspace = true }
 ld2-core = { path = "../ld2-core" }
 gpui = { workspace = true }
 gpui_platform = { workspace = true }
+ely = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
