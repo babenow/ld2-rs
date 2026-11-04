@@ -19,6 +19,7 @@ use ld2_protocol::cmd::{
 use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
 
 use crate::palette::Palette;
+use ely::forms::Input;
 
 use super::{act_btn, Root};
 
@@ -1088,14 +1089,14 @@ impl Root {
                         .text_color(rgb(pal.muted))
                         .child(t(lang, Key::GuildNone)),
                 )
-                .child(field_row(pal, self.guild_input.clone()))
+                .child(Input::new(self.ti(&self.guild_input)))
                 .child(act_btn(
                     cx,
                     t(lang, Key::GuildCreateBtn),
                     pal.accent,
                     pal.accent_text,
                     |this, cx| {
-                        let name = this.guild_input.read(cx).content.to_string();
+                        let name = this.ti(&this.guild_input).read(cx).text().to_string();
                         let name = name.trim().to_string();
                         if !name.is_empty() {
                             let cmd = ld2_protocol::cmd::GuildCreate { name };
@@ -1684,17 +1685,4 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
                 .text_color(rgb(pal.muted))
                 .child(label),
         )
-}
-
-/// Строка поля ввода в рамке (для создания гильдии).
-pub(crate) fn field_row(pal: &Palette, input: gpui::Entity<crate::text_input::TextInput>) -> Div {
-    div()
-        .w_full()
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(pal.border))
-        .bg(rgb(pal.panel))
-        .child(input)
 }

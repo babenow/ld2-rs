@@ -8,6 +8,7 @@ use ld2_core::store::{parse_chat_input, Act, ChatDraft, CHAT_CHANNELS};
 use ld2_protocol::cmd::ChatSend;
 
 use crate::palette::{palette, Palette};
+use ely::forms::Input;
 
 use super::{act_btn, Root};
 
@@ -16,7 +17,7 @@ impl Root {
         let lang = self.lang;
         let dark = pal.bg == palette("dark").bg;
         let active = self.chat_channel.clone();
-        let filter = self.chat_filter.read(cx).content.to_string().to_lowercase();
+        let filter = self.ti(&self.chat_filter).read(cx).text().to_lowercase();
         let reply_to = self.store.last_whisper_from.clone();
 
         let mut panel = div()
@@ -49,7 +50,11 @@ impl Root {
                 let _ = cx;
             }));
         }
-        tabs = tabs.child(div().flex_grow_1().child(self.chat_filter.clone()));
+        tabs = tabs.child(
+            div()
+                .flex_grow_1()
+                .child(Input::new(self.ti(&self.chat_filter))),
+        );
         panel = panel.child(tabs);
 
         // ── история активного канала с фильтром ──
@@ -92,13 +97,7 @@ impl Root {
         input_row = input_row.child(
             div()
                 .flex_grow_1()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(pal.border))
-                .bg(rgb(pal.bg))
-                .child(self.chat_input.clone()),
+                .child(Input::new(self.ti(&self.chat_input))),
         );
         if reply_to.is_some() {
             input_row = input_row.child(act_btn(
@@ -109,7 +108,9 @@ impl Root {
                 |this, cx| {
                     if let Some(to) = this.store.last_whisper_from.clone() {
                         let text = format!("/w {to} ");
-                        this.chat_input.update(cx, |i, _| i.content = text.into());
+                        if let Some(input) = this.chat_input.clone() {
+                            input.update(cx, |i, cx| i.set_text(text.clone(), cx));
+                        }
                     }
                 },
             ));
@@ -128,11 +129,13 @@ impl Root {
     /// Отправка ввода чата: слэш-команды парсятся, неизвестная — тост
     /// и в чат НЕ уходит (ФР-13).
     pub(crate) fn send_chat(&mut self, cx: &mut Context<'_, Self>) {
-        let text = self.chat_input.read(cx).content.to_string();
+        let text = self.ti(&self.chat_input).read(cx).text().to_string();
         if text.trim().is_empty() {
             return;
         }
-        self.chat_input.update(cx, |i, _| i.content = "".into());
+        if let Some(input) = self.chat_input.clone() {
+            input.update(cx, |i, cx| i.set_text(String::new(), cx));
+        }
         let channel = self.chat_channel.clone();
         let reply = self.store.last_whisper_from.clone();
         match parse_chat_input(&text, &channel, reply.as_deref()) {

@@ -6,13 +6,12 @@
 
 mod palette;
 mod root;
-mod text_input;
 
 use std::borrow::Cow;
 use std::time::Duration;
 
 use ely::{theme::Mode, theme::Theme, Assets};
-use gpui::{px, size, App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions};
+use gpui::{px, size, App, AppContext, Bounds, WindowBounds, WindowOptions};
 use gpui_platform::application;
 use ld2_core::config::ConfigStore;
 use ld2_core::l10n::Lang;
@@ -21,10 +20,6 @@ use ld2_core::transport::{self, TransportConfig};
 use tokio::sync::mpsc;
 
 use crate::root::{Root, Shell};
-use crate::text_input::{
-    Backspace, Copy, Cut, Delete, End, Home, Left, Paste, Right, SelectAll, SelectLeft,
-    SelectRight, ShowCharacterPalette, Submit,
-};
 
 fn main() -> anyhow::Result<()> {
     let _log_guard = ld2_core::logging::init()?;
@@ -85,29 +80,6 @@ fn main() -> anyhow::Result<()> {
         if let Err(e) = cx.text_system().add_fonts(fonts.into()) {
             tracing::warn!("не удалось загрузить шрифты: {e:#}");
         }
-
-        // Клавиши текстового ввода — только в контексте поля (ФР-19:
-        // ремаппинг самих действий мира — M10.4).
-        cx.bind_keys([
-            KeyBinding::new("backspace", Backspace, Some("TextInput")),
-            KeyBinding::new("delete", Delete, Some("TextInput")),
-            KeyBinding::new("left", Left, Some("TextInput")),
-            KeyBinding::new("right", Right, Some("TextInput")),
-            KeyBinding::new("shift-left", SelectLeft, Some("TextInput")),
-            KeyBinding::new("shift-right", SelectRight, Some("TextInput")),
-            KeyBinding::new("cmd-a", SelectAll, Some("TextInput")),
-            KeyBinding::new("ctrl-a", SelectAll, Some("TextInput")),
-            KeyBinding::new("cmd-v", Paste, Some("TextInput")),
-            KeyBinding::new("ctrl-v", Paste, Some("TextInput")),
-            KeyBinding::new("cmd-c", Copy, Some("TextInput")),
-            KeyBinding::new("ctrl-c", Copy, Some("TextInput")),
-            KeyBinding::new("cmd-x", Cut, Some("TextInput")),
-            KeyBinding::new("ctrl-x", Cut, Some("TextInput")),
-            KeyBinding::new("home", Home, Some("TextInput")),
-            KeyBinding::new("end", End, Some("TextInput")),
-            KeyBinding::new("enter", Submit, Some("TextInput")),
-            KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, Some("TextInput")),
-        ]);
 
         let root = cx.new(|cx| Root::new(cx, shell));
 

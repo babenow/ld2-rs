@@ -6,8 +6,8 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, App, Context, Div, Entity, MouseButton, Render,
-    SharedString, Window,
+    div, prelude::*, px, rgb, AnyElement, App, Context, Div, Entity, Focusable, MouseButton,
+    Render, SharedString, Window,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -22,7 +22,7 @@ mod sheet;
 mod social;
 
 use crate::palette::{palette, Palette};
-use crate::text_input::TextInput;
+use ely::forms::{Input, InputEvent, PasswordInput, TextInput};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
 const RELEASE: bool = !cfg!(debug_assertions);
@@ -86,9 +86,9 @@ pub struct Root {
     ingress: mpsc::UnboundedReceiver<IngressEvent>,
     update_rx: std::sync::mpsc::Receiver<String>,
     update_available: Option<String>,
-    login_input: Entity<TextInput>,
-    password_input: Entity<TextInput>,
-    host_input: Entity<TextInput>,
+    login_input: Option<Entity<TextInput>>,
+    password_input: Option<Entity<TextInput>>,
+    host_input: Option<Entity<TextInput>>,
     settings_open: bool,
     first_frame: bool,
     /// Открытое контекстное меню сущности (id строки, ПКМ).
@@ -96,21 +96,21 @@ pub struct Root {
     /// Открытое меню предмета в инвентаре (uid, ПКМ).
     item_menu: Option<String>,
     /// Поле имени новой гильдии (ФР-16).
-    guild_input: Entity<TextInput>,
+    guild_input: Option<Entity<TextInput>>,
     /// Открытая вкладка листа (ФР-19: персистентна в config).
     sheet_tab: sheet::SheetTab,
     /// M10.5: чат — ввод, фильтр, активный канал.
-    chat_input: Entity<TextInput>,
-    chat_filter: Entity<TextInput>,
+    chat_input: Option<Entity<TextInput>>,
+    chat_filter: Option<Entity<TextInput>>,
     chat_channel: String,
     /// M10.5: окно сделки — поле золота.
-    trade_gold: Entity<TextInput>,
+    trade_gold: Option<Entity<TextInput>>,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
     party_collapsed: bool,
     /// Запись горячей клавиши (ФР-19): индекс действия (0..=4).
     hotkey_capture: Option<usize>,
     /// M10.6: создание/удаление персонажей (ФР-02).
-    create_name: Entity<TextInput>,
+    create_name: Option<Entity<TextInput>>,
     create_profile: ld2_core::store::Profile,
     create_open: bool,
     create_submitted: bool,
@@ -118,31 +118,9 @@ pub struct Root {
 }
 
 impl Root {
-    pub fn new(cx: &mut Context<'_, Self>, shell: Shell) -> Self {
+    pub fn new(_cx: &mut Context<'_, Self>, shell: Shell) -> Self {
         let sheet_tab = sheet::SheetTab::parse(&shell.config.sheet_tab);
         let party_collapsed = shell.config.party_collapsed;
-        let login_input = cx.new(|cx| {
-            let mut input = TextInput::new(cx, t(shell.lang, Key::FieldLogin));
-            if let Some(last) = &shell.config.last_login {
-                input.content = last.clone().into();
-            }
-            input
-        });
-        let password_input = cx.new(|cx| TextInput::new(cx, t(shell.lang, Key::FieldPassword)));
-        let guild_input = cx.new(|cx| TextInput::new(cx, "…"));
-        let create_name = cx.new(|cx| TextInput::new(cx, t(shell.lang, Key::FieldCharName)));
-        let chat_input = cx.new(|cx| TextInput::new(cx, ""));
-        let chat_filter = cx.new(|cx| TextInput::new(cx, t(shell.lang, Key::ChFilter)));
-        let trade_gold = cx.new(|cx| {
-            let mut i = TextInput::new(cx, "0");
-            i.content = "0".into();
-            i
-        });
-        let host_input = cx.new(|cx| {
-            let mut input = TextInput::new(cx, &shell.config.host);
-            input.content = shell.config.host.clone().into();
-            input
-        });
         Self {
             store: shell.store,
             config: shell.config,
@@ -152,22 +130,22 @@ impl Root {
             ingress: shell.ingress,
             update_rx: shell.update_rx,
             update_available: None,
-            login_input,
-            password_input,
-            host_input,
+            login_input: None,
+            password_input: None,
+            host_input: None,
             settings_open: false,
             first_frame: true,
             ctx_menu: None,
             item_menu: None,
-            guild_input,
+            guild_input: None,
             sheet_tab,
-            chat_input,
-            chat_filter,
+            chat_input: None,
+            chat_filter: None,
             chat_channel: "location".into(),
-            trade_gold,
+            trade_gold: None,
             party_collapsed,
             hotkey_capture: None,
-            create_name,
+            create_name: None,
             create_profile: ld2_core::store::Profile::default(),
             create_open: false,
             create_submitted: false,
@@ -190,20 +168,6 @@ impl Root {
                     self.exec_effects(effects);
                 }
                 Err(_) => break,
-            }
-        }
-
-        // Enter в поле чата → отправка (M10.5).
-        if self.store.screen == Screen::Game && self.chat_input.update(cx, |i, _| i.take_submit()) {
-            self.send_chat(cx);
-        }
-
-        // Enter в полях входа = отправка (флаг ставит TextInput).
-        if self.store.screen == Screen::Login {
-            let submitted = self.login_input.update(cx, |i, _| i.take_submit())
-                || self.password_input.update(cx, |i, _| i.take_submit());
-            if submitted {
-                self.send_login(cx);
             }
         }
 
@@ -268,8 +232,8 @@ impl Root {
     // ── действия ───────────────────────────────────────────────────────────
 
     fn send_login(&mut self, cx: &Context<'_, Self>) {
-        let login = self.login_input.read(cx).content.to_string();
-        let password = self.password_input.read(cx).content.to_string();
+        let login = self.ti(&self.login_input).read(cx).text().to_string();
+        let password = self.ti(&self.password_input).read(cx).text().to_string();
         if login.trim().is_empty() || password.is_empty() {
             self.store.login_error = Some(t(self.lang, Key::ErrFillFields).to_string());
             return;
@@ -301,6 +265,86 @@ impl Root {
         self.store.to_login_screen();
     }
 
+    /// Поле, созданное на первом кадре (паникующий доступ: render всегда
+    /// идёт после инициализации).
+    pub(crate) fn ti<'s>(&self, slot: &'s Option<Entity<TextInput>>) -> &'s Entity<TextInput> {
+        slot.as_ref().expect("поле создано на первом кадре")
+    }
+
+    /// M11.3: поля Ely создаются на первом кадре — `TextInput::new` требует
+    /// Window. Enter в логине/чате = отправка через InputEvent::Submit
+    /// (поллинг take_submit упразднён); пароль — masked (отклонение M10 снято).
+    fn init_inputs(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let lang = self.lang;
+        let last_login = self.config.last_login.clone();
+        let host = self.config.host.clone();
+        let mk = |window: &mut Window,
+                  cx: &mut Context<'_, Self>,
+                  placeholder: String,
+                  masked: bool,
+                  initial: Option<String>| {
+            cx.new(|cx| {
+                let mut i = TextInput::new(window, cx).placeholder(placeholder);
+                if masked {
+                    i = i.masked();
+                }
+                if let Some(text) = initial {
+                    i.set_text(text, cx);
+                }
+                i
+            })
+        };
+        self.login_input = Some(mk(
+            window,
+            cx,
+            t(lang, Key::FieldLogin).to_string(),
+            false,
+            last_login,
+        ));
+        self.password_input = Some(mk(
+            window,
+            cx,
+            t(lang, Key::FieldPassword).to_string(),
+            true,
+            None,
+        ));
+        self.host_input = Some(mk(window, cx, host.clone(), false, Some(host)));
+        self.guild_input = Some(mk(window, cx, "…".into(), false, None));
+        self.create_name = Some(mk(
+            window,
+            cx,
+            t(lang, Key::FieldCharName).to_string(),
+            false,
+            None,
+        ));
+        self.chat_input = Some(mk(window, cx, String::new(), false, None));
+        self.chat_filter = Some(mk(
+            window,
+            cx,
+            t(lang, Key::ChFilter).to_string(),
+            false,
+            None,
+        ));
+        self.trade_gold = Some(mk(window, cx, "0".into(), false, Some("0".into())));
+
+        for slot in [self.login_input.clone(), self.password_input.clone()] {
+            let ent = slot.expect("создано выше");
+            cx.subscribe(&ent, |root, _field, event: &InputEvent, cx| {
+                if *event == InputEvent::Submit && root.store.screen == Screen::Login {
+                    root.send_login(cx);
+                }
+            })
+            .detach();
+        }
+        let chat = self.chat_input.clone().expect("создано выше");
+        cx.subscribe(&chat, |root, _field, event: &InputEvent, cx| {
+            if *event == InputEvent::Submit && root.store.screen == Screen::Game {
+                root.send_chat(cx);
+            }
+        })
+        .detach();
+    }
+
     /// Есть ли фокус в любом текстовом поле (навигация не должна
     /// срабатывать при наборе текста).
     pub(crate) fn typing_focused(&self, window: &Window, cx: &gpui::App) -> bool {
@@ -314,7 +358,8 @@ impl Root {
             &self.trade_gold,
         ]
         .iter()
-        .any(|input| input.read(cx).focus_handle.is_focused(window))
+        .filter_map(|input| input.as_ref())
+        .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
     }
 
     /// Обработка глобального нажатия: навигация/цикл целей по хоткеям
@@ -407,8 +452,10 @@ impl Root {
             }
             Click::ToggleSettings => {
                 self.settings_open = !self.settings_open;
-                self.host_input
-                    .update(cx, |i, _| i.content = self.config.host.clone().into());
+                let host = self.config.host.clone();
+                if let Some(input) = self.host_input.clone() {
+                    input.update(cx, |i, cx| i.set_text(host.clone(), cx));
+                }
             }
             Click::CloseSettings => self.settings_open = false,
             Click::Theme(theme) => {
@@ -426,7 +473,7 @@ impl Root {
                 self.save_config();
             }
             Click::ApplyHost => {
-                let host = self.host_input.read(cx).content.to_string();
+                let host = self.ti(&self.host_input).read(cx).text().to_string();
                 let host = host.trim().to_string();
                 if !host_allowed(&host, RELEASE) {
                     self.store.notice = Some(t(self.lang, Key::SettingsWsDenied).to_string());
@@ -628,8 +675,8 @@ impl Root {
                     .text_size(px(22.0))
                     .child(t(lang, Key::LoginTitle)),
             )
-            .child(field_box(pal, self.login_input.clone()))
-            .child(field_box(pal, self.password_input.clone()))
+            .child(Input::new(self.ti(&self.login_input)))
+            .child(PasswordInput::new(self.ti(&self.password_input)))
             .child(btn(
                 cx,
                 t(lang, Key::BtnLogin).to_string(),
@@ -735,7 +782,7 @@ impl Root {
                         .text_color(rgb(pal.muted))
                         .child(t(lang, Key::SettingsHost)),
                 )
-                .child(field_box(pal, self.host_input.clone()))
+                .child(Input::new(self.ti(&self.host_input)))
                 .children((!host_ok).then(|| {
                     div()
                         .text_color(rgb(pal.danger))
@@ -880,19 +927,6 @@ fn keystroke_matches(spec: &str, ks: &gpui::Keystroke) -> bool {
         }
         Err(_) => false,
     }
-}
-
-/// Строка поля ввода в рамке (для создания гильдии). — см. [`crate::text_input`]).
-fn field_box(pal: &Palette, input: Entity<TextInput>) -> Div {
-    div()
-        .w(px(320.0))
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(pal.border))
-        .bg(rgb(pal.panel))
-        .child(input)
 }
 
 /// Строка настройки: подпись слева, контролы справа.
@@ -1079,8 +1113,9 @@ impl Render for Root {
         // Автофокус поля логина на первом кадре (экран входа).
         if self.first_frame {
             self.first_frame = false;
+            self.init_inputs(window, cx);
             if self.store.screen == Screen::Login {
-                let handle = self.login_input.read(cx).focus_handle.clone();
+                let handle = self.ti(&self.login_input).read(cx).focus_handle(cx);
                 window.focus(&handle, cx);
             }
         }

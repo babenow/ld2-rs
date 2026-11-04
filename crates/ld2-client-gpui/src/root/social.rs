@@ -14,6 +14,7 @@ use ld2_protocol::cmd::{
 };
 
 use crate::palette::Palette;
+use ely::forms::Input;
 
 use super::{act_btn, Root};
 
@@ -492,7 +493,7 @@ impl Root {
                 .border_1()
                 .border_color(rgb(pal.border))
                 .bg(rgb(pal.bg))
-                .child(self.trade_gold.clone()),
+                .child(Input::new(self.ti(&self.trade_gold))),
         );
         {
             let oid = offer_id.clone();
@@ -503,9 +504,9 @@ impl Root {
                 pal.text,
                 move |this, cx| {
                     let gold: i64 = this
-                        .trade_gold
+                        .ti(&this.trade_gold)
                         .read(cx)
-                        .content
+                        .text()
                         .to_string()
                         .trim()
                         .parse()

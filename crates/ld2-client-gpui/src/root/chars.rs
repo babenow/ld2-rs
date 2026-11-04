@@ -9,6 +9,7 @@ use ld2_core::store::{Act, Profile};
 use ld2_protocol::cmd::{CharCreate, CharDelete, CharSelect};
 
 use crate::palette::Palette;
+use ely::forms::Input;
 
 use super::{act_btn, Root};
 
@@ -184,7 +185,9 @@ impl Root {
                 |this, cx| {
                     this.create_open = true;
                     this.create_submitted = false;
-                    this.create_name.update(cx, |i, _| i.content = "".into());
+                    if let Some(name) = this.create_name.clone() {
+                        name.update(cx, |i, cx| i.set_text(String::new(), cx));
+                    }
                 },
             ));
         } else {
@@ -217,7 +220,7 @@ impl Root {
     fn create_view(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let pending = self.store.pending == Some(Act::Create);
-        let name = self.create_name.read(cx).content.to_string();
+        let name = self.ti(&self.create_name).read(cx).text().to_string();
         let name_valid = name.trim().chars().count() >= 2;
         let profile = self.create_profile;
 
@@ -268,7 +271,7 @@ impl Root {
                 .border_1()
                 .border_color(rgb(pal.border))
                 .bg(rgb(pal.panel))
-                .child(self.create_name.clone()),
+                .child(Input::new(self.ti(&self.create_name))),
         );
         if !name.is_empty() && !name_valid {
             col = col.child(
