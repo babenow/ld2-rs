@@ -9,7 +9,7 @@ use ld2_protocol::cmd::{
 use ld2_protocol::evt::{CharDeath, StateSnapshot};
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot};
 
-use crate::l10n::{t, Key};
+use crate::l10n::{t, tf, Key};
 use crate::store::{filter_active_statuses, local_epoch, Act};
 use crate::ui::{
     crime_kind_title, format_duration, log_panel, severity_color, sheet, ScreenEffects, UiCtx,
@@ -30,6 +30,21 @@ pub fn game(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui) -> ScreenEffects {
         return effects;
     }
 
+    // M8: приглашение в группу (ФР-14) — модалка с ответом до входа в мир.
+    if let Some(invite) = ctx.store.party_invite.clone() {
+        party_invite_modal(ctx, ui, &invite);
+    }
+
+    // M8: приглашение в гильдию (ФР-16) — модалка с ответом.
+    if let Some(invite) = ctx.store.guild_invite.clone() {
+        guild_invite_modal(ctx, ui, &invite);
+    }
+
+    // M8: окно сделки (ФР-15) — две колонки, версия с сервера.
+    if let Some(trade) = ctx.store.trade.clone() {
+        trade_modal(ctx, ui, &trade);
+    }
+
     let Some(snap) = ctx.store.snapshot.clone() else {
         ui.vertical_centered(|ui| {
             ui.add_space(80.0);
@@ -45,6 +60,9 @@ pub fn game(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui) -> ScreenEffects {
     ui.columns(3, |cols| {
         let left = &mut cols[0];
         left.set_max_width(210.0);
+        // ФР-14: виджет группы сверху слева (сворачиваемый).
+        party_widget(left, ctx);
+        left.add_space(6.0);
         resources(left, ctx, &snap, &mut effects);
         left.add_space(10.0);
         history(left, ctx);
@@ -298,11 +316,361 @@ fn entity_row(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>, entity: &Entity, safe: boo
             send_attack(ctx, &entity.id);
             ui.close();
         }
+        // M8: социальные действия по игроку (ФР-14/15).
+        if matches!(entity.kind, EntityKind::Player) {
+            if ui.button(t(lang, Key::PartyInviteBtn)).clicked() {
+                let cmd = ld2_protocol::cmd::PartyInvite {
+                    player_id: entity.id.clone(),
+                };
+                match ctx.transport.send(&cmd) {
+                    Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Party),
+                    Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                }
+                ui.close();
+            }
+            if ui.button(t(lang, Key::TradeBtn)).clicked() {
+                let cmd = ld2_protocol::cmd::TradeOpen {
+                    player_id: entity.id.clone(),
+                };
+                match ctx.transport.send(&cmd) {
+                    Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Trade),
+                    Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                }
+                ui.close();
+            }
+        }
         if player_corpse {
             ui.separator();
             ui.weak(t(lang, Key::CorpsePlayerHint));
         }
     });
+}
+
+// ─── M8: группа, сделка (ФР-14, ФР-15) ─────────────────────────────────────
+
+/// Виджет группы в левой колонке (ФР-14): состав, лидер, HP, операции.
+fn party_widget(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
+    let lang = ctx.lang;
+    let collapsed = ctx.forms.party_collapsed;
+    let party = ctx.store.party.clone();
+    let my_id = ctx
+        .store
+        .snapshot
+        .as_ref()
+        .map(|s| s.char.id.clone())
+        .unwrap_or_default();
+    ui.group(|ui| {
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(!collapsed, t(lang, Key::PartyLabel))
+                .clicked()
+            {
+                ctx.forms.party_collapsed = !collapsed;
+            }
+            if collapsed {
+                return;
+            }
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| match &party {
+                    None => {
+                        if ui.small_button(t(lang, Key::PartyCreateBtn)).clicked() {
+                            let cmd = ld2_protocol::cmd::PartyCreate {};
+                            match ctx.transport.send(&cmd) {
+                                Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Party),
+                                Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        if ui.small_button(t(lang, Key::PartyLeaveBtn)).clicked() {
+                            let cmd = ld2_protocol::cmd::PartyLeave {};
+                            match ctx.transport.send(&cmd) {
+                                Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Party),
+                                Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                            }
+                        }
+                    }
+                },
+            );
+        });
+        if collapsed {
+            return;
+        }
+        let Some(party) = party else {
+            ui.weak(t(lang, Key::PartyEmpty));
+            return;
+        };
+        let i_am_leader = party.leader == my_id;
+        for member in &party.members {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        if member.id == party.leader {
+                            ui.colored_label(GREEN, "★");
+                        }
+                        ui.label(&member.name);
+                        if member.id == my_id {
+                            ui.weak("(вы)");
+                        }
+                    });
+                    if let Some(hp) = &member.hp {
+                        let frac = (hp.cur as f32 / hp.max.max(1) as f32).clamp(0.0, 1.0);
+                        ui.add(egui::ProgressBar::new(frac).desired_height(8.0));
+                    }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Исключает только лидер и не себя (ФР-14).
+                    if i_am_leader
+                        && member.id != my_id
+                        && ui.small_button(t(lang, Key::PartyKickBtn)).clicked()
+                    {
+                        let cmd = ld2_protocol::cmd::PartyKick {
+                            player_id: member.id.clone(),
+                        };
+                        match ctx.transport.send(&cmd) {
+                            Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Party),
+                            Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                        }
+                    }
+                });
+            });
+        }
+    });
+}
+
+/// Модалка приглашения в группу (ФР-14): принять/отклонить, §7 invite_id.
+fn party_invite_modal(
+    ctx: &mut UiCtx<'_>,
+    ui: &mut egui::Ui,
+    invite: &crate::store::PartyInviteView,
+) {
+    let lang = ctx.lang;
+    egui::Window::new(t(lang, Key::PartyLabel))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, -60.0])
+        .show(ui.ctx(), |ui| {
+            ui.label(tf(
+                lang,
+                Key::PartyInviteFrom,
+                &[("{name}", invite.from_name.as_str())],
+            ));
+            ui.horizontal(|ui| {
+                if ui.button(t(lang, Key::PartyAcceptBtn)).clicked() {
+                    let cmd = ld2_protocol::cmd::PartyAccept {
+                        invite_id: invite.invite_id.clone(),
+                    };
+                    match ctx.transport.send(&cmd) {
+                        Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Party),
+                        Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                    }
+                    ctx.store.party_invite = None;
+                }
+                if ui.button(t(lang, Key::PartyDeclineBtn)).clicked() {
+                    let cmd = ld2_protocol::cmd::PartyDecline {
+                        invite_id: invite.invite_id.clone(),
+                    };
+                    match ctx.transport.send(&cmd) {
+                        Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Party),
+                        Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                    }
+                    ctx.store.party_invite = None;
+                }
+            });
+        });
+}
+
+/// Окно сделки (ФР-15): две колонки я/партнёр, золото, фиксация, отмена.
+/// Версия/зеркало — с сервера (клиент не пересчитывает).
+fn trade_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, trade: &ld2_protocol::evt::TradeState) {
+    let lang = ctx.lang;
+    let my_id = ctx
+        .store
+        .snapshot
+        .as_ref()
+        .map(|s| s.char.id.clone())
+        .unwrap_or_default();
+    let inventory = ctx
+        .store
+        .snapshot
+        .as_ref()
+        .map(|s| s.char.inventory.clone())
+        .unwrap_or_default();
+    let offer_id = trade.offer_id.clone();
+    let version = trade.version;
+    egui::Window::new(t(lang, Key::TradeLabel))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ui.ctx(), |ui| {
+            // Оценка стоимости + предупреждение (ФР-15 анти-абуз).
+            if let Some(value) = trade.value_hint {
+                ui.weak(tf(lang, Key::TradeValue, &[("{v}", &value.to_string())]));
+            }
+            ui.weak(t(lang, Key::TradeWarn));
+            ui.separator();
+
+            ui.columns(2, |cols| {
+                // Моя колонка: предложения + добавление + золото.
+                let me = &mut cols[0];
+                me.strong(t(lang, Key::TradeYou));
+                for item in &trade.you {
+                    me.label(format!("• {} ×{}", item.name, item.qty.unwrap_or(1)));
+                }
+                me.weak(format!("{}: {}", t(lang, Key::TradeGold), trade.you_gold));
+                if trade.you_locked {
+                    me.weak(format!("✓ {}", t(lang, Key::TradeAccept)));
+                }
+
+                // Их колонка (зеркало с сервера).
+                let them = &mut cols[1];
+                them.strong(t(lang, Key::TradeThem));
+                for item in &trade.them {
+                    them.label(format!("• {} ×{}", item.name, item.qty.unwrap_or(1)));
+                }
+                them.weak(format!("{}: {}", t(lang, Key::TradeGold), trade.them_gold));
+                if trade.them_locked {
+                    them.weak(format!("✓ {}", t(lang, Key::TradeAccept)));
+                }
+            });
+
+            ui.separator();
+            // Добавление предмета из инвентаря (только не предложенные).
+            let offered: Vec<String> = trade.you.iter().map(|i| i.uid.clone()).collect();
+            let available: Vec<_> = inventory
+                .iter()
+                .filter(|i| !offered.contains(&i.uid))
+                .collect();
+            if !available.is_empty() {
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("trade_item")
+                        .selected_text(t(lang, Key::TradeAddItem))
+                        .show_ui(ui, |ui| {
+                            for item in &available {
+                                if ui
+                                    .selectable_label(
+                                        ctx.forms.trade_item == item.uid,
+                                        item.name.clone(),
+                                    )
+                                    .clicked()
+                                {
+                                    ctx.forms.trade_item = item.uid.clone();
+                                }
+                            }
+                        });
+                });
+            }
+            if !ctx.forms.trade_item.is_empty() && !offered.contains(&ctx.forms.trade_item) {
+                let uid = ctx.forms.trade_item.clone();
+                if ui
+                    .small_button(format!("＋ {}", t(lang, Key::TradeAddItem)))
+                    .clicked()
+                {
+                    let cmd = ld2_protocol::cmd::TradeAddItem {
+                        offer_id: offer_id.clone(),
+                        item_uid: uid.clone(),
+                        qty: None,
+                    };
+                    match ctx.transport.send(&cmd) {
+                        Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Trade),
+                        Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                    }
+                    ctx.forms.trade_item.clear();
+                }
+            }
+
+            // Золото.
+            ui.horizontal(|ui| {
+                ui.label(t(lang, Key::TradeGold));
+                ui.add(
+                    egui::TextEdit::singleline(&mut ctx.forms.trade_gold)
+                        .desired_width(90.0)
+                        .hint_text("0"),
+                );
+                if ui.small_button(t(lang, Key::TradeSetGold)).clicked() {
+                    let gold: i64 = ctx.forms.trade_gold.trim().parse().unwrap_or(0);
+                    let cmd = ld2_protocol::cmd::TradeSetGold {
+                        offer_id: offer_id.clone(),
+                        gold,
+                    };
+                    match ctx.transport.send(&cmd) {
+                        Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Trade),
+                        Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                    }
+                }
+            });
+
+            ui.separator();
+            ui.horizontal(|ui| {
+                // Фиксация своей стороны (сверка версии — на сервере, §9).
+                if ui.button(t(lang, Key::TradePropose)).clicked() {
+                    let cmd = ld2_protocol::cmd::TradePropose {
+                        offer_id: offer_id.clone(),
+                        version,
+                    };
+                    match ctx.transport.send(&cmd) {
+                        Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Trade),
+                        Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                    }
+                }
+                if ui.button(t(lang, Key::TradeAccept)).clicked() {
+                    let cmd = ld2_protocol::cmd::TradeAccept {
+                        offer_id: offer_id.clone(),
+                        version,
+                    };
+                    match ctx.transport.send(&cmd) {
+                        Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Trade),
+                        Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                    }
+                }
+                if ui.button(t(lang, Key::TradeCancel)).clicked() {
+                    let cmd = ld2_protocol::cmd::TradeCancel {
+                        offer_id: offer_id.clone(),
+                    };
+                    match ctx.transport.send(&cmd) {
+                        Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Trade),
+                        Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                    }
+                }
+            });
+            let _ = &my_id;
+        });
+}
+
+/// Модалка приглашения в гильдию (ФР-16): принять = `guild.join` (§7).
+fn guild_invite_modal(
+    ctx: &mut UiCtx<'_>,
+    ui: &mut egui::Ui,
+    invite: &crate::store::GuildInviteView,
+) {
+    let lang = ctx.lang;
+    egui::Window::new(t(lang, Key::GuildTab))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, -60.0])
+        .show(ui.ctx(), |ui| {
+            ui.label(tf(
+                lang,
+                Key::PartyInviteFrom,
+                &[("{name}", invite.guild_name.as_str())],
+            ));
+            ui.horizontal(|ui| {
+                if ui.button(t(lang, Key::GuildJoinBtn)).clicked() {
+                    let cmd = ld2_protocol::cmd::GuildJoin {
+                        guild_id: Some(invite.guild_id.clone()),
+                    };
+                    match ctx.transport.send(&cmd) {
+                        Ok(_) => ctx.store.on_sheet_sent(crate::store::Act::Guild),
+                        Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),
+                    }
+                    ctx.store.guild_invite = None;
+                }
+                if ui.button(t(lang, Key::PartyDeclineBtn)).clicked() {
+                    ctx.store.guild_invite = None;
+                }
+            });
+        });
 }
 
 fn examine_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, detail: serde_json::Value) {

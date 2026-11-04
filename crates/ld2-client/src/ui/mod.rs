@@ -36,6 +36,14 @@ pub struct Forms {
     pub sheet: SheetState,
     /// Нижняя панель чата (ФР-13, M8): ввод и фильтр-строка.
     pub chat: ChatForm,
+    /// Пати-виджет свёрнут (ФР-14: «сворачиваемый»).
+    pub party_collapsed: bool,
+    /// Поле золота в окне сделки (ФР-15).
+    pub trade_gold: String,
+    /// Выбранный в ComboBox предмет для добавления в сделку.
+    pub trade_item: String,
+    /// Поле имени новой гильдии (ФР-16).
+    pub guild_name: String,
 }
 
 #[derive(Default)]
@@ -120,6 +128,8 @@ pub enum SheetTab {
     Quests,
     /// Профессии и крафт (ФР-08, M7).
     Professions,
+    /// Гильдия: состав, ранги, список (ФР-16, M8).
+    Guild,
 }
 
 /// Источник перетаскивания в инвентаре (drag&drop, ФР-07).
