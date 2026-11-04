@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/ld2-protocol", "crates/ld2-mock-server", "crates/ld2-client"]
+# Стаб gpui_web (wasm-only) — вне workspace, патчится в [patch] ниже.
+exclude = ["vendor/gpui_web"]
+members = [
+    "crates/ld2-protocol",
+    "crates/ld2-mock-server",
+    "crates/ld2-client",
+    "crates/ld2-client-gpui",
+]
 
 [workspace.package]
 version = "0.9.0"
@@ -27,6 +34,16 @@ anyhow = "1"
 
 # UI
 eframe = "0.37"
+# gpui (D11: git-pin тега Zed — официальный crates.io устарел до platform-split).
+# gpui_platform: font-kit (macOS), wayland/x11 (Linux) — «safe cross-platform
+# default» из README gpui; Windows фичи не требуются (Win32/DirectWrite).
+gpui = { git = "https://github.com/zed-industries/zed", tag = "v1.26.2" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", tag = "v1.26.2", features = ["font-kit", "wayland", "x11"] }
+
+# Замена wasm-бэкенда Zed стабом: его пин unicode-properties =0.1.3
+# конфликтует с epaint/egui 0.37 (^0.1.4) — см. vendor/gpui_web/Cargo.toml.
+[patch."https://github.com/zed-industries/zed"]
+gpui_web = { path = "vendor/gpui_web" }
 
 [profile.dev]
 debug = 1
