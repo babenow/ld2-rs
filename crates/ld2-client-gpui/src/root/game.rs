@@ -28,6 +28,16 @@ impl Root {
         if let Some((uid, name)) = self.store.loot_confirm.clone() {
             return self.loot_view(cx, pal, uid, name);
         }
+        // Модалки листа (ФР-07/09/10) — паритет egui-окон.
+        if let Some(detail) = self.store.item_detail.clone() {
+            return self.item_view(cx, pal, detail);
+        }
+        if let Some(view) = self.store.upgrade.clone() {
+            return self.upgrade_view(cx, pal, &view);
+        }
+        if let Some(staff_uid) = self.store.socketing.clone() {
+            return self.socket_view(cx, pal, staff_uid);
+        }
         let Some(snap) = self.store.snapshot.clone() else {
             return div()
                 .flex()
@@ -44,6 +54,7 @@ impl Root {
             .size_full()
             .p(px(12.0))
             .child(self.left_column(cx, pal, &snap))
+            .child(self.sheet(cx, pal))
             .child(
                 div()
                     .flex()

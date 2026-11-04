@@ -2,6 +2,7 @@
 //! окно настроек и `tick` — опрос ingress-канала транспорта + исполнение
 //! [`Effect`] (аналог `App::ui` egui-клиента, D12: логика в `ld2-core`).
 
+use std::cell::RefCell;
 use std::time::Duration;
 
 use gpui::{
@@ -14,6 +15,7 @@ use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, 
 use ld2_protocol::cmd::{AuthLogin, CharSelect, LocationMove};
 
 mod game;
+mod sheet;
 
 use crate::palette::{palette, Palette};
 use crate::text_input::TextInput;
@@ -88,10 +90,17 @@ pub struct Root {
     first_frame: bool,
     /// Открытое контекстное меню сущности (id строки, ПКМ).
     ctx_menu: Option<String>,
+    /// Открытое меню предмета в инвентаре (uid, ПКМ).
+    item_menu: Option<String>,
+    /// Поле имени новой гильдии (ФР-16).
+    guild_input: Entity<TextInput>,
+    /// Открытая вкладка листа (ФР-19: персистентна в config).
+    sheet_tab: sheet::SheetTab,
 }
 
 impl Root {
     pub fn new(cx: &mut Context<'_, Self>, shell: Shell) -> Self {
+        let sheet_tab = sheet::SheetTab::parse(&shell.config.sheet_tab);
         let login_input = cx.new(|cx| {
             let mut input = TextInput::new(cx, t(shell.lang, Key::FieldLogin));
             if let Some(last) = &shell.config.last_login {
@@ -100,6 +109,7 @@ impl Root {
             input
         });
         let password_input = cx.new(|cx| TextInput::new(cx, t(shell.lang, Key::FieldPassword)));
+        let guild_input = cx.new(|cx| TextInput::new(cx, "…"));
         let host_input = cx.new(|cx| {
             let mut input = TextInput::new(cx, &shell.config.host);
             input.content = shell.config.host.clone().into();
@@ -120,6 +130,9 @@ impl Root {
             settings_open: false,
             first_frame: true,
             ctx_menu: None,
+            item_menu: None,
+            guild_input,
+            sheet_tab,
         }
     }
 
@@ -808,6 +821,35 @@ fn btn(
     click: Click,
 ) -> Div {
     btn_hover(cx, label, bg, bg, fg, click)
+}
+
+/// Кнопка с произвольным действием (для листа: замыкание вместо [`Click`]).
+pub(crate) fn act_btn(
+    cx: &mut Context<'_, Root>,
+    label: impl Into<SharedString>,
+    bg: u32,
+    fg: u32,
+    f: impl FnOnce(&mut Root, &mut Context<'_, Root>) + 'static,
+) -> Div {
+    let cell = RefCell::new(Some(f));
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .cursor_pointer()
+        .bg(rgb(bg))
+        .text_color(rgb(fg))
+        .hover(move |s| s.bg(rgb(bg)))
+        .child(label.into())
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                if let Some(f) = cell.borrow_mut().take() {
+                    f(this, cx);
+                }
+                cx.notify();
+            }),
+        )
 }
 
 /// Кнопка с отдельным цветом наведения.
