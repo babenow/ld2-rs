@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 ld2-protocol = { path = "../ld2-protocol" }
+serde_json = { workspace = true }
 ld2-core = { path = "../ld2-core" }
 gpui = { workspace = true }
 gpui_platform = { workspace = true }

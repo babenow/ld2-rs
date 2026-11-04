@@ -3487,6 +3487,7 @@ dependencies = [
  "keyring",
  "ld2-core",
  "ld2-protocol",
+ "serde_json",
  "tokio",
  "tracing",
  "unicode-segmentation",

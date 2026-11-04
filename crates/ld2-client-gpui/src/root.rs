@@ -13,6 +13,8 @@ use ld2_core::store::{Act, AppStore, Effect, Screen};
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
 use ld2_protocol::cmd::{AuthLogin, CharSelect, LocationMove};
 
+mod game;
+
 use crate::palette::{palette, Palette};
 use crate::text_input::TextInput;
 
@@ -35,8 +37,26 @@ enum Click {
     ApplyHost,
     SelectChar(String),
     MoveExit(String),
-    SetTarget(String),
     OpenReleases,
+    // M10.4: игровой экран
+    Attack(String),
+    Flee,
+    Examine(String),
+    PartyInvite(String),
+    TradeOpen(String),
+    RuneCast {
+        staff_uid: String,
+        socket_index: u32,
+    },
+    UseItem(String),
+    PowerStrike,
+    ConfirmDeath,
+    LootTake,
+    /// Лут трупа игрока: открыть подтверждение (uid, name) — ФР-11.
+    LootTakeMarker(String, String),
+    LootCancel,
+    CloseDetail,
+    SwitchChar,
 }
 
 /// Инициализация корневого view (всё, что создаётся вне gpui-контекста).
@@ -66,6 +86,8 @@ pub struct Root {
     host_input: Entity<TextInput>,
     settings_open: bool,
     first_frame: bool,
+    /// Открытое контекстное меню сущности (id строки, ПКМ).
+    ctx_menu: Option<String>,
 }
 
 impl Root {
@@ -97,6 +119,7 @@ impl Root {
             host_input,
             settings_open: false,
             first_frame: true,
+            ctx_menu: None,
         }
     }
 
@@ -135,6 +158,10 @@ impl Root {
             }
         }
 
+        if had_events {
+            // gpui перерисовывается только по notify (аналог request_repaint).
+            cx.notify();
+        }
         Duration::from_millis(if had_events { 50 } else { 200 })
     }
 
@@ -209,6 +236,7 @@ impl Root {
     }
 
     fn logout(&mut self) {
+        let _ = self.transport.send(&ld2_protocol::cmd::AuthLogout {});
         let effects = self.store.logout();
         self.exec_effects(effects);
     }
@@ -282,8 +310,96 @@ impl Root {
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
-            Click::SetTarget(id) => self.store.select_target(id),
             Click::OpenReleases => cx.open_url(ld2_core::update_check::RELEASES_PAGE),
+            // ── M10.4: игровой экран ──
+            Click::Attack(id) => {
+                let cmd = ld2_protocol::cmd::CombatAttack { target_id: id };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::Attack),
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+                self.ctx_menu = None;
+            }
+            Click::Flee => {
+                let cmd = ld2_protocol::cmd::CombatFlee {};
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::Attack),
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+                self.ctx_menu = None;
+            }
+            Click::Examine(id) => {
+                let cmd = ld2_protocol::cmd::EntityInfo { entity_id: id };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::Examine),
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+                self.ctx_menu = None;
+            }
+            Click::PartyInvite(player_id) => {
+                let cmd = ld2_protocol::cmd::PartyInvite { player_id };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_sheet_sent(Act::Party),
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+                self.ctx_menu = None;
+            }
+            Click::TradeOpen(player_id) => {
+                let cmd = ld2_protocol::cmd::TradeOpen { player_id };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_sheet_sent(Act::Trade),
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+                self.ctx_menu = None;
+            }
+            Click::RuneCast {
+                staff_uid,
+                socket_index,
+            } => {
+                let cmd = ld2_protocol::cmd::MagicRuneCast {
+                    staff_uid,
+                    socket_index,
+                    target_id: self.store.target.clone(),
+                };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::Cast),
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::UseItem(uid) => {
+                let cmd = ld2_protocol::cmd::ItemUse {
+                    item_uid: uid,
+                    target_id: None,
+                };
+                match self.transport.send(&cmd) {
+                    Ok(_) => {
+                        self.store.on_world_sent(Act::Drop);
+                        self.store.entity_detail = None;
+                        self.store.clear_loot_confirm();
+                    }
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::PowerStrike => {
+                let cmd = ld2_protocol::cmd::SkillUse {
+                    skill_id: "power_strike".into(),
+                    target_id: self.store.target.clone(),
+                };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::Cast),
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::ConfirmDeath => self.store.confirm_death(),
+            Click::LootTakeMarker(uid, name) => self.store.set_loot_confirm(uid, name),
+            Click::LootTake => {
+                if let Some((uid, _)) = self.store.loot_confirm.clone() {
+                    self.on_click(Click::UseItem(uid), cx);
+                }
+            }
+            Click::LootCancel => self.store.clear_loot_confirm(),
+            Click::CloseDetail => self.store.entity_detail = None,
+            Click::SwitchChar => self.store.back_to_characters(),
         }
     }
 
@@ -469,151 +585,6 @@ impl Root {
             pal.danger,
             Click::Logout,
         ))
-    }
-
-    /// Игровой экран — минимальный для гейта M10.3 (полный паритет — M10.4):
-    /// локация, выходы (навигация), сущности (цель), уведомления/ошибки.
-    fn game_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let lang = self.lang;
-        let Some(snap) = self.store.snapshot.clone() else {
-            return div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size_full()
-                .child(t(lang, Key::Loading));
-        };
-        let mut root = div().flex().flex_col().gap_2().size_full().p(px(12.0));
-
-        if let Some(err) = self
-            .store
-            .notice
-            .clone()
-            .or_else(|| self.store.world_error.clone())
-        {
-            root = root.child(div().text_color(rgb(pal.warn)).child(err));
-        }
-
-        // Локация (ФР-03).
-        root = root.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .px_3()
-                .py_2()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.border))
-                .child(div().font_weight(gpui::FontWeight::BOLD).child(format!(
-                    "{}: {}",
-                    t(lang, Key::LocationLabel),
-                    snap.location.name
-                )))
-                .child(
-                    div()
-                        .text_size(px(13.0))
-                        .text_color(rgb(pal.muted))
-                        .child(snap.location.text.clone()),
-                ),
-        );
-
-        // Выходы (Alt-навигация — M10.4; здесь — клики).
-        let mut exits = div().flex().flex_row().gap_2().items_center().child(
-            div()
-                .text_color(rgb(pal.muted))
-                .child(format!("{}:", t(lang, Key::ExitsLabel))),
-        );
-        if snap.location.exits.is_empty() {
-            exits = exits.child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::NoExits)),
-            );
-        }
-        for exit in &snap.location.exits {
-            let label = if exit.label.is_empty() {
-                exit.dir.clone().unwrap_or_default()
-            } else {
-                exit.label.clone()
-            };
-            exits = exits.child(btn(
-                cx,
-                label,
-                pal.panel,
-                pal.accent,
-                Click::MoveExit(exit.id.clone()),
-            ));
-        }
-        root = root.child(exits);
-
-        // Сущности: клик = цель (ФР-05).
-        let target = self.store.target.clone();
-        for entity in &snap.location.entities {
-            let selected = target.as_deref() == Some(entity.id.as_str());
-            let id = entity.id.clone();
-            let mut kind = match entity.kind {
-                ld2_protocol::types::EntityKind::Player => t(lang, Key::PlayersLabel),
-                ld2_protocol::types::EntityKind::Monster => t(lang, Key::MonstersLabel),
-                ld2_protocol::types::EntityKind::Npc => t(lang, Key::NpcsLabel),
-                ld2_protocol::types::EntityKind::Corpse => t(lang, Key::CorpsesLabel),
-                _ => "",
-            }
-            .to_string();
-            if let Some(hp) = &entity.hp {
-                kind.push_str(&format!(" {}/{}", hp.cur, hp.max));
-            }
-            root = root.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(if selected { pal.selection } else { pal.panel }))
-                    .border_1()
-                    .border_color(rgb(pal.border))
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(rgb(pal.selection)))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener({
-                            let id = id.clone();
-                            move |this, _, _, cx| {
-                                this.on_click(Click::SetTarget(id.clone()), cx);
-                            }
-                        }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .child(entity.name.clone())
-                            .child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .text_color(rgb(pal.muted))
-                                    .child(kind),
-                            ),
-                    ),
-            );
-        }
-
-        // Цель (ФР-05): строка под списком.
-        if let Some(target_id) = self.store.target.clone() {
-            if let Some(entity) = snap.location.entities.iter().find(|e| e.id == target_id) {
-                root = root.child(div().font_weight(gpui::FontWeight::BOLD).child(format!(
-                    "{}: {}",
-                    t(lang, Key::TargetLabel),
-                    entity.name
-                )));
-            }
-        }
-        root
     }
 
     /// Окно настроек (ФР-19) — как отдельный экран с кнопкой закрытия.
@@ -862,6 +833,7 @@ fn btn_hover(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| {
                 this.on_click(click.clone(), cx);
+                cx.notify();
             }),
         )
 }

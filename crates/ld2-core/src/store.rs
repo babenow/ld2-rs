@@ -1605,6 +1605,16 @@ pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&s
     }
 }
 
+/// Заголовок преступления из конфига сервера (§5 kinds), фолбэк — kind.
+pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
+    store
+        .session
+        .as_ref()
+        .and_then(|s| s.crime.kinds.iter().find(|k| k.kind == kind))
+        .map(|k| k.title.clone())
+        .unwrap_or_else(|| kind.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
