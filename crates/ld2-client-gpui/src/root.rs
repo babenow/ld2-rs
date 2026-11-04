@@ -22,7 +22,7 @@ mod sheet;
 mod social;
 
 use crate::palette::{palette, Palette};
-use ely::forms::{Input, InputEvent, PasswordInput, TextInput};
+use ely::forms::{HotkeyInput, Input, InputEvent, PasswordInput, TextInput};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
 const RELEASE: bool = !cfg!(debug_assertions);
@@ -104,11 +104,10 @@ pub struct Root {
     chat_filter: Option<Entity<TextInput>>,
     chat_channel: String,
     /// M10.5: окно сделки — поле золота.
-    trade_gold: Option<Entity<TextInput>>,
+    /// M11.3: золото сделки (NumberInput Ely; фиксируется операцией).
+    trade_gold_value: f64,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
     party_collapsed: bool,
-    /// Запись горячей клавиши (ФР-19): индекс действия (0..=4).
-    hotkey_capture: Option<usize>,
     /// M10.6: создание/удаление персонажей (ФР-02).
     create_name: Option<Entity<TextInput>>,
     create_profile: ld2_core::store::Profile,
@@ -142,9 +141,8 @@ impl Root {
             chat_input: None,
             chat_filter: None,
             chat_channel: "location".into(),
-            trade_gold: None,
+            trade_gold_value: 0.0,
             party_collapsed,
-            hotkey_capture: None,
             create_name: None,
             create_profile: ld2_core::store::Profile::default(),
             create_open: false,
@@ -325,7 +323,6 @@ impl Root {
             false,
             None,
         ));
-        self.trade_gold = Some(mk(window, cx, "0".into(), false, Some("0".into())));
 
         for slot in [self.login_input.clone(), self.password_input.clone()] {
             let ent = slot.expect("создано выше");
@@ -355,7 +352,6 @@ impl Root {
             &self.guild_input,
             &self.chat_input,
             &self.chat_filter,
-            &self.trade_gold,
         ]
         .iter()
         .filter_map(|input| input.as_ref())
@@ -370,26 +366,6 @@ impl Root {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // Запись хоткея (ФР-19): приоритет над навигацией, работает
-        // на любом экране; Escape — отмена записи.
-        if let Some(idx) = self.hotkey_capture {
-            if ks.key.eq_ignore_ascii_case("escape") {
-                self.hotkey_capture = None;
-            } else if let Some(spec) = spec_from_keystroke(ks) {
-                let hk = &mut self.config.hotkeys;
-                match idx {
-                    0 => hk.nav_up = spec,
-                    1 => hk.nav_down = spec,
-                    2 => hk.nav_left = spec,
-                    3 => hk.nav_right = spec,
-                    _ => hk.cycle_target = spec,
-                }
-                self.hotkey_capture = None;
-                self.save_config();
-            }
-            cx.notify();
-            return;
-        }
         if self.store.screen != Screen::Game || self.typing_focused(window, cx) {
             return;
         }
@@ -811,48 +787,38 @@ impl Root {
                 )
                 .child(hotkey_row(
                     cx,
-                    pal,
                     lang,
                     Key::HkNavUp,
                     &self.config.hotkeys.nav_up,
                     0,
-                    self.hotkey_capture,
                 ))
                 .child(hotkey_row(
                     cx,
-                    pal,
                     lang,
                     Key::HkNavDown,
                     &self.config.hotkeys.nav_down,
                     1,
-                    self.hotkey_capture,
                 ))
                 .child(hotkey_row(
                     cx,
-                    pal,
                     lang,
                     Key::HkNavLeft,
                     &self.config.hotkeys.nav_left,
                     2,
-                    self.hotkey_capture,
                 ))
                 .child(hotkey_row(
                     cx,
-                    pal,
                     lang,
                     Key::HkNavRight,
                     &self.config.hotkeys.nav_right,
                     3,
-                    self.hotkey_capture,
                 ))
                 .child(hotkey_row(
                     cx,
-                    pal,
                     lang,
                     Key::HkCycleTarget,
                     &self.config.hotkeys.cycle_target,
                     4,
-                    self.hotkey_capture,
                 )),
         );
 
@@ -959,24 +925,52 @@ fn row(pal: &Palette, label: String, controls: Vec<Div>) -> Div {
     r
 }
 
-/// Строка хоткея: клик — запись нового нажатия (ФР-19).
-fn hotkey_row(
-    cx: &mut Context<'_, Root>,
-    pal: &Palette,
-    lang: Lang,
-    label: Key,
-    spec: &str,
-    idx: usize,
-    capturing: Option<usize>,
-) -> Div {
-    let text = if capturing == Some(idx) {
-        t(lang, Key::HkPress).to_string()
-    } else {
-        format!("{} — {spec}", t(lang, label))
-    };
-    act_btn(cx, text, pal.panel, pal.text, move |this, _cx| {
-        this.hotkey_capture = Some(idx);
-    })
+/// Строка хоткея: `HotkeyInput` Ely — запись нажатия и очистка Backspace
+/// (ФР-19). Приоритет над навигацией даёт сам виджет (фокус-режим),
+/// ручная capture-машинка M10 упразднена; значение хранится в config.toml
+/// форматом `alt+up` (round-trip через Keystroke::parse_with_os).
+fn hotkey_row(cx: &mut Context<'_, Root>, lang: Lang, label: Key, spec: &str, idx: usize) -> Div {
+    const IDS: [&str; 5] = [
+        "ld2-hk-nav-up",
+        "ld2-hk-nav-down",
+        "ld2-hk-nav-left",
+        "ld2-hk-nav-right",
+        "ld2-hk-cycle",
+    ];
+    let want = gpui::Keystroke::parse_with_os(&spec.replace('+', "-"), host_os()).ok();
+    let this = cx.entity();
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .items_center()
+        .text_size(px(13.0))
+        .child(
+            div()
+                .flex_grow_1()
+                .text_color(rgb(0x7f848e))
+                .child(t(lang, label)),
+        )
+        .child(
+            HotkeyInput::new(IDS[idx], want).on_change(move |ks, _window, acx| {
+                this.update(acx, |root, cx| {
+                    let spec = ks
+                        .as_ref()
+                        .and_then(spec_from_keystroke)
+                        .unwrap_or_default();
+                    let hk = &mut root.config.hotkeys;
+                    match idx {
+                        0 => hk.nav_up = spec,
+                        1 => hk.nav_down = spec,
+                        2 => hk.nav_left = spec,
+                        3 => hk.nav_right = spec,
+                        _ => hk.cycle_target = spec,
+                    }
+                    root.save_config();
+                    cx.notify();
+                });
+            }),
+        )
 }
 
 /// Кнопка: статичные цвета + hover, действие — [`Click`].

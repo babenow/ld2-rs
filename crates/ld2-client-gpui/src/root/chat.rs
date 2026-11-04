@@ -8,7 +8,7 @@ use ld2_core::store::{parse_chat_input, Act, ChatDraft, CHAT_CHANNELS};
 use ld2_protocol::cmd::ChatSend;
 
 use crate::palette::{palette, Palette};
-use ely::forms::Input;
+use ely::forms::{Input, SearchInput};
 
 use super::{act_btn, Root};
 
@@ -50,11 +50,10 @@ impl Root {
                 let _ = cx;
             }));
         }
-        tabs = tabs.child(
-            div()
-                .flex_grow_1()
-                .child(Input::new(self.ti(&self.chat_filter))),
-        );
+        tabs = tabs.child(div().flex_grow_1().child(SearchInput::new(
+            "ld2-chat-filter",
+            self.ti(&self.chat_filter),
+        )));
         panel = panel.child(tabs);
 
         // ── история активного канала с фильтром ──

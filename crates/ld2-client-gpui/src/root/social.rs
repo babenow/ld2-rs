@@ -14,7 +14,7 @@ use ld2_protocol::cmd::{
 };
 
 use crate::palette::Palette;
-use ely::forms::Input;
+use ely::forms::NumberInput;
 
 use super::{act_btn, Root};
 
@@ -484,17 +484,16 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(format!("{}:", t(lang, Key::TradeGold))),
         );
-        gold_row = gold_row.child(
-            div()
-                .w(px(90.0))
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(pal.border))
-                .bg(rgb(pal.bg))
-                .child(Input::new(self.ti(&self.trade_gold))),
-        );
+        gold_row = gold_row.child(div().w(px(140.0)).child({
+            let this = cx.entity();
+            let gold = self.trade_gold_value;
+            NumberInput::new("ld2-trade-gold", gold)
+                .precision(0)
+                .step(10.0)
+                .on_change(move |v, _window, acx| {
+                    this.update(acx, |root, _cx| root.trade_gold_value = v);
+                })
+        }));
         {
             let oid = offer_id.clone();
             gold_row = gold_row.child(act_btn(
@@ -502,15 +501,8 @@ impl Root {
                 t(lang, Key::TradeSetGold),
                 pal.panel,
                 pal.text,
-                move |this, cx| {
-                    let gold: i64 = this
-                        .ti(&this.trade_gold)
-                        .read(cx)
-                        .text()
-                        .to_string()
-                        .trim()
-                        .parse()
-                        .unwrap_or(0);
+                move |this, _cx| {
+                    let gold = this.trade_gold_value.max(0.0) as i64;
                     let cmd = TradeSetGold {
                         offer_id: oid.clone(),
                         gold,
@@ -519,7 +511,6 @@ impl Root {
                         Ok(_) => this.store.on_sheet_sent(Act::Trade),
                         Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
                     }
-                    let _ = cx;
                 },
             ));
         }
