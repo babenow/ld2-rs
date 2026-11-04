@@ -6,7 +6,8 @@
 //! Отличия от egui: модалки заменяют контент (шапка остаётся), контекстное
 //! меню — инлайн под строкой (вместо попапа по курсору), тултипы не используются.
 
-use gpui::{div, prelude::*, px, rgb, Context, Div, MouseButton};
+use ely::overlays::Dialog;
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton};
 use ld2_core::l10n::{format_duration, t, Key};
 use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, LogKind};
 use ld2_protocol::evt::StateSnapshot;
@@ -17,37 +18,48 @@ use crate::palette::Palette;
 use super::{btn, Click, Root};
 
 impl Root {
-    pub(crate) fn game_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        // Модалки заменяют контент (шапка остаётся) — паритет egui-окон.
+    /// M11.2: игровые всплывающие диалоги (ФР-03/05/06): death/examine/loot.
+    /// Приоритет — прежний диспетчер замены контента (смерть главнее).
+    pub(crate) fn game_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
         if let Some(death) = self.store.death.clone() {
-            return self.death_view(cx, pal, &death);
+            let title = t(self.lang, Key::DeathTitle).to_string();
+            let body = self.death_view(cx, pal, &death).into_any_element();
+            // ФР-06: закрытие только подтверждением (акр сервера) — Escape и
+            // клик по скриму ничего не делают: on_close пуст.
+            return Some(
+                Dialog::new("ld2-death", title, |_window, _cx| {})
+                    .child(body)
+                    .into_any_element(),
+            );
         }
         if let Some(detail) = self.store.entity_detail.clone() {
-            return self.examine_view(cx, pal, detail);
+            let name = detail["entity"]["name"].as_str().unwrap_or("?").to_string();
+            let body = self.examine_view(cx, pal, detail).into_any_element();
+            let close = self.dismiss(cx, |r| r.store.entity_detail = None);
+            return Some(
+                Dialog::new("ld2-examine", name, close)
+                    .child(body)
+                    .into_any_element(),
+            );
         }
         if let Some((uid, name)) = self.store.loot_confirm.clone() {
-            return self.loot_view(cx, pal, uid, name);
+            let title = t(self.lang, Key::TakeLoot).to_string();
+            let body = self.loot_view(cx, pal, uid, name).into_any_element();
+            let close = self.dismiss(cx, |r| r.store.clear_loot_confirm());
+            return Some(
+                Dialog::new("ld2-loot", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
         }
-        // Соц-модалки (ФР-14/15/16) — паритет egui-окон.
-        if let Some(invite) = self.store.party_invite.clone() {
-            return self.party_invite_view(cx, pal, &invite);
-        }
-        if let Some(invite) = self.store.guild_invite.clone() {
-            return self.guild_invite_view(cx, pal, &invite);
-        }
-        if let Some(trade) = self.store.trade.clone() {
-            return self.trade_view(cx, pal, &trade);
-        }
-        // Модалки листа (ФР-07/09/10) — паритет egui-окон.
-        if let Some(detail) = self.store.item_detail.clone() {
-            return self.item_view(cx, pal, detail);
-        }
-        if let Some(view) = self.store.upgrade.clone() {
-            return self.upgrade_view(cx, pal, &view);
-        }
-        if let Some(staff_uid) = self.store.socketing.clone() {
-            return self.socket_view(cx, pal, staff_uid);
-        }
+        None
+    }
+
+    pub(crate) fn game_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let Some(snap) = self.store.snapshot.clone() else {
             return div()
                 .flex()
@@ -684,17 +696,7 @@ impl Root {
         div()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
             .gap_2()
-            .size_full()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(20.0))
-                    .text_color(rgb(pal.danger))
-                    .child(t(lang, Key::DeathTitle)),
-            )
             .child(
                 div()
                     .text_color(rgb(pal.muted))
@@ -726,7 +728,6 @@ impl Root {
         detail: serde_json::Value,
     ) -> Div {
         let lang = self.lang;
-        let name = detail["entity"]["name"].as_str().unwrap_or("?").to_string();
         let kind = detail["entity"]["kind"].as_str().unwrap_or("?").to_string();
         let was_player = detail["was_player"] == true;
         let looted = detail["looted"] == true;
@@ -734,16 +735,6 @@ impl Root {
             .flex()
             .flex_col()
             .gap_2()
-            .items_center()
-            .justify_center()
-            .size_full()
-            .p(px(16.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(18.0))
-                    .child(name),
-            )
             .child(div().text_color(rgb(pal.muted)).child(kind));
         if let Some(hp) = detail["entity"]["hp"].as_object() {
             col = col.child(
@@ -825,17 +816,7 @@ impl Root {
         div()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
             .gap_2()
-            .size_full()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(18.0))
-                    .text_color(rgb(pal.danger))
-                    .child(t(lang, Key::TakeLoot)),
-            )
             .child(
                 div()
                     .text_color(rgb(pal.warn))

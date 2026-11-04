@@ -4,7 +4,8 @@
 //! Модалки заменяют контент игрового экрана (шапка остаётся) — паритет
 //! egui-окон; версия/зеркало сделки — с сервера (клиент не пересчитывает).
 
-use gpui::{div, prelude::*, px, rgb, Context, Div};
+use ely::overlays::Dialog;
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div};
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::Act;
 use ld2_protocol::cmd::{
@@ -17,6 +18,60 @@ use crate::palette::Palette;
 use super::{act_btn, Root};
 
 impl Root {
+    /// M11.2: соц-диалоги (ФР-14/15/16): приглашения и сделка.
+    /// Закрытие скримом = отклонение/отмена (сервер снимает состояние).
+    pub(crate) fn social_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        if let Some(invite) = self.store.party_invite.clone() {
+            let title = t(self.lang, Key::PartyLabel).to_string();
+            let body = self.party_invite_view(cx, pal, &invite).into_any_element();
+            let id = invite.invite_id.clone();
+            let close = self.dismiss(cx, move |r| {
+                let cmd = PartyDecline {
+                    invite_id: id.clone(),
+                };
+                let _ = r.transport.send(&cmd);
+                r.store.party_invite = None;
+            });
+            return Some(
+                Dialog::new("ld2-party-invite", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
+        if let Some(invite) = self.store.guild_invite.clone() {
+            let title = t(self.lang, Key::GuildTab).to_string();
+            let body = self.guild_invite_view(cx, pal, &invite).into_any_element();
+            let close = self.dismiss(cx, |r| r.store.guild_invite = None);
+            return Some(
+                Dialog::new("ld2-guild-invite", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
+        if let Some(trade) = self.store.trade.clone() {
+            let title = t(self.lang, Key::TradeLabel).to_string();
+            let body = self.trade_view(cx, pal, &trade).into_any_element();
+            let oid = trade.offer_id.clone();
+            // Отмена — на сервере (закрыть окно = TradeCancel, как в egui).
+            let close = self.dismiss(cx, move |r| {
+                let cmd = TradeCancel {
+                    offer_id: oid.clone(),
+                };
+                let _ = r.transport.send(&cmd);
+            });
+            return Some(
+                Dialog::new("ld2-trade", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
+        None
+    }
+
     // ── виджет группы (ФР-14) ─────────────────────────────────────────────
 
     pub(crate) fn party_widget(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
@@ -173,16 +228,7 @@ impl Root {
         div()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
             .gap_2()
-            .size_full()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(17.0))
-                    .child(t(lang, Key::PartyLabel)),
-            )
             .child(tf(
                 lang,
                 Key::PartyInviteFrom,
@@ -248,16 +294,7 @@ impl Root {
         div()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
             .gap_2()
-            .size_full()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(17.0))
-                    .child(t(lang, Key::GuildTab)),
-            )
             .child(tf(
                 lang,
                 Key::PartyInviteFrom,
@@ -321,21 +358,7 @@ impl Root {
             .unwrap_or_default();
         let offered: Vec<String> = trade.you.iter().map(|i| i.uid.clone()).collect();
 
-        let mut col = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .items_center()
-            .justify_center()
-            .size_full()
-            .p(px(16.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(17.0))
-                    .child(t(lang, Key::TradeLabel)),
-            );
-
+        let mut col = div().flex().flex_col().gap_2();
         // Оценка + предупреждение (ФР-15 анти-абуз).
         if let Some(value) = trade.value_hint {
             col = col.child(div().text_color(rgb(pal.muted)).child(tf(

@@ -7,7 +7,8 @@
 //! описания, combobox обучения — ряд кнопок. Состояние вкладки —
 //! `Root::sheet_tab` (персистентно в config, ФР-19).
 
-use gpui::{div, prelude::*, px, rgb, Context, Div, MouseButton};
+use ely::overlays::Dialog;
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton};
 use ld2_core::l10n::{format_duration, t, Key, Lang};
 use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, Act, UpgradeView};
 use ld2_protocol::cmd::{
@@ -83,6 +84,45 @@ const LEARN_CATALOG: [(&str, Key); 7] = [
 ];
 
 impl Root {
+    /// M11.2: диалоги листа (ФР-07/09/10): предмет/улучшение/инкрустация.
+    pub(crate) fn sheet_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        if let Some(detail) = self.store.item_detail.clone() {
+            let name = detail["name"].as_str().unwrap_or("?").to_string();
+            let body = self.item_view(cx, pal, detail).into_any_element();
+            let close = self.dismiss(cx, |r| r.store.item_detail = None);
+            return Some(
+                Dialog::new("ld2-item", name, close)
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
+        if let Some(view) = self.store.upgrade.clone() {
+            let title = view.item_name.clone();
+            let body = self.upgrade_view(cx, pal, &view).into_any_element();
+            let close = self.dismiss(cx, |r| r.store.upgrade = None);
+            return Some(
+                Dialog::new("ld2-upgrade", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
+        if let Some(staff_uid) = self.store.socketing.clone() {
+            let title = t(self.lang, Key::SocketingTitle).to_string();
+            let body = self.socket_view(cx, pal, staff_uid).into_any_element();
+            let close = self.dismiss(cx, |r| r.store.close_socketing());
+            return Some(
+                Dialog::new("ld2-socket", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
+        None
+    }
+
     // ── каркас панели ─────────────────────────────────────────────────────
 
     pub(crate) fn sheet(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
@@ -1260,29 +1300,16 @@ impl Root {
         detail: serde_json::Value,
     ) -> Div {
         let lang = self.lang;
-        let name = detail["name"].as_str().unwrap_or("?").to_string();
         let rarity = detail["rarity"].as_str().unwrap_or("common");
-        let color = rarity_color(rarity, pal);
-        let mut col = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .items_center()
-            .justify_center()
-            .size_full()
-            .p(px(16.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(17.0))
-                    .text_color(rgb(color))
-                    .child(name),
-            )
-            .child(div().text_color(rgb(pal.muted)).child(format!(
-                "{} · +{}",
-                detail["type"].as_str().unwrap_or("?"),
-                detail["upgrade"].as_i64().unwrap_or(0)
-            )));
+        let mut col = div().flex().flex_col().gap_1().child(
+            div()
+                .text_color(rgb(rarity_color(rarity, pal)))
+                .child(format!(
+                    "{rarity} · {} · +{}",
+                    detail["type"].as_str().unwrap_or("?"),
+                    detail["upgrade"].as_i64().unwrap_or(0)
+                )),
+        );
         if let Some(stats) = detail["stats"].as_object() {
             for (key, value) in stats {
                 col = col.child(div().child(format!("{key}: {value}")));
@@ -1328,21 +1355,7 @@ impl Root {
     ) -> Div {
         let lang = self.lang;
         let pending = self.store.pending == Some(Act::Upgrade);
-        let mut col = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .items_center()
-            .justify_center()
-            .size_full()
-            .p(px(16.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(17.0))
-                    .child(view.item_name.clone()),
-            );
-
+        let mut col = div().flex().flex_col().gap_1();
         let Some(preview) = view.preview.clone() else {
             col = col.child(
                 div()
@@ -1488,21 +1501,7 @@ impl Root {
             .cloned()
             .collect();
 
-        let mut col = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .items_center()
-            .justify_center()
-            .size_full()
-            .p(px(16.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(17.0))
-                    .child(staff.name.clone()),
-            );
-
+        let mut col = div().flex().flex_col().gap_1();
         for socket in staff.sockets.iter().flatten() {
             let mut row = div().flex().flex_row().gap_2().items_center();
             row = row.child(

@@ -2,7 +2,8 @@
 //! список слотов с входом/удалением, модалка создания (имя + профиль),
 //! подтверждение удаления. Модалки заменяют контент (шапка остаётся).
 
-use gpui::{div, prelude::*, px, rgb, Context, Div};
+use ely::overlays::Dialog;
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div};
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::{Act, Profile};
 use ld2_protocol::cmd::{CharCreate, CharDelete, CharSelect};
@@ -12,15 +13,40 @@ use crate::palette::Palette;
 use super::{act_btn, Root};
 
 impl Root {
-    pub(crate) fn characters_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        // Модалки — замена контента (паритет egui-окон).
+    /// M11.2: диалоги экрана персонажей (ФР-02): создание/удаление.
+    pub(crate) fn chars_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
         if self.create_open {
-            return self.create_view(cx, pal);
+            let title = t(self.lang, Key::CreateTitle).to_string();
+            let body = self.create_view(cx, pal).into_any_element();
+            let close = self.dismiss(cx, |r| {
+                r.create_open = false;
+                r.create_submitted = false;
+                r.store.create_error = None;
+            });
+            return Some(
+                Dialog::new("ld2-create", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
         }
         if self.delete_target.is_some() {
-            return self.delete_view(cx, pal);
+            let title = t(self.lang, Key::DeleteTitle).to_string();
+            let body = self.delete_view(cx, pal).into_any_element();
+            let close = self.dismiss(cx, |r| r.delete_target = None);
+            return Some(
+                Dialog::new("ld2-delete", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
         }
+        None
+    }
 
+    pub(crate) fn characters_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let Some(session) = self.store.session.clone() else {
             // Ещё нет session.start (resume в процессе).
@@ -204,25 +230,11 @@ impl Root {
             self.create_submitted = false;
         }
 
-        let mut col = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .items_center()
-            .justify_center()
-            .size_full()
-            .p(px(16.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(17.0))
-                    .child(t(lang, Key::CreateTitle)),
-            )
-            .child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::ProfileLabel)),
-            );
+        let mut col = div().flex().flex_col().gap_2().child(
+            div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::ProfileLabel)),
+        );
 
         // Профиль: ряд кнопок (вместо radio egui).
         let mut profiles = div().flex().flex_row().gap_1();
@@ -330,17 +342,7 @@ impl Root {
         div()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
             .gap_2()
-            .size_full()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(17.0))
-                    .text_color(rgb(pal.warn))
-                    .child(t(lang, Key::DeleteTitle)),
-            )
             .child(tf(lang, Key::DeleteConfirm, &[("name", name.as_str())]))
             .child(
                 div()

@@ -6,7 +6,8 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, Context, Div, Entity, MouseButton, Render, SharedString, Window,
+    div, prelude::*, px, rgb, AnyElement, App, Context, Div, Entity, MouseButton, Render,
+    SharedString, Window,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -1030,6 +1031,44 @@ fn status_text(lang: Lang, status: &TransportStatus) -> String {
     }
 }
 
+impl Root {
+    /// M11.2: on_close диалога — мутация состояния Root и перерисовка
+    /// (диалог рендерится из состояния, поэтому «закрыть» = снять флаг).
+    pub(crate) fn dismiss(
+        &self,
+        cx: &mut Context<'_, Self>,
+        f: impl Fn(&mut Self) + 'static,
+    ) -> impl Fn(&mut Window, &mut App) + 'static {
+        let this = cx.entity();
+        move |_window, acx| {
+            this.update(acx, |root, rcx| {
+                f(root);
+                rcx.notify();
+            });
+        }
+    }
+
+    /// M11.2: диспетчер всплывающих диалогов (Ely `Dialog` поверх контента,
+    /// ADR-004): экран → приоритеты game > social > sheet.
+    pub(crate) fn dialog_layer(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        if self.settings_open {
+            return None;
+        }
+        match self.store.screen {
+            Screen::Login => None,
+            Screen::Characters => self.chars_dialog(cx, pal),
+            Screen::Game => self
+                .game_dialog(cx, pal)
+                .or_else(|| self.social_dialog(cx, pal))
+                .or_else(|| self.sheet_dialog(cx, pal)),
+        }
+    }
+}
+
 impl Render for Root {
     fn render(
         &mut self,
@@ -1061,6 +1100,8 @@ impl Render for Root {
                     Screen::Game => self.game_screen(cx, &pal),
                 }
             })
+            // M11.2: всплывающий диалог поверх контента (скрим + панель).
+            .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
     }
 }
 
