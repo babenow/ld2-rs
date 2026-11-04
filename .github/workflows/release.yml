@@ -1,0 +1,120 @@
+name: Release
+
+# §12 ТЗ: артефакты релиза на тег vX.Y.Z — Windows portable, macOS .app/.dmg
+# (universal, ad-hoc подпись = dev-only build), Linux .tar.gz + .deb.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux
+          - os: macos-14
+            name: macos
+          - os: windows-latest
+            name: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: build (release)
+        run: cargo build --release -p ld2-client -p ld2-mock-server
+
+      # ── Linux: .tar.gz + .deb (AppImage — P1, см. PLAN-M9) ──
+      - name: package (linux)
+        if: matrix.name == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          DIR="ld2-${VER}-linux-x86_64"
+          mkdir -p "$DIR"
+          cp target/release/ld2-client target/release/ld2-mock-server "$DIR/"
+          cp README.md "$DIR/" 2>/dev/null || true
+          tar -czf "${DIR}.tar.gz" "$DIR"
+          # .deb (dpkg-deb есть на ubuntu-runner).
+          mkdir -p pkg/DEBIAN pkg/usr/bin
+          cp target/release/ld2-client target/release/ld2-mock-server pkg/usr/bin/
+          cat > pkg/DEBIAN/control <<EOF
+          Package: ld2
+          Version: ${VER}
+          Section: games
+          Priority: optional
+          Architecture: amd64
+          Maintainer: ld2 devs <dev@example.com>
+          Description: ld2 desktop client and mock server
+           Text online MMORPG client (eframe/egui) with bundled mock server.
+          EOF
+          dpkg-deb --build pkg "ld2-${VER}_amd64.deb"
+          echo "ASSETS=${DIR}.tar.gz,ld2-${VER}_amd64.deb" >> "$GITHUB_ENV"
+
+      # ── macOS: universal .app → .dmg (lipo; код-подпись ad-hoc = dev-only) ──
+      - name: package (macos)
+        if: matrix.name == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          BIN="target/release/ld2-client"
+          # Universal binary: arm64 (нативный) + x86_64 (кросс, best effort).
+          rustup target add x86_64-apple-darwin
+          if cargo build --release -p ld2-client --target x86_64-apple-darwin; then
+            lipo -create "$BIN" target/x86_64-apple-darwin/release/ld2-client -output universal-bin
+            BIN="universal-bin"
+          fi
+          APP="ld2.app"
+          mkdir -p "$APP/Contents/MacOS"
+          cp "$BIN" "$APP/Contents/MacOS/ld2"
+          cp target/release/ld2-mock-server "$APP/Contents/MacOS/" 2>/dev/null || true
+          cat > "$APP/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>ld2</string>
+            <key>CFBundleIdentifier</key><string>ru.ld2.client</string>
+            <key>CFBundleVersion</key><string>${VER}</string>
+            <key>CFBundleShortVersionString</key><string>${VER}</string>
+            <key>CFBundleExecutable</key><string>ld2</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+          </dict>
+          </plist>
+          EOF
+          # ad-hoc подпись (codesign/notarize — секреты CI, P1 §12).
+          codesign --force --sign - "$APP" || true
+          hdiutil create -volname "ld2 ${VER}" -srcfolder "$APP" -ov -format UDZO "ld2-${VER}-macos.dmg"
+          tar -czf "ld2-${VER}-macos-universal.tar.gz" "$APP"
+          echo "ASSETS=ld2-${VER}-macos.dmg,ld2-${VER}-macos-universal.tar.gz" >> "$GITHUB_ENV"
+
+      # ── Windows: portable .zip (exe) ──
+      - name: package (windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $ver = $env:GITHUB_REF_NAME.TrimStart("v")
+          $dir = "ld2-$ver-windows-x86_64"
+          New-Item -ItemType Directory -Path $dir | Out-Null
+          Copy-Item target/release/ld2-client.exe $dir/
+          Copy-Item target/release/ld2-mock-server.exe $dir/
+          if (Test-Path README.md) { Copy-Item README.md $dir/ }
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
+          "ASSETS=$dir.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSETS }}
+          generate_release_notes: true
