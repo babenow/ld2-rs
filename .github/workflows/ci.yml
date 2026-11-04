@@ -24,6 +24,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Системные зависимости gpui (xkbcommon/fontconfig/wayland) — M10.1.
+      - name: system deps (linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libfontconfig1-dev libwayland-dev \
+            libx11-dev libxcb1-dev
+
       - name: rustfmt
         run: cargo fmt --check
 
