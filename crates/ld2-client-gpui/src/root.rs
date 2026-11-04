@@ -1152,13 +1152,24 @@ impl Root {
         if self.settings_open {
             return None;
         }
-        match self.store.screen {
-            Screen::Login => None,
-            Screen::Characters => self.chars_dialog(cx, pal),
-            Screen::Game => self
-                .game_dialog(cx, pal)
-                .or_else(|| self.social_dialog(cx, pal))
-                .or_else(|| self.sheet_dialog(cx, pal)),
+        // Гейт экрана и приоритет — ядро (E2E-тест M11.6); внутри домена
+        // порядок полей зеркалит AppStore::active_dialog.
+        let kind = self
+            .store
+            .active_dialog(self.create_open, self.delete_target.is_some())?;
+        match kind {
+            ld2_core::store::Dialog::Death
+            | ld2_core::store::Dialog::Examine
+            | ld2_core::store::Dialog::Loot => self.game_dialog(cx, pal),
+            ld2_core::store::Dialog::PartyInvite
+            | ld2_core::store::Dialog::GuildInvite
+            | ld2_core::store::Dialog::Trade => self.social_dialog(cx, pal),
+            ld2_core::store::Dialog::Item
+            | ld2_core::store::Dialog::Upgrade
+            | ld2_core::store::Dialog::Socket => self.sheet_dialog(cx, pal),
+            ld2_core::store::Dialog::Create | ld2_core::store::Dialog::Delete => {
+                self.chars_dialog(cx, pal)
+            }
         }
     }
 }
