@@ -549,6 +549,8 @@ impl AppStore {
                     return vec![];
                 };
                 let refresh = cfg.session.refresh.token.clone();
+                // НФР «Обновления»: force-min-version capability сервера (§12).
+                let required = cfg.server.min_client.clone();
                 let login = self
                     .session_login
                     .clone()
@@ -561,6 +563,16 @@ impl AppStore {
                     // игры экран НЕ меняем (§4.5: session.start повторяется).
                     self.screen = Screen::Characters;
                     self.notice = None;
+                }
+                // После сброса notice: предупреждение о версии не должно
+                // затираться переходом экрана (НФР force-min-version).
+                if let Some(required) = required {
+                    if crate::update_check::is_newer(&required, env!("CARGO_PKG_VERSION")) {
+                        self.notice = Some(format!(
+                            "⚠ Сервер требует клиент v{required} (у вас v{}) — обновитесь",
+                            env!("CARGO_PKG_VERSION")
+                        ));
+                    }
                 }
                 vec![
                     Effect::PersistSession {
@@ -1844,6 +1856,40 @@ mod tests {
         }));
         assert_eq!(store.guild_log.len(), 1);
         assert!(store.log.iter().any(|e| e.text.contains("Гильдия")));
+    }
+
+    /// НФР/§12: min_client capability сервера новее клиента → предупреждение.
+    #[test]
+    fn newer_min_client_shows_warning() {
+        let mut store = AppStore::new();
+        store.on_login_sent("demo");
+        let mut cfg = fixtures::session_config(8);
+        cfg.server.min_client = Some("99.0.0".into());
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::to_value(cfg).unwrap()),
+        }));
+        let notice = store.notice.expect("предупреждение о версии");
+        assert!(notice.contains("99.0.0"), "нужна версия сервера: {notice}");
+
+        // Текущая/старая версия — без предупреждения.
+        let mut store = AppStore::new();
+        store.on_login_sent("demo");
+        let mut cfg = fixtures::session_config(8);
+        cfg.server.min_client = Some("0.1.0".into());
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::to_value(cfg).unwrap()),
+        }));
+        assert!(store.notice.is_none(), "старая версия сервера — тихо");
     }
 
     /// D7: события уведомлений эмитятся эффектами (флаг применяет App).

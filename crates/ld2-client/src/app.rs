@@ -33,6 +33,10 @@ pub struct App {
     base_text_styles: std::collections::BTreeMap<egui::TextStyle, egui::FontId>,
     /// Были ли события в прошлом кадре (idle-backoff ≤ 5 fps, НФР §8).
     had_events_last_frame: bool,
+    /// Канал фоновой проверки обновлений (НФР: не блокирует старт).
+    update_rx: std::sync::mpsc::Receiver<String>,
+    /// Есть ли доступная версия (бейдж в header, §12).
+    update_available: Option<String>,
 }
 
 impl App {
@@ -72,10 +76,16 @@ impl App {
         // НФР §8/ФР-19: лимит истории чата — из конфига.
         store.chat_limit = config.chat_limit;
 
+        // НФР «Обновления»: проверка GitHub Releases в фоне (не блокирует).
+        let (update_tx, update_rx) = std::sync::mpsc::channel();
+        crate::update_check::spawn_check(update_tx);
+
         Self {
             applied_theme: config.theme.clone(),
             applied_font_scale: config.font_scale,
             had_events_last_frame: false,
+            update_rx,
+            update_available: None,
             base_text_styles: _cc.egui_ctx.style_of(egui::Theme::Dark).text_styles.clone(),
             lang: Lang::from_code(&config.lang),
             config,
@@ -230,6 +240,23 @@ impl App {
                     if ui.button(l10n::t(self.lang, Key::SettingsBtn)).clicked() {
                         self.forms.settings_open = !self.forms.settings_open;
                     }
+                    // §12: бейдж обновления — открытие страницы релизов.
+                    if let Some(version) = self.update_available.clone() {
+                        let label = l10n::tf(
+                            self.lang,
+                            Key::UpdateBadge,
+                            &[("{v}", &format!("v{version}"))],
+                        );
+                        if ui
+                            .colored_label(egui::Color32::from_rgb(0x98, 0xC3, 0x79), label)
+                            .on_hover_text(crate::update_check::RELEASES_PAGE)
+                            .clicked()
+                        {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(
+                                crate::update_check::RELEASES_PAGE,
+                            ));
+                        }
+                    }
                     let label = format!(
                         "{}: {}",
                         l10n::t(self.lang, Key::Language),
@@ -298,6 +325,13 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let had_events = self.drain_ingress();
         self.had_events_last_frame = had_events;
+        // Результат фоновой проверки обновлений (§12).
+        while let Ok(version) = self.update_rx.try_recv() {
+            if crate::update_check::is_newer(&version, env!("CARGO_PKG_VERSION")) {
+                tracing::info!("доступна версия v{version}");
+                self.update_available = Some(version);
+            }
+        }
         self.apply_visual_prefs(ui.ctx());
         self.header(ui);
 
