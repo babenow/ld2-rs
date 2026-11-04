@@ -29,6 +29,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ErrFillFields => "Заполните логин и пароль",
         // M2: персонажи
         CharactersTitle => "Персонажи",
+        CharactersEmpty => "Персонажей нет — создайте первого",
         SlotsUsed => "{used} из {limit} слотов",
         SlotsFull => "Все слоты заняты",
         BtnEnter => "Войти в мир",

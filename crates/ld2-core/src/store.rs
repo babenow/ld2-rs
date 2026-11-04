@@ -230,6 +230,8 @@ pub struct AppStore {
     pub entity_detail: Option<serde_json::Value>,
     /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
     pub pending_delete: Option<PendingDelete>,
+    /// M11.7: цель текущего `char.delete` — снять карточку по ack.
+    pub deleting_char: Option<String>,
     /// Логин текущей сессии — для ключа keyring (`<host>:<login>`).
     session_login: Option<String>,
 }
@@ -385,6 +387,7 @@ impl AppStore {
             visited: Vec::new(),
             entity_detail: None,
             pending_delete: None,
+            deleting_char: None,
             session_login: None,
         }
     }
@@ -455,7 +458,10 @@ impl AppStore {
                 Act::Login => self.login_error = Some(msg),
                 Act::Create => self.create_error = Some(msg),
                 Act::Select => self.select_error = Some(msg),
-                Act::Delete => self.notice = Some(msg),
+                Act::Delete => {
+                    self.deleting_char = None;
+                    self.notice = Some(msg);
+                }
                 Act::Move | Act::Attack | Act::Examine => self.world_error = Some(msg),
                 Act::Invest
                 | Act::Equip
@@ -480,7 +486,15 @@ impl AppStore {
             // Успех логина подтверждён ack'ом; дальше ждём evt/session.start.
             Act::Login => {}
             Act::Select => {}
-            Act::Delete => {}
+            Act::Delete => {
+                // M11.7: ack — карточка уходит из списка (ФР-02).
+                if let Some(id) = self.deleting_char.take() {
+                    if let Some(session) = self.session.as_mut() {
+                        session.characters.retain(|c| c.id != id);
+                    }
+                }
+                self.notice = Some("Персонаж удалён".into());
+            }
             Act::Invest => {
                 // §7: ack несёт остаток пула.
                 if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
@@ -1514,9 +1528,10 @@ impl AppStore {
         self.pending = Some(Act::Select);
     }
 
-    pub fn on_delete_sent(&mut self) {
+    pub fn on_delete_sent(&mut self, char_id: &str) {
         self.notice = None;
         self.pending = Some(Act::Delete);
+        self.deleting_char = Some(char_id.to_string());
     }
 
     /// Hot-switch: вернуться к выбору персонажей БЕЗ ре-логина (ФР-02).
@@ -2427,11 +2442,26 @@ mod tests {
     #[test]
     fn delete_ack_error_surfaces_notice() {
         let mut store = store_with_session();
-        store.on_delete_sent();
+        let id = store.session.as_ref().unwrap().characters[0].id.clone();
+        store.on_delete_sent(&id);
         let ack = ld2_protocol::Ack::error(9, None, &ErrorCode::CharLimit, "нельзя удалить");
         store.apply(IngressEvent::Ack(ack));
         assert_eq!(store.notice.as_deref(), Some("нельзя удалить"));
         assert_eq!(store.slot_usage(), (1, 8), "список не изменился");
+    }
+
+    /// M11.7: успешный ack удаления снимает карточку (ФР-02).
+    #[test]
+    fn delete_ack_removes_character_from_list() {
+        let mut store = store_with_session();
+        assert_eq!(store.slot_usage(), (1, 8), "до удаления");
+        let id = store.session.as_ref().unwrap().characters[0].id.clone();
+        store.on_delete_sent(&id);
+        let ack = ld2_protocol::Ack::ok(10, Some(1004));
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.slot_usage(), (0, 8), "карточка убрана по ack");
+        assert_eq!(store.notice.as_deref(), Some("Персонаж удалён"));
+        assert!(store.deleting_char.is_none());
     }
 
     #[test]

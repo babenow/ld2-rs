@@ -412,12 +412,16 @@ impl Session {
         // Аккаунт определяет список персонажей и refresh-токен (§5).
         self.login = Some(cmd.login.clone());
         self.authenticated = true;
-        self.chars = fixtures::chars_for(&cmd.login);
+        // Живое состояние (созданные/удалённые) или фикстуры — как в resume.
+        let saved_chars = self.w().load_home(&cmd.login).map(|h| h.chars);
+        self.chars = saved_chars.unwrap_or_else(|| fixtures::chars_for(&cmd.login));
         self.restore_home(&cmd.login);
         let refresh = crate::world::refresh_token_for(&cmd.login);
         self.w().bind_token(&refresh, &cmd.login);
         let sv = self.bump();
-        let config = fixtures::session_config_for(&cmd.login, self.char_slot_limit);
+        let mut config = fixtures::session_config_for(&cmd.login, self.char_slot_limit);
+        // session.start несёт живой список (с profile) — не статику (M11.7).
+        config.characters = self.chars.clone();
         vec![
             self.ack_ok_payload(
                 seq,
@@ -460,8 +464,14 @@ impl Session {
                 self.restore_home(login);
                 fixtures::session_config_for(login, self.char_slot_limit)
             }
-            None => fixtures::session_config_for(fixtures::LOGIN, self.char_slot_limit),
+            None => {
+                self.chars = fixtures::chars_for(fixtures::LOGIN);
+                fixtures::session_config_for(fixtures::LOGIN, self.char_slot_limit)
+            }
         };
+        let mut config = config;
+        // session.start несёт живой список (с profile) — не статику (M11.7).
+        config.characters = self.chars.clone();
         vec![
             self.ack_ok(seq, Some(sv)),
             self.event(
@@ -569,14 +579,7 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<CharDelete>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        if self.chars.len() <= 1 {
-            return vec![self.ack_err(
-                seq,
-                None,
-                ErrorCode::CharLimit,
-                "нельзя удалить последнего персонажа",
-            )];
-        }
+        // Аккаунт может остаться без персонажей (M11.7, требование).
         self.chars.retain(|c| c.id != cmd.char_id);
         if self.char.as_ref().is_some_and(|c| c.id == cmd.char_id) {
             self.char = None;

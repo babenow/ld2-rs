@@ -1266,3 +1266,26 @@ async fn m8_trade_mirrored_versioned_exchange_two_clients() {
     assert_eq!(removed_a["payload"]["uid"], "m_1");
     assert_eq!(removed_a["payload"]["reason"], "traded", "§8 ItemRemoved");
 }
+
+#[tokio::test]
+async fn created_char_profile_in_list() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    c.login().await;
+    let seq = c
+        .send(
+            "cmd/char.create",
+            json!({ "name": "Тест", "profile": "rogue" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert!(ack["error"].is_null(), "create: {ack}");
+    let seq = c.send("cmd/char.list", json!({})).await;
+    let ack = c.ack(seq).await;
+    let chars = ack["payload"]["characters"].as_array().expect("list");
+    let created = chars
+        .iter()
+        .find(|x| x["name"] == "Тест")
+        .expect("созданный в списке");
+    assert_eq!(created["profile"], "rogue", "profile созданного персонажа");
+}

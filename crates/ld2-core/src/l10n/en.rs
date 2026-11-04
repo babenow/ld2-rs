@@ -29,6 +29,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ErrFillFields => "Enter login and password",
         // M2: characters
         CharactersTitle => "Characters",
+        CharactersEmpty => "No characters yet — create the first one",
         SlotsUsed => "{used} of {limit} slots",
         SlotsFull => "All slots are used",
         BtnEnter => "Enter world",

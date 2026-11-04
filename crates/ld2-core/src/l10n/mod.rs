@@ -63,6 +63,7 @@ pub enum Key {
     ErrFillFields,
     // M2: персонажи (ФР-02)
     CharactersTitle,
+    CharactersEmpty,
     SlotsUsed,
     SlotsFull,
     BtnEnter,
@@ -361,6 +362,7 @@ mod tests {
         Key::StatusStopped,
         Key::ErrFillFields,
         Key::CharactersTitle,
+        Key::CharactersEmpty,
         Key::SlotsUsed,
         Key::SlotsFull,
         Key::BtnEnter,

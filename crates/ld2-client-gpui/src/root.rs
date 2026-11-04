@@ -204,9 +204,11 @@ impl Root {
             if self.store.screen != Screen::Characters {
                 self.store.cancel_delete();
             } else if let Some(char_id) = self.store.tick_delete(local_epoch()) {
-                let cmd = CharDelete { char_id };
+                let cmd = CharDelete {
+                    char_id: char_id.clone(),
+                };
                 match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_delete_sent(),
+                    Ok(_) => self.store.on_delete_sent(&char_id),
                     Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
                 }
             }

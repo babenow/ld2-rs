@@ -85,6 +85,14 @@ impl Root {
                 )
             )));
 
+        // Аккаунт может быть без персонажей (M11.7) — подсказка.
+        if session.characters.is_empty() {
+            col = col.child(
+                div()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::CharactersEmpty)),
+            );
+        }
         if let Some(err) = &self.store.select_error {
             col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
         }
