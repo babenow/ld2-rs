@@ -118,8 +118,6 @@ pub struct VisitedLocation {
 
 /// Ёмкость журнала мира (НФР §8: лог локации ≤ 10 000; M3 — 1000).
 const LOG_LIMIT: usize = 1000;
-/// История чата на канал — кольцевой буфер (ФР-13: 5 000/канал, NFR §8).
-const CHAT_LIMIT: usize = 5_000;
 /// Каналы чата из §5 (порядок вкладок UI).
 pub const CHAT_CHANNELS: [&str; 6] = ["system", "location", "global", "party", "guild", "whisper"];
 /// Ёмкость истории посещённых.
@@ -198,6 +196,8 @@ pub struct AppStore {
     pub guild_log: Vec<GuildLogEntry>,
     /// Список гильдий уже запрошен (вкладка грузит один раз).
     pub guild_browse_loaded: bool,
+    /// Лимит истории чата на канал (НФР §8; из `config.toml`, ФР-19).
+    pub chat_limit: usize,
     /// Рецепты крафта из `cmd/craft.recipes` (ФР-08).
     pub recipes: Vec<serde_json::Value>,
     /// Рецепты уже запрошены (вкладка грузит один раз).
@@ -257,6 +257,7 @@ impl AppStore {
             guild_browse: Vec::new(),
             guild_log: Vec::new(),
             guild_browse_loaded: false,
+            chat_limit: 5_000,
             recipes: Vec::new(),
             recipes_loaded: false,
             notice: None,
@@ -1176,7 +1177,7 @@ impl AppStore {
                     self.last_whisper_from = Some(msg.name.clone());
                 }
                 let entry = self.chat.entry(msg.channel.clone()).or_default();
-                if entry.len() >= CHAT_LIMIT {
+                if entry.len() >= self.chat_limit {
                     entry.pop_front();
                 }
                 entry.push_back(msg.clone());
@@ -1399,6 +1400,12 @@ impl AppStore {
     }
 
     /// Логаут (ФР-01): чистый сессионный сброс + отзыв токена.
+    /// Смена сервера в настройках (ФР-19): возврат на экран входа БЕЗ
+    /// отзыва keyring-токена (токен старого хоста остаётся валидным).
+    pub fn to_login_screen(&mut self) {
+        let _ = self.reset_to_login(None);
+    }
+
     pub fn logout(&mut self) -> Vec<Effect> {
         self.reset_to_login(None)
     }
@@ -1640,7 +1647,8 @@ mod tests {
     #[test]
     fn chat_history_is_ring_per_channel() {
         let mut store = store_with_session();
-        for i in 0..(CHAT_LIMIT + 5) {
+        let limit = store.chat_limit;
+        for i in 0..(limit + 5) {
             store.apply(IngressEvent::Event(ld2_protocol::Envelope {
                 v: 1,
                 msg_type: "evt/chat/message".into(),
@@ -1654,7 +1662,7 @@ mod tests {
             }));
         }
         let global = store.chat.get("global").expect("канал global");
-        assert_eq!(global.len(), CHAT_LIMIT, "ring-буфер: 5 000/канал");
+        assert_eq!(global.len(), limit, "ring-буфер: лимит из конфига");
         assert_eq!(global.front().unwrap().text, "м 5", "старые вытеснены");
         // Другой канал не тронут.
         store.apply(IngressEvent::Event(ld2_protocol::Envelope {
