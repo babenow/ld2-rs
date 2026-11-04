@@ -5,6 +5,7 @@ exclude = ["vendor/gpui_web"]
 members = [
     "crates/ld2-protocol",
     "crates/ld2-mock-server",
+    "crates/ld2-core",
     "crates/ld2-client",
     "crates/ld2-client-gpui",
 ]

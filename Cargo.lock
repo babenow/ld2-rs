@@ -3464,8 +3464,35 @@ name = "ld2-client"
 version = "0.9.0"
 dependencies = [
  "anyhow",
- "directories",
  "eframe",
+ "futures-util",
+ "keyring",
+ "ld2-core",
+ "ld2-mock-server",
+ "ld2-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ld2-client-gpui"
+version = "0.9.0"
+dependencies = [
+ "gpui",
+ "gpui_platform",
+]
+
+[[package]]
+name = "ld2-core"
+version = "0.9.0"
+dependencies = [
+ "anyhow",
+ "directories",
  "futures-util",
  "keyring",
  "ld2-mock-server",
@@ -3479,17 +3506,7 @@ dependencies = [
  "tokio-tungstenite",
  "toml 0.8.23",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "ureq",
-]
-
-[[package]]
-name = "ld2-client-gpui"
-version = "0.9.0"
-dependencies = [
- "gpui",
- "gpui_platform",
 ]
 
 [[package]]

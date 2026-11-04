@@ -6,23 +6,18 @@ description = "Desktop-клиент текстовой онлайн-MMORPG ld2 (
 
 [dev-dependencies]
 ld2-mock-server = { path = "../ld2-mock-server" }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
 
 [dependencies]
 ld2-protocol = { path = "../ld2-protocol" }
+ld2-core = { path = "../ld2-core" }
 eframe = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 keyring = { workspace = true }
-notify-rust = { workspace = true }
-ureq = { workspace = true }
-directories = { workspace = true }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-tungstenite = { workspace = true }
-futures-util = { workspace = true }
-time = { version = "0.3", features = ["formatting"] }
