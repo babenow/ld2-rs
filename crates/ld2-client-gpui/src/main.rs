@@ -117,7 +117,7 @@ fn main() -> anyhow::Result<()> {
         cx.open_window(
             WindowOptions {
                 titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("ld2 (gpui)".into()),
+                    title: Some("Likedimion".into()),
                     ..Default::default()
                 }),
                 window_bounds: Some(WindowBounds::Windowed(bounds)),

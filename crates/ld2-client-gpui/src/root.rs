@@ -630,8 +630,6 @@ impl Root {
     // ── элементы ───────────────────────────────────────────────────────────
 
     fn header(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let status = status_text(self.lang, &self.store.transport);
-        let rtt = self.store.rtt_ms;
         let update = self.update_available.clone();
         let lang = self.lang;
         let settings_open = self.settings_open;
@@ -646,20 +644,11 @@ impl Root {
             .border_b_1()
             .border_color(rgb(pal.border))
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(t(lang, Key::AppTitle)),
-                    )
-                    .child(div().text_color(rgb(pal.muted)).child(status))
-                    .children(
-                        rtt.map(|ms| div().text_color(rgb(pal.muted)).child(format!("{ms} мс"))),
-                    ),
+                div().flex().flex_row().items_center().gap_2().child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(t(lang, Key::AppTitle)),
+                ),
             )
             .child(
                 div()
@@ -1215,6 +1204,35 @@ impl Root {
             }
         }
     }
+
+    /// Нижний статус-бар: статус сервера и RTT (перенесено из шапки).
+    fn status_bar(&self, pal: &Palette) -> Div {
+        let status = status_text(self.lang, &self.store.transport);
+        let rtt = self.store.rtt_ms;
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .flex_shrink_0()
+            .bg(rgb(pal.panel))
+            .border_t_1()
+            .border_color(rgb(pal.border))
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(status),
+            )
+            .children(rtt.map(|ms| {
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(format!("{ms} мс"))
+            }))
+    }
 }
 
 impl Render for Root {
@@ -1249,6 +1267,8 @@ impl Render for Root {
                     Screen::Game => self.game_screen(cx, &pal),
                 }
             })
+            // Статус сервера — внизу окна (запрос).
+            .child(self.status_bar(&pal))
             // M11.2: всплывающий диалог поверх контента (скрим + панель).
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M11.4: всплывающие тосты (notice → Ely Toast).

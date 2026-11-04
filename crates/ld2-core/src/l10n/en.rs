@@ -5,7 +5,7 @@ use super::Key;
 pub(super) fn t(key: Key) -> &'static str {
     use Key::*;
     match key {
-        AppTitle => "ld2",
+        AppTitle => "Likedimion",
         Subtitle => "text-based online MMORPG",
         Exit => "Exit",
         Language => "Language",
@@ -23,7 +23,7 @@ pub(super) fn t(key: Key) -> &'static str {
         BtnLogout => "Log out",
         StatusConnecting => "Connecting…",
         StatusOnline => "Online",
-        StatusReconnecting => "Reconnecting…",
+        StatusReconnecting => "Offline",
         StatusAuthExpired => "Session expired",
         StatusStopped => "Disconnected",
         ErrFillFields => "Enter login and password",
