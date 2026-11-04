@@ -244,6 +244,12 @@ pub enum Key {
     HkPress,
     SettingsBtn,
     UpdateBadge,
+    NotifyDeath,
+    NotifyPartyInvite,
+    NotifyGuildInvite,
+    NotifyTradeOpen,
+    NotifyWhisper,
+    NotifyUpgrade,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -463,6 +469,12 @@ mod tests {
         Key::HkPress,
         Key::SettingsBtn,
         Key::UpdateBadge,
+        Key::NotifyDeath,
+        Key::NotifyPartyInvite,
+        Key::NotifyGuildInvite,
+        Key::NotifyTradeOpen,
+        Key::NotifyWhisper,
+        Key::NotifyUpgrade,
     ];
 
     #[test]

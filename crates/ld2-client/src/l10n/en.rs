@@ -210,5 +210,11 @@ pub(super) fn t(key: Key) -> &'static str {
         HkPress => "press…",
         SettingsBtn => "Settings",
         UpdateBadge => "Update {v} available",
+        NotifyDeath => "You died",
+        NotifyPartyInvite => "Party invitation",
+        NotifyGuildInvite => "Guild invitation",
+        NotifyTradeOpen => "Trade opened",
+        NotifyWhisper => "New whisper",
+        NotifyUpgrade => "Upgrade finished",
     }
 }

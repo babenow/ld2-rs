@@ -193,6 +193,13 @@ impl App {
                         tracing::warn!("транспорт недоступен для ротации токена: {e}");
                     }
                 }
+                Effect::Notify(kind) => {
+                    // D7: под флагом настроек (desktop.notify).
+                    if self.config.notify {
+                        let body = notify_body(self.lang, kind);
+                        crate::notify::show(&body);
+                    }
+                }
             }
         }
     }
@@ -268,6 +275,23 @@ fn read_token_with_timeout(
             None
         }
     }
+}
+
+/// Локализованное тело уведомления (D7: события — в `l10n`).
+fn notify_body(lang: Lang, kind: crate::store::NotifyKind) -> String {
+    use crate::store::NotifyKind::*;
+    l10n::t(
+        lang,
+        match kind {
+            Death => Key::NotifyDeath,
+            PartyInvite => Key::NotifyPartyInvite,
+            GuildInvite => Key::NotifyGuildInvite,
+            TradeOpen => Key::NotifyTradeOpen,
+            Whisper => Key::NotifyWhisper,
+            Upgrade => Key::NotifyUpgrade,
+        },
+    )
+    .to_string()
 }
 
 impl eframe::App for App {

@@ -210,5 +210,11 @@ pub(super) fn t(key: Key) -> &'static str {
         HkPress => "нажмите…",
         SettingsBtn => "Настройки",
         UpdateBadge => "Доступна версия {v}",
+        NotifyDeath => "Вы погибли",
+        NotifyPartyInvite => "Вас приглашают в группу",
+        NotifyGuildInvite => "Вас приглашают в гильдию",
+        NotifyTradeOpen => "С кем-то открыта сделка",
+        NotifyWhisper => "Новое сообщение (шёпот)",
+        NotifyUpgrade => "Улучшение завершено",
     }
 }
