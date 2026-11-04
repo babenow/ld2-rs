@@ -265,12 +265,6 @@ impl Root {
         col = col.child(
             div()
                 .w(px(320.0))
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(pal.border))
-                .bg(rgb(pal.panel))
                 .child(Input::new(self.ti(&self.create_name))),
         );
         if !name.is_empty() && !name_valid {

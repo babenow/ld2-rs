@@ -685,8 +685,16 @@ impl Root {
                     .text_size(px(22.0))
                     .child(t(lang, Key::LoginTitle)),
             )
-            .child(Input::new(self.ti(&self.login_input)))
-            .child(PasswordInput::new(self.ti(&self.password_input)))
+            .child(
+                div()
+                    .w(px(320.0))
+                    .child(Input::new(self.ti(&self.login_input))),
+            )
+            .child(
+                div()
+                    .w(px(320.0))
+                    .child(PasswordInput::new(self.ti(&self.password_input))),
+            )
             .child(btn(
                 cx,
                 t(lang, Key::BtnLogin).to_string(),
@@ -824,7 +832,11 @@ impl Root {
                         .text_color(rgb(pal.muted))
                         .child(t(lang, Key::SettingsHost)),
                 )
-                .child(Input::new(self.ti(&self.host_input)))
+                .child(
+                    div()
+                        .w(px(320.0))
+                        .child(Input::new(self.ti(&self.host_input))),
+                )
                 .children((!host_ok).then(|| {
                     div()
                         .text_color(rgb(pal.danger))

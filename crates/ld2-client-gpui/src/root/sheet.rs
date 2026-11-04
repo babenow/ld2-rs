@@ -1052,7 +1052,11 @@ impl Root {
                         .text_color(rgb(pal.muted))
                         .child(t(lang, Key::GuildNone)),
                 )
-                .child(Input::new(self.ti(&self.guild_input)))
+                .child(
+                    div()
+                        .w(px(320.0))
+                        .child(Input::new(self.ti(&self.guild_input))),
+                )
                 .child(act_btn(
                     cx,
                     t(lang, Key::GuildCreateBtn),
