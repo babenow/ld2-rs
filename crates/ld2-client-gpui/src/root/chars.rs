@@ -85,6 +85,51 @@ impl Root {
                 )
             )));
 
+        // Кнопки действий — сверху списка (запрос): создание + выход.
+        let full = used as u32 >= limit;
+        let create_label = if full {
+            t(lang, Key::SlotsFull)
+        } else {
+            t(lang, Key::BtnCreate)
+        };
+        let mut toolbar = div().flex().flex_row().gap_2().mt(px(4.0));
+        if !full && !pending {
+            toolbar = toolbar.child(act_btn(
+                cx,
+                create_label,
+                pal.accent,
+                pal.accent_text,
+                |this, cx| {
+                    this.create_open = true;
+                    this.create_submitted = false;
+                    if let Some(name) = this.create_name.clone() {
+                        name.update(cx, |i, cx| i.set_text(String::new(), cx));
+                    }
+                },
+            ));
+        } else {
+            toolbar = toolbar.child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.border))
+                    .text_color(rgb(pal.muted))
+                    .child(create_label),
+            );
+        }
+        toolbar = toolbar.child(act_btn(
+            cx,
+            t(lang, Key::BtnLogout),
+            pal.panel,
+            pal.danger,
+            |this, cx| {
+                this.logout();
+                let _ = cx;
+            },
+        ));
+        col = col.child(toolbar);
+
         // Аккаунт может быть без персонажей (M11.7) — подсказка.
         if session.characters.is_empty() {
             col = col.child(
@@ -200,49 +245,6 @@ impl Root {
             col = col.child(card);
         }
 
-        // Создание (слоты заняты — недоступно, ФР-02/§5 лимит).
-        let full = used as u32 >= limit;
-        let create_label = if full {
-            t(lang, Key::SlotsFull)
-        } else {
-            t(lang, Key::BtnCreate)
-        };
-        if !full && !pending {
-            col = col.child(act_btn(
-                cx,
-                create_label,
-                pal.accent,
-                pal.accent_text,
-                |this, cx| {
-                    this.create_open = true;
-                    this.create_submitted = false;
-                    if let Some(name) = this.create_name.clone() {
-                        name.update(cx, |i, cx| i.set_text(String::new(), cx));
-                    }
-                },
-            ));
-        } else {
-            col = col.child(
-                div()
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(pal.border))
-                    .text_color(rgb(pal.muted))
-                    .child(create_label),
-            );
-        }
-
-        col = col.child(act_btn(
-            cx,
-            t(lang, Key::BtnLogout),
-            pal.panel,
-            pal.danger,
-            |this, cx| {
-                this.logout();
-                let _ = cx;
-            },
-        ));
         col
     }
 
