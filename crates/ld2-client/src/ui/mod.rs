@@ -11,6 +11,7 @@ use crate::l10n::Key;
 use crate::store::{AppStore, Effect};
 use crate::transport::TransportHandle;
 
+pub mod chat_panel;
 pub mod log_panel;
 pub mod screens;
 pub mod sheet;
@@ -33,6 +34,24 @@ pub struct Forms {
     pub delete_target: Option<(String, String)>,
     /// Правая панель: вкладка + drag&drop (M4).
     pub sheet: SheetState,
+    /// Нижняя панель чата (ФР-13, M8): ввод и фильтр-строка.
+    pub chat: ChatForm,
+    /// Пати-виджет свёрнут (ФР-14: «сворачиваемый»).
+    pub party_collapsed: bool,
+    /// Поле золота в окне сделки (ФР-15).
+    pub trade_gold: String,
+    /// Выбранный в ComboBox предмет для добавления в сделку.
+    pub trade_item: String,
+    /// Поле имени новой гильдии (ФР-16).
+    pub guild_name: String,
+}
+
+#[derive(Default)]
+pub struct ChatForm {
+    /// Поле ввода сообщения.
+    pub input: String,
+    /// Фильтр-строка по истории (ФР-13).
+    pub filter: String,
 }
 
 #[derive(Default)]
@@ -109,6 +128,8 @@ pub enum SheetTab {
     Quests,
     /// Профессии и крафт (ФР-08, M7).
     Professions,
+    /// Гильдия: состав, ранги, список (ФР-16, M8).
+    Guild,
 }
 
 /// Источник перетаскивания в инвентаре (drag&drop, ФР-07).
