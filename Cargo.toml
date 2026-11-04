@@ -16,6 +16,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 keyring = "4"
+# OS-уведомления (D7): zbus-бэкенд — без системной libdbus в CI.
+notify-rust = { version = "4", default-features = false, features = ["z"] }
+# Проверка обновлений (НФР/§12): лёгкий синхронный HTTP.
+ureq = "2"
 directories = "6"
 toml = "0.8"
 thiserror = "2"

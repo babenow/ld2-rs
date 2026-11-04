@@ -851,3 +851,83 @@ async fn social_flow_dod_two_clients() {
     ha.close();
     hb.close();
 }
+
+/// НФР §8: burst 200 событий подряд — клиент применяет всё, порядок сохранён.
+#[tokio::test]
+async fn stress_200_events_applied_in_order() {
+    let url = start_mock().await;
+    let (handle, mut rx, mut store) = spawn_pair(&url);
+    enter_world(&handle, &mut store, &mut rx).await;
+
+    handle
+        .send(&ChatSend {
+            channel: "system".into(),
+            text: "/scenario stress".into(),
+            to: None,
+        })
+        .expect("stress");
+    store.on_sheet_sent(ld2_client::store::Act::Chat);
+
+    // Все 200 событий применяются к истории чата.
+    pump(&mut store, &mut rx, |s| {
+        s.chat
+            .get("system")
+            .is_some_and(|h| h.iter().filter(|m| m.text.starts_with("stress ")).count() == 200)
+    })
+    .await;
+
+    // Порядок: 1..=200 без пропусков и перестановок.
+    let messages: Vec<String> = store
+        .chat
+        .get("system")
+        .unwrap()
+        .iter()
+        .filter(|m| m.text.starts_with("stress "))
+        .map(|m| m.text.clone())
+        .collect();
+    let expected: Vec<String> = (1..=200).map(|i| format!("stress {i}")).collect();
+    assert_eq!(messages, expected, "порядок 200 событий сохранён (НФР §8)");
+
+    handle.close();
+}
+
+/// НФР §8 (надёжность): неизвестные типы/битые payload не роняют стор.
+#[tokio::test]
+async fn unknown_and_malformed_events_are_ignored() {
+    let url = start_mock().await;
+    let (handle, mut rx, mut store) = spawn_pair(&url);
+    enter_world(&handle, &mut store, &mut rx).await;
+
+    // Мусорные события: неизвестный тип, битый JSON-тип, лишние поля.
+    for msg_type in [
+        "evt/totally/unknown",
+        "evt/state/delta",
+        "evt/error",
+        "evt/combat/end",
+    ] {
+        store.apply(ld2_client::transport::IngressEvent::Event(
+            ld2_protocol::Envelope {
+                v: 1,
+                msg_type: msg_type.into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({ "foo": "bar", "n": 42 })),
+            },
+        ));
+    }
+    // Некорректный payload у существующего типа — игнор, не паника.
+    store.apply(ld2_client::transport::IngressEvent::Event(
+        ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/char/xp".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!("не объект")),
+        },
+    ));
+    // Стор жив, экран не изменился.
+    assert_eq!(store.screen, Screen::Game);
+    handle.close();
+}

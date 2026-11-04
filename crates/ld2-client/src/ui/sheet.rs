@@ -62,6 +62,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
             let selected = tab == candidate;
             if ui.selectable_label(selected, t(lang, key)).clicked() {
                 ctx.forms.sheet.tab = candidate;
+                // ФР-19: открытая вкладка переживает перезапуск.
+                ctx.cfg.sheet_tab = candidate.as_str().to_string();
+                ctx.persist_cfg();
             }
         }
     });

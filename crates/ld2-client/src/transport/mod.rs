@@ -98,6 +98,8 @@ pub enum IngressEvent {
     Ack(Ack),
     /// Серверное событие `evt/*` — дальше типизируется приложением.
     Event(Envelope),
+    /// RTT последней подтверждённой команды, мс (НФР: RTT-индикатор).
+    Rtt(u64),
     /// Ack не пришёл за `ack_timeout` и повторы исчерпаны.
     CommandTimeout {
         seq: u32,

@@ -1965,6 +1965,8 @@ impl Session {
             return match cmd.text.as_str() {
                 "/scenario death" => self.scenario_death(seq),
                 "/scenario upgrade_fail" => self.scenario_upgrade_fail(seq),
+                // НФР §8: burst 200 событий/с — проверка без потери порядка.
+                "/scenario stress" => self.scenario_stress(seq),
                 other => vec![self.ack_err(
                     seq,
                     None,
@@ -2268,6 +2270,29 @@ impl Session {
     /// Сценарий смерти (DoD M4): сводка утраченного → **полная потеря лута**
     /// (инвентарь + экипировка) → респаун в деревне с полным hp/mp.
     /// Триггер: чат `/scenario death` (см. `--help` мока).
+    /// НФР §8 (stress 200 ev/s): burst из 200 событий чата одной пачкой —
+    /// клиент обязан применить их все, сохранив порядок.
+    fn scenario_stress(&mut self, seq: u32) -> Vec<Out> {
+        let mut outs = vec![self.ack_ok(seq, None)];
+        for i in 1..=200 {
+            let msg = ChatMessage {
+                channel: "system".into(),
+                from: "server".into(),
+                name: "Стресс".into(),
+                text: format!("stress {i}"),
+                tags: None,
+                sent_at: fixtures::now_rfc3339(),
+                extra: Default::default(),
+            };
+            outs.push(self.event(
+                "evt/chat/message",
+                None,
+                serde_json::to_value(msg).unwrap_or_default(),
+            ));
+        }
+        outs
+    }
+
     fn scenario_death(&mut self, seq: u32) -> Vec<Out> {
         let (lost, lost_uids, hp, mp) = match self.char.as_mut() {
             Some(ch) => {

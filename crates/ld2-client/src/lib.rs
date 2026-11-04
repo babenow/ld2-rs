@@ -11,10 +11,12 @@
 pub mod app;
 pub mod config;
 pub mod l10n;
+pub mod notify;
 pub mod secrets;
 pub mod store;
 pub mod transport;
 pub mod ui;
+pub mod update_check;
 
 /// Точка входа приложения (вызывается бинарником `ld2-client`).
 pub fn run() -> anyhow::Result<()> {

@@ -8,9 +8,21 @@ use eframe::egui;
 use crate::l10n::{t, Key, Lang};
 use crate::store::{LogEntry, LogKind};
 
-/// Палитра §7.4 (контрастная к тёмной теме).
-fn color(kind: LogKind) -> egui::Color32 {
+/// Палитра §7.4: для светлой темы — затемнённые варианты (читаемость, НФР
+/// контраст AA; светлые строки 0xAB… на светлом фоне нечитаемы).
+fn color(kind: LogKind, dark: bool) -> egui::Color32 {
     use LogKind::*;
+    if !dark {
+        return match kind {
+            System => egui::Color32::from_rgb(0x5A, 0x5E, 0x66),
+            Location => egui::Color32::from_rgb(0x4A, 0x4E, 0x58),
+            Chat => egui::Color32::from_rgb(0x2A, 0x2A, 0x2E),
+            Xp => egui::Color32::from_rgb(0x2E, 0x7D, 0x91),
+            Loot => egui::Color32::from_rgb(0x8A, 0x6D, 0x1F),
+            Crime => egui::Color32::from_rgb(0xA5, 0x5A, 0x22),
+            _ => color(kind, true), // боевые/квестовые цвета контрастны на обеих
+        };
+    }
     match kind {
         System => egui::Color32::from_rgb(0x7F, 0x84, 0x8E),
         Location => egui::Color32::from_rgb(0xAB, 0xB2, 0xBF),
@@ -26,6 +38,7 @@ fn color(kind: LogKind) -> egui::Color32 {
 }
 
 pub fn show(ui: &mut egui::Ui, lang: Lang, log: &VecDeque<LogEntry>) {
+    let dark = ui.style().visuals.dark_mode;
     ui.group(|ui| {
         ui.horizontal(|ui| {
             ui.strong(t(lang, Key::LogLabel));
@@ -40,8 +53,43 @@ pub fn show(ui: &mut egui::Ui, lang: Lang, log: &VecDeque<LogEntry>) {
                     ui.weak("…");
                 }
                 for entry in log {
-                    ui.colored_label(color(entry.kind), &entry.text);
+                    ui.colored_label(color(entry.kind, dark), &entry.text);
                 }
             });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M9.2: светлые строки палитры затемняются на светлой теме (читаемость),
+    /// боевые цвета контрастны на обеих темах.
+    #[test]
+    fn light_theme_darkens_light_colors_only() {
+        for kind in [
+            LogKind::System,
+            LogKind::Location,
+            LogKind::Chat,
+            LogKind::Xp,
+        ] {
+            assert_ne!(
+                color(kind, true),
+                color(kind, false),
+                "{kind:?}: светлые строки должны затемняться"
+            );
+        }
+        for kind in [
+            LogKind::CombatOut,
+            LogKind::CombatIn,
+            LogKind::Magic,
+            LogKind::Quest,
+        ] {
+            assert_eq!(
+                color(kind, true),
+                color(kind, false),
+                "{kind:?}: боевые цвета одинаковы на обеих темах"
+            );
+        }
+    }
 }
