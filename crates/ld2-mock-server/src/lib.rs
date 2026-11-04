@@ -18,6 +18,7 @@ pub mod fixtures;
 pub mod knobs;
 pub mod server;
 pub mod session;
+pub mod world;
 
 pub use chaos::Chaos;
 pub use knobs::Knobs;

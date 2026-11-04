@@ -49,7 +49,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
 
     tracker_block(ui, ctx);
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for (candidate, key) in [
             (SheetTab::Skills, Key::SheetSkills),
             (SheetTab::Attrs, Key::SheetAttrs),
@@ -57,6 +57,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
             (SheetTab::Statuses, Key::StatusesTab),
             (SheetTab::Quests, Key::QuestsTab),
             (SheetTab::Professions, Key::ProfessionsTab),
+            (SheetTab::Guild, Key::GuildTab),
         ] {
             let selected = tab == candidate;
             if ui.selectable_label(selected, t(lang, key)).clicked() {
@@ -83,6 +84,12 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
         let cmd = CraftRecipes { profession: None };
         send(ctx, &cmd, Act::Craft);
     }
+    // Вкладка «Гильдия»: список гильдий мира загружается один раз (ФР-16).
+    if tab == SheetTab::Guild && !ctx.store.guild_browse_loaded && ctx.store.snapshot.is_some() {
+        ctx.store.guild_browse_loaded = true;
+        let cmd = ld2_protocol::cmd::GuildBrowse { query: None };
+        send(ctx, &cmd, Act::GuildBrowse);
+    }
 
     match tab {
         SheetTab::Skills => skills(ui, ctx),
@@ -91,6 +98,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
         SheetTab::Statuses => statuses(ui, ctx),
         SheetTab::Quests => quests(ui, ctx),
         SheetTab::Professions => professions(ui, ctx),
+        SheetTab::Guild => guild(ui, ctx),
     }
 
     // Модалка «Описание предмета» (ФР-07).
@@ -840,6 +848,144 @@ fn professions(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
             }
         });
         ui.add_space(4.0);
+    }
+}
+
+// ─── вкладка «Гильдия» (ФР-16, M8) ─────────────────────────────────────────
+
+fn guild(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
+    let lang = ctx.lang;
+    let target = ctx.store.target.clone();
+    let guild = ctx.store.guild.clone();
+    let my_id = ctx
+        .store
+        .snapshot
+        .as_ref()
+        .map(|s| s.char.id.clone())
+        .unwrap_or_default();
+
+    let Some(g) = guild else {
+        // Не в гильдии: создать или вступить по списку мира (§7).
+        ui.weak(t(lang, Key::GuildNone));
+        ui.horizontal(|ui| {
+            ui.label(t(lang, Key::GuildCreateLbl));
+            ui.add(
+                egui::TextEdit::singleline(&mut ctx.forms.guild_name)
+                    .desired_width(140.0)
+                    .hint_text("…"),
+            );
+            if ui.button(t(lang, Key::GuildCreateBtn)).clicked() {
+                let name = ctx.forms.guild_name.trim().to_string();
+                if !name.is_empty() {
+                    let cmd = ld2_protocol::cmd::GuildCreate { name };
+                    send(ctx, &cmd, Act::Guild);
+                }
+            }
+        });
+        ui.separator();
+        ui.strong(t(lang, Key::GuildBrowseLbl));
+        if ctx.store.guild_browse.is_empty() {
+            ui.weak("…");
+        }
+        for entry in ctx.store.guild_browse.clone() {
+            let id = entry["id"].as_str().unwrap_or("").to_string();
+            let name = entry["name"].as_str().unwrap_or("?").to_string();
+            ui.horizontal(|ui| {
+                ui.label(name);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button(t(lang, Key::GuildJoinBtn)).clicked() {
+                        let cmd = ld2_protocol::cmd::GuildJoin {
+                            guild_id: Some(id.clone()),
+                        };
+                        send(ctx, &cmd, Act::Guild);
+                    }
+                });
+            });
+        }
+        if let Some(err) = &ctx.store.sheet_error {
+            ui.colored_label(RED, err);
+        }
+        return;
+    };
+
+    // В гильдии: инфо, состав, операции, журнал.
+    ui.strong(&g.name);
+    ui.add_space(4.0);
+    ui.strong(t(lang, Key::GuildMembers));
+    let mut kick: Option<String> = None;
+    let mut rank_set: Option<(String, String)> = None;
+    for member in &g.members {
+        ui.horizontal(|ui| {
+            ui.label(&member.name);
+            if member.rank == "master" {
+                ui.colored_label(GREEN, "★");
+            }
+            ui.weak(&member.rank);
+            if member.online {
+                ui.weak("● online");
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Операции мастера (§7 guild.kick/rank_set — атомарно).
+                if g.members
+                    .iter()
+                    .any(|m| m.id == my_id && m.rank == "master")
+                    && member.id != my_id
+                {
+                    if ui.small_button(t(lang, Key::GuildKickBtn)).clicked() {
+                        kick = Some(member.id.clone());
+                    }
+                    // Смена ранга: цикл master → officer → member.
+                    let next = match member.rank.as_str() {
+                        "master" => "officer",
+                        "officer" => "member",
+                        _ => "master",
+                    };
+                    if ui
+                        .small_button(format!("{} → {next}", t(lang, Key::GuildRankLbl)))
+                        .clicked()
+                    {
+                        rank_set = Some((member.id.clone(), next.to_string()));
+                    }
+                }
+            });
+        });
+    }
+    if let Some(player_id) = kick {
+        let cmd = ld2_protocol::cmd::GuildKick { player_id };
+        send(ctx, &cmd, Act::Guild);
+    }
+    if let Some((player_id, rank)) = rank_set {
+        let cmd = ld2_protocol::cmd::GuildRankSet { player_id, rank };
+        send(ctx, &cmd, Act::Guild);
+    }
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if let Some(target) = &target {
+            if ui.small_button(t(lang, Key::GuildInviteBtn)).clicked() {
+                let cmd = ld2_protocol::cmd::GuildInvite {
+                    player_id: target.clone(),
+                };
+                send(ctx, &cmd, Act::Guild);
+            }
+        }
+        if ui.small_button(t(lang, Key::GuildLeaveBtn)).clicked() {
+            let cmd = ld2_protocol::cmd::GuildLeave {
+                guild_id: Some(g.id.clone()),
+            };
+            send(ctx, &cmd, Act::Guild);
+        }
+    });
+
+    if !ctx.store.guild_log.is_empty() {
+        ui.add_space(6.0);
+        ui.strong(t(lang, Key::GuildLogLbl));
+        for entry in ctx.store.guild_log.iter().rev().take(5) {
+            ui.weak(format!("• {}", entry.text));
+        }
+    }
+    if let Some(err) = &ctx.store.sheet_error {
+        ui.colored_label(RED, err);
     }
 }
 

@@ -10,11 +10,12 @@ use std::collections::{BTreeMap, VecDeque};
 use ld2_protocol::evt::{
     CharDeath, CharStats, CharXp, ChatMessage, CombatCooldown, CombatHit, CorpseCreated,
     CorpseLooted, CrimeAdded, CrimeRemoved, CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove,
-    EntitySpawn, ItemAdded, ItemRemoved, LocationChanged, MagicCast, StateSnapshot,
+    EntitySpawn, GuildLogEntry, ItemAdded, ItemRemoved, LocationChanged, MagicCast, StateSnapshot,
     TimeSync as TimeSyncEvent,
 };
 use ld2_protocol::types::{
-    CharacterSummary, CrimeLogEntry, CrimeStatus, Hp, LocationSnapshot, QuestState,
+    CharacterSummary, CrimeLogEntry, CrimeStatus, GuildState, Hp, LocationSnapshot, PartyState,
+    QuestState,
 };
 use ld2_protocol::{ErrorCode, SessionConfig};
 
@@ -60,10 +61,20 @@ pub enum Act {
     CrimeLog,
     /// `craft.learn` → ack {profession} обновляет снапшот (ФР-08).
     Learn,
+    /// `chat.send` — ack несёт только ошибки (лимиты §5), события — отдельно.
+    Chat,
     /// `craft.start`/`craft.recipes` — результат крафта событиями (ФР-08).
     Craft,
     /// `quest.accept|turn_in|abandon` — результат событиями (ФР-12).
     Quest,
+    /// `party.*` — ack несёт `{party}` на create/accept, остальное — события.
+    Party,
+    /// `trade.*` — состояние только событиями `evt/trade/*` (ФР-15).
+    Trade,
+    /// `guild.browse` → ack {guilds[]} — список для вкладки (ФР-16).
+    GuildBrowse,
+    /// `guild.*` — ack несёт `{guild}` на create/join, остальное — события.
+    Guild,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -107,6 +118,10 @@ pub struct VisitedLocation {
 
 /// Ёмкость журнала мира (НФР §8: лог локации ≤ 10 000; M3 — 1000).
 const LOG_LIMIT: usize = 1000;
+/// История чата на канал — кольцевой буфер (ФР-13: 5 000/канал, NFR §8).
+const CHAT_LIMIT: usize = 5_000;
+/// Каналы чата из §5 (порядок вкладок UI).
+pub const CHAT_CHANNELS: [&str; 6] = ["system", "location", "global", "party", "guild", "whisper"];
 /// Ёмкость истории посещённых.
 const VISITED_LIMIT: usize = 50;
 
@@ -161,6 +176,28 @@ pub struct AppStore {
     pub loot_confirm: Option<(String, String)>,
     /// Трекер квестов (ФР-12): id, максимум 3, рендер с фильтром по наличию.
     pub quest_tracker: Vec<String>,
+    /// История чата по каналам (ФР-13): `channel → сообщения` (ring).
+    pub chat: std::collections::HashMap<String, std::collections::VecDeque<ChatMessage>>,
+    /// Активный канал чата (вкладка в UI, ФР-13).
+    pub chat_channel: String,
+    /// Адресат последнего whisper (ФР-13: «ответить»).
+    pub last_whisper_from: Option<String>,
+    /// Группа (ФР-14): полное состояние из `evt/party/updated`/снапшота.
+    pub party: Option<PartyState>,
+    /// Входящее приглашение в группу (поле `invite`, §11) — модалка ответа.
+    pub party_invite: Option<PartyInviteView>,
+    /// Сделка — моя перспектива `you/them` (ФР-15, версия — истина сервера).
+    pub trade: Option<ld2_protocol::evt::TradeState>,
+    /// Гильдия (ФР-16): состояние из `evt/guild/updated`/снапшота.
+    pub guild: Option<GuildState>,
+    /// Входящее приглашение в гильдию (поле `invite`, §11).
+    pub guild_invite: Option<GuildInviteView>,
+    /// Список гильдий из `cmd/guild.browse` (поиск/вступление).
+    pub guild_browse: Vec<serde_json::Value>,
+    /// Журнал гильдии (§8 `evt/guild/log`).
+    pub guild_log: Vec<GuildLogEntry>,
+    /// Список гильдий уже запрошен (вкладка грузит один раз).
+    pub guild_browse_loaded: bool,
     /// Рецепты крафта из `cmd/craft.recipes` (ФР-08).
     pub recipes: Vec<serde_json::Value>,
     /// Рецепты уже запрошены (вкладка грузит один раз).
@@ -209,6 +246,17 @@ impl AppStore {
             crime_log_loaded: false,
             loot_confirm: None,
             quest_tracker: Vec::new(),
+            chat: std::collections::HashMap::new(),
+            chat_channel: "location".into(),
+            last_whisper_from: None,
+            party: None,
+            party_invite: None,
+            trade: None,
+            guild: None,
+            guild_invite: None,
+            guild_browse: Vec::new(),
+            guild_log: Vec::new(),
+            guild_browse_loaded: false,
             recipes: Vec::new(),
             recipes_loaded: false,
             notice: None,
@@ -294,6 +342,10 @@ impl AppStore {
                 Act::CrimeLog | Act::Learn | Act::Craft | Act::Quest => {
                     self.sheet_error = Some(msg)
                 }
+                // Лимиты чата (E_RATE_LIMITED §9) — тостом (ФР-13).
+                Act::Chat => self.notice = Some(msg),
+                // Соцдомен: ошибки (E_TRADE_STALE, E_PARTY_FULL §9) — тостом.
+                Act::Party | Act::Trade | Act::GuildBrowse | Act::Guild => self.notice = Some(msg),
             }
             return vec![];
         }
@@ -334,8 +386,43 @@ impl AppStore {
                     }
                 }
             }
-            Act::Attack | Act::Examine | Act::Drop | Act::Upgrade | Act::Cast | Act::Quest => {
+            Act::Attack
+            | Act::Examine
+            | Act::Drop
+            | Act::Upgrade
+            | Act::Cast
+            | Act::Quest
+            | Act::Chat
+            | Act::Trade => {
                 // результат событиями (§8)
+            }
+            Act::Party => {
+                // §7: party.create/accept несут {party}.
+                if let Some(payload) = ack.payload.as_ref() {
+                    if let Ok(party) =
+                        serde_json::from_value::<PartyState>(payload["party"].clone())
+                    {
+                        self.party = Some(party);
+                    }
+                }
+            }
+            Act::GuildBrowse => {
+                // §7: guild.browse → {guilds[]} (идемпотентна, §7).
+                if let Some(payload) = ack.payload.as_ref() {
+                    if let Some(list) = payload["guilds"].as_array() {
+                        self.guild_browse = list.clone();
+                    }
+                }
+            }
+            Act::Guild => {
+                // §7: guild.create/join несут {guild}.
+                if let Some(payload) = ack.payload.as_ref() {
+                    if let Ok(guild) =
+                        serde_json::from_value::<GuildState>(payload["guild"].clone())
+                    {
+                        self.guild = Some(guild);
+                    }
+                }
             }
             Act::Craft => {
                 // §7: ack несёт список рецептов.
@@ -478,6 +565,9 @@ impl AppStore {
                     LogKind::Location,
                     format!("Вход в мир: {}", snap.location.name),
                 );
+                // §7: снапшот несёт межигровое состояние (пати/гильдия).
+                self.party = snap.party.clone();
+                self.guild = snap.guild.clone();
                 self.snapshot = Some(snap);
                 self.screen = Screen::Game;
                 self.select_error = None;
@@ -931,6 +1021,95 @@ impl AppStore {
                 );
                 vec![]
             }
+            "evt/party/updated" => {
+                #[derive(serde::Deserialize)]
+                struct WithParty {
+                    #[serde(default)]
+                    party: Option<PartyState>,
+                    #[serde(default)]
+                    invite: Option<PartyInviteView>,
+                }
+                let Ok(w) = serde_json::from_value::<WithParty>(payload) else {
+                    return vec![];
+                };
+                // ФР-14: полное состояние группы + входящее приглашение (§11).
+                self.party = w.party;
+                if let Some(inv) = w.invite {
+                    self.push_log(
+                        LogKind::System,
+                        format!("Приглашение в группу от {}", inv.from_name),
+                    );
+                    self.party_invite = Some(inv);
+                } else if self.party.is_some() {
+                    self.party_invite = None; // состав обновился — ответ дан
+                }
+                vec![]
+            }
+            "evt/trade/state" => {
+                let Ok(trade) = serde_json::from_value::<ld2_protocol::evt::TradeState>(payload)
+                else {
+                    return vec![];
+                };
+                // ФР-15: версия/зеркало — истина сервера, клиент не пересчитывает.
+                self.trade = Some(trade);
+                vec![]
+            }
+            "evt/trade/closed" => {
+                #[derive(serde::Deserialize)]
+                struct Closed {
+                    offer_id: String,
+                    reason: ld2_protocol::evt::TradeCloseReason,
+                }
+                let Ok(c) = serde_json::from_value::<Closed>(payload) else {
+                    return vec![];
+                };
+                self.trade = None;
+                let text = match c.reason {
+                    ld2_protocol::evt::TradeCloseReason::Done => {
+                        format!("Сделка {} состоялась", c.offer_id)
+                    }
+                    ld2_protocol::evt::TradeCloseReason::Cancelled => {
+                        format!("Сделка {} отменена", c.offer_id)
+                    }
+                    _ => format!("Сделка {} не состоялась", c.offer_id),
+                };
+                self.push_log(LogKind::Loot, text);
+                vec![]
+            }
+            "evt/guild/updated" => {
+                #[derive(serde::Deserialize)]
+                struct WithGuild {
+                    #[serde(default)]
+                    guild: Option<GuildState>,
+                    #[serde(default)]
+                    invite: Option<GuildInviteView>,
+                }
+                let Ok(w) = serde_json::from_value::<WithGuild>(payload) else {
+                    return vec![];
+                };
+                self.guild = w.guild;
+                if let Some(inv) = w.invite {
+                    self.push_log(
+                        LogKind::System,
+                        format!("Приглашение в гильдию «{}»", inv.guild_name),
+                    );
+                    self.guild_invite = Some(inv);
+                }
+                vec![]
+            }
+            "evt/guild/log" => {
+                #[derive(serde::Deserialize)]
+                struct WithEntry {
+                    entry: GuildLogEntry,
+                }
+                let Ok(w) = serde_json::from_value::<WithEntry>(payload) else {
+                    return vec![];
+                };
+                // §8: журнал гильдии попадает и в системный лог (ФР-16).
+                self.push_log(LogKind::System, format!("Гильдия: {}", w.entry.text));
+                self.guild_log.push(w.entry);
+                vec![]
+            }
             "evt/crime/status" => {
                 let Ok(update) = serde_json::from_value::<CrimeStatusUpdate>(payload) else {
                     return vec![];
@@ -987,6 +1166,20 @@ impl AppStore {
                 let Ok(msg) = serde_json::from_value::<ChatMessage>(payload) else {
                     return vec![];
                 };
+                // ФР-13: история per-channel (ring) + адресат для «ответить».
+                let my_id = self
+                    .snapshot
+                    .as_ref()
+                    .map(|sn| sn.char.id.clone())
+                    .unwrap_or_default();
+                if msg.channel == "whisper" && msg.from != my_id {
+                    self.last_whisper_from = Some(msg.name.clone());
+                }
+                let entry = self.chat.entry(msg.channel.clone()).or_default();
+                if entry.len() >= CHAT_LIMIT {
+                    entry.pop_front();
+                }
+                entry.push_back(msg.clone());
                 self.push_log(
                     LogKind::Chat,
                     format!("[{}] {}: {}", msg.channel, msg.name, msg.text),
@@ -1137,6 +1330,16 @@ impl AppStore {
         self.loot_confirm = None;
         self.quest_tracker.clear();
         self.session_login = None;
+        self.chat.clear();
+        self.last_whisper_from = None;
+        self.party = None;
+        self.party_invite = None;
+        self.trade = None;
+        self.guild = None;
+        self.guild_invite = None;
+        self.guild_log.clear();
+        self.guild_browse_loaded = false;
+        self.guild_browse.clear();
         login
             .map(|login| vec![Effect::ForgetSession { login }])
             .unwrap_or_default()
@@ -1183,6 +1386,15 @@ impl AppStore {
         self.upgrade = None;
         self.socketing = None;
         self.quest_tracker.clear();
+        // ФР-13: переключение персонажа сбрасывает историю чата.
+        self.chat.clear();
+        self.last_whisper_from = None;
+        self.party = None;
+        self.party_invite = None;
+        self.trade = None;
+        self.guild = None;
+        self.guild_invite = None;
+        self.guild_log.clear();
         self.notice = None;
     }
 
@@ -1245,10 +1457,400 @@ fn apply_item_patch(ch: &mut ld2_protocol::types::CharacterState, payload: &serd
     }
 }
 
+/// Входящее приглашение в группу (§8 `evt/party/updated` c `invite`,
+/// §11 — новое опциональное поле).
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct PartyInviteView {
+    pub invite_id: String,
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub from_name: String,
+}
+
+/// Входящее приглашение в гильдию (§11 — новое опциональное поле).
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct GuildInviteView {
+    pub guild_id: String,
+    #[serde(default)]
+    pub guild_name: String,
+    #[serde(default)]
+    pub from_name: String,
+}
+
+/// Результат разбора ввода чата (ФР-13: слэш-команды).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChatDraft {
+    /// Отправить `cmd/chat.send`.
+    Send {
+        channel: String,
+        to: Option<String>,
+        text: String,
+    },
+    /// Неизвестная команда — ошибка тостом, в чат НЕ отправляется (ФР-13).
+    Unknown(String),
+}
+
+/// Разбор ввода чата: `/w Имя текст`, `/p`, `/g`, `/r` (ответ последнему
+/// whisper), `/scenario …` (passthrough-сценарии мока); обычный текст —
+/// в активный канал. `whisper_to` — адресат для `/r` («ответить»).
+pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&str>) -> ChatDraft {
+    let trimmed = input.trim();
+    // Сценарии мока — dev-команда, уходит как текст (мок перехватывает префикс).
+    if trimmed.starts_with("/scenario ") {
+        return ChatDraft::Send {
+            channel: active_channel.to_string(),
+            to: None,
+            text: trimmed.to_string(),
+        };
+    }
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        // Обычный текст — в активный канал.
+        return ChatDraft::Send {
+            channel: active_channel.to_string(),
+            to: None,
+            text: trimmed.to_string(),
+        };
+    };
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let cmd = parts.next().unwrap_or_default().to_ascii_lowercase();
+    let arg = parts.next().unwrap_or("").trim();
+    match cmd.as_str() {
+        // `/w Имя текст` → whisper адресату.
+        "w" | "whisper" => {
+            let mut it = arg.splitn(2, char::is_whitespace);
+            let to = it.next().unwrap_or("").to_string();
+            let text = it.next().unwrap_or("").trim().to_string();
+            if to.is_empty() || text.is_empty() {
+                return ChatDraft::Unknown("/w".into());
+            }
+            ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some(to),
+                text,
+            }
+        }
+        // `/r текст` → ответ последнему адресату whisper.
+        "r" | "reply" => match whisper_to {
+            Some(to) if !arg.is_empty() => ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some(to.to_string()),
+                text: arg.to_string(),
+            },
+            _ => ChatDraft::Unknown("/r".into()),
+        },
+        // `/p` / `/g` → каналы группы/гильдии.
+        "p" | "party" if !arg.is_empty() => ChatDraft::Send {
+            channel: "party".into(),
+            to: None,
+            text: arg.to_string(),
+        },
+        "g" | "guild" if !arg.is_empty() => ChatDraft::Send {
+            channel: "guild".into(),
+            to: None,
+            text: arg.to_string(),
+        },
+        _ => ChatDraft::Unknown(format!("/{cmd}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ld2_mock_server::fixtures;
+
+    // ─── M8: чат (ФР-13) ───────────────────────────────────────────────────
+
+    #[test]
+    fn slash_parse_whisper_and_channels() {
+        // `/w Имя текст` → whisper адресату.
+        assert_eq!(
+            parse_chat_input("/w Астра привет!", "location", None),
+            ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some("Астра".into()),
+                text: "привет!".into()
+            }
+        );
+        // `/p` / `/g` → каналы группы/гильдии.
+        assert_eq!(
+            parse_chat_input("/p идём в лес", "location", None),
+            ChatDraft::Send {
+                channel: "party".into(),
+                to: None,
+                text: "идём в лес".into()
+            }
+        );
+        assert_eq!(
+            parse_chat_input("/g привет гильдии", "global", None),
+            ChatDraft::Send {
+                channel: "guild".into(),
+                to: None,
+                text: "привет гильдии".into()
+            }
+        );
+        // Обычный текст — в активный канал.
+        assert_eq!(
+            parse_chat_input("просто текст", "location", None),
+            ChatDraft::Send {
+                channel: "location".into(),
+                to: None,
+                text: "просто текст".into()
+            }
+        );
+    }
+
+    #[test]
+    fn slash_parse_reply_and_unknown() {
+        // `/r` с адресатом последнего whisper.
+        assert_eq!(
+            parse_chat_input("/r тоже привет", "location", Some("Астра")),
+            ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some("Астра".into()),
+                text: "тоже привет".into()
+            }
+        );
+        // Без адресата — ошибка, не отправляется.
+        assert_eq!(
+            parse_chat_input("/r привет", "location", None),
+            ChatDraft::Unknown("/r".into())
+        );
+        // Неизвестная команда — ошибка тостом (ФР-13), текстом в чат не идёт.
+        assert_eq!(
+            parse_chat_input("/xyz ага", "location", None),
+            ChatDraft::Unknown("/xyz".into())
+        );
+        // Неполный `/w` — ошибка.
+        assert_eq!(
+            parse_chat_input("/w Астра", "location", None),
+            ChatDraft::Unknown("/w".into())
+        );
+        // Сценарии мока — passthrough (dev-команда мока).
+        assert_eq!(
+            parse_chat_input("/scenario death", "global", None),
+            ChatDraft::Send {
+                channel: "global".into(),
+                to: None,
+                text: "/scenario death".into()
+            }
+        );
+    }
+
+    #[test]
+    fn chat_history_is_ring_per_channel() {
+        let mut store = store_with_session();
+        for i in 0..(CHAT_LIMIT + 5) {
+            store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/chat/message".into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({
+                    "channel": "global", "from": "p", "name": "Марк",
+                    "text": format!("м {i}"), "sent_at": "2026-11-03T00:00:00Z"
+                })),
+            }));
+        }
+        let global = store.chat.get("global").expect("канал global");
+        assert_eq!(global.len(), CHAT_LIMIT, "ring-буфер: 5 000/канал");
+        assert_eq!(global.front().unwrap().text, "м 5", "старые вытеснены");
+        // Другой канал не тронут.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "system", "from": "srv", "name": "Сервер",
+                "text": "событие", "sent_at": "2026-11-03T00:00:00Z"
+            })),
+        }));
+        assert_eq!(store.chat.get("system").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn party_invite_opens_pending_and_accept_clears_it() {
+        let mut store = store_with_session();
+        // Приглашение (поле invite, §11) → модалка ответа.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/party/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "party": serde_json::Value::Null,
+                "invite": { "invite_id": "inv_1", "from": "c1", "from_name": "Ким" }
+            })),
+        }));
+        let inv = store.party_invite.as_ref().expect("приглашение");
+        assert_eq!(inv.invite_id, "inv_1");
+        assert_eq!(inv.from_name, "Ким");
+        assert!(store.party.is_none());
+
+        // Принятие: состав группы приходит тем же событием.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/party/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "party": {
+                    "id": "pt_1", "leader": "c1",
+                    "members": [
+                        { "id": "c1", "name": "Ким" },
+                        { "id": "c2", "name": "Астра" }
+                    ]
+                }
+            })),
+        }));
+        let party = store.party.as_ref().expect("группа");
+        assert_eq!(party.members.len(), 2);
+        assert_eq!(party.leader, "c1");
+        assert!(store.party_invite.is_none(), "ответ дан — модалка закрыта");
+
+        // Выход/распускание: party: null.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/party/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({ "party": null })),
+        }));
+        assert!(store.party.is_none());
+    }
+
+    #[test]
+    fn trade_state_mirror_version_and_close() {
+        let mut store = store_with_session();
+        // Зеркальная перспектива: you — своя сторона, them — чужая (ФР-15).
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/trade/state".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "offer_id": "of_c1", "version": 3,
+                "you": [ { "uid": "m_1", "type": "ingot_iron", "name": "Слиток",
+                            "rarity": "common", "upgrade": 0, "stats": {} } ],
+                "them": [],
+                "you_gold": 10, "them_gold": 0,
+                "you_locked": false, "them_locked": true,
+                "value_hint": 15
+            })),
+        }));
+        let trade = store.trade.as_ref().expect("сделка");
+        assert_eq!(trade.version, 3, "версия — истина сервера");
+        assert_eq!(trade.you.len(), 1);
+        assert_eq!(trade.you[0].uid, "m_1");
+        assert!(trade.them.is_empty());
+        assert!(trade.them_locked && !trade.you_locked);
+        assert_eq!(trade.value_hint, Some(15));
+
+        // Завершение: done закрывает окно и пишет в журнал.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/trade/closed".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({ "offer_id": "of_c1", "reason": "done" })),
+        }));
+        assert!(store.trade.is_none());
+        assert!(store.log.iter().any(|e| e.text.contains("состоялась")));
+    }
+
+    #[test]
+    fn guild_update_invite_and_log() {
+        let mut store = store_with_session();
+        // Приглашение в гильдию (§11).
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/guild/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "guild": serde_json::Value::Null,
+                "invite": { "guild_id": "g_1", "guild_name": "Стальные волки",
+                             "from_name": "Ким" }
+            })),
+        }));
+        let inv = store.guild_invite.as_ref().expect("приглашение");
+        assert_eq!(inv.guild_name, "Стальные волки");
+
+        // Состояние гильдии + журнал.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/guild/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "guild": { "id": "g_1", "name": "Стальные волки",
+                            "members": [ { "id": "c1", "name": "Ким",
+                                           "rank": "master", "online": true } ] }
+            })),
+        }));
+        assert_eq!(store.guild.as_ref().expect("гильдия").members.len(), 1);
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/guild/log".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "entry": { "kind": "rank_change", "text": "Ранг c2 → member",
+                            "at": 1793700000 }
+            })),
+        }));
+        assert_eq!(store.guild_log.len(), 1);
+        assert!(store.log.iter().any(|e| e.text.contains("Гильдия")));
+    }
+
+    #[test]
+    fn social_state_resets_on_char_switch() {
+        let mut store = store_with_session();
+        store.party = Some(PartyState {
+            id: "pt_1".into(),
+            leader: "c1".into(),
+            members: vec![],
+            extra: Default::default(),
+        });
+        store.back_to_characters();
+        assert!(store.party.is_none(), "пати сброшено при hot-switch");
+        assert!(store.guild_browse.is_empty());
+    }
+
+    #[test]
+    fn chat_resets_on_char_switch_and_whisper_reply_target() {
+        let mut store = store_with_session();
+        // Whisper от другого игрока запоминает адресата (ФР-13 «ответить»).
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "whisper", "from": "c2", "name": "Астра",
+                "text": "эй", "sent_at": "2026-11-03T00:00:00Z"
+            })),
+        }));
+        assert_eq!(store.last_whisper_from.as_deref(), Some("Астра"));
+        assert_eq!(store.chat.get("whisper").unwrap().len(), 1);
+
+        // Переключение персонажа сбрасывает историю (ФР-13).
+        store.back_to_characters();
+        assert!(store.chat.is_empty(), "история чата сброшена");
+        assert!(store.last_whisper_from.is_none());
+    }
 
     fn store_with_session() -> AppStore {
         let mut store = AppStore::new();

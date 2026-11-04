@@ -1,4 +1,8 @@
 //! WS-сервер мока: accept-loop + обработка соединения через [`Session`].
+//!
+//! С M8 каждое соединение получает **свою** [`Session`] (персонаж, авторизация),
+//! а общее состояние (версии, рассылка, пати/сделка/гильдия, аккаунты) живёт в
+//! одном [`World`] на сервер — DoD M8 требует «2 клиента против мока».
 
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
@@ -13,6 +17,7 @@ use tracing::{info, warn};
 use crate::chaos::Chaos;
 use crate::knobs::Knobs;
 use crate::session::{Out, Session};
+use crate::world::{Deliver, World};
 
 #[derive(Clone)]
 pub struct MockOptions {
@@ -50,9 +55,10 @@ pub async fn serve_with_listener(listener: TcpListener, chaos: Chaos) -> anyhow:
 /// Вариант для сквозных e2e (PLAN-M1 T4): доступ к «ручкам» — запись
 /// полученных конвертов, управляемые обрывы.
 ///
-/// `Session` **общая для всех соединений** (как у реального сервера):
-/// состояние персонажа и монотонный `state_version` переживают reconnect —
-/// без этого `state.resync` после обрыва бессмыслен (§3).
+/// `World` **общий для всех соединений**: монотонный `state_version` и
+/// сохранённые состояния аккаунтов переживают reconnect (§3, §4.5), а
+/// [`Session`] — своя на каждое соединение (два клиента не перетирают друг
+/// друга, DoD M8).
 pub async fn serve_with_knobs(
     listener: TcpListener,
     chaos: Chaos,
@@ -61,27 +67,21 @@ pub async fn serve_with_knobs(
     serve_configured(listener, chaos, knobs, crate::fixtures::CHAR_SLOT_LIMIT).await
 }
 
-/// Полная конфигурация: лимит слотов задаётся здесь (DoD M2 — конфиг, а не код).
-///
-/// `Session` **общая для всех соединений** (как у реального сервера):
-/// состояние персонажа и монотонный `state_version` переживают reconnect —
-/// без этого `state.resync` после обрыва бессмыслен (§3).
+/// Полная конфигурация: лимит слотов задаётся здесь (DoD M2 — конфиг, не код).
 pub async fn serve_configured(
     listener: TcpListener,
     chaos: Chaos,
     knobs: Arc<Knobs>,
     char_slot_limit: u32,
 ) -> anyhow::Result<()> {
-    let session = Arc::new(std::sync::Mutex::new(Session::with_char_slot_limit(
-        char_slot_limit,
-    )));
+    let world = Arc::new(std::sync::Mutex::new(World::new()));
     loop {
         let (stream, peer) = listener.accept().await?;
         let chaos = chaos.clone();
         let knobs = Arc::clone(&knobs);
-        let session = Arc::clone(&session);
+        let world = Arc::clone(&world);
         tokio::spawn(async move {
-            if let Err(e) = handle(stream, peer, chaos, knobs, session).await {
+            if let Err(e) = handle(stream, peer, chaos, knobs, world, char_slot_limit).await {
                 warn!("соединение {peer} завершено: {e:#}");
             }
         });
@@ -93,16 +93,64 @@ async fn handle(
     peer: SocketAddr,
     mut chaos: Chaos,
     knobs: Arc<Knobs>,
-    session: Arc<std::sync::Mutex<Session>>,
+    world: Arc<std::sync::Mutex<World>>,
+    char_slot_limit: u32,
 ) -> anyhow::Result<()> {
     let index = knobs.connections.fetch_add(1, Ordering::SeqCst) + 1;
+    let conn_id = format!("{peer}#{index}");
     let ws = tokio_tungstenite::accept_async(stream).await?;
     let (mut sink, mut stream) = ws.split();
     debug_conn(peer);
 
+    // Канал доставки: события других клиентов (whisper, пати, сделка) приходят
+    // сюда и уходят в этот сокет (см. [`World::register_conn`]).
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Deliver>();
+    world
+        .lock()
+        .expect("mutex мира")
+        .register_conn(&conn_id, tx);
+
+    // Своя сессия на соединение; Drop вернёт состояние аккаунта в World и
+    // отвяжет канал.
+    let mut session = Session::new(Arc::clone(&world), conn_id.clone(), char_slot_limit);
+
     let mut acks_here = 0usize;
-    while let Some(msg) = stream.next().await {
-        match msg? {
+    loop {
+        let msg = tokio::select! {
+            incoming = stream.next() => {
+                match incoming {
+                    Some(Ok(msg)) => Some(msg),
+                    Some(Err(e)) => return Err(e.into()),
+                    None => None, // сокет закрылся
+                }
+            }
+            deliver = rx.recv() => {
+                match deliver {
+                    Some(Deliver::Socket(text)) => {
+                        sink.send(Message::Text(text.into())).await?;
+                    }
+                    Some(Deliver::Cmd(cmd)) => {
+                        // Внутренняя команда мира (обмен по сделке): применяем
+                        // и отправляем события своего клиента.
+                        for out in session.apply_cmd(cmd) {
+                            match out {
+                                Out::Text(t) => sink.send(Message::Text(t.into())).await?,
+                                Out::Close => {
+                                    sink.close().await?;
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                    None => return Ok(()), // мир ушёл (теоретически недостижимо)
+                }
+                continue;
+            }
+        };
+        let Some(msg) = msg else {
+            break; // клиент закрыл соединение
+        };
+        match msg {
             Message::Text(text) => {
                 // Запись для e2e-ассертов (до обработки).
                 if let Ok(env) = serde_json::from_str::<Envelope>(text.as_str()) {
@@ -112,12 +160,8 @@ async fn handle(
                     continue; // молчим — ждём клиентского таймаута
                 }
 
-                // Лок поднимается только на чистой синхронной обработке —
-                // IO (sink.send) идёт уже без удержания замка.
-                let outs = {
-                    let mut session = session.lock().expect("mutex сессии");
-                    session.on_text(text.as_str())
-                };
+                // Сессия уже принадлежит только этому потоку — лок не нужен.
+                let outs = session.on_text(text.as_str());
                 for out in outs {
                     match out {
                         Out::Text(t) => {
@@ -156,6 +200,8 @@ async fn handle(
             _ => {}
         }
     }
+    // Drop сессии: сохранение состояния аккаунта + отвязка от World.
+    drop(session);
     Ok(())
 }
 

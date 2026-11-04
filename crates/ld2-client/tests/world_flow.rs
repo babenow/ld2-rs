@@ -61,19 +61,30 @@ async fn enter_world(
     store: &mut AppStore,
     rx: &mut mpsc::UnboundedReceiver<IngressEvent>,
 ) {
+    enter_world_as(handle, store, rx, "demo", "c1").await;
+}
+
+/// Вход конкретным аккаунтом/персонажем (DoD M8 — второй клиент demo2/c2).
+async fn enter_world_as(
+    handle: &transport::TransportHandle,
+    store: &mut AppStore,
+    rx: &mut mpsc::UnboundedReceiver<IngressEvent>,
+    login: &str,
+    char_id: &str,
+) {
     pump(store, rx, |s| s.transport == TransportStatus::Online).await;
     handle
         .send(&AuthLogin {
-            login: "demo".into(),
+            login: login.into(),
             password: "demo123".into(),
         })
         .expect("login");
-    store.on_login_sent("demo");
+    store.on_login_sent(login);
     pump(store, rx, |s| s.screen == Screen::Characters).await;
 
     handle
         .send(&CharSelect {
-            char_id: "c1".into(),
+            char_id: char_id.into(),
         })
         .expect("select");
     store.on_select_sent();
@@ -679,4 +690,164 @@ async fn quest_craft_flow_dod() {
     );
 
     handle.close();
+}
+
+/// DoD M8 (ТЗ §10): «2 клиента против мока: party + сделка + whisper».
+#[tokio::test]
+async fn social_flow_dod_two_clients() {
+    let url = start_mock().await;
+    let (ha, mut rxa, mut sa) = spawn_pair(&url);
+    let (hb, mut rxb, mut sb) = spawn_pair(&url);
+    // A — demo/c1 «Ким», B — demo2/c2 «Астра» (два аккаунта, DoD M8).
+    enter_world_as(&ha, &mut sa, &mut rxa, "demo", "c1").await;
+    enter_world_as(&hb, &mut sb, &mut rxb, "demo2", "c2").await;
+
+    // ── 1) Whisper A → B (ФР-13): доставка адресату ──
+    ha.send(&ChatSend {
+        channel: "whisper".into(),
+        text: "привет, Астра!".into(),
+        to: Some("Астра".into()),
+    })
+    .expect("whisper");
+    sa.on_sheet_sent(ld2_client::store::Act::Chat);
+    pump(&mut sa, &mut rxa, |s| {
+        s.chat.get("whisper").is_some_and(|h| !h.is_empty())
+    })
+    .await;
+    pump(&mut sb, &mut rxb, |s| {
+        s.chat.get("whisper").is_some_and(|h| !h.is_empty())
+    })
+    .await;
+    assert_eq!(
+        sb.chat.get("whisper").unwrap()[0].text,
+        "привет, Астра!",
+        "B получил whisper"
+    );
+    assert_eq!(
+        sb.chat.get("whisper").unwrap()[0].from,
+        "c1",
+        "автор — клиент A"
+    );
+
+    // ── 2) Группа (ФР-14): create → invite → accept, оба видят состав ──
+    ha.send(&ld2_protocol::cmd::PartyCreate {}).expect("create");
+    sa.on_sheet_sent(ld2_client::store::Act::Party);
+    pump(&mut sa, &mut rxa, |s| s.party.is_some()).await;
+
+    ha.send(&ld2_protocol::cmd::PartyInvite {
+        player_id: "c2".into(),
+    })
+    .expect("invite");
+    sa.on_sheet_sent(ld2_client::store::Act::Party);
+    pump(&mut sb, &mut rxb, |s| s.party_invite.is_some()).await;
+    let invite_id = sb.party_invite.as_ref().unwrap().invite_id.clone();
+    assert_eq!(sb.party_invite.as_ref().unwrap().from_name, "Ким");
+
+    hb.send(&ld2_protocol::cmd::PartyAccept { invite_id })
+        .expect("accept");
+    sb.on_sheet_sent(ld2_client::store::Act::Party);
+    pump(&mut sb, &mut rxb, |s| {
+        s.party.as_ref().is_some_and(|p| p.members.len() == 2)
+    })
+    .await;
+    pump(&mut sa, &mut rxa, |s| {
+        s.party.as_ref().is_some_and(|p| p.members.len() == 2)
+    })
+    .await;
+    let members: Vec<&str> = sa
+        .party
+        .as_ref()
+        .unwrap()
+        .members
+        .iter()
+        .map(|m| m.id.as_str())
+        .collect();
+    assert_eq!(members, vec!["c1", "c2"], "оба клиента видят состав");
+
+    // ── 3) Сделка (ФР-15): открытие, зеркало, версии, обмен ──
+    ha.send(&ld2_protocol::cmd::TradeOpen {
+        player_id: "c2".into(),
+    })
+    .expect("open");
+    sa.on_sheet_sent(ld2_client::store::Act::Trade);
+    pump(&mut sa, &mut rxa, |s| s.trade.is_some()).await;
+    pump(&mut sb, &mut rxb, |s| s.trade.is_some()).await;
+    let offer_id = sa.trade.as_ref().unwrap().offer_id.clone();
+
+    // A кладёт слиток m_1 → у B он в `them` (зеркало с сервера).
+    ha.send(&ld2_protocol::cmd::TradeAddItem {
+        offer_id: offer_id.clone(),
+        item_uid: "m_1".into(),
+        qty: None,
+    })
+    .expect("add_item");
+    sa.on_sheet_sent(ld2_client::store::Act::Trade);
+    pump(&mut sa, &mut rxa, |s| {
+        s.trade.as_ref().is_some_and(|t| t.you.len() == 1)
+    })
+    .await;
+    pump(&mut sb, &mut rxb, |s| {
+        s.trade.as_ref().is_some_and(|t| t.them.len() == 1)
+    })
+    .await;
+    assert_eq!(sb.trade.as_ref().unwrap().them[0].uid, "m_1");
+
+    // Обе стороны фиксируют (сверка версии — на сервере, §9).
+    let ver_a = sa.trade.as_ref().unwrap().version;
+    ha.send(&ld2_protocol::cmd::TradePropose {
+        offer_id: offer_id.clone(),
+        version: ver_a,
+    })
+    .expect("propose");
+    sa.on_sheet_sent(ld2_client::store::Act::Trade);
+    pump(&mut sa, &mut rxa, |s| {
+        s.trade.as_ref().is_some_and(|t| t.you_locked)
+    })
+    .await;
+    // Ждём, пока фиксация A дойдёт зеркалом до B (иначе E_TRADE_STALE).
+    pump(&mut sb, &mut rxb, |s| {
+        s.trade.as_ref().is_some_and(|t| t.them_locked)
+    })
+    .await;
+    let ver_b = sb.trade.as_ref().unwrap().version;
+    hb.send(&ld2_protocol::cmd::TradeAccept {
+        offer_id: offer_id.clone(),
+        version: ver_b,
+    })
+    .expect("accept");
+    sb.on_sheet_sent(ld2_client::store::Act::Trade);
+
+    // Сделка закрыта обеим, предмет переехал: B получил m_1, A — потерял.
+    pump(&mut sb, &mut rxb, |s| s.trade.is_none()).await;
+    pump(&mut sa, &mut rxa, |s| s.trade.is_none()).await;
+    pump(&mut sb, &mut rxb, |s| {
+        s.snapshot
+            .as_ref()
+            .is_some_and(|sn| sn.char.inventory.iter().any(|i| i.uid == "m_1"))
+    })
+    .await;
+    // Событие removed у A ещё в канале — читаем до ассерта.
+    pump(&mut sa, &mut rxa, |s| {
+        s.snapshot
+            .as_ref()
+            .is_some_and(|sn| sn.char.inventory.iter().all(|i| i.uid != "m_1"))
+    })
+    .await;
+    assert!(
+        sa.snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .all(|i| i.uid != "m_1"),
+        "A отдал слиток"
+    );
+    assert!(
+        sa.log.iter().any(|e| e.text.contains("состоялась")),
+        "журнал сделки (ФР-17)"
+    );
+
+    ha.close();
+    hb.close();
 }
