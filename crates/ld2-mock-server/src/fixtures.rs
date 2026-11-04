@@ -293,12 +293,7 @@ pub fn staff_item() -> ItemSnapshot {
             },
             Socket {
                 index: 1,
-                rune: Some(ld2_protocol::types::RuneInfo {
-                    name: "Огненный шар".into(),
-                    spell: "fireball".into(),
-                    charges: 10,
-                    max: 10,
-                }),
+                rune: None,
             },
         ]),
         qty: None,
