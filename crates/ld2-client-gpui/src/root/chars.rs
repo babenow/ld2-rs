@@ -1,15 +1,16 @@
-//! Экран персонажей gpui (M10.6, ФР-02) — порт `ui/screens.rs`:
-//! список слотов с входом/удалением, модалка создания (имя + профиль),
-//! подтверждение удаления. Модалки заменяют контент (шапка остаётся).
+//! Экран персонажей gpui (M10.6, ФР-02; M11.7, D19–D21) — карточки с
+//! цветом ника по классу, создание (имя + профиль), удаление: ввод ника
+//! + таймер (вход в игру отменяет). Диалоги — Ely `Dialog` поверх.
 
+use ely::forms::{Choice, Input, Select};
+use ely::layout::Card;
 use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div};
 use ld2_core::l10n::{t, tf, Key};
-use ld2_core::store::{Act, Profile};
-use ld2_protocol::cmd::{CharCreate, CharDelete, CharSelect};
+use ld2_core::store::{local_epoch, Act, Profile};
+use ld2_protocol::cmd::{CharCreate, CharSelect};
 
-use crate::palette::Palette;
-use ely::forms::Input;
+use crate::palette::{palette, Palette};
 
 use super::{act_btn, Root};
 
@@ -91,24 +92,22 @@ impl Root {
             col = col.child(div().text_color(rgb(pal.muted)).child(notice.clone()));
         }
 
+        let dark = pal.bg == palette("dark").bg;
         for character in &session.characters {
             let id = character.id.clone();
             let name = character.name.clone();
-            let mut card = div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .w(px(420.0))
-                .px_3()
-                .py_2()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.border));
+            let scheduled = self
+                .store
+                .pending_delete
+                .as_ref()
+                .filter(|p| p.char_id == character.id);
+
+            // M11.7 (D19): ник цветом по классу; без profile — нейтрально.
             let mut head = div().flex().flex_row().gap_2().items_center().child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
                     .text_size(px(16.0))
+                    .text_color(rgb(class_color(character.profile.as_deref(), dark)))
                     .child(name.clone()),
             );
             for kind in &character.crime {
@@ -120,52 +119,76 @@ impl Root {
                         .child(kind.clone()),
                 );
             }
-            head = head.child(
-                div()
-                    .flex_grow_1()
-                    .text_color(rgb(pal.muted))
-                    .text_size(px(12.0))
-                    .child(format!(
-                        "{} · {}",
-                        character.summary.clone().unwrap_or_default(),
-                        character.location
-                    )),
-            );
-            // Кнопки справа (как в egui right_to_left).
-            let cid = id.clone();
-            let cname = name.clone();
-            head = head.child(act_btn(
-                cx,
-                t(lang, Key::BtnDelete),
-                pal.panel,
-                pal.danger,
-                move |this, cx| {
-                    if this.store.pending.is_none() {
-                        this.delete_target = Some((cid.clone(), cname.clone()));
-                    }
-                    let _ = cx;
-                },
-            ));
-            let cid2 = id.clone();
-            head = head.child(act_btn(
-                cx,
-                t(lang, Key::BtnEnter),
-                pal.accent,
-                pal.accent_text,
-                move |this, cx| {
-                    if this.store.pending.is_none() {
-                        let cmd = CharSelect {
-                            char_id: cid2.clone(),
-                        };
-                        match this.transport.send(&cmd) {
-                            Ok(_) => this.store.on_select_sent(),
-                            Err(e) => this.store.select_error = Some(format!("нет связи: {e}")),
+            let meta = div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(format!(
+                    "{} · {}",
+                    character.summary.clone().unwrap_or_default(),
+                    character.location
+                ));
+
+            // Подвал: отсчёт таймера (D20) или кнопки входа/удаления.
+            let mut footer = div().flex().flex_row().gap_2().items_center();
+            if let Some(p) = scheduled {
+                let left = (p.deadline - local_epoch()).max(0);
+                footer = footer.child(
+                    div()
+                        .text_size(px(13.0))
+                        .text_color(rgb(pal.danger))
+                        .child(tf(lang, Key::DeleteIn, &[("s", &left.to_string())])),
+                );
+                footer = footer.child(act_btn(
+                    cx,
+                    t(lang, Key::DeleteCancelBtn),
+                    pal.panel,
+                    pal.text,
+                    |this, _cx| this.store.cancel_delete(),
+                ));
+            } else {
+                let cid = id.clone();
+                let cname = name.clone();
+                footer = footer.child(act_btn(
+                    cx,
+                    t(lang, Key::BtnDelete),
+                    pal.panel,
+                    pal.danger,
+                    move |this, cx| {
+                        // Одновременно — не больше одного отложенного (D20).
+                        if this.store.pending.is_none() && this.store.pending_delete.is_none() {
+                            this.delete_target = Some((cid.clone(), cname.clone()));
+                            if let Some(input) = this.delete_name.clone() {
+                                input.update(cx, |i, cx| i.set_text(String::new(), cx));
+                            }
                         }
-                    }
-                    let _ = cx;
-                },
-            ));
-            card = card.child(head);
+                    },
+                ));
+                let cid2 = id.clone();
+                footer = footer.child(act_btn(
+                    cx,
+                    t(lang, Key::BtnEnter),
+                    pal.accent,
+                    pal.accent_text,
+                    move |this, cx| {
+                        if this.store.pending.is_none() {
+                            let cmd = CharSelect {
+                                char_id: cid2.clone(),
+                            };
+                            match this.transport.send(&cmd) {
+                                Ok(_) => this.store.on_select_sent(),
+                                Err(e) => this.store.select_error = Some(format!("нет связи: {e}")),
+                            }
+                        }
+                        let _ = cx;
+                    },
+                ));
+            }
+
+            let card = Card::new()
+                .w(px(420.0))
+                .child(head)
+                .child(meta)
+                .footer(footer);
             col = col.child(card);
         }
 
@@ -328,59 +351,136 @@ impl Root {
         col
     }
 
-    // ── удаление персонажа (ФР-02) ────────────────────────────────────────
+    // ── удаление персонажа (ФР-02, M11.7: ввод ника + таймер, D20/D21) ────
 
     fn delete_view(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let Some((id, name)) = self.delete_target.clone() else {
             return div().size_full();
         };
-        let pending = self.store.pending == Some(Act::Delete);
-        div()
+        let typed = self.ti(&self.delete_name).read(cx).text().to_string();
+        let confirmed = typed == name;
+
+        let mut col = div()
             .flex()
             .flex_col()
             .gap_2()
             .child(tf(lang, Key::DeleteConfirm, &[("name", name.as_str())]))
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .gap_3()
-                    .mt(px(8.0))
-                    .child(act_btn(
-                        cx,
-                        t(lang, Key::Exit),
-                        pal.panel,
-                        pal.text,
-                        |this, _cx| {
-                            this.delete_target = None;
-                        },
-                    ))
-                    .child({
-                        let cid = id.clone();
-                        act_btn(
-                            cx,
-                            t(lang, Key::BtnDelete),
-                            pal.danger,
-                            0xffffff,
-                            move |this, _cx| {
-                                if !pending {
-                                    let cmd = CharDelete {
-                                        char_id: cid.clone(),
-                                    };
-                                    match this.transport.send(&cmd) {
-                                        Ok(_) => {
-                                            this.store.on_delete_sent();
-                                            this.delete_target = None;
-                                        }
-                                        Err(e) => {
-                                            this.store.notice = Some(format!("нет связи: {e}"))
-                                        }
-                                    }
-                                }
-                            },
-                        )
-                    }),
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.warn))
+                    .child(t(lang, Key::DeleteGameHint)),
             )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::DeleteTypeNick)),
+            )
+            .child(
+                div()
+                    .w(px(320.0))
+                    .child(Input::new(self.ti(&self.delete_name))),
+            );
+        if !typed.is_empty() && !confirmed {
+            // Ник не совпадает — подсказка красным.
+            col = col.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.danger))
+                    .child(t(lang, Key::DeleteTypeNick)),
+            );
+        }
+
+        // D21: длительность таймера — Select (5/10/30/60 с, по умолч. 10).
+        let delay = self.delete_delay;
+        let choices: Vec<Choice> = [5, 10, 30, 60]
+            .iter()
+            .map(|s| Choice::new(s.to_string(), s.to_string()))
+            .collect();
+        let this = cx.entity();
+        col = col.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::DeleteTimerLabel)),
+                )
+                .child(
+                    Select::new("ld2-delete-timer", choices)
+                        .selected(delay.to_string())
+                        .on_change(move |v, _window, acx| {
+                            let v: i64 = v.parse().unwrap_or(10);
+                            this.update(acx, |root, _cx| root.delete_delay = v);
+                        }),
+                ),
+        );
+
+        let mut row = div().flex().flex_row().gap_3().mt(px(8.0));
+        row = row.child(act_btn(
+            cx,
+            t(lang, Key::Exit),
+            pal.panel,
+            pal.text,
+            |this, _cx| {
+                this.delete_target = None;
+            },
+        ));
+        if confirmed {
+            let cid = id.clone();
+            let cname = name.clone();
+            row = row.child(act_btn(
+                cx,
+                t(lang, Key::BtnDelete),
+                pal.danger,
+                0xffffff,
+                move |this, cx| {
+                    // D20: не шлём сразу — ставим таймер; тикает он в tick.
+                    let delay = this.delete_delay;
+                    this.store
+                        .schedule_delete(cid.clone(), cname.clone(), local_epoch(), delay);
+                    if let Some(input) = this.delete_name.clone() {
+                        input.update(cx, |i, cx| i.set_text(String::new(), cx));
+                    }
+                    this.delete_target = None;
+                },
+            ));
+        } else {
+            row = row.child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.border))
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::BtnDelete)),
+            );
+        }
+        col = col.child(row);
+        col
+    }
+}
+
+/// Цвет ника по классу (D19/ADR-005): warrior/rogue/mage; светлая тема —
+/// затемнение; без profile — нейтральный.
+fn class_color(profile: Option<&str>, dark: bool) -> u32 {
+    if !dark {
+        return match profile {
+            Some("warrior") => 0xa1_34_39,
+            Some("rogue") => 0x4c_7a_2f,
+            Some("mage") => 0x2e_65_b8,
+            _ => 0x5a_5e_66,
+        };
+    }
+    match profile {
+        Some("warrior") => 0xe0_6c_75,
+        Some("rogue") => 0x98_c3_79,
+        Some("mage") => 0x61_af_ef,
+        _ => 0xab_b2_bf,
     }
 }

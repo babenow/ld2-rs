@@ -11,9 +11,9 @@ use gpui::{
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
-use ld2_core::store::{Act, AppStore, Effect, Screen};
+use ld2_core::store::{local_epoch, Act, AppStore, Effect, Screen};
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
-use ld2_protocol::cmd::{AuthLogin, LocationMove};
+use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove};
 
 mod chars;
 mod chat;
@@ -108,6 +108,9 @@ pub struct Root {
     /// M11.3: выбранные значения Select (обучение профессии / предмет сделки).
     learn_pick: Option<String>,
     trade_pick: Option<String>,
+    /// M11.7 (D20/D21): поле ввода ника и длительность таймера удаления.
+    delete_name: Option<Entity<TextInput>>,
+    delete_delay: i64,
     /// M11.4: тосты Ely (notice → всплывающее уведомление).
     toaster: Entity<Toaster>,
     last_notice: Option<String>,
@@ -152,6 +155,8 @@ impl Root {
             trade_gold_value: 0.0,
             learn_pick: None,
             trade_pick: None,
+            delete_name: None,
+            delete_delay: 10,
             toaster: cx.new(|_| Toaster::default()),
             last_notice: None,
             journal_scroll: ScrollHandle::new(),
@@ -191,6 +196,22 @@ impl Root {
                 tracing::info!("доступна версия v{version}");
                 self.update_available = Some(version);
             }
+        }
+
+        // M11.7: таймер удаления (D20): тикает только на экране персонажей;
+        // вход в игру/логаут (смена экрана) → отмена; истёк → char.delete.
+        if self.store.pending_delete.is_some() {
+            if self.store.screen != Screen::Characters {
+                self.store.cancel_delete();
+            } else if let Some(char_id) = self.store.tick_delete(local_epoch()) {
+                let cmd = CharDelete { char_id };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_delete_sent(),
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+            }
+            // Отсчёт на карточке — перерисовка каждый тик.
+            cx.notify();
         }
 
         // M11.4: новый notice → всплывающий тост Ely (текст в экране
@@ -354,6 +375,13 @@ impl Root {
             None,
         ));
 
+        self.delete_name = Some(mk(
+            window,
+            cx,
+            t(lang, Key::DeleteTypeNick).to_string(),
+            false,
+            None,
+        ));
         for slot in [self.login_input.clone(), self.password_input.clone()] {
             let ent = slot.expect("создано выше");
             cx.subscribe(&ent, |root, _field, event: &InputEvent, cx| {
@@ -382,6 +410,7 @@ impl Root {
             &self.guild_input,
             &self.chat_input,
             &self.chat_filter,
+            &self.delete_name,
         ]
         .iter()
         .filter_map(|input| input.as_ref())

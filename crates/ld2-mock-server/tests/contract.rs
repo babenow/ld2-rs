@@ -223,9 +223,11 @@ async fn char_slot_limit_comes_from_config() {
     // Список отражает лимит
     let seq = c.send("cmd/char.list", json!({})).await;
     let ack = c.ack(seq).await;
+    let chars = ack["payload"]["characters"].as_array().expect("list");
+    assert_eq!(chars.len(), 3);
     assert_eq!(
-        ack["payload"]["characters"].as_array().expect("list").len(),
-        3
+        chars[0]["profile"], "warrior",
+        "profile из char.create в списке (ADR-005)"
     );
 }
 
@@ -1008,6 +1010,10 @@ async fn m8_two_accounts_do_not_clobber_each_other() {
             .collect()
     };
     assert_eq!(names(&start_a), vec!["Ким"], "аккаунт demo → только c1");
+    assert_eq!(
+        start_a["characters"][0]["profile"], "warrior",
+        "profile в session.start (ADR-005)"
+    );
     assert_eq!(names(&start_b), vec!["Астра"], "аккаунт demo2 → только c2");
 
     let snap_a = a.select().await;

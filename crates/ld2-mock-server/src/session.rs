@@ -519,6 +519,7 @@ impl Session {
             // Уникальный id из общего счётчика (два аккаунта: c1/c2 заняты).
             id: self.w().next_char_id(),
             name: cmd.name.clone(),
+            profile: Some(cmd.profile.clone()),
             location: self.location.name.clone(),
             summary: Some(format!("Профиль: {}", cmd.profile)),
             crime: vec![],

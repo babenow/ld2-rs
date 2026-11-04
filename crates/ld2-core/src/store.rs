@@ -228,6 +228,8 @@ pub struct AppStore {
     pub visited: Vec<VisitedLocation>,
     /// Результат `entity.info` — модалка осмотра (включая лут трупа).
     pub entity_detail: Option<serde_json::Value>,
+    /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
+    pub pending_delete: Option<PendingDelete>,
     /// Логин текущей сессии — для ключа keyring (`<host>:<login>`).
     session_login: Option<String>,
 }
@@ -236,6 +238,16 @@ impl Default for AppStore {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Отложенное удаление персонажа (M11.7, D20/ADR-005): клиент шлёт
+/// `char.delete` по таймеру; смена экрана (вход в игру/логаут) — отмена.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDelete {
+    pub char_id: String,
+    pub name: String,
+    /// Эпоха в секундах ([`local_epoch`]): когда уходит `char.delete`.
+    pub deadline: i64,
 }
 
 /// M11: какой всплывающий диалог активен. Приоритет и гейт экрана — здесь
@@ -298,6 +310,34 @@ impl AppStore {
             _ => None,
         }
     }
+
+    /// M11.7 (D20): отложить `char.delete` на `delay_s` секунд от `now`
+    /// (замещает прежнее немедленное подтверждение удаления).
+    pub fn schedule_delete(&mut self, char_id: String, name: String, now: i64, delay_s: i64) {
+        self.pending_delete = Some(PendingDelete {
+            char_id,
+            name,
+            deadline: now + delay_s,
+        });
+    }
+
+    /// M11.7: отмена (вход в игру, логаут, явный отказ — D20).
+    pub fn cancel_delete(&mut self) {
+        self.pending_delete = None;
+    }
+
+    /// M11.7: срок истёк — `Some(char_id)`, состояние снимается (одноразово).
+    pub fn tick_delete(&mut self, now: i64) -> Option<String> {
+        let due = self
+            .pending_delete
+            .as_ref()
+            .is_some_and(|p| now >= p.deadline);
+        if due {
+            self.pending_delete.take().map(|p| p.char_id)
+        } else {
+            None
+        }
+    }
 }
 
 impl AppStore {
@@ -344,6 +384,7 @@ impl AppStore {
             log: VecDeque::new(),
             visited: Vec::new(),
             entity_detail: None,
+            pending_delete: None,
             session_login: None,
         }
     }
@@ -1789,6 +1830,33 @@ mod tests {
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Socket));
         s.socketing = None;
         assert_eq!(s.active_dialog(false, false), None);
+    }
+
+    // ─── M11.7: таймер удаления (D20) ──────────────────────────────────────
+
+    #[test]
+    fn deletion_timer_schedule_tick_cancel() {
+        let mut s = AppStore::new();
+        s.schedule_delete("c1".into(), "Ким".into(), 1_000, 10);
+        assert_eq!(s.tick_delete(1_005), None, "до срока — не уходит");
+        assert!(s.pending_delete.is_some());
+        assert_eq!(s.tick_delete(1_010), Some("c1".into()), "срок истёк");
+        assert!(s.pending_delete.is_none(), "одноразово");
+        assert_eq!(s.tick_delete(1_020), None, "повторный тик — пусто");
+
+        s.schedule_delete("c2".into(), "Астра".into(), 2_000, 30);
+        s.cancel_delete();
+        assert_eq!(s.tick_delete(3_000), None, "отменено — не уходит");
+        assert!(s.pending_delete.is_none());
+
+        // Новая запись замещает старую (отложенных — не больше одного).
+        s.schedule_delete("c1".into(), "Ким".into(), 3_000, 5);
+        s.schedule_delete("c2".into(), "Астра".into(), 3_000, 60);
+        assert_eq!(s.tick_delete(3_010), None, "старая заменена");
+        assert_eq!(
+            s.pending_delete.as_ref().map(|p| p.char_id.as_str()),
+            Some("c2")
+        );
     }
 
     // ─── M8: чат (ФР-13) ───────────────────────────────────────────────────

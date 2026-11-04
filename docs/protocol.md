@@ -177,11 +177,15 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "characters": [
-    { "id": "c1", "name": "Ким", "location": "Черный лес",
+    { "id": "c1", "name": "Ким", "profile": "warrior", "location": "Черный лес",
       "summary": "Навыки: меч 3, аркана 1", "crime": ["murderer"], "online": true }
   ]
 }
 ```
+
+`profile` в `characters[]` — опционально (аддитивно, ADR-005): класс из
+`char.create` (`warrior`/`rogue`/`mage`) для цвета ника на экране выбора;
+сервер без поля валиден — клиент рисует нейтрально.
 
 - `kinds` — расширяемый список видов статусов; клиент рендерит любые `kind` через title/severity, незнакомые — generic.
 - `min_client` (string|null) — если не `null` и версия приложения меньше → экран «Требуется обновление», вход блокируется.
