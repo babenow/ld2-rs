@@ -212,6 +212,8 @@ pub struct AppStore {
     pub guild_browse_loaded: bool,
     /// Лимит истории чата на канал (НФР §8; из `config.toml`, ФР-19).
     pub chat_limit: usize,
+    /// Последний измеренный RTT, мс (НФР: RTT-индикатор).
+    pub rtt_ms: Option<u64>,
     /// Рецепты крафта из `cmd/craft.recipes` (ФР-08).
     pub recipes: Vec<serde_json::Value>,
     /// Рецепты уже запрошены (вкладка грузит один раз).
@@ -272,6 +274,7 @@ impl AppStore {
             guild_log: Vec::new(),
             guild_browse_loaded: false,
             chat_limit: 5_000,
+            rtt_ms: None,
             recipes: Vec::new(),
             recipes_loaded: false,
             notice: None,
@@ -299,6 +302,11 @@ impl AppStore {
             IngressEvent::CommandFailed { msg_type, .. } => {
                 self.notice = Some(format!("связь потеряна: {msg_type}"));
                 self.pending = None;
+                vec![]
+            }
+            IngressEvent::Rtt(ms) => {
+                // НФР §8: RTT-индикатор в header.
+                self.rtt_ms = Some(ms);
                 vec![]
             }
         }

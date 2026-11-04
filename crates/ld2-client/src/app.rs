@@ -232,6 +232,10 @@ impl App {
                 ui.separator();
                 ui.weak(l10n::t(self.lang, Key::Subtitle));
                 ui.weak(format!("· {status}"));
+                if let Some(rtt) = self.store.rtt_ms {
+                    // НФР §8: RTT-индикатор (обновляется по ack).
+                    ui.weak(format!("· {rtt} мс"));
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(l10n::t(self.lang, Key::Exit)).clicked() {
