@@ -23,7 +23,8 @@ mod social;
 
 use crate::palette::{palette, Palette};
 use ely::feedback::{Toast, ToastViewport, Toaster};
-use ely::forms::{HotkeyInput, Input, InputEvent, PasswordInput, TextInput};
+use ely::forms::{HotkeyInput, Input, InputEvent, PasswordInput, Slider, TextInput};
+use ely::theme::{Mode, Theme};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
 const RELEASE: bool = !cfg!(debug_assertions);
@@ -465,6 +466,15 @@ impl Root {
             Click::CloseSettings => self.settings_open = false,
             Click::Theme(theme) => {
                 self.config.theme = theme.to_string();
+                // M11.5: тема Ely переключается вместе с config (ФР-19).
+                Theme::set_mode_now(
+                    if theme == "light" {
+                        Mode::Light
+                    } else {
+                        Mode::Dark
+                    },
+                    cx,
+                );
                 self.save_config();
             }
             Click::ChatLimit(delta) => {
@@ -742,6 +752,38 @@ impl Root {
                 ),
             ],
         ));
+
+        // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
+        // пишет Theme.font_scale (отклонение M10 «font_scale не
+        // применяется» снято).
+        root = root.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .w(px(130.0))
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::SettingsFont)),
+                )
+                .child({
+                    let this = cx.entity();
+                    let value = self.config.font_scale as f64;
+                    Slider::new("ld2-font-scale", value)
+                        .range(1.0, 1.4)
+                        .step(0.05)
+                        .on_change(move |v, _window, acx| {
+                            this.update(acx, |root, cx| {
+                                root.config.font_scale = v as f32;
+                                cx.global_mut::<Theme>().font_scale = v as f32;
+                                cx.refresh_windows();
+                                root.save_config();
+                            });
+                        })
+                }),
+        );
 
         // Лимит истории чата.
         root = root.child(row(

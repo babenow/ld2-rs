@@ -51,8 +51,9 @@ fn main() -> anyhow::Result<()> {
     // НФР §8/ФР-19: лимит истории чата — из конфига.
     app_store.chat_limit = config.chat_limit;
 
-    // M11.5: тема Ely ↔ config (ФР-19). Light — только «light», иначе dark.
+    // M11.5: тема/шрифт/масштаб Ely ↔ config (ФР-19, §13, НФР min 12px).
     let theme_light = config.theme == "light";
+    let font_scale = config.font_scale;
 
     let shell = Shell {
         store: app_store,
@@ -71,6 +72,14 @@ fn main() -> anyhow::Result<()> {
         ely::init(cx).expect("Ely init");
         // Тема из config (ФР-19): без фейда при старте.
         Theme::set_mode_now(if theme_light { Mode::Light } else { Mode::Dark }, cx);
+        // §13: PT Sans — основной шрифт Ely-компонентов (кириллица embedded);
+        // масштаб — НФР «размер шрифта» (min 12px применяет сам Ely).
+        {
+            let theme = cx.global_mut::<Theme>();
+            theme.font_family = "PT Sans".into();
+            theme.font_scale = font_scale;
+        }
+        cx.refresh_windows();
 
         // §13: embedded-шрифт с кириллицей (PT Sans, OFL) — без системных.
         let fonts = [
