@@ -1,22 +1,22 @@
 //! # ld2-client
 //!
-//! Desktop-клиент текстовой онлайн-MMORPG ld2 (eframe/egui).
+//! Desktop-клиент текстовой онлайн-MMORPG ld2 (**eframe/egui** — первый UI).
+//!
+//! Ядро (store/transport/l10n/config/secrets/notify/update_check) живёт в
+//! `ld2-core` (D12, PLAN-M10) и экспортируется здесь re-export'ами — пути
+//! `ld2_client::store::…` (UI, e2e-тесты) не меняются. Второй UI — gpui:
+//! `ld2-client-gpui`.
 //!
 //! Структура (ТЗ §6.2):
-//! - [`transport`] — WebSocket, `seq`/ack, reconnect/resync (M1, PLAN-M1 T2);
-//! - [`store`] — AppStore + редукторы (M1–M2: собирается только из событий);
-//! - [`app`] — egui-шелл; игровые панели — с M2 по ФР ТЗ §7;
-//! - [`config`], [`l10n`], [`secrets`] — локальные настройки, ru/en, keyring.
+//! - `ld2_core::transport` — WebSocket, `seq`/ack, reconnect/resync (M1);
+//! - `ld2_core::store` — AppStore + редукторы (собирается из событий);
+//! - [`app`] — egui-шелл; игровые панели — [`ui`] по ФР ТЗ §7;
+//! - `ld2_core::config` / `l10n` / `secrets` — настройки, ru/en, keyring.
+
+pub use ld2_core::{config, l10n, notify, secrets, store, transport, update_check};
 
 pub mod app;
-pub mod config;
-pub mod l10n;
-pub mod notify;
-pub mod secrets;
-pub mod store;
-pub mod transport;
 pub mod ui;
-pub mod update_check;
 
 /// Точка входа приложения (вызывается бинарником `ld2-client`).
 pub fn run() -> anyhow::Result<()> {

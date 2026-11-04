@@ -1,0 +1,22 @@
+//! # ld2-core
+//!
+//! Ядро десктоп-клиента ld2 — **без UI-зависимостей** (D12, PLAN-M10):
+//!
+//! - [`store`] — `AppStore` + редукторы (собирается только из событий);
+//! - [`transport`] — WebSocket, `seq`/ack, reconnect/resync (свой tokio-runtime);
+//! - [`l10n`] — таблицы ru/en;
+//! - [`config`] — `config.toml`, guard release-сборки, горячие клавиши;
+//! - [`secrets`] — keyring-токены;
+//! - [`notify`] — OS-уведомления (D7);
+//! - [`update_check`] — проверка GitHub Releases (§12).
+//!
+//! Отсюда зависят оба клиента: egui (`ld2-client`) и gpui
+//! (`ld2-client-gpui`) — логика игры и тесты общие.
+
+pub mod config;
+pub mod l10n;
+pub mod notify;
+pub mod secrets;
+pub mod store;
+pub mod transport;
+pub mod update_check;

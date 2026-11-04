@@ -1,0 +1,25 @@
+[package]
+name = "ld2-core"
+version.workspace = true
+edition.workspace = true
+description = "Ядро десктоп-клиента ld2: store, transport, l10n, config, secrets, notify, update-check (без UI)"
+
+[dev-dependencies]
+ld2-mock-server = { path = "../ld2-mock-server" }
+
+[dependencies]
+ld2-protocol = { path = "../ld2-protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+keyring = { workspace = true }
+notify-rust = { workspace = true }
+ureq = { workspace = true }
+directories = { workspace = true }
+toml = { workspace = true }
+time = { version = "0.3", features = ["formatting"] }
