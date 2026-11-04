@@ -3475,8 +3475,6 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -3506,6 +3504,8 @@ dependencies = [
  "tokio-tungstenite",
  "toml 0.8.23",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "ureq",
 ]
 

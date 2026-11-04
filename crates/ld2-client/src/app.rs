@@ -211,7 +211,7 @@ impl App {
                 Effect::Notify(kind) => {
                     // D7: под флагом настроек (desktop.notify).
                     if self.config.notify {
-                        let body = notify_body(self.lang, kind);
+                        let body = l10n::notify_body(self.lang, kind);
                         crate::notify::show(&body);
                     }
                 }
@@ -314,22 +314,6 @@ fn read_token_with_timeout(
 }
 
 /// Локализованное тело уведомления (D7: события — в `l10n`).
-fn notify_body(lang: Lang, kind: crate::store::NotifyKind) -> String {
-    use crate::store::NotifyKind::*;
-    l10n::t(
-        lang,
-        match kind {
-            Death => Key::NotifyDeath,
-            PartyInvite => Key::NotifyPartyInvite,
-            GuildInvite => Key::NotifyGuildInvite,
-            TradeOpen => Key::NotifyTradeOpen,
-            Whisper => Key::NotifyWhisper,
-            Upgrade => Key::NotifyUpgrade,
-        },
-    )
-    .to_string()
-}
-
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // НФР §8 (cold start): метка первого кадра — точка замера в логе

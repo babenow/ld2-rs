@@ -261,6 +261,20 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
 
 /// Строка с подстановкой плейсхолдеров `{name}`:
 /// `tf(lang, Key::SlotsUsed, &[("used", "2"), ("limit", "8")])`.
+/// Локализованное тело OS-уведомления (D7) — используется обоими клиентами.
+pub fn notify_body(lang: Lang, kind: crate::store::NotifyKind) -> String {
+    use crate::store::NotifyKind::*;
+    let key = match kind {
+        Death => Key::NotifyDeath,
+        PartyInvite => Key::NotifyPartyInvite,
+        GuildInvite => Key::NotifyGuildInvite,
+        TradeOpen => Key::NotifyTradeOpen,
+        Whisper => Key::NotifyWhisper,
+        Upgrade => Key::NotifyUpgrade,
+    };
+    t(lang, key).to_string()
+}
+
 pub fn tf(lang: Lang, key: Key, subs: &[(&str, &str)]) -> String {
     let mut s = t(lang, key).to_string();
     for (name, value) in subs {
