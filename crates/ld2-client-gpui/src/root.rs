@@ -106,6 +106,8 @@ pub struct Root {
     trade_gold: Entity<TextInput>,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
     party_collapsed: bool,
+    /// Запись горячей клавиши (ФР-19): индекс действия (0..=4).
+    hotkey_capture: Option<usize>,
     /// M10.6: создание/удаление персонажей (ФР-02).
     create_name: Entity<TextInput>,
     create_profile: ld2_core::store::Profile,
@@ -163,6 +165,7 @@ impl Root {
             chat_channel: "location".into(),
             trade_gold,
             party_collapsed,
+            hotkey_capture: None,
             create_name,
             create_profile: ld2_core::store::Profile::default(),
             create_open: false,
@@ -321,6 +324,26 @@ impl Root {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) {
+        // Запись хоткея (ФР-19): приоритет над навигацией, работает
+        // на любом экране; Escape — отмена записи.
+        if let Some(idx) = self.hotkey_capture {
+            if ks.key.eq_ignore_ascii_case("escape") {
+                self.hotkey_capture = None;
+            } else if let Some(spec) = spec_from_keystroke(ks) {
+                let hk = &mut self.config.hotkeys;
+                match idx {
+                    0 => hk.nav_up = spec,
+                    1 => hk.nav_down = spec,
+                    2 => hk.nav_left = spec,
+                    3 => hk.nav_right = spec,
+                    _ => hk.cycle_target = spec,
+                }
+                self.hotkey_capture = None;
+                self.save_config();
+            }
+            cx.notify();
+            return;
+        }
         if self.store.screen != Screen::Game || self.typing_focused(window, cx) {
             return;
         }
@@ -738,26 +761,50 @@ impl Root {
                         .font_weight(gpui::FontWeight::BOLD)
                         .child(t(lang, Key::SettingsHotkeys)),
                 )
-                .child(hotkey_row(lang, Key::HkNavUp, &self.config.hotkeys.nav_up))
                 .child(hotkey_row(
+                    cx,
+                    pal,
+                    lang,
+                    Key::HkNavUp,
+                    &self.config.hotkeys.nav_up,
+                    0,
+                    self.hotkey_capture,
+                ))
+                .child(hotkey_row(
+                    cx,
+                    pal,
                     lang,
                     Key::HkNavDown,
                     &self.config.hotkeys.nav_down,
+                    1,
+                    self.hotkey_capture,
                 ))
                 .child(hotkey_row(
+                    cx,
+                    pal,
                     lang,
                     Key::HkNavLeft,
                     &self.config.hotkeys.nav_left,
+                    2,
+                    self.hotkey_capture,
                 ))
                 .child(hotkey_row(
+                    cx,
+                    pal,
                     lang,
                     Key::HkNavRight,
                     &self.config.hotkeys.nav_right,
+                    3,
+                    self.hotkey_capture,
                 ))
                 .child(hotkey_row(
+                    cx,
+                    pal,
                     lang,
                     Key::HkCycleTarget,
                     &self.config.hotkeys.cycle_target,
+                    4,
+                    self.hotkey_capture,
                 )),
         );
 
@@ -781,17 +828,47 @@ impl Root {
     }
 }
 
+/// Нажатие → спецификация (`alt+up`) для записи в config (ФР-19).
+fn spec_from_keystroke(ks: &gpui::Keystroke) -> Option<String> {
+    let name = ks.key.to_lowercase();
+    if name.is_empty() {
+        return None;
+    }
+    let mut spec = String::new();
+    if ks.modifiers.alt {
+        spec.push_str("alt+");
+    }
+    if ks.modifiers.control {
+        spec.push_str("ctrl+");
+    }
+    if ks.modifiers.shift {
+        spec.push_str("shift+");
+    }
+    if ks.modifiers.platform {
+        spec.push_str("cmd+");
+    }
+    spec.push_str(&name);
+    Some(spec)
+}
+
 /// Совпадает ли нажатие со спецификацией хоткея (`alt+up`, `tab`, …).
 /// Спецификации из config.toml парсятся gpui-синтаксисом (`alt-up`).
 fn keystroke_matches(spec: &str, ks: &gpui::Keystroke) -> bool {
     let normalized = spec.replace('+', "-");
     match gpui::Keystroke::parse(&normalized) {
-        Ok(want) => want.modifiers == ks.modifiers && want.key.eq_ignore_ascii_case(&ks.key),
+        Ok(want) => {
+            want.modifiers.alt == ks.modifiers.alt
+                && want.modifiers.control == ks.modifiers.control
+                && want.modifiers.shift == ks.modifiers.shift
+                && want.modifiers.platform == ks.modifiers.platform
+                && want.modifiers.function == ks.modifiers.function
+                && want.key.eq_ignore_ascii_case(&ks.key)
+        }
         Err(_) => false,
     }
 }
 
-/// Поля ввода в рамке (бокс рисует владелец — см. [`crate::text_input`]).
+/// Строка поля ввода в рамке (для создания гильдии). — см. [`crate::text_input`]).
 fn field_box(pal: &Palette, input: Entity<TextInput>) -> Div {
     div()
         .w(px(320.0))
@@ -834,14 +911,24 @@ fn row(pal: &Palette, label: String, controls: Vec<Div>) -> Div {
     r
 }
 
-fn hotkey_row(lang: Lang, label: Key, spec: &str) -> Div {
-    div()
-        .flex()
-        .flex_row()
-        .justify_between()
-        .text_size(px(13.0))
-        .child(div().text_color(rgb(0x7f848e)).child(t(lang, label)))
-        .child(div().child(spec.to_string()))
+/// Строка хоткея: клик — запись нового нажатия (ФР-19).
+fn hotkey_row(
+    cx: &mut Context<'_, Root>,
+    pal: &Palette,
+    lang: Lang,
+    label: Key,
+    spec: &str,
+    idx: usize,
+    capturing: Option<usize>,
+) -> Div {
+    let text = if capturing == Some(idx) {
+        t(lang, Key::HkPress).to_string()
+    } else {
+        format!("{} — {spec}", t(lang, label))
+    };
+    act_btn(cx, text, pal.panel, pal.text, move |this, _cx| {
+        this.hotkey_capture = Some(idx);
+    })
 }
 
 /// Кнопка: статичные цвета + hover, действие — [`Click`].
@@ -961,5 +1048,33 @@ impl Render for Root {
                     Screen::Game => self.game_screen(cx, &pal),
                 }
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Запись хоткея обязана давать спецификацию, парсящуюся обратно
+    /// (config.toml ↔ gpui Keystroke, ФР-19).
+    #[test]
+    fn hotkey_spec_round_trip() {
+        for spec in ["alt+up", "tab", "shift+left", "ctrl+f5", "alt+left"] {
+            let ks = gpui::Keystroke::parse(&spec.replace('+', "-")).expect(spec);
+            assert_eq!(
+                spec_from_keystroke(&ks).as_deref(),
+                Some(spec),
+                "round-trip {spec}"
+            );
+            assert!(keystroke_matches(spec, &ks), "матч {spec}");
+        }
+        assert!(!keystroke_matches(
+            "alt+up",
+            &gpui::Keystroke::parse("up").unwrap()
+        ));
+        assert!(!keystroke_matches(
+            "bogus+key",
+            &gpui::Keystroke::parse("up").unwrap()
+        ));
     }
 }
