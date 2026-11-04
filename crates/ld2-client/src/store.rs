@@ -118,8 +118,6 @@ pub struct VisitedLocation {
 
 /// Ёмкость журнала мира (НФР §8: лог локации ≤ 10 000; M3 — 1000).
 const LOG_LIMIT: usize = 1000;
-/// История чата на канал — кольцевой буфер (ФР-13: 5 000/канал, NFR §8).
-const CHAT_LIMIT: usize = 5_000;
 /// Каналы чата из §5 (порядок вкладок UI).
 pub const CHAT_CHANNELS: [&str; 6] = ["system", "location", "global", "party", "guild", "whisper"];
 /// Ёмкость истории посещённых.
@@ -137,6 +135,20 @@ pub enum Effect {
     ForgetSession { login: String },
     /// Прокинуть refresh-токен в транспорт (реконнекты без логина, §4.5).
     TransportToken(String),
+    /// OS-уведомление (D7, feature-flag `desktop.notify` в настройках).
+    Notify(NotifyKind),
+}
+
+/// События для системных уведомлений (D7: смерть, приглашения, whisper,
+/// результат улучшения). Локализуется в `App` — стор не знает языка.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifyKind {
+    Death,
+    PartyInvite,
+    GuildInvite,
+    TradeOpen,
+    Whisper,
+    Upgrade,
 }
 
 #[derive(Debug)]
@@ -198,6 +210,10 @@ pub struct AppStore {
     pub guild_log: Vec<GuildLogEntry>,
     /// Список гильдий уже запрошен (вкладка грузит один раз).
     pub guild_browse_loaded: bool,
+    /// Лимит истории чата на канал (НФР §8; из `config.toml`, ФР-19).
+    pub chat_limit: usize,
+    /// Последний измеренный RTT, мс (НФР: RTT-индикатор).
+    pub rtt_ms: Option<u64>,
     /// Рецепты крафта из `cmd/craft.recipes` (ФР-08).
     pub recipes: Vec<serde_json::Value>,
     /// Рецепты уже запрошены (вкладка грузит один раз).
@@ -257,6 +273,8 @@ impl AppStore {
             guild_browse: Vec::new(),
             guild_log: Vec::new(),
             guild_browse_loaded: false,
+            chat_limit: 5_000,
+            rtt_ms: None,
             recipes: Vec::new(),
             recipes_loaded: false,
             notice: None,
@@ -284,6 +302,11 @@ impl AppStore {
             IngressEvent::CommandFailed { msg_type, .. } => {
                 self.notice = Some(format!("связь потеряна: {msg_type}"));
                 self.pending = None;
+                vec![]
+            }
+            IngressEvent::Rtt(ms) => {
+                // НФР §8: RTT-индикатор в header.
+                self.rtt_ms = Some(ms);
                 vec![]
             }
         }
@@ -534,6 +557,8 @@ impl AppStore {
                     return vec![];
                 };
                 let refresh = cfg.session.refresh.token.clone();
+                // НФР «Обновления»: force-min-version capability сервера (§12).
+                let required = cfg.server.min_client.clone();
                 let login = self
                     .session_login
                     .clone()
@@ -546,6 +571,16 @@ impl AppStore {
                     // игры экран НЕ меняем (§4.5: session.start повторяется).
                     self.screen = Screen::Characters;
                     self.notice = None;
+                }
+                // После сброса notice: предупреждение о версии не должно
+                // затираться переходом экрана (НФР force-min-version).
+                if let Some(required) = required {
+                    if crate::update_check::is_newer(&required, env!("CARGO_PKG_VERSION")) {
+                        self.notice = Some(format!(
+                            "⚠ Сервер требует клиент v{required} (у вас v{}) — обновитесь",
+                            env!("CARGO_PKG_VERSION")
+                        ));
+                    }
                 }
                 vec![
                     Effect::PersistSession {
@@ -816,7 +851,7 @@ impl AppStore {
                 );
                 self.death = Some(death);
                 self.target = None;
-                vec![]
+                vec![Effect::Notify(NotifyKind::Death)]
             }
             "evt/magic/cast" => {
                 let Ok(cast) = serde_json::from_value::<MagicCast>(payload) else {
@@ -939,7 +974,7 @@ impl AppStore {
                     );
                 }
                 self.upgrade = None;
-                vec![]
+                vec![Effect::Notify(NotifyKind::Upgrade)]
             }
             "evt/quest/progress" | "evt/quest/updated" => {
                 #[derive(serde::Deserialize)]
@@ -1040,7 +1075,9 @@ impl AppStore {
                         format!("Приглашение в группу от {}", inv.from_name),
                     );
                     self.party_invite = Some(inv);
-                } else if self.party.is_some() {
+                    return vec![Effect::Notify(NotifyKind::PartyInvite)];
+                }
+                if self.party.is_some() {
                     self.party_invite = None; // состав обновился — ответ дан
                 }
                 vec![]
@@ -1051,7 +1088,12 @@ impl AppStore {
                     return vec![];
                 };
                 // ФР-15: версия/зеркало — истина сервера, клиент не пересчитывает.
+                // Открытие сделки партнёром — уведомление (D7).
+                let opened = self.trade.is_none();
                 self.trade = Some(trade);
+                if opened {
+                    return vec![Effect::Notify(NotifyKind::TradeOpen)];
+                }
                 vec![]
             }
             "evt/trade/closed" => {
@@ -1094,6 +1136,7 @@ impl AppStore {
                         format!("Приглашение в гильдию «{}»", inv.guild_name),
                     );
                     self.guild_invite = Some(inv);
+                    return vec![Effect::Notify(NotifyKind::GuildInvite)];
                 }
                 vec![]
             }
@@ -1172,11 +1215,13 @@ impl AppStore {
                     .as_ref()
                     .map(|sn| sn.char.id.clone())
                     .unwrap_or_default();
+                let mut effects = vec![];
                 if msg.channel == "whisper" && msg.from != my_id {
                     self.last_whisper_from = Some(msg.name.clone());
+                    effects.push(Effect::Notify(NotifyKind::Whisper));
                 }
                 let entry = self.chat.entry(msg.channel.clone()).or_default();
-                if entry.len() >= CHAT_LIMIT {
+                if entry.len() >= self.chat_limit {
                     entry.pop_front();
                 }
                 entry.push_back(msg.clone());
@@ -1184,7 +1229,7 @@ impl AppStore {
                     LogKind::Chat,
                     format!("[{}] {}: {}", msg.channel, msg.name, msg.text),
                 );
-                vec![]
+                effects
             }
             _ => vec![], // неизвестные/ненужные события транспорт уже залогировал
         }
@@ -1399,6 +1444,12 @@ impl AppStore {
     }
 
     /// Логаут (ФР-01): чистый сессионный сброс + отзыв токена.
+    /// Смена сервера в настройках (ФР-19): возврат на экран входа БЕЗ
+    /// отзыва keyring-токена (токен старого хоста остаётся валидным).
+    pub fn to_login_screen(&mut self) {
+        let _ = self.reset_to_login(None);
+    }
+
     pub fn logout(&mut self) -> Vec<Effect> {
         self.reset_to_login(None)
     }
@@ -1640,7 +1691,8 @@ mod tests {
     #[test]
     fn chat_history_is_ring_per_channel() {
         let mut store = store_with_session();
-        for i in 0..(CHAT_LIMIT + 5) {
+        let limit = store.chat_limit;
+        for i in 0..(limit + 5) {
             store.apply(IngressEvent::Event(ld2_protocol::Envelope {
                 v: 1,
                 msg_type: "evt/chat/message".into(),
@@ -1654,7 +1706,7 @@ mod tests {
             }));
         }
         let global = store.chat.get("global").expect("канал global");
-        assert_eq!(global.len(), CHAT_LIMIT, "ring-буфер: 5 000/канал");
+        assert_eq!(global.len(), limit, "ring-буфер: лимит из конфига");
         assert_eq!(global.front().unwrap().text, "м 5", "старые вытеснены");
         // Другой канал не тронут.
         store.apply(IngressEvent::Event(ld2_protocol::Envelope {
@@ -1812,6 +1864,134 @@ mod tests {
         }));
         assert_eq!(store.guild_log.len(), 1);
         assert!(store.log.iter().any(|e| e.text.contains("Гильдия")));
+    }
+
+    /// НФР/§12: min_client capability сервера новее клиента → предупреждение.
+    #[test]
+    fn newer_min_client_shows_warning() {
+        let mut store = AppStore::new();
+        store.on_login_sent("demo");
+        let mut cfg = fixtures::session_config(8);
+        cfg.server.min_client = Some("99.0.0".into());
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::to_value(cfg).unwrap()),
+        }));
+        let notice = store.notice.expect("предупреждение о версии");
+        assert!(notice.contains("99.0.0"), "нужна версия сервера: {notice}");
+
+        // Текущая/старая версия — без предупреждения.
+        let mut store = AppStore::new();
+        store.on_login_sent("demo");
+        let mut cfg = fixtures::session_config(8);
+        cfg.server.min_client = Some("0.1.0".into());
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::to_value(cfg).unwrap()),
+        }));
+        assert!(store.notice.is_none(), "старая версия сервера — тихо");
+    }
+
+    /// D7: события уведомлений эмитятся эффектами (флаг применяет App).
+    #[test]
+    fn notify_effects_emitted_for_d7_events() {
+        let mut store = store_with_session();
+
+        // Смерть.
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/char/death".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "victim_char": true, "lost_items": [], "corpse": "cor_self",
+                "respawn": { "location_id": "l_village", "delay_s": 0 }
+            })),
+        }));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::Notify(NotifyKind::Death))),
+            "смерть → уведомление: {effects:?}"
+        );
+
+        // Приглашение в группу.
+        let mut store = store_with_session();
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/party/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "party": null,
+                "invite": { "invite_id": "inv_1", "from": "c1", "from_name": "Ким" }
+            })),
+        }));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::Notify(NotifyKind::PartyInvite))));
+
+        // Whisper от другого.
+        let mut store = store_with_session();
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "whisper", "from": "c2", "name": "Астра",
+                "text": "эй", "sent_at": "2026-11-04T00:00:00Z"
+            })),
+        }));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::Notify(NotifyKind::Whisper))));
+
+        // Своё сообщение whisper — без уведомления (нужен снапшот: id «я»).
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/state/snapshot".into(),
+            seq: None,
+            ts: None,
+            state_version: Some(1003),
+            payload: Some(
+                serde_json::to_value(fixtures::snapshot(
+                    1003,
+                    &fixtures::character("c1", "Ким"),
+                    &fixtures::village(),
+                ))
+                .expect("снапшот"),
+            ),
+        }));
+        let my_id = store.snapshot.as_ref().unwrap().char.id.clone();
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "whisper", "from": my_id, "name": "Ким",
+                "text": "себе", "sent_at": "2026-11-04T00:00:00Z"
+            })),
+        }));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::Notify(NotifyKind::Whisper))),
+            "своё сообщение не уведомляет"
+        );
     }
 
     #[test]

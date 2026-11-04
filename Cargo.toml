@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/ld2-protocol", "crates/ld2-mock-server", "crates/ld2-client"]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 
 [workspace.dependencies]
@@ -16,6 +16,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 keyring = "4"
+# OS-уведомления (D7): zbus-бэкенд — без системной libdbus в CI.
+notify-rust = { version = "4", default-features = false, features = ["z"] }
+# Проверка обновлений (НФР/§12): лёгкий синхронный HTTP.
+ureq = "2"
 directories = "6"
 toml = "0.8"
 thiserror = "2"

@@ -12,10 +12,21 @@ use crate::store::{AppStore, Effect};
 use crate::transport::TransportHandle;
 
 pub mod chat_panel;
+pub mod hotkeys;
 pub mod log_panel;
 pub mod screens;
+pub mod settings;
 pub mod sheet;
 pub mod world;
+
+impl UiCtx<'_> {
+    /// Сохранение `config.toml` по факту изменения настройки (ФР-19).
+    pub fn persist_cfg(&self) {
+        if let Err(e) = self.cfg_store.save(self.cfg) {
+            tracing::warn!("не удалось сохранить конфиг: {e:#}");
+        }
+    }
+}
 
 /// Контекст экрана: всё, что нужно функции отрисовки.
 pub struct UiCtx<'a> {
@@ -23,6 +34,10 @@ pub struct UiCtx<'a> {
     pub forms: &'a mut Forms,
     pub transport: &'a TransportHandle,
     pub lang: crate::l10n::Lang,
+    /// Локальный конфиг (ФР-19): тема/шрифт/лимиты/хоткеи/состояние UI.
+    pub cfg: &'a mut crate::config::Config,
+    /// Персистентность конфига (сохранение по факту изменения).
+    pub cfg_store: &'a crate::config::ConfigStore,
 }
 
 /// Формы ввода (живут между кадрами).
@@ -44,6 +59,14 @@ pub struct Forms {
     pub trade_item: String,
     /// Поле имени новой гильдии (ФР-16).
     pub guild_name: String,
+    /// Открыто ли окно настроек (ФР-19).
+    pub settings_open: bool,
+    /// Запись горячей клавиши: ждём нажатия для действия с этим индексом.
+    pub hotkey_capture: Option<usize>,
+    /// Черновик хоста сервера в настройках.
+    pub host_draft: String,
+    /// Смена хоста применена — App переподключит транспорт после кадра.
+    pub host_apply_pending: bool,
 }
 
 #[derive(Default)]
@@ -130,6 +153,34 @@ pub enum SheetTab {
     Professions,
     /// Гильдия: состав, ранги, список (ФР-16, M8).
     Guild,
+}
+
+impl SheetTab {
+    /// Строковое имя для `config.toml` (ФР-19: состояние вкладки).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SheetTab::Skills => "skills",
+            SheetTab::Attrs => "attrs",
+            SheetTab::Inventory => "inventory",
+            SheetTab::Statuses => "statuses",
+            SheetTab::Quests => "quests",
+            SheetTab::Professions => "professions",
+            SheetTab::Guild => "guild",
+        }
+    }
+
+    /// Восстановление из конфига (неизвестное значение → дефолт).
+    pub fn parse_tab(s: &str) -> Self {
+        match s {
+            "attrs" => SheetTab::Attrs,
+            "inventory" => SheetTab::Inventory,
+            "statuses" => SheetTab::Statuses,
+            "quests" => SheetTab::Quests,
+            "professions" => SheetTab::Professions,
+            "guild" => SheetTab::Guild,
+            _ => SheetTab::Skills,
+        }
+    }
 }
 
 /// Источник перетаскивания в инвентаре (drag&drop, ФР-07).

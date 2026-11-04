@@ -10,8 +10,16 @@ use ld2_protocol::cmd::ChatSend;
 use crate::l10n::{t, tf, Key};
 use crate::store::{parse_chat_input, Act, ChatDraft, CHAT_CHANNELS};
 
-/// Цветовая метка канала (палитра §7.4).
-fn channel_color(channel: &str) -> egui::Color32 {
+/// Цветовая метка канала (палитра §7.4); для светлой темы — затемнённые
+/// варианты светлых каналов (читаемость, НФР контраст).
+fn channel_color(channel: &str, dark: bool) -> egui::Color32 {
+    if !dark {
+        return match channel {
+            "system" => egui::Color32::from_rgb(0x5A, 0x5E, 0x66),
+            "location" => egui::Color32::from_rgb(0x4A, 0x4E, 0x58),
+            _ => channel_color(channel, true),
+        };
+    }
     match channel {
         "system" => egui::Color32::from_rgb(0x7F, 0x84, 0x8E),
         "global" => egui::Color32::from_rgb(0x61, 0xAF, 0xEF),
@@ -36,12 +44,13 @@ fn channel_key(channel: &str) -> Key {
 
 pub fn show(ui: &mut egui::Ui, ctx: &mut crate::ui::UiCtx<'_>) {
     let lang = ctx.lang;
+    let dark = ui.style().visuals.dark_mode;
     ui.group(|ui| {
         // ── вкладки каналов + фильтр-строка (ФР-13) ──
         ui.horizontal(|ui| {
             let active = ctx.store.chat_channel.clone();
             for channel in CHAT_CHANNELS {
-                let color = channel_color(channel);
+                let color = channel_color(channel, dark);
                 let selected = active == channel;
                 let label = format!(
                     "{} ({})",
@@ -93,7 +102,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut crate::ui::UiCtx<'_>) {
                 if messages.is_empty() {
                     ui.weak(t(lang, Key::ChEmpty));
                 }
-                let color = channel_color(&channel);
+                let color = channel_color(&channel, dark);
                 for line in messages {
                     ui.colored_label(color, line);
                 }

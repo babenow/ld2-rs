@@ -232,8 +232,14 @@ where
                                 _ => {}
                             }
 
-                            if pending.resolve(ack.seq).is_none() {
-                                debug!("ack без pending: seq={}", ack.seq);
+                            match pending.resolve(ack.seq) {
+                                Some(cmd) => {
+                                    // НФР §8: RTT-индикатор — по времени
+                                    // «отправка → ack» (sent_at из очереди).
+                                    let rtt = cmd.sent_at.elapsed().as_millis() as u64;
+                                    let _ = ingress.send(IngressEvent::Rtt(rtt));
+                                }
+                                None => debug!("ack без pending: seq={}", ack.seq),
                             }
                             let _ = ingress.send(IngressEvent::Ack(ack));
 

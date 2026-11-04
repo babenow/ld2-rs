@@ -366,6 +366,9 @@ fn party_widget(ui: &mut egui::Ui, ctx: &mut UiCtx<'_>) {
                 .clicked()
             {
                 ctx.forms.party_collapsed = !collapsed;
+                // ФР-19: состояние пати-виджета переживает перезапуск.
+                ctx.cfg.party_collapsed = ctx.forms.party_collapsed;
+                ctx.persist_cfg();
             }
             if collapsed {
                 return;
@@ -746,17 +749,22 @@ fn examine_modal(ctx: &mut UiCtx<'_>, ui: &mut egui::Ui, detail: serde_json::Val
 // ─── навигация и команды ──────────────────────────────────────────────────
 
 fn alt_nav(ctx: &mut UiCtx<'_>, ui: &egui::Ui, loc: &LocationSnapshot) {
+    // Ремаппинг (ФР-19): направления из конфига, не из хардкода.
+    let hk = &ctx.cfg.hotkeys;
+    let (up, down, left, right) = (
+        hk.nav_up.clone(),
+        hk.nav_down.clone(),
+        hk.nav_left.clone(),
+        hk.nav_right.clone(),
+    );
     let dir = ui.input(|i| {
-        if !i.modifiers.alt {
-            return None;
-        }
-        for (key, direction) in [
-            (egui::Key::ArrowUp, "north"),
-            (egui::Key::ArrowDown, "south"),
-            (egui::Key::ArrowLeft, "west"),
-            (egui::Key::ArrowRight, "east"),
+        for (spec, direction) in [
+            (up.as_str(), "north"),
+            (down.as_str(), "south"),
+            (left.as_str(), "west"),
+            (right.as_str(), "east"),
         ] {
-            if i.key_pressed(key) {
+            if crate::ui::hotkeys::pressed(i, spec) {
                 return Some(direction.to_string());
             }
         }
@@ -764,7 +772,8 @@ fn alt_nav(ctx: &mut UiCtx<'_>, ui: &egui::Ui, loc: &LocationSnapshot) {
     });
     let Some(dir) = dir else {
         // Tab — цикл целей по монстрам (ФР-05).
-        if ui.input(|i| i.key_pressed(egui::Key::Tab) && !i.modifiers.alt && !i.modifiers.command) {
+        let cycle_spec = ctx.cfg.hotkeys.cycle_target.clone();
+        if ui.input(|i| crate::ui::hotkeys::pressed(i, &cycle_spec)) {
             ctx.store.cycle_target();
         }
         return;
