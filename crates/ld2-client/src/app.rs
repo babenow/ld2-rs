@@ -37,6 +37,8 @@ pub struct App {
     update_rx: std::sync::mpsc::Receiver<String>,
     /// Есть ли доступная версия (бейдж в header, §12).
     update_available: Option<String>,
+    /// Метка «первый кадр» уже записана (замер cold start, НФР §8).
+    first_frame_logged: bool,
 }
 
 impl App {
@@ -62,7 +64,9 @@ impl App {
             // ждать диалога доступа для нового бинаря (инцидент M4/M5) —
             // приложение обязано стартовать, а не виснуть до ответа.
             if let Some(token) =
-                read_token_with_timeout(&config.host, login, Duration::from_secs(2))
+                // 1с: холодный старт ≤ 2с (НФР) — таймаут защищает от
+                // зависания на диалоге keychain, но не должен его съедать.
+                read_token_with_timeout(&config.host, login, Duration::from_secs(1))
             {
                 tcfg.refresh_token = Some(token);
                 tracing::info!("keyring: resume-токен найден ({login})");
@@ -86,6 +90,7 @@ impl App {
             had_events_last_frame: false,
             update_rx,
             update_available: None,
+            first_frame_logged: false,
             base_text_styles: _cc.egui_ctx.style_of(egui::Theme::Dark).text_styles.clone(),
             lang: Lang::from_code(&config.lang),
             config,
@@ -327,6 +332,12 @@ fn notify_body(lang: Lang, kind: crate::store::NotifyKind) -> String {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // НФР §8 (cold start): метка первого кадра — точка замера в логе
+        // (между «старт» в main и этой строкой).
+        if !self.first_frame_logged {
+            self.first_frame_logged = true;
+            tracing::info!("первый кадр отрисован");
+        }
         let had_events = self.drain_ingress();
         self.had_events_last_frame = had_events;
         // Результат фоновой проверки обновлений (§12).
