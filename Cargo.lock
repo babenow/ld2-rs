@@ -3481,8 +3481,15 @@ dependencies = [
 name = "ld2-client-gpui"
 version = "0.9.0"
 dependencies = [
+ "anyhow",
  "gpui",
  "gpui_platform",
+ "keyring",
+ "ld2-core",
+ "ld2-protocol",
+ "tokio",
+ "tracing",
+ "unicode-segmentation",
 ]
 
 [[package]]
