@@ -9,6 +9,7 @@ use ld2_protocol::cmd::ChatSend;
 
 use crate::palette::{palette, Palette};
 use ely::forms::{Choice, Input, SearchInput};
+use ely::layout::ScrollArea;
 use ely::navigation::Tabs;
 
 use super::{act_btn, Root};
@@ -79,11 +80,15 @@ impl Root {
             })
             .unwrap_or_default();
         let color = channel_color(&active, dark);
-        let mut history = div()
-            .id("chat_history")
-            .h(px(120.0))
-            .overflow_y_scroll()
-            .flex_shrink_0();
+        // M11.4: stick-to-bottom — новая строка доскроливается вниз
+        // (ScrollHandle + ScrollArea; egui-паритет ФР-13).
+        if messages.len() != self.last_chat_len {
+            self.last_chat_len = messages.len();
+            if !messages.is_empty() {
+                self.chat_scroll.scroll_to_item(messages.len() - 1);
+            }
+        }
+        let mut history = div().flex().flex_col().gap_1();
         if messages.is_empty() {
             history = history.child(
                 div()
@@ -95,7 +100,14 @@ impl Root {
         for line in messages {
             history = history.child(div().text_size(px(12.0)).text_color(rgb(color)).child(line));
         }
-        panel = panel.child(history);
+        panel = panel.child(
+            div().h(px(120.0)).flex_shrink_0().child(
+                ScrollArea::new("ld2-chat-history")
+                    .vertical()
+                    .track_scroll(&self.chat_scroll)
+                    .child(history),
+            ),
+        );
 
         // ── ввод: Enter/кнопка, слэш-команды (ФР-13) ──
         let mut input_row = div().flex().flex_row().gap_1().items_center();

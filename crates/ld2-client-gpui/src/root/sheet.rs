@@ -22,6 +22,7 @@ use crate::palette::Palette;
 use ely::forms::{Choice, Input, Select};
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
+use ely::primitives::Tooltip;
 
 use super::{act_btn, Root};
 
@@ -452,6 +453,11 @@ impl Root {
             let uid = item.uid.clone();
             let detail = serde_json::to_value(item).unwrap_or_default();
             let tile = div()
+                .id(format!("ld2-item-{uid}"))
+                .tooltip(Tooltip::text(format!(
+                    "{} · {} · +{}",
+                    item.name, item.rarity, item.upgrade
+                )))
                 .flex()
                 .flex_row()
                 .gap_2()

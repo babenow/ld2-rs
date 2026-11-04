@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use gpui::{
     div, prelude::*, px, rgb, AnyElement, App, Context, Div, Entity, Focusable, MouseButton,
-    Render, SharedString, Window,
+    Render, ScrollHandle, SharedString, Window,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -22,6 +22,7 @@ mod sheet;
 mod social;
 
 use crate::palette::{palette, Palette};
+use ely::feedback::{Toast, ToastViewport, Toaster};
 use ely::forms::{HotkeyInput, Input, InputEvent, PasswordInput, TextInput};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
@@ -106,6 +107,14 @@ pub struct Root {
     /// M11.3: выбранные значения Select (обучение профессии / предмет сделки).
     learn_pick: Option<String>,
     trade_pick: Option<String>,
+    /// M11.4: тосты Ely (notice → всплывающее уведомление).
+    toaster: Entity<Toaster>,
+    last_notice: Option<String>,
+    /// M11.4: stick-to-bottom журнала и чата.
+    journal_scroll: ScrollHandle,
+    chat_scroll: ScrollHandle,
+    last_journal_len: usize,
+    last_chat_len: usize,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
     party_collapsed: bool,
     /// M10.6: создание/удаление персонажей (ФР-02).
@@ -117,7 +126,7 @@ pub struct Root {
 }
 
 impl Root {
-    pub fn new(_cx: &mut Context<'_, Self>, shell: Shell) -> Self {
+    pub fn new(cx: &mut Context<'_, Self>, shell: Shell) -> Self {
         let sheet_tab = sheet::SheetTab::parse(&shell.config.sheet_tab);
         let party_collapsed = shell.config.party_collapsed;
         Self {
@@ -142,6 +151,12 @@ impl Root {
             trade_gold_value: 0.0,
             learn_pick: None,
             trade_pick: None,
+            toaster: cx.new(|_| Toaster::default()),
+            last_notice: None,
+            journal_scroll: ScrollHandle::new(),
+            chat_scroll: ScrollHandle::new(),
+            last_journal_len: 0,
+            last_chat_len: 0,
             party_collapsed,
             create_name: None,
             create_profile: ld2_core::store::Profile::default(),
@@ -175,6 +190,20 @@ impl Root {
                 tracing::info!("доступна версия v{version}");
                 self.update_available = Some(version);
             }
+        }
+
+        // M11.4: новый notice → всплывающий тост Ely (текст в экране
+        // остаётся до замены — на время жизни тоста возможен дубль).
+        if let Some(notice) = self.store.notice.clone() {
+            if self.last_notice.as_deref() != Some(notice.as_str()) {
+                self.last_notice = Some(notice.clone());
+                let toast = Toast::new(notice);
+                self.toaster.update(cx, |t, cx| {
+                    t.push(toast, cx);
+                });
+            }
+        } else {
+            self.last_notice = None;
         }
 
         if had_events {
@@ -1126,6 +1155,8 @@ impl Render for Root {
             })
             // M11.2: всплывающий диалог поверх контента (скрим + панель).
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
+            // M11.4: всплывающие тосты (notice → Ely Toast).
+            .child(ToastViewport::new("ld2-toasts", &self.toaster))
     }
 }
 

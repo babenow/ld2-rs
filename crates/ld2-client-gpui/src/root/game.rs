@@ -14,7 +14,9 @@ use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
 
 use crate::palette::Palette;
+use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
+use ely::primitives::Tooltip;
 
 use super::{btn, Click, Root};
 
@@ -395,6 +397,8 @@ impl Root {
         let id = entity.id.clone();
 
         let mut row = div()
+            .id(format!("ld2-ent-{}", entity.id))
+            .tooltip(Tooltip::text(entity_tooltip(&entity)))
             .flex()
             .flex_row()
             .items_center()
@@ -525,7 +529,7 @@ impl Root {
                     let enabled = charges_ok && mp_ok;
                     let label = format!("{} ×{}", rune.name, rune.charges);
                     if enabled {
-                        row = row.child(btn(
+                        let slot = btn(
                             cx,
                             label,
                             pal.accent,
@@ -534,10 +538,17 @@ impl Root {
                                 staff_uid: staff_uid.clone(),
                                 socket_index: socket.index,
                             },
-                        ));
+                        );
+                        // M11.4: стоимость каста — тултип (egui-паритет).
+                        row = row.child(if rune_cost > 0 {
+                            slot.id(format!("ld2-rune-{}", socket.index))
+                                .tooltip(Tooltip::text(format!("{rune_cost} MP")))
+                                .into_any_element()
+                        } else {
+                            slot.into_any_element()
+                        });
                     } else {
-                        // Причина недоступности — в тексте (тултипы egui не
-                        // портились, см. отклонения M10.4).
+                        // M11.4: причина недоступности — тултип (egui-паритет).
                         let reason = if !charges_ok {
                             t(lang, Key::NoCharge)
                         } else {
@@ -545,12 +556,14 @@ impl Root {
                         };
                         row = row.child(
                             div()
+                                .id(format!("ld2-rune-off-{}", socket.index))
+                                .tooltip(Tooltip::text(reason.to_string()))
                                 .px_3()
                                 .py_1()
                                 .rounded_md()
                                 .bg(rgb(pal.border))
                                 .text_color(rgb(pal.muted))
-                                .child(format!("{label} · {reason}")),
+                                .child(label),
                         );
                     }
                 }
@@ -609,7 +622,7 @@ impl Root {
 
     // ── журнал мира (ФР-17) ───────────────────────────────────────────────
 
-    fn log_block(&self, pal: &Palette) -> Div {
+    fn log_block(&mut self, pal: &Palette) -> Div {
         let lang = self.lang;
         let dark = pal.bg == crate::palette::palette("dark").bg;
         div()
@@ -632,18 +645,28 @@ impl Root {
                         self.store.log.len()
                     )),
             )
-            .child(
-                div()
-                    .id("log_scroll")
-                    .h(px(150.0))
-                    .overflow_y_scroll()
-                    .children(self.store.log.iter().map(|entry| {
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(rgb(log_color(entry.kind, dark)))
-                            .child(entry.text.clone())
-                    })),
-            )
+            .child({
+                // M11.4: stick-to-bottom — новая строка доскроливается вниз.
+                if self.store.log.len() != self.last_journal_len {
+                    self.last_journal_len = self.store.log.len();
+                    if !self.store.log.is_empty() {
+                        self.journal_scroll.scroll_to_item(self.store.log.len() - 1);
+                    }
+                }
+                div().h(px(150.0)).child(
+                    ScrollArea::new("ld2-log-scroll")
+                        .vertical()
+                        .track_scroll(&self.journal_scroll)
+                        .child(div().flex().flex_col().gap_1().children(
+                            self.store.log.iter().map(|entry| {
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(log_color(entry.kind, dark)))
+                                    .child(entry.text.clone())
+                            }),
+                        )),
+                )
+            })
     }
 
     // ── модалки (паритет egui-окон) ───────────────────────────────────────
@@ -874,5 +897,25 @@ fn log_color(kind: LogKind, dark: bool) -> u32 {
         Quest => 0xc6_78_dd,
         Xp => 0x56_b6_c2,
         Chat => 0xeb_eb_eb,
+    }
+}
+
+/// Подсказка строки сущности: HP и теги (имя — уже в строке).
+fn entity_tooltip(entity: &Entity) -> String {
+    let hp = entity
+        .hp
+        .map(|hp| format!(" · {}/{}", hp.cur, hp.max))
+        .unwrap_or_default();
+    let tags = entity
+        .tags
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if tags.is_empty() {
+        format!("{}{hp}", entity.name)
+    } else {
+        format!("{}{hp} · {tags}", entity.name)
     }
 }
