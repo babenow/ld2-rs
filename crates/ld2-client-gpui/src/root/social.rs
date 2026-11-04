@@ -14,7 +14,7 @@ use ld2_protocol::cmd::{
 };
 
 use crate::palette::Palette;
-use ely::forms::NumberInput;
+use ely::forms::{Choice, NumberInput, Select};
 
 use super::{act_btn, Root};
 
@@ -445,21 +445,40 @@ impl Root {
                 ),
         );
 
-        // Добавление предмета: кнопки по инвентарю (вместо combobox egui).
+        // M11.3: добавление предмета — Select Ely + «+ предмет»
+        // (отклонение «ряды кнопок вместо combobox» снят).
         let available: Vec<_> = inventory
             .iter()
             .filter(|i| !offered.contains(&i.uid))
             .collect();
         if !available.is_empty() {
-            let mut add_row = div().flex().flex_row().flex_wrap().gap_1();
-            for item in available {
-                let uid = item.uid.clone();
+            let choices: Vec<Choice> = available
+                .iter()
+                .map(|item| Choice::new(item.uid.clone(), item.name.clone()))
+                .collect();
+            let pick = self.trade_pick.clone();
+            let this = cx.entity();
+            let mut add_row = div().flex().flex_row().gap_2().items_center();
+            add_row = add_row.child(div().flex_grow_1().child({
+                let this = this.clone();
+                let sel =
+                    Select::new("ld2-trade-item", choices).placeholder(t(lang, Key::TradeAddItem));
+                match pick {
+                    Some(value) => sel.selected(value),
+                    None => sel,
+                }
+                .on_change(move |value, _window, acx| {
+                    let value = value.to_string();
+                    this.update(acx, |root, _cx| root.trade_pick = Some(value));
+                })
+            }));
+            if let Some(uid) = self.trade_pick.clone() {
                 let oid = offer_id.clone();
                 add_row = add_row.child(act_btn(
                     cx,
-                    format!("＋ {}", item.name),
-                    pal.panel,
-                    pal.text,
+                    t(lang, Key::TradeAddItem),
+                    pal.accent,
+                    pal.accent_text,
                     move |this, cx| {
                         let cmd = TradeAddItem {
                             offer_id: oid.clone(),

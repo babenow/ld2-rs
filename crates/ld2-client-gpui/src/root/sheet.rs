@@ -19,7 +19,7 @@ use ld2_protocol::cmd::{
 use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
 
 use crate::palette::Palette;
-use ely::forms::Input;
+use ely::forms::{Choice, Input, Select};
 
 use super::{act_btn, Root};
 
@@ -904,29 +904,43 @@ impl Root {
             );
         }
 
-        // Обучение новым (демо-каталог) — вместо combobox: ряд кнопок.
+        // M11.3: обучение — Select Ely + подтверждение (отклонение
+        // «ряд кнопок вместо combobox» снят).
         let available: Vec<(&'static str, Key)> = LEARN_CATALOG
             .iter()
             .copied()
             .filter(|(id, _)| !snap.char.professions.iter().any(|p| p.id == *id))
             .collect();
         if !available.is_empty() {
-            col = col.child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::LearnLabel)),
-            );
-            let mut row = div().flex().flex_row().flex_wrap().gap_1();
-            for (id, key) in available {
+            let choices: Vec<Choice> = available
+                .iter()
+                .map(|(id, key)| Choice::new(*id, t(lang, *key)))
+                .collect();
+            let pick = self.learn_pick.clone();
+            let this = cx.entity();
+            let mut row = div().flex().flex_row().gap_2().items_center();
+            row = row.child(div().flex_grow_1().child({
+                let this = this.clone();
+                let sel =
+                    Select::new("ld2-learn-prof", choices).placeholder(t(lang, Key::LearnLabel));
+                match pick {
+                    Some(value) => sel.selected(value),
+                    None => sel,
+                }
+                .on_change(move |value, _window, acx| {
+                    let value = value.to_string();
+                    this.update(acx, |root, _cx| root.learn_pick = Some(value));
+                })
+            }));
+            if let Some(id) = self.learn_pick.clone() {
                 row = row.child(act_btn(
                     cx,
-                    t(lang, key),
-                    pal.panel,
-                    pal.text,
+                    t(lang, Key::LearnLabel),
+                    pal.accent,
+                    pal.accent_text,
                     move |this, cx| {
                         let cmd = CraftLearn {
-                            profession_id: id.to_string(),
+                            profession_id: id.clone(),
                         };
                         this.send_cmd(&cmd, Act::Learn);
                         let _ = cx;

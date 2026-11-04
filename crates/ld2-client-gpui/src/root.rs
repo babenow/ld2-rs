@@ -106,6 +106,9 @@ pub struct Root {
     /// M10.5: окно сделки — поле золота.
     /// M11.3: золото сделки (NumberInput Ely; фиксируется операцией).
     trade_gold_value: f64,
+    /// M11.3: выбранные значения Select (обучение профессии / предмет сделки).
+    learn_pick: Option<String>,
+    trade_pick: Option<String>,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
     party_collapsed: bool,
     /// M10.6: создание/удаление персонажей (ФР-02).
@@ -142,6 +145,8 @@ impl Root {
             chat_filter: None,
             chat_channel: "location".into(),
             trade_gold_value: 0.0,
+            learn_pick: None,
+            trade_pick: None,
             party_collapsed,
             create_name: None,
             create_profile: ld2_core::store::Profile::default(),
