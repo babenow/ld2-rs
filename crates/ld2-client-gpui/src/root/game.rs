@@ -28,6 +28,16 @@ impl Root {
         if let Some((uid, name)) = self.store.loot_confirm.clone() {
             return self.loot_view(cx, pal, uid, name);
         }
+        // Соц-модалки (ФР-14/15/16) — паритет egui-окон.
+        if let Some(invite) = self.store.party_invite.clone() {
+            return self.party_invite_view(cx, pal, &invite);
+        }
+        if let Some(invite) = self.store.guild_invite.clone() {
+            return self.guild_invite_view(cx, pal, &invite);
+        }
+        if let Some(trade) = self.store.trade.clone() {
+            return self.trade_view(cx, pal, &trade);
+        }
         // Модалки листа (ФР-07/09/10) — паритет egui-окон.
         if let Some(detail) = self.store.item_detail.clone() {
             return self.item_view(cx, pal, detail);
@@ -72,6 +82,7 @@ impl Root {
                     }))
                     .child(self.entities_block(cx, pal, &snap.location))
                     .child(self.hotbar(cx, pal, &snap))
+                    .child(self.chat_panel(cx, pal))
                     .child(self.log_block(pal)),
             )
     }
@@ -86,6 +97,9 @@ impl Root {
     ) -> Div {
         let lang = self.lang;
         let mut col = div().flex().flex_col().gap_2().w(px(210.0));
+
+        // Виджет группы (ФР-14) — сверху слева, как в egui.
+        col = col.child(self.party_widget(cx, pal));
 
         // Цель (ФР-05): HP + атака/отступ.
         if let Some(target_id) = self.store.target.clone() {

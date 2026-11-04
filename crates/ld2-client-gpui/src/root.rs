@@ -14,8 +14,10 @@ use ld2_core::store::{Act, AppStore, Effect, Screen};
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
 use ld2_protocol::cmd::{AuthLogin, CharSelect, LocationMove};
 
+mod chat;
 mod game;
 mod sheet;
+mod social;
 
 use crate::palette::{palette, Palette};
 use crate::text_input::TextInput;
@@ -96,11 +98,20 @@ pub struct Root {
     guild_input: Entity<TextInput>,
     /// Открытая вкладка листа (ФР-19: персистентна в config).
     sheet_tab: sheet::SheetTab,
+    /// M10.5: чат — ввод, фильтр, активный канал.
+    chat_input: Entity<TextInput>,
+    chat_filter: Entity<TextInput>,
+    chat_channel: String,
+    /// M10.5: окно сделки — поле золота.
+    trade_gold: Entity<TextInput>,
+    /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
+    party_collapsed: bool,
 }
 
 impl Root {
     pub fn new(cx: &mut Context<'_, Self>, shell: Shell) -> Self {
         let sheet_tab = sheet::SheetTab::parse(&shell.config.sheet_tab);
+        let party_collapsed = shell.config.party_collapsed;
         let login_input = cx.new(|cx| {
             let mut input = TextInput::new(cx, t(shell.lang, Key::FieldLogin));
             if let Some(last) = &shell.config.last_login {
@@ -110,6 +121,13 @@ impl Root {
         });
         let password_input = cx.new(|cx| TextInput::new(cx, t(shell.lang, Key::FieldPassword)));
         let guild_input = cx.new(|cx| TextInput::new(cx, "…"));
+        let chat_input = cx.new(|cx| TextInput::new(cx, ""));
+        let chat_filter = cx.new(|cx| TextInput::new(cx, t(shell.lang, Key::ChFilter)));
+        let trade_gold = cx.new(|cx| {
+            let mut i = TextInput::new(cx, "0");
+            i.content = "0".into();
+            i
+        });
         let host_input = cx.new(|cx| {
             let mut input = TextInput::new(cx, &shell.config.host);
             input.content = shell.config.host.clone().into();
@@ -133,6 +151,11 @@ impl Root {
             item_menu: None,
             guild_input,
             sheet_tab,
+            chat_input,
+            chat_filter,
+            chat_channel: "location".into(),
+            trade_gold,
+            party_collapsed,
         }
     }
 
@@ -152,6 +175,11 @@ impl Root {
                 }
                 Err(_) => break,
             }
+        }
+
+        // Enter в поле чата → отправка (M10.5).
+        if self.store.screen == Screen::Game && self.chat_input.update(cx, |i, _| i.take_submit()) {
+            self.send_chat(cx);
         }
 
         // Enter в полях входа = отправка (флаг ставит TextInput).
@@ -263,6 +291,74 @@ impl Root {
         self.transport = transport::spawn(TransportConfig::new(self.config.host.clone()), tx);
         self.ingress = rx;
         self.store.to_login_screen();
+    }
+
+    /// Есть ли фокус в любом текстовом поле (навигация не должна
+    /// срабатывать при наборе текста).
+    pub(crate) fn typing_focused(&self, window: &Window, cx: &gpui::App) -> bool {
+        [
+            &self.login_input,
+            &self.password_input,
+            &self.host_input,
+            &self.guild_input,
+            &self.chat_input,
+            &self.chat_filter,
+            &self.trade_gold,
+        ]
+        .iter()
+        .any(|input| input.read(cx).focus_handle.is_focused(window))
+    }
+
+    /// Обработка глобального нажатия: навигация/цикл целей по хоткеям
+    /// из config (ФР-19); не срабатывает вне игры и при наборе текста.
+    pub(crate) fn handle_keystroke(
+        &mut self,
+        ks: &gpui::Keystroke,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.store.screen != Screen::Game || self.typing_focused(window, cx) {
+            return;
+        }
+        for (spec, dir) in [
+            (self.config.hotkeys.nav_up.clone(), "north"),
+            (self.config.hotkeys.nav_down.clone(), "south"),
+            (self.config.hotkeys.nav_left.clone(), "west"),
+            (self.config.hotkeys.nav_right.clone(), "east"),
+        ] {
+            if keystroke_matches(&spec, ks) {
+                self.nav_direction(dir);
+                cx.notify();
+                return;
+            }
+        }
+        if keystroke_matches(&self.config.hotkeys.cycle_target, ks) {
+            self.cycle_target();
+            cx.notify();
+        }
+    }
+
+    /// Навигация по направлению (ФР-03; хоткеи из config — ФР-19).
+    pub(crate) fn nav_direction(&mut self, dir: &str) {
+        let Some(exit) = self.store.snapshot.as_ref().and_then(|s| {
+            s.location
+                .exits
+                .iter()
+                .find(|e| e.dir.as_deref() == Some(dir))
+                .map(|e| e.id.clone())
+        }) else {
+            return;
+        };
+        let cmd = ld2_protocol::cmd::LocationMove { exit_id: exit };
+        match self.transport.send(&cmd) {
+            Ok(_) => self.store.on_world_sent(Act::Move),
+            Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+        }
+    }
+
+    /// Цикл целей по Tab (ФР-05).
+    pub(crate) fn cycle_target(&mut self) {
+        self.store.cycle_target();
     }
 
     fn save_config(&mut self) {
@@ -756,6 +852,16 @@ impl Root {
             pal.accent_text,
             Click::CloseSettings,
         ))
+    }
+}
+
+/// Совпадает ли нажатие со спецификацией хоткея (`alt+up`, `tab`, …).
+/// Спецификации из config.toml парсятся gpui-синтаксисом (`alt-up`).
+fn keystroke_matches(spec: &str, ks: &gpui::Keystroke) -> bool {
+    let normalized = spec.replace('+', "-");
+    match gpui::Keystroke::parse(&normalized) {
+        Ok(want) => want.modifiers == ks.modifiers && want.key.eq_ignore_ascii_case(&ks.key),
+        Err(_) => false,
     }
 }
 

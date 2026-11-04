@@ -99,6 +99,16 @@ fn main() -> anyhow::Result<()> {
 
         let root = cx.new(|cx| Root::new(cx, shell));
 
+        // Навигация мира (ФР-03) по хоткеям из config.toml (ФР-19) —
+        // логика в Root::handle_keystroke (модулю main поля Root не видны).
+        let nav_root = root.clone();
+        cx.observe_keystrokes(move |ev, window, cx| {
+            nav_root.update(cx, |root, cx| {
+                root.handle_keystroke(&ev.keystroke, window, cx);
+            });
+        })
+        .detach();
+
         // Фоновый цикл: опрос транспорта с idle-backoff (НФР §8).
         let poller = root.clone();
         cx.spawn(async move |cx: &mut gpui::AsyncApp| {
