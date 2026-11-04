@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use ely::{theme::Mode, theme::Theme, Assets};
-use gpui::{px, size, App, AppContext, Bounds, WindowBounds, WindowOptions};
+use gpui::{px, size, App, AppContext, Bounds, QuitMode, WindowBounds, WindowOptions};
 use gpui_platform::application;
 use ld2_core::config::ConfigStore;
 use ld2_core::l10n::Lang;
@@ -67,66 +67,71 @@ fn main() -> anyhow::Result<()> {
 
     // D16/M11.1: gpui-pre 0.3.10 + ассеты Ely (шрифты Inter/JetBrains Mono,
     // Lucide-иконки, PLEX для svg-рендерера) — `init` грузит их через AssetSource.
-    application().with_assets(Assets).run(move |cx: &mut App| {
-        // Ely: шрифты+тема+Tab-биндинги — «call once, first» (README).
-        ely::init(cx).expect("Ely init");
-        // Тема из config (ФР-19): без фейда при старте.
-        Theme::set_mode_now(if theme_light { Mode::Light } else { Mode::Dark }, cx);
-        // §13: PT Sans — основной шрифт Ely-компонентов (кириллица embedded);
-        // масштаб — НФР «размер шрифта» (min 12px применяет сам Ely).
-        {
-            let theme = cx.global_mut::<Theme>();
-            theme.font_family = "PT Sans".into();
-            theme.font_scale = font_scale;
-        }
-        cx.refresh_windows();
-
-        // §13: embedded-шрифт с кириллицей (PT Sans, OFL) — без системных.
-        let fonts = [
-            Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Regular.ttf").as_slice()),
-            Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Bold.ttf").as_slice()),
-        ];
-        if let Err(e) = cx.text_system().add_fonts(fonts.into()) {
-            tracing::warn!("не удалось загрузить шрифты: {e:#}");
-        }
-
-        let root = cx.new(|cx| Root::new(cx, shell));
-
-        // Навигация мира (ФР-03) по хоткеям из config.toml (ФР-19) —
-        // логика в Root::handle_keystroke (модулю main поля Root не видны).
-        let nav_root = root.clone();
-        cx.observe_keystrokes(move |ev, window, cx| {
-            nav_root.update(cx, |root, cx| {
-                root.handle_keystroke(&ev.keystroke, window, cx);
-            });
-        })
-        .detach();
-
-        // Фоновый цикл: опрос транспорта с idle-backoff (НФР §8).
-        let poller = root.clone();
-        cx.spawn(async move |cx: &mut gpui::AsyncApp| {
-            let mut delay = Duration::from_millis(50);
-            loop {
-                cx.background_executor().timer(delay).await;
-                delay = poller.update(cx, |root, cx| root.tick(cx));
+    application()
+        .with_assets(Assets)
+        // macOS по умолчанию QuitMode::Explicit — закрытие окна не
+        // завершало процесс (баг M11); LastWindowClosed — на всех ОС.
+        .with_quit_mode(QuitMode::LastWindowClosed)
+        .run(move |cx: &mut App| {
+            // Ely: шрифты+тема+Tab-биндинги — «call once, first» (README).
+            ely::init(cx).expect("Ely init");
+            // Тема из config (ФР-19): без фейда при старте.
+            Theme::set_mode_now(if theme_light { Mode::Light } else { Mode::Dark }, cx);
+            // §13: PT Sans — основной шрифт Ely-компонентов (кириллица embedded);
+            // масштаб — НФР «размер шрифта» (min 12px применяет сам Ely).
+            {
+                let theme = cx.global_mut::<Theme>();
+                theme.font_family = "PT Sans".into();
+                theme.font_scale = font_scale;
             }
-        })
-        .detach();
+            cx.refresh_windows();
 
-        let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("Likedimion".into()),
+            // §13: embedded-шрифт с кириллицей (PT Sans, OFL) — без системных.
+            let fonts = [
+                Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Regular.ttf").as_slice()),
+                Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Bold.ttf").as_slice()),
+            ];
+            if let Err(e) = cx.text_system().add_fonts(fonts.into()) {
+                tracing::warn!("не удалось загрузить шрифты: {e:#}");
+            }
+
+            let root = cx.new(|cx| Root::new(cx, shell));
+
+            // Навигация мира (ФР-03) по хоткеям из config.toml (ФР-19) —
+            // логика в Root::handle_keystroke (модулю main поля Root не видны).
+            let nav_root = root.clone();
+            cx.observe_keystrokes(move |ev, window, cx| {
+                nav_root.update(cx, |root, cx| {
+                    root.handle_keystroke(&ev.keystroke, window, cx);
+                });
+            })
+            .detach();
+
+            // Фоновый цикл: опрос транспорта с idle-backoff (НФР §8).
+            let poller = root.clone();
+            cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+                let mut delay = Duration::from_millis(50);
+                loop {
+                    cx.background_executor().timer(delay).await;
+                    delay = poller.update(cx, |root, cx| root.tick(cx));
+                }
+            })
+            .detach();
+
+            let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    titlebar: Some(gpui::TitlebarOptions {
+                        title: Some("Likedimion".into()),
+                        ..Default::default()
+                    }),
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
-                }),
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            move |_, _| root.clone(),
-        )
-        .expect("окно");
-        cx.activate(true);
-    });
+                },
+                move |_, _| root.clone(),
+            )
+            .expect("окно");
+            cx.activate(true);
+        });
     Ok(())
 }
