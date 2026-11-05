@@ -471,6 +471,7 @@ impl AppStore {
                     self.register_error = Some(crate::register::RegisterError {
                         field: crate::register::register_field_for(&code),
                         message: msg,
+                        retry_after_s: ack.error.as_ref().and_then(|e| e.retry_after_s),
                     });
                 }
                 Act::Create => self.create_error = Some(msg),

@@ -18,6 +18,7 @@ use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove};
 mod chars;
 mod chat;
 mod game;
+mod register;
 mod sheet;
 mod social;
 
@@ -34,6 +35,8 @@ const RELEASE: bool = !cfg!(debug_assertions);
 #[derive(Clone)]
 pub(crate) enum Click {
     Login,
+    /// M13.3: открыть диалог регистрации (ФР-01).
+    OpenRegister,
     Logout,
     Exit,
     ToggleLang,
@@ -90,6 +93,14 @@ pub struct Root {
     update_available: Option<String>,
     login_input: Option<Entity<TextInput>>,
     password_input: Option<Entity<TextInput>>,
+    /// Поля диалога регистрации (M13.3, D35): живут только в UI-состоянии,
+    /// в store/логи не попадают.
+    register_open: bool,
+    register_submitted: bool,
+    reg_login: Option<Entity<TextInput>>,
+    reg_email: Option<Entity<TextInput>>,
+    reg_password: Option<Entity<TextInput>>,
+    reg_password2: Option<Entity<TextInput>>,
     host_input: Option<Entity<TextInput>>,
     settings_open: bool,
     first_frame: bool,
@@ -144,6 +155,12 @@ impl Root {
             update_available: None,
             login_input: None,
             password_input: None,
+            register_open: false,
+            register_submitted: false,
+            reg_login: None,
+            reg_email: None,
+            reg_password: None,
+            reg_password2: None,
             host_input: None,
             settings_open: false,
             first_frame: true,
@@ -368,6 +385,35 @@ impl Root {
             false,
             None,
         ));
+        // M13.3: поля регистрации (пароль и подтверждение — masked).
+        self.reg_login = Some(mk(
+            window,
+            cx,
+            t(lang, Key::FieldLogin).to_string(),
+            false,
+            None,
+        ));
+        self.reg_email = Some(mk(
+            window,
+            cx,
+            t(lang, Key::FieldEmail).to_string(),
+            false,
+            None,
+        ));
+        self.reg_password = Some(mk(
+            window,
+            cx,
+            t(lang, Key::FieldPassword).to_string(),
+            true,
+            None,
+        ));
+        self.reg_password2 = Some(mk(
+            window,
+            cx,
+            t(lang, Key::FieldPassword2).to_string(),
+            true,
+            None,
+        ));
         self.chat_input = Some(mk(window, cx, String::new(), false, None));
         self.chat_filter = Some(mk(
             window,
@@ -393,6 +439,24 @@ impl Root {
             })
             .detach();
         }
+        // Enter в полях регистрации — отправка (как в логине, §ФР-01).
+        for slot in [
+            self.reg_login.clone(),
+            self.reg_email.clone(),
+            self.reg_password.clone(),
+            self.reg_password2.clone(),
+        ] {
+            let ent = slot.expect("создано выше");
+            cx.subscribe(&ent, |root, _field, event: &InputEvent, cx| {
+                if *event == InputEvent::Submit
+                    && root.store.screen == Screen::Login
+                    && root.register_open
+                {
+                    root.send_register(cx);
+                }
+            })
+            .detach();
+        }
         let chat = self.chat_input.clone().expect("создано выше");
         cx.subscribe(&chat, |root, _field, event: &InputEvent, cx| {
             if *event == InputEvent::Submit && root.store.screen == Screen::Game {
@@ -408,6 +472,10 @@ impl Root {
         [
             &self.login_input,
             &self.password_input,
+            &self.reg_login,
+            &self.reg_email,
+            &self.reg_password,
+            &self.reg_password2,
             &self.host_input,
             &self.guild_input,
             &self.chat_input,
@@ -480,6 +548,11 @@ impl Root {
     pub(crate) fn on_click(&mut self, click: Click, cx: &mut Context<'_, Self>) {
         match click {
             Click::Login => self.send_login(cx),
+            Click::OpenRegister => {
+                self.register_open = true;
+                self.register_submitted = false;
+                self.store.register_error = None;
+            }
             Click::Logout => self.logout(),
             Click::Exit => cx.quit(),
             Click::ToggleLang => {
@@ -721,6 +794,13 @@ impl Root {
                 pal.accent,
                 pal.accent_text,
                 Click::Login,
+            ))
+            .child(btn(
+                cx,
+                t(lang, Key::BtnRegister).to_string(),
+                pal.panel,
+                pal.text,
+                Click::OpenRegister,
             ))
             .children(error.map(|e| div().text_color(rgb(pal.danger)).child(e)))
             .child(
@@ -1183,6 +1263,11 @@ impl Root {
     ) -> Option<AnyElement> {
         if self.settings_open {
             return None;
+        }
+        // M13.3: диалог регистрации живёт на экране входа (D35) — вне
+        // гейта active_dialog (тот смотрит только на экраны мира/персонажей).
+        if self.register_open {
+            return self.register_dialog(cx, pal);
         }
         // Гейт экрана и приоритет — ядро (E2E-тест M11.6); внутри домена
         // порядок полей зеркалит AppStore::active_dialog.
