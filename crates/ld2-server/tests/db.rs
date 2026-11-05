@@ -55,8 +55,11 @@ async fn migrations_up_idempotent_and_revert_cycle() {
     let mut expected = [
         "_sqlx_migrations",
         "accounts",
+        "character_professions",
+        "character_quests",
         "character_skills",
         "characters",
+        "craft_jobs",
         "crime_log",
         "crime_statuses",
         "item_defs",
@@ -64,6 +67,9 @@ async fn migrations_up_idempotent_and_revert_cycle() {
         "locations",
         "loot_taken",
         "meta",
+        "professions",
+        "quests",
+        "recipes",
         "refresh_tokens",
         "skills",
     ]

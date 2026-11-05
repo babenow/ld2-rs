@@ -7,19 +7,20 @@ use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
-    ChatSend, CombatAttack, CrimeLog, EntityInfo, ItemDrop, ItemEquip, ItemUnequip, ItemUse,
-    LocationMove, MagicRuneCast, MagicScrollCast, SocketExtract, SocketInsert, StateResync,
-    UpgradePreview, UpgradeStart,
+    ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo, ItemDrop,
+    ItemEquip, ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, SocketExtract,
+    SocketInsert, StateResync, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
-    CastSource, CharStats, CharXp, CombatHit, CombatKind, CrimeAdded, EntityHp, ItemAdded,
-    ItemRemovalReason, ItemRemoved, ItemState, LocationChanged, MagicCast, Pong, StateSnapshot,
-    TimeSync, UpgradeResult,
+    CastSource, CharStats, CharXp, CombatHit, CombatKind, CraftProfession, CrimeAdded, EntityHp,
+    ItemAdded, ItemRemovalReason, ItemRemoved, ItemState, LocationChanged, MagicCast, Pong,
+    StateSnapshot, TimeSync, UpgradeResult,
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, EquipMap, Hp,
-    ItemSnapshot, LocationSnapshot, Mp, Requires, Severity, SkillSnapshot, Socket,
+    ItemSnapshot, LocationSnapshot, Mp, ProfessionSnapshot, Requires, Severity, SkillSnapshot,
+    Socket,
 };
 use ld2_protocol::ErrorCode;
 use serde::de::DeserializeOwned;
@@ -27,6 +28,7 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::auth;
+use crate::content::ContentInput;
 use crate::db;
 use crate::state::SharedState;
 
@@ -151,6 +153,16 @@ impl Session {
             "cmd/combat.attack" => self.combat_attack(env, seq).await,
             "cmd/combat.stop" => self.combat_stop(seq).await,
             "cmd/combat.flee" => self.combat_flee(seq).await,
+            // профессии/крафт (ФР-08, M12.6)
+            "cmd/craft.list" => self.craft_list(seq).await,
+            "cmd/craft.recipes" => self.craft_recipes(env, seq).await,
+            "cmd/craft.learn" => self.craft_learn(env, seq).await,
+            "cmd/craft.start" => self.craft_start(env, seq).await,
+            // квесты (ФР-12, M12.6)
+            "cmd/quest.list" => self.quest_list(seq).await,
+            "cmd/quest.accept" => self.quest_accept(env, seq).await,
+            "cmd/quest.turn_in" => self.quest_turn_in(env, seq).await,
+            "cmd/quest.abandon" => self.quest_abandon(env, seq).await,
             // преступность (ФР-11, §10, M12.5d)
             "cmd/crime.log" => self.crime_log(env, seq).await,
             // улучшение предметов (ФР-10, M12.5c)
@@ -1084,7 +1096,17 @@ impl Session {
             name: row.name.clone(),
             attrs,
             skills,
-            professions: Vec::new(), // M12.6
+            // Изученные профессии (§6, M12.6).
+            professions: match db::professions::learned(pool, &row.id).await {
+                Ok(rows) => rows
+                    .iter()
+                    .map(|(id, xp, rank)| self.profession_snapshot(id, *xp, *rank))
+                    .collect(),
+                Err(e) => {
+                    warn!("профессии {}: {e}", row.id);
+                    Vec::new()
+                }
+            },
             hp: Hp {
                 cur: i64::from(row.hp_cur),
                 max: i64::from(row.hp_max),
@@ -1111,7 +1133,19 @@ impl Session {
                     }
                 },
             },
-            quests: Vec::new(), // M12.6
+            // Журнал квестов: контент + прогресс (§6, ФР-12).
+            quests: {
+                let defs = db::quests::defs(pool).await.unwrap_or_default();
+                let progress = db::quests::progress(pool, &row.id)
+                    .await
+                    .unwrap_or_default();
+                defs.iter()
+                    .map(|def| {
+                        let p = progress.iter().find(|(id, _, _)| id == &def.0);
+                        db::quests::build_state(def, p)
+                    })
+                    .collect()
+            },
             extra: Default::default(),
         })
     }
@@ -2465,6 +2499,15 @@ impl Session {
             if let Some(text) = crate::tick::grant_kill_xp(&self.state, work).await {
                 mine.push(Out::Text(text));
             }
+            if let Some(target) = &work.target {
+                for (_, text) in
+                    crate::tick::quest_kill_progress(&self.state, &char_id, target).await
+                {
+                    if !text.is_empty() {
+                        mine.push(Out::Text(text));
+                    }
+                }
+            }
         }
         {
             let world = self.state.world.lock().expect("мир");
@@ -2690,6 +2733,15 @@ impl Session {
         if let Some(work) = &xp_work {
             if let Some(text) = crate::tick::grant_kill_xp(&self.state, work).await {
                 mine.push(Out::Text(text));
+            }
+            if let Some(target) = &work.target {
+                for (_, text) in
+                    crate::tick::quest_kill_progress(&self.state, &char_id, target).await
+                {
+                    if !text.is_empty() {
+                        mine.push(Out::Text(text));
+                    }
+                }
             }
         }
         mine
@@ -3101,6 +3153,463 @@ impl Session {
         Some((char_id.to_string(), text))
     }
 
+    // ── профессии и крафт (ФР-08, M12.6) ───────────────────────────────────
+
+    /// Профессия персонажа → снапшот §6 (`xp_to_next` из конфига, D25).
+    fn profession_snapshot(&self, id: &str, xp: i64, rank: i32) -> ProfessionSnapshot {
+        let cfg = &self.state.config.gameplay.professions;
+        let rank_u32 = rank.max(1) as u32;
+        let xp_to_next = if rank_u32 >= cfg.rank_max {
+            0
+        } else {
+            ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64
+        };
+        ProfessionSnapshot {
+            id: id.to_string(),
+            rank: rank_u32,
+            xp,
+            xp_to_next,
+            extra: Default::default(),
+        }
+    }
+
+    /// `cmd/craft.list` (§7): мои профессии `{professions[]}`.
+    async fn craft_list(&mut self, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let rows = match db::professions::learned(&self.state.pool, &char_id).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("craft.list: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let professions: Vec<ProfessionSnapshot> = rows
+            .iter()
+            .map(|(id, xp, rank)| self.profession_snapshot(id, *xp, *rank))
+            .collect();
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "professions": professions }),
+        )]
+    }
+
+    /// `cmd/craft.recipes` (§7): список рецептов `{recipes[]}` (payload
+    /// skills.md §5.4; фильтр по профессии опционален).
+    async fn craft_recipes(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CraftRecipes>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let rows = match db::craft::recipes(&self.state.pool, cmd.profession.as_deref()).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("craft.recipes: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let recipes: Vec<serde_json::Value> = rows.iter().map(recipe_payload).collect();
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "recipes": recipes }),
+        )]
+    }
+
+    /// `cmd/craft.learn` (§7): изучение профессии; лимит первичных —
+    /// `profession_limit` (D25) → `E_PROFESSION_LIMIT`.
+    async fn craft_learn(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CraftLearn>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+
+        let prof_type = match sqlx::query_scalar::<_, String>(
+            "SELECT prof_type FROM professions WHERE id = $1",
+        )
+        .bind(&cmd.profession_id)
+        .fetch_optional(pool)
+        .await
+        {
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                return vec![Self::err(seq, ErrorCode::Profession, "нет такой профессии")];
+            }
+            Err(e) => {
+                warn!("craft.learn (профессия): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if prof_type == "primary" {
+            let limit = i64::from(self.state.config.gameplay.profession_limit);
+            match db::professions::primary_count(pool, &char_id).await {
+                Ok(count) if count >= limit => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::ProfessionLimit,
+                        format!("лимит первичных профессий: {limit}"),
+                    )];
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!("craft.learn (счётчик): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+        }
+        match db::professions::learn(pool, &char_id, &cmd.profession_id).await {
+            Ok(_) => {}
+            Err(e) => {
+                warn!("craft.learn: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let snapshot = self.profession_snapshot(&cmd.profession_id, 0, 1);
+        let mut outs = vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "profession": snapshot }),
+        )];
+        outs.push(out_event(
+            "evt/craft/profession",
+            None,
+            serde_json::to_value(CraftProfession {
+                profession: snapshot,
+            })
+            .unwrap_or_default(),
+        ));
+        outs
+    }
+
+    /// `cmd/craft.start` (§7): проверки (ранг/станок/инструмент/ингредиенты)
+    /// → списание ингредиентов + джоб в БД (D27); итог — `evt/craft/result`
+    /// по готовности (тик-луп). Ошибки: `E_RANK_CAP`, `E_STATION_REQUIRED`,
+    /// `E_TOOL_MISSING`, `E_INGREDIENTS`.
+    async fn craft_start(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CraftStart>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if cmd.qty < 1 || cmd.qty > 100 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "qty должно быть 1..=100",
+            )];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = self.state.pool.clone();
+
+        let Some(recipe) = (match db::craft::recipe(&pool, &cmd.recipe_id).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("craft.start (рецепт): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "рецепта нет")];
+        };
+
+        // Ранг профессии.
+        let learned = match db::professions::learned(&pool, &char_id).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("craft.start (профессии): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let prof_rank = learned
+            .iter()
+            .find(|(id, _, _)| *id == recipe.profession)
+            .map(|(_, _, rank)| *rank)
+            .unwrap_or(0);
+        if prof_rank < recipe.rank {
+            return vec![Self::err(
+                seq,
+                ErrorCode::RankCap,
+                format!("нужен ранг {} профессии {}", recipe.rank, recipe.profession),
+            )];
+        }
+
+        // Станок: сущность с `extra.station` в текущей локации.
+        if let Some(station) = recipe.station.as_deref() {
+            let location = self.current_location(&char_id).await;
+            let has_station = match db::locations::get(&pool, &location).await {
+                Ok(Some(row)) => {
+                    let entities: Vec<Entity> =
+                        serde_json::from_value(row.entities.clone()).unwrap_or_default();
+                    entities
+                        .iter()
+                        .any(|e| e.extra.get("station").and_then(|s| s.as_str()) == Some(station))
+                }
+                _ => false,
+            };
+            if !has_station {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::StationRequired,
+                    format!("нужен станок: {station}"),
+                )];
+            }
+        }
+
+        // Инструмент: предмет с `item_type` в инвентаре.
+        if let Some(tool) = recipe.tool_type.as_deref() {
+            let has_tool = match db::items::inventory_has_type(&pool, &char_id, tool).await {
+                Ok(has) => has,
+                Err(e) => {
+                    warn!("craft.start (инструмент): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            if !has_tool {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::ToolMissing,
+                    format!("нет инструмента: {tool}"),
+                )];
+            }
+        }
+
+        // Ингредиенты: qty × inputs.
+        let inputs: Vec<ContentInput> =
+            serde_json::from_value(recipe.inputs.clone()).unwrap_or_default();
+        for input in &inputs {
+            let need = input.qty * cmd.qty;
+            let have = match db::items::count_by_type(&pool, &char_id, &input.item_type).await {
+                Ok(have) => have,
+                Err(e) => {
+                    warn!("craft.start (ингредиенты): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            if have < need {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Ingredients,
+                    format!("не хватает {}: {have}/{need}", input.item_type),
+                )];
+            }
+        }
+        for input in &inputs {
+            let need = input.qty * cmd.qty;
+            if let Err(e) =
+                db::items::consume_by_type(&pool, &char_id, &input.item_type, need).await
+            {
+                warn!("craft.start (списание): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+
+        // Джоб: материалы уже списаны, рестарт не теряет их (D27).
+        let finishes_at =
+            crate::time::now_epoch() as f64 + f64::from(recipe.time_s) * cmd.qty as f64;
+        if let Err(e) = db::craft::enqueue(&pool, &char_id, &recipe, cmd.qty, finishes_at).await {
+            warn!("craft.start (джоб): {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    // ── квесты (ФР-12, M12.6) ───────────────────────────────────────────────
+
+    /// Журнал квестов: все контент-квесты + прогресс персонажа (§7).
+    async fn quest_list(&mut self, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let (defs, progress) = match (
+            db::quests::defs(&self.state.pool).await,
+            db::quests::progress(&self.state.pool, &char_id).await,
+        ) {
+            (Ok(d), Ok(p)) => (d, p),
+            (Err(e), _) | (_, Err(e)) => {
+                warn!("quest.list: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let quests: Vec<serde_json::Value> = defs
+            .iter()
+            .map(|def| {
+                let row = progress.iter().find(|(id, _, _)| id == &def.0);
+                serde_json::to_value(db::quests::build_state(def, row)).unwrap_or_default()
+            })
+            .collect();
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "quests": quests }),
+        )]
+    }
+
+    /// `cmd/quest.accept` (§7): взять квест → ack `{quest}` +
+    /// `evt/quest/updated`.
+    async fn quest_accept(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        self.quest_transition(env, seq, "accept").await
+    }
+
+    /// `cmd/quest.turn_in` (§7): сдать выполненный → награда (XP в пул +
+    /// предметы) → ack `{quest}` + события.
+    async fn quest_turn_in(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        self.quest_transition(env, seq, "turn_in").await
+    }
+
+    /// `cmd/quest.abandon` (§7): бросить → снова «доступен».
+    async fn quest_abandon(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        self.quest_transition(env, seq, "abandon").await
+    }
+
+    /// Общий переход квеста (accept/turn_in/abandon) — одна точка проверок.
+    async fn quest_transition(&mut self, env: &Envelope, seq: u32, op: &str) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(value) = Self::payload_of::<Value>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let Some(quest_id) = value.get("quest_id").and_then(|q| q.as_str()) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "нет quest_id")];
+        };
+        let quest_id = quest_id.to_string();
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+
+        let defs = match db::quests::defs(pool).await {
+            Ok(defs) => defs,
+            Err(e) => {
+                warn!("quest (квесты): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let Some(def) = defs.iter().find(|d| d.0 == quest_id) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "квеста нет")];
+        };
+        let progress = match db::quests::progress(pool, &char_id).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("quest (прогресс): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let row = progress.iter().find(|(id, _, _)| *id == quest_id);
+
+        let mut outs = Vec::new();
+        match op {
+            "accept" => {
+                if row.is_some() {
+                    return vec![Self::err(seq, ErrorCode::Internal, "квест уже взят")];
+                }
+                let goal_count = def.3.as_array().map(|a| a.len()).unwrap_or(0);
+                if let Err(e) = db::quests::accept(pool, &char_id, &quest_id, goal_count).await {
+                    warn!("quest (accept): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+            "turn_in" => {
+                let Some((_, state, _)) = row else {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "квест не взят")];
+                };
+                if state != "turn_in" {
+                    return vec![Self::err(seq, ErrorCode::Internal, "цели ещё не выполнены")];
+                }
+                // Награда: XP в пул (D3/D4) + предметы (слоты — из конфига).
+                let reward_xp = def.4.get("xp").and_then(|x| x.as_i64()).unwrap_or(0);
+                let reward_items: Vec<(String, i64)> = def
+                    .4
+                    .get("items")
+                    .and_then(|i| i.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|it| {
+                                Some((
+                                    it.get("type")?.as_str()?.to_string(),
+                                    it.get("qty").and_then(|q| q.as_i64()).unwrap_or(1),
+                                ))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if reward_xp > 0 {
+                    if let Err(e) = db::characters::add_xp_pool(pool, &char_id, reward_xp).await {
+                        warn!("quest (награда XP): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                }
+                for (item_type, qty) in &reward_items {
+                    if let Err(e) = db::items::insert_by_type(pool, &char_id, item_type, *qty).await
+                    {
+                        warn!("quest (награда предмет): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                }
+                if let Err(e) = db::quests::set_state(pool, &char_id, &quest_id, "done").await {
+                    warn!("quest (done): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+            _ => {
+                // abandon: активный квест сбрасывается; завершённый — нельзя.
+                if let Some((_, state, _)) = row {
+                    if state == "done" {
+                        return vec![Self::err(seq, ErrorCode::Internal, "квест завершён")];
+                    }
+                }
+                if let Err(e) = db::quests::abandon(pool, &char_id, &quest_id).await {
+                    warn!("quest (abandon): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+        }
+
+        // Свежее состояние после перехода → ack `{quest}` + событие.
+        let progress = db::quests::progress(pool, &char_id)
+            .await
+            .unwrap_or_default();
+        let row = progress.iter().find(|(id, _, _)| *id == quest_id);
+        let state = db::quests::build_state(def, row);
+        outs.push(Self::ack_payload(
+            seq,
+            &serde_json::json!({ "quest": state }),
+        ));
+        outs.push(out_event(
+            "evt/quest/updated",
+            None,
+            serde_json::json!({ "quest": state }),
+        ));
+        // Сдача: обновить пул в снапшоте сессии.
+        if op == "turn_in" {
+            if let Ok(Some(row)) = db::characters::get(pool, &char_id).await {
+                if let Some(snap) = self.char.as_mut() {
+                    snap.xp_pool = row.xp_pool;
+                }
+            }
+        }
+        outs
+    }
+
     // ── помощники ────────────────────────────────────────────────────────────
 
     /// Окно rate-limit auth-команд по IP (D30); `Some(retry_after_s)` — отклон.
@@ -3196,6 +3705,24 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
         gold_value: Some(i64::from(def.gold_value)),
         extra: Default::default(),
     }
+}
+
+/// Payload рецепта для `cmd/craft.recipes` (skills.md §5.4, открытый §6).
+fn recipe_payload(r: &db::craft::RecipeRow) -> serde_json::Value {
+    serde_json::json!({
+        "id": r.id,
+        "name": r.name,
+        "profession": r.profession,
+        "rank": r.rank,
+        "station": r.station,
+        "tool": r.tool_type.as_ref().map(|t| serde_json::json!({ "type": t })),
+        "requires": r.requires,
+        "inputs": r.inputs,
+        "time_s": r.time_s,
+        "xp": { "profession": i64::from(r.xp_profession) },
+        "output": { "type": r.output_type, "qty": i64::from(r.output_qty) },
+        "station_label": r.station_label,
+    })
 }
 
 /// id определений лута сущности (§6 `extra.loot` — открытый объект).

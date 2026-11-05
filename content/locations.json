@@ -21,6 +21,24 @@
           "id": "npc_elder",
           "kind": "npc",
           "name": "Староста"
+        },
+        {
+          "id": "st_alchemy",
+          "kind": "object",
+          "name": "Алхимический стол",
+          "station": "alchemy_table"
+        },
+        {
+          "id": "st_workbench",
+          "kind": "object",
+          "name": "Верстак",
+          "station": "workbench"
+        },
+        {
+          "id": "st_scribe",
+          "kind": "object",
+          "name": "Стол начертателя",
+          "station": "scribe_table"
         }
       ]
     },

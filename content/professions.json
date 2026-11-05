@@ -1,0 +1,12 @@
+{
+  "professions": [
+    { "id": "blacksmith", "name": "Кузнец", "type": "primary" },
+    { "id": "alchemist", "name": "Алхимик", "type": "primary" },
+    { "id": "scribe", "name": "Начертатель", "type": "primary" },
+    { "id": "woodcarver", "name": "Резчик", "type": "primary" },
+    { "id": "tailor", "name": "Портной", "type": "primary" },
+    { "id": "cook", "name": "Повар", "type": "primary" },
+    { "id": "herbalist", "name": "Травник", "type": "secondary" },
+    { "id": "hunter", "name": "Охотник", "type": "secondary" }
+  ]
+}

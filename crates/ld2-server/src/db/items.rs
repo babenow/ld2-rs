@@ -221,3 +221,102 @@ pub async fn set_upgrade(pool: &PgPool, uid: &str, upgrade: i32) -> Result<(), s
         .await?;
     Ok(())
 }
+
+/// Есть ли в инвентаре предмет с данным `item_type` (инструмент, M12.6).
+pub async fn inventory_has_type(
+    pool: &PgPool,
+    char_id: &str,
+    item_type: &str,
+) -> Result<bool, sqlx::Error> {
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM items i JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = $2",
+    )
+    .bind(char_id)
+    .bind(item_type)
+    .fetch_one(pool)
+    .await?;
+    Ok(n > 0)
+}
+
+/// Сколько штук (сумма стаков) предметов данного `item_type`.
+pub async fn count_by_type(
+    pool: &PgPool,
+    char_id: &str,
+    item_type: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(SUM(i.qty), 0) FROM items i JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = $2",
+    )
+    .bind(char_id)
+    .bind(item_type)
+    .fetch_one(pool)
+    .await
+}
+
+/// Списать `need` штук по `item_type` (стаки убывают, пустые — удаляются);
+/// `false` — не хватает (атомарно не защищено — проверка вызывающим).
+pub async fn consume_by_type(
+    pool: &PgPool,
+    char_id: &str,
+    item_type: &str,
+    need: i64,
+) -> Result<bool, sqlx::Error> {
+    let rows: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT i.uid, i.qty FROM items i JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = $2 ORDER BY i.created_at, i.uid",
+    )
+    .bind(char_id)
+    .bind(item_type)
+    .fetch_all(pool)
+    .await?;
+    let mut left = need;
+    for (uid, qty) in rows {
+        if left <= 0 {
+            break;
+        }
+        let take = i64::from(qty).min(left);
+        left -= take;
+        let rest = qty - take as i32;
+        if rest <= 0 {
+            sqlx::query("DELETE FROM items WHERE uid = $1")
+                .bind(&uid)
+                .execute(pool)
+                .await?;
+        } else {
+            set_qty(pool, &uid, i64::from(rest)).await?;
+        }
+    }
+    Ok(left <= 0)
+}
+
+/// Вставить предмет по типу или id определения (награды квестов и крафт,
+/// M12.6): сначала точное совпадение `id`, затем первый `item_type`;
+/// `None` — такого предмета нет в контенте.
+pub async fn insert_by_type(
+    pool: &PgPool,
+    char_id: &str,
+    item_type: &str,
+    qty: i64,
+) -> Result<Option<ItemRow>, sqlx::Error> {
+    let by_id: Option<String> = sqlx::query_scalar("SELECT id FROM item_defs WHERE id = $1")
+        .bind(item_type)
+        .fetch_optional(pool)
+        .await?;
+    let def_id = match by_id {
+        Some(id) => Some(id),
+        None => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM item_defs WHERE item_type = $1 ORDER BY id LIMIT 1",
+            )
+            .bind(item_type)
+            .fetch_optional(pool)
+            .await?
+        }
+    };
+    let Some(def_id) = def_id else {
+        return Ok(None);
+    };
+    insert(pool, char_id, &def_id, qty).await.map(Some)
+}

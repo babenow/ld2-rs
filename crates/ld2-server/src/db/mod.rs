@@ -11,9 +11,12 @@
 
 pub mod accounts;
 pub mod characters;
+pub mod craft;
 pub mod crime;
 pub mod items;
 pub mod locations;
+pub mod professions;
+pub mod quests;
 pub mod skills;
 
 use sqlx::postgres::PgPoolOptions;

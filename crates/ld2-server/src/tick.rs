@@ -38,17 +38,24 @@ pub async fn run(state: SharedState) {
     let period = Duration::from_millis((1000 / tick_hz).max(1) as u64);
     let mut interval = tokio::time::interval(period);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut stopped = state.shutdown_rx();
     let mut ticks: u64 = 0;
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = stopped.changed() => break, // request_shutdown (graceful)
+            _ = interval.tick() => {}
+        }
         tick_once(&state).await;
         ticks += 1;
         if ticks.is_multiple_of(u64::from(tick_hz)) {
-            // Раз в секунду: мана-реген (§2.4) и истечение статусов (§10).
+            // Раз в секунду: мана-реген (§2.4), истечение статусов (§10)
+            // и готовность крафт-джобов (M12.6).
             regen_step(&state).await;
             crime_expire_step(&state).await;
+            craft_finish_step(&state).await;
         }
     }
+    tracing::info!("тик-луп остановлен");
 }
 
 /// Один тик: план атак (под локом, без await) → БД-работа (урон персонажам,
@@ -72,11 +79,18 @@ async fn tick_once(state: &SharedState) {
         let death_events = apply_mob_hit(state, hit).await;
         send_all(state, &death_events);
     }
-    // 3) XP убийств — в БД и событием (D27).
+    // 3) XP убийств — в БД и событием (D27); квесты-«убийства» (ФР-12).
     for work in &plan.xp {
         if let Some(text) = grant_kill_xp(state, work).await {
             let world = state.world.lock().expect("мир");
             world.send_to_char(&work.char_id, text);
+        }
+        if let Some(target) = &work.target {
+            let events = quest_kill_progress(state, &work.char_id, target).await;
+            let world = state.world.lock().expect("мир");
+            for (addr, text) in events {
+                world.send_to_char(&addr, text);
+            }
         }
     }
     plan.events.clear();
@@ -107,6 +121,8 @@ pub(crate) struct KillXp {
     pub(crate) char_id: String,
     pub(crate) amount: i64,
     pub(crate) skill: Option<String>,
+    /// id убитой сущности — прогресс квестов типа `kill` (ФР-12).
+    pub(crate) target: Option<String>,
 }
 
 #[derive(Default)]
@@ -312,6 +328,7 @@ pub(crate) fn mob_kill_effects(
         char_id: attacker.to_string(),
         amount,
         skill: None,
+        target: Some(target.to_string()),
     })
 }
 
@@ -528,4 +545,222 @@ async fn crime_expire_step(state: &SharedState) {
             world.send_to_char(&char_id, text);
         }
     }
+}
+
+/// Готовые крафт-джобы раз в секунду (M12.6): выдача предметов + XP
+/// профессии → `evt/craft/result`, `evt/item/added`, `evt/craft/profession`.
+/// Джоб забирается атомарно (`take_job`) — рестарт не дублирует выдачу (D27).
+async fn craft_finish_step(state: &SharedState) {
+    let now = crate::time::now_epoch() as f64;
+    let jobs = match crate::db::craft::ready_jobs(&state.pool, now).await {
+        Ok(jobs) => jobs,
+        Err(e) => {
+            warn!("крафт (джобы): {e}");
+            return;
+        }
+    };
+    for (job_id, char_id, recipe_id, total_qty, xp) in jobs {
+        if !crate::db::craft::take_job(&state.pool, job_id)
+            .await
+            .unwrap_or(false)
+        {
+            continue; // забран параллельным шагом
+        }
+        let mut events: Vec<(String, String)> = Vec::new();
+        // Выдача предметов (output_type × total_qty).
+        let output_type = recipe_output_type(state, &recipe_id).await;
+        let made =
+            match crate::db::items::insert_by_type(&state.pool, &char_id, &output_type, total_qty)
+                .await
+            {
+                Ok(Some(row)) => vec![serde_json::json!({ "uid": row.uid, "qty": total_qty })],
+                Ok(None) => {
+                    warn!("крафт: нет предмета типа {output_type} (рецепт {recipe_id})");
+                    Vec::new()
+                }
+                Err(e) => {
+                    warn!("крафт (выдача {char_id}): {e}");
+                    Vec::new()
+                }
+            };
+        let result = ld2_protocol::evt::CraftResult {
+            recipe_id: recipe_id.clone(),
+            ok: true,
+            made: made
+                .iter()
+                .filter_map(|m| {
+                    Some(ld2_protocol::evt::MadeItem {
+                        uid: m["uid"].as_str()?.to_string(),
+                        qty: m["qty"].as_i64()?,
+                    })
+                })
+                .collect(),
+            consumed: Vec::new(),
+            extra: Default::default(),
+        };
+        events.push((
+            char_id.clone(),
+            crate::session::event_text(
+                "evt/craft/result",
+                None,
+                serde_json::to_value(&result).unwrap_or_default(),
+            ),
+        ));
+        // XP профессии (skills.md §5.1: 40 + 25×ранг — уже в xp рецепта).
+        if xp > 0 {
+            if let Some(text) = profession_xp_step(state, &char_id, &recipe_id, xp).await {
+                events.push((char_id.clone(), text));
+            }
+        }
+        let world = state.world.lock().expect("мир");
+        for (addr, text) in events {
+            if !text.is_empty() {
+                world.send_to_char(&addr, text);
+            }
+        }
+    }
+}
+
+/// `output_type` рецепта (для вставки предмета по типу).
+async fn recipe_output_type(state: &SharedState, recipe_id: &str) -> String {
+    crate::db::craft::recipe(&state.pool, recipe_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| r.output_type)
+        .unwrap_or_else(|| recipe_id.to_string())
+}
+
+/// XP в профессию рецепта с повышением ранга (skills.md §5.1) → событие
+/// `evt/craft/profession` (или `None`).
+async fn profession_xp_step(
+    state: &SharedState,
+    char_id: &str,
+    recipe_id: &str,
+    gain: i64,
+) -> Option<String> {
+    let recipe = crate::db::craft::recipe(&state.pool, recipe_id)
+        .await
+        .ok()
+        .flatten()?;
+    let learned = crate::db::professions::learned(&state.pool, char_id)
+        .await
+        .ok()?;
+    let (mut xp, mut rank) = learned
+        .iter()
+        .find(|(id, _, _)| *id == recipe.profession)
+        .map(|(_, x, r)| (*x, *r))
+        .unwrap_or((0, 1));
+    xp += gain;
+    let cfg = &state.config.gameplay.professions;
+    // Рост ранга, пока хватает порога и не достигнут потолок.
+    loop {
+        if rank as u32 >= cfg.rank_max {
+            break;
+        }
+        let need = ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64;
+        if xp < need {
+            break;
+        }
+        xp -= need;
+        rank += 1;
+    }
+    if let Err(e) =
+        crate::db::professions::grant_xp(&state.pool, char_id, &recipe.profession, xp, rank).await
+    {
+        warn!("крафт (XP профессии {char_id}): {e}");
+        return None;
+    }
+    let rank_u32 = rank.max(1) as u32;
+    let xp_to_next = if rank_u32 >= cfg.rank_max {
+        0
+    } else {
+        ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64
+    };
+    let snapshot = ld2_protocol::types::ProfessionSnapshot {
+        id: recipe.profession.clone(),
+        rank: rank_u32,
+        xp,
+        xp_to_next,
+        extra: Default::default(),
+    };
+    let text = crate::session::event_text(
+        "evt/craft/profession",
+        None,
+        serde_json::to_value(ld2_protocol::evt::CraftProfession {
+            profession: snapshot,
+        })
+        .unwrap_or_default(),
+    );
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Прогресс квестов типа `kill <target>` для убийцы (ФР-12): цели
+/// продвигаются, выполненные → `evt/quest/progress`/`evt/quest/updated`.
+pub(crate) async fn quest_kill_progress(
+    state: &SharedState,
+    char_id: &str,
+    target: &str,
+) -> Vec<(String, String)> {
+    let defs = match crate::db::quests::defs(&state.pool).await {
+        Ok(defs) => defs,
+        Err(e) => {
+            warn!("квесты (defs): {e}");
+            return Vec::new();
+        }
+    };
+    let progress = match crate::db::quests::progress(&state.pool, char_id).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!("квесты (прогресс {char_id}): {e}");
+            return Vec::new();
+        }
+    };
+    let mut events = Vec::new();
+    for def in &defs {
+        let Some(row) = progress.iter().find(|(id, _, _)| id == &def.0) else {
+            continue; // не взят
+        };
+        if row.1 != "active" {
+            continue;
+        }
+        let (new_progress, all_done) = crate::db::quests::advance_kill(&def.3, &row.2, target);
+        if new_progress == row.2 {
+            continue; // цель не про эту сущность
+        }
+        let new_state = if all_done { "turn_in" } else { "active" };
+        if let Err(e) =
+            crate::db::quests::set_progress(&state.pool, char_id, &def.0, new_progress.clone())
+                .await
+        {
+            warn!("квесты (запись {}): {e}", def.0);
+            continue;
+        }
+        if all_done {
+            if let Err(e) =
+                crate::db::quests::set_state(&state.pool, char_id, &def.0, "turn_in").await
+            {
+                warn!("квесты (turn_in {}): {e}", def.0);
+            }
+        }
+        let fresh = crate::db::quests::progress(&state.pool, char_id)
+            .await
+            .unwrap_or_default();
+        let p = fresh.iter().find(|(id, _, _)| id == &def.0);
+        let state_obj = crate::db::quests::build_state(def, p);
+        let ty = if new_state == "turn_in" {
+            "evt/quest/updated"
+        } else {
+            "evt/quest/progress"
+        };
+        let text = crate::session::event_text(ty, None, serde_json::json!({ "quest": state_obj }));
+        if !text.is_empty() {
+            events.push((char_id.to_string(), text));
+        }
+    }
+    events
 }

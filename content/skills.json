@@ -12,6 +12,11 @@
     { "id": "armor_light", "name": "Лёгкая броня", "group": "defense" },
     { "id": "block", "name": "Блок", "group": "defense" },
     { "id": "evasion", "name": "Уклонение", "group": "defense" },
+    { "id": "parring", "name": "Парирование", "group": "defense" },
+    { "id": "shield_block", "name": "Блок щитом", "group": "defense" },
+    { "id": "m_evasion", "name": "Маг. уклонение", "group": "defense" },
+    { "id": "m_armor", "name": "Маг. защита", "group": "defense" },
+    { "id": "m_dispel", "name": "Маг. рассеивание", "group": "defense" },
 
     { "id": "fire", "name": "Огонь", "group": "magic" },
     { "id": "frost", "name": "Мороз", "group": "magic" },

@@ -33,11 +33,19 @@ async fn healthz(
 /// `into_make_service_with_connect_info` — нужен `ConnectInfo<SocketAddr>`
 /// в WS-обработчике (rate-limit auth по IP, D30).
 pub async fn serve(listener: tokio::net::TcpListener, state: SharedState) -> std::io::Result<()> {
+    let mut stopped = state.shutdown_rx();
+    let router = router(state);
     axum::serve(
         listener,
-        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+        router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move {
+        tokio::select! {
+            _ = shutdown_signal() => {},
+            // Остановка по запросу (request_shutdown): тесты «рестарта» (M12.6).
+            _ = stopped.changed() => {},
+        }
+    })
     .await
 }
 

@@ -85,6 +85,8 @@ pub struct GameplaySection {
     pub inventory: InventorySection,
     pub upgrade: UpgradeSection,
     pub magic: MagicSection,
+    /// Профессии и крафт (skills.md §8, M12.6).
+    pub professions: ProfessionsSection,
 }
 
 /// Значение capability-флага §5: булево или строка (`upgrade.rules`).
@@ -166,6 +168,22 @@ pub struct ManaSection {
     pub regen_in_pct_s: f64,
     /// Стоимость каста руны в мане.
     pub rune_cost: u32,
+}
+
+/// Баланс профессий (skills.md §8 `[professions]`, D25 — из конфига).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfessionsSection {
+    /// Предел ранга профессии (skills.md §5.1: 1…7).
+    pub rank_max: u32,
+    /// XP за успешный крафт: `base + per_rank × ранг_рецепта`.
+    pub xp_per_craft_base: i64,
+    pub xp_per_craft_per_rank: i64,
+    /// Порог ранга: `round(base × growth^rank)`.
+    pub xp_to_next_base: i64,
+    pub xp_growth: f64,
+    /// Доля XP при неудаче (skills.md §5.1).
+    pub fail_xp_ratio: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -331,6 +349,29 @@ impl Config {
             out.push(format!(
                 "gameplay.upgrade.chance_per_level: должен быть в 0..=1 (получено: {})",
                 self.gameplay.upgrade.chance_per_level
+            ));
+        }
+
+        // [gameplay.professions] (M12.6)
+        if self.gameplay.professions.rank_max == 0 {
+            out.push("gameplay.professions.rank_max: должен быть ≥ 1".into());
+        }
+        if self.gameplay.professions.xp_per_craft_base < 0
+            || self.gameplay.professions.xp_per_craft_per_rank < 0
+            || self.gameplay.professions.xp_to_next_base < 1
+        {
+            out.push("gameplay.professions.xp_*: base ≥ 0, per_rank ≥ 0, to_next ≥ 1".into());
+        }
+        if self.gameplay.professions.xp_growth < 1.0 {
+            out.push(format!(
+                "gameplay.professions.xp_growth: должен быть ≥ 1.0 (получено: {})",
+                self.gameplay.professions.xp_growth
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.gameplay.professions.fail_xp_ratio) {
+            out.push(format!(
+                "gameplay.professions.fail_xp_ratio: должен быть в 0..=1 (получено: {})",
+                self.gameplay.professions.fail_xp_ratio
             ));
         }
 

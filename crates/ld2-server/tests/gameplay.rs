@@ -80,7 +80,7 @@ async fn skills_invest_gate_and_cap() {
     let skills = snap["payload"]["char"]["skills"]
         .as_array()
         .expect("навыки");
-    assert_eq!(skills.len(), 28, "все навыки skills.md §3");
+    assert_eq!(skills.len(), 33, "все навыки skills.md §3 (уникальные id)");
     let sword = skills
         .iter()
         .find(|s| s["id"] == "sword")

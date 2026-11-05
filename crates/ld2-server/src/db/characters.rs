@@ -187,3 +187,14 @@ pub async fn add_gold(pool: &PgPool, char_id: &str, amount: i64) -> Result<(), s
         .await?;
     Ok(())
 }
+
+/// Начислить XP в пул (награды квестов, D3/D4) → новый пул.
+pub async fn add_xp_pool(pool: &PgPool, char_id: &str, amount: i64) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE characters SET xp_pool = xp_pool + $2 WHERE id = $1 RETURNING xp_pool",
+    )
+    .bind(char_id)
+    .bind(amount)
+    .fetch_one(pool)
+    .await
+}

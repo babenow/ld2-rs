@@ -64,6 +64,76 @@
       },
       "gold_value": 30,
       "qty": 1
+    },
+    {
+      "id": "herb",
+      "type": "herb",
+      "name": "Трава",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 2,
+      "qty": 1
+    },
+    {
+      "id": "wood_oak",
+      "type": "wood_oak",
+      "name": "Дубовое бревно",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 4,
+      "qty": 1
+    },
+    {
+      "id": "parchment",
+      "type": "parchment",
+      "name": "Пергамент",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
+      "id": "ink",
+      "type": "ink",
+      "name": "Чернила",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
+      "id": "tool_flask",
+      "type": "flask",
+      "name": "Колба",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "tool_chisel",
+      "type": "chisel",
+      "name": "Резец",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "tool_quill",
+      "type": "quill",
+      "name": "Перо",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
     }
   ]
 }

@@ -31,8 +31,50 @@ pub fn test_config(db_url: &str, tweak: impl FnOnce(&mut Config)) -> Config {
     cfg
 }
 
+/// Управляемый тестовый сервер: можно остановить («рестарт», M12.6) —
+/// `stop()` гасит тик-луп и accept-loop через `request_shutdown`.
+pub struct TestServer {
+    pub ws: String,
+    state: std::sync::Arc<AppState>,
+}
+
+impl TestServer {
+    /// Остановить сервер (graceful): тик-луп и WS-приём завершаются.
+    pub async fn stop(self) {
+        self.state.request_shutdown();
+        // Немного даём accept-loop/tiku завершиться до следующего старта.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// Сервер на эфемерном порту с хэндлом остановки.
+pub async fn start_server_guarded(db_url: &str, tweak: impl FnOnce(&mut Config)) -> TestServer {
+    let addr = start_server_with(db_url, tweak).await;
+    let state = TEST_STATE
+        .get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|m| m.get(&addr).cloned())
+        .expect("state запущенного сервера");
+    TestServer {
+        ws: format!("ws://{addr}/ws"),
+        state,
+    }
+}
+
+/// Реестр state'ов запущенных серверов (по адресу) — для остановки в тестах.
+static TEST_STATE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<AppState>>>,
+> = std::sync::OnceLock::new();
+
 /// Сервер на эфемерном порту (свой state, миграции + сид контента) → адрес.
 pub async fn start_server_with(db_url: &str, tweak: impl FnOnce(&mut Config)) -> String {
+    // Логи сервера в вывод теста (диагностика падений; инициализация — разовая).
+    static LOG: std::sync::Once = std::sync::Once::new();
+    LOG.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    });
     let cfg = test_config(db_url, tweak);
     let pool = db::connect(&cfg.database).await.expect("БД + миграции");
     ld2_server::content::seed(&pool, &cfg.world.content_dir)
@@ -44,10 +86,19 @@ pub async fn start_server_with(db_url: &str, tweak: impl FnOnce(&mut Config)) ->
         .await
         .expect("bind");
     let addr = listener.local_addr().expect("local_addr");
+    let key = addr.to_string();
+    let registry = TEST_STATE.get_or_init(Default::default);
+    if let Ok(mut map) = registry.lock() {
+        map.insert(key.clone(), state.clone());
+    }
+    let key_for_task = key.clone();
     tokio::spawn(async move {
         let _ = app::serve(listener, state).await;
+        if let Ok(mut map) = registry.lock() {
+            map.remove(&key_for_task);
+        }
     });
-    addr.to_string()
+    key
 }
 
 /// Сервер с конфигом-шаблоном → ws-url (`ws://addr/ws`).

@@ -84,6 +84,14 @@ gold_per_level = 50     # прибавка за уровень
 chance_base = 0.9       # шанс успеха с +0
 chance_per_level = 0.05 # снижение шанса за уровень
 
+[gameplay.professions]  # skills.md §8 (D25)
+rank_max = 7            # предел ранга профессии
+xp_per_craft_base = 40  # XP за крафт: 40 + per_rank × ранг рецепта
+xp_per_craft_per_rank = 25
+xp_to_next_base = 80    # порог ранга: round(base × growth^rank)
+xp_growth = 1.5
+fail_xp_ratio = 0.2     # XP при неудаче
+
 [gameplay.magic]
 rune_recharge = "item"     # ADR-002
 scroll_requires_target = true
