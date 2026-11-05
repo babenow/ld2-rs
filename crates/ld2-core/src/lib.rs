@@ -15,6 +15,7 @@
 
 pub mod config;
 pub mod l10n;
+pub mod logging;
 pub mod notify;
 pub mod secrets;
 pub mod store;

@@ -3655,16 +3655,21 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]
 name = "ld2-client-gpui"
 version = "0.9.0"
 dependencies = [
+ "anyhow",
  "gpui",
  "gpui_platform",
+ "keyring",
+ "ld2-core",
+ "ld2-protocol",
+ "tokio",
+ "tracing",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -3686,6 +3691,8 @@ dependencies = [
  "tokio-tungstenite",
  "toml 0.8.23",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "ureq",
 ]
 
