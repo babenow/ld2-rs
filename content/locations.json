@@ -1,0 +1,36 @@
+{
+  "locations": [
+    {
+      "id": "l_village",
+      "name": "Деревня Изба",
+      "spawn": true,
+      "flags": ["safe"],
+      "text": "Тесная деревня на опушке. Дым из труб, крики петухов. На север уходит тропа в лес.",
+      "exits": [
+        { "id": "e_north", "label": "тропа на север", "dir": "north", "to": "l_forest" }
+      ],
+      "entities": [
+        { "id": "npc_elder", "kind": "npc", "name": "Староста" }
+      ]
+    },
+    {
+      "id": "l_forest",
+      "name": "Черный лес",
+      "flags": ["pvp"],
+      "text": "Сосны давят тьмою… Тропа вьётся на юг, к деревне.",
+      "exits": [
+        { "id": "e_south", "label": "тропа на юг", "dir": "south", "to": "l_village" }
+      ],
+      "entities": [
+        {
+          "id": "m_3",
+          "kind": "monster",
+          "name": "Волк",
+          "hp": { "cur": 18, "max": 18 },
+          "tags": ["aggro"],
+          "aggro": true
+        }
+      ]
+    }
+  ]
+}

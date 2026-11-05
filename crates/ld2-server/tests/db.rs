@@ -11,10 +11,16 @@ fn test_url() -> Option<String> {
         .filter(|u| !u.is_empty())
 }
 
-/// Все таблицы текущей схемы (для проверки «ушла/вернулась»).
-const SCHEMA_TABLES: &str = "SELECT COUNT(*) FROM information_schema.tables \
-     WHERE table_schema = 'public' \
-     AND table_name IN ('meta', 'accounts', 'refresh_tokens', 'characters')";
+/// Все таблицы `public` (отсортированы — сравнение как множество).
+async fn schema_tables(pool: &sqlx::PgPool) -> Vec<String> {
+    let mut tables: Vec<String> =
+        sqlx::query_scalar("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+            .fetch_all(pool)
+            .await
+            .expect("pg_tables");
+    tables.sort();
+    tables
+}
 
 #[tokio::test]
 async fn migrations_up_idempotent_and_revert_cycle() {
@@ -27,32 +33,40 @@ async fn migrations_up_idempotent_and_revert_cycle() {
         max_connections: 4,
     };
 
-    // Up дважды — идемпотентно (лог `_sqlx_migrations`).
+    // Up дважды — идемпотентно (лог `_sqlx_migrations`; `meta` может нести
+    // строки сида контента с M12.3 — «пустота meta» здесь не проверяется).
     let first = db::connect(&cfg).await.expect("первый up");
     let second = db::connect(&cfg).await.expect("повторный up");
-    let (rows,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM meta")
-        .fetch_one(&second)
-        .await
-        .expect("таблица meta существует и пуста");
-    assert_eq!(rows, 0);
     db::ping(&second).await.expect("ping");
 
-    // Полный откат до версии 0: down-пары убирают всю схему.
+    // Полный откат до версии 0: down-пары убирают всю схему, остаётся
+    // только пустой лог миграций.
     let migrator = sqlx::migrate!("./migrations");
     migrator.undo(&second, 0).await.expect("undo(0)");
-    let gone: i64 = sqlx::query_scalar(SCHEMA_TABLES)
-        .fetch_one(&second)
-        .await
-        .expect("information_schema после отката");
-    assert_eq!(gone, 0, "после отката до 0 схемы нет");
+    let remaining = schema_tables(&second).await;
+    assert_eq!(
+        remaining,
+        vec!["_sqlx_migrations".to_string()],
+        "после undo(0) — только пустой лог миграций"
+    );
 
     // И снова up — схема полностью восстанавливается.
     migrator.run(&second).await.expect("up после отката");
-    let back: i64 = sqlx::query_scalar(SCHEMA_TABLES)
-        .fetch_one(&second)
-        .await
-        .expect("information_schema после подъёма");
-    assert_eq!(back, 4, "после повторного up все таблицы на месте");
+    let mut expected = [
+        "_sqlx_migrations",
+        "accounts",
+        "characters",
+        "locations",
+        "meta",
+        "refresh_tokens",
+    ]
+    .map(|s| s.to_string());
+    expected.sort();
+    assert_eq!(
+        schema_tables(&second).await,
+        expected,
+        "после повторного up схема полностью восстановлена"
+    );
     db::ping(&second).await.expect("ping после цикла");
 
     first.close().await;

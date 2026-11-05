@@ -105,3 +105,26 @@ pub async fn touch_login(pool: &PgPool, account_id: i64) -> Result<(), sqlx::Err
         .await?;
     Ok(())
 }
+
+/// Последний выбранный персонаж (восстановление сессии при login/resume:
+/// клиент шлёт `state.resync` и ждёт снапшот, §3/§4.5).
+pub async fn last_char(pool: &PgPool, account_id: i64) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>("SELECT last_char_id FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Запомнить выбранный персонажа (best-effort, на `char.select`).
+pub async fn set_last_char(
+    pool: &PgPool,
+    account_id: i64,
+    char_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE accounts SET last_char_id = $2 WHERE id = $1")
+        .bind(account_id)
+        .bind(char_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}

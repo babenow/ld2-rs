@@ -11,6 +11,7 @@
 
 pub mod accounts;
 pub mod characters;
+pub mod locations;
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;

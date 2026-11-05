@@ -106,6 +106,12 @@ impl From<std::io::Error> for AppError {
     }
 }
 
+impl From<ld2_server::content::ContentError> for AppError {
+    fn from(err: ld2_server::content::ContentError) -> Self {
+        AppError::Runtime(anyhow::Error::new(err))
+    }
+}
+
 async fn run() -> Result<(), AppError> {
     let (command, config_path) = match parse_args()? {
         Args::Help => {
@@ -142,6 +148,19 @@ async fn run() -> Result<(), AppError> {
         pool.close().await;
         return Ok(());
     }
+
+    // Сид контента (D26): версия не изменилась → БД не трогается вообще
+    // (ручные правки переживают перезапуск — критерий M12.3).
+    let seed = ld2_server::content::seed(&pool, &cfg.world.content_dir).await?;
+    tracing::info!(
+        "контент: {} (версия {}…)",
+        if seed.applied {
+            "сид применён"
+        } else {
+            "без изменений"
+        },
+        &seed.version[..12]
+    );
 
     let listener = tokio::net::TcpListener::bind(&cfg.server.bind).await?;
     let addr = listener.local_addr()?;

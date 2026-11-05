@@ -19,19 +19,25 @@ pub fn test_url() -> Option<String> {
         .filter(|u| !u.is_empty())
 }
 
-/// Конфиг-шаблон (`server.example.toml`) с тестовой БД и правками теста.
+/// Конфиг-шаблон (`server.example.toml`) с тестовой БД, контентом из
+/// репозитория и правками теста.
 pub fn test_config(db_url: &str, tweak: impl FnOnce(&mut Config)) -> Config {
     let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("server.example.toml");
     let mut cfg = Config::load(&example).expect("шаблон валиден");
     cfg.database.url = db_url.to_string();
+    // Контент — из репозитория (CWD тестов — корень crate, M12.3/D26).
+    cfg.world.content_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
     tweak(&mut cfg);
     cfg
 }
 
-/// Сервер на эфемерном порту (свой state, миграции) → адрес `127.0.0.1:port`.
+/// Сервер на эфемерном порту (свой state, миграции + сид контента) → адрес.
 pub async fn start_server_with(db_url: &str, tweak: impl FnOnce(&mut Config)) -> String {
     let cfg = test_config(db_url, tweak);
     let pool = db::connect(&cfg.database).await.expect("БД + миграции");
+    ld2_server::content::seed(&pool, &cfg.world.content_dir)
+        .await
+        .expect("сид контента");
     let state = Arc::new(AppState::new(cfg, pool));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

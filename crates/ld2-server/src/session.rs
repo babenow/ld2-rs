@@ -5,10 +5,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 
-use ld2_protocol::cmd::{AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect};
+use ld2_protocol::cmd::{
+    AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, EntityInfo,
+    LocationMove, StateResync,
+};
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
-use ld2_protocol::evt::{Pong, StateSnapshot, TimeSync};
-use ld2_protocol::types::{CharacterState, CharacterSummary, Hp, LocationSnapshot, Mp};
+use ld2_protocol::evt::{LocationChanged, Pong, StateSnapshot, TimeSync};
+use ld2_protocol::types::{CharacterState, CharacterSummary, Entity, Hp, LocationSnapshot, Mp};
 use ld2_protocol::ErrorCode;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -39,6 +42,8 @@ pub struct Session {
     /// Выбранный персонаж (`char.select`, §3): снапшот и ack-версии — его.
     selected_char_id: Option<String>,
     char: Option<CharacterState>,
+    /// Текущая локация персонажа (M12.3): разрешается при входе/переходе.
+    location_id: Option<String>,
 }
 
 impl Session {
@@ -53,6 +58,7 @@ impl Session {
             authenticated: false,
             selected_char_id: None,
             char: None,
+            location_id: None,
         }
     }
 
@@ -108,6 +114,11 @@ impl Session {
             "cmd/char.create" => self.char_create(env, seq).await,
             "cmd/char.select" => self.char_select(env, seq).await,
             "cmd/char.delete" => self.char_delete(env, seq).await,
+            // мир (ФР-03, M12.3)
+            "cmd/location.look" => self.location_look(seq).await,
+            "cmd/location.move" => self.location_move(env, seq).await,
+            "cmd/entity.info" => self.entity_info(env, seq).await,
+            "cmd/state.resync" => self.state_resync(env, seq).await,
             // Сервисный ping (§7): ack + echo; RTT клиент считает по своему
             // `ts` — сервер отвечает 0, как и мок.
             "cmd/ping" => {
@@ -316,14 +327,20 @@ impl Session {
         self.authenticated = true;
         self.selected_char_id = None;
         self.char = None;
+        self.location_id = None;
+        // Восстановление последней сессии (§4.5): после resume клиент шлёт
+        // `state.resync` и ждёт снапшот — персонаж должен быть выбран.
+        self.restore_last_char(account_id).await;
         // §5 characters[]: живые персонажи аккаунта (ошибка — не ломает вход).
-        let chars = match db::characters::list(&self.state.pool, account_id).await {
-            Ok(rows) => rows.iter().map(summary_of).collect(),
-            Err(e) => {
-                warn!("список персонажей при входе: {e}");
-                Vec::new()
+        let mut chars = Vec::new();
+        match db::characters::list(&self.state.pool, account_id).await {
+            Ok(rows) => {
+                for row in &rows {
+                    chars.push(self.summary_for(row).await);
+                }
             }
-        };
+            Err(e) => warn!("список персонажей при входе: {e}"),
+        }
         let config = auth::session_config(&cfg, access.clone(), refresh, chars);
         vec![
             Self::ack_payload(
@@ -350,7 +367,10 @@ impl Session {
         let account_id = self.account_id.expect("require_auth выше");
         match db::characters::list(&self.state.pool, account_id).await {
             Ok(rows) => {
-                let characters: Vec<CharacterSummary> = rows.iter().map(summary_of).collect();
+                let mut characters = Vec::with_capacity(rows.len());
+                for row in &rows {
+                    characters.push(self.summary_for(row).await);
+                }
                 vec![Self::ack_payload(
                     seq,
                     &serde_json::json!({ "characters": characters }),
@@ -403,10 +423,13 @@ impl Session {
             )];
         }
         match db::characters::create(pool, account_id, &cmd.name, &cmd.profile).await {
-            Ok(Some(row)) => vec![Self::ack_payload(
-                seq,
-                &serde_json::json!({ "character": summary_of(&row) }),
-            )],
+            Ok(Some(row)) => {
+                let character = self.summary_for(&row).await;
+                vec![Self::ack_payload(
+                    seq,
+                    &serde_json::json!({ "character": character }),
+                )]
+            }
             Ok(None) => {
                 vec![Self::err(
                     seq,
@@ -429,37 +452,49 @@ impl Session {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
         let account_id = self.account_id.expect("require_auth выше");
-        let pool = &self.state.pool;
-        let Some(row) = (match db::characters::find(pool, account_id, &cmd.char_id).await {
-            Ok(row) => row,
-            Err(e) => {
-                warn!("char.select: {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }) else {
+        let Some(row) =
+            (match db::characters::find(&self.state.pool, account_id, &cmd.char_id).await {
+                Ok(row) => row,
+                Err(e) => {
+                    warn!("char.select: {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            })
+        else {
             // Паритет с моком: не найден/чужой → «персонаж не найден».
             return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
         };
         // §3: state_version монотонен на сессию персонажа и переживает
         // reconnect — бамп атомарный в БД.
-        let state_version = match db::characters::bump_state_version(pool, &row.id).await {
-            Ok(v) => v as u64,
-            Err(e) => {
-                warn!("char.select (state_version): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        let state_version =
+            match db::characters::bump_state_version(&self.state.pool, &row.id).await {
+                Ok(v) => v as u64,
+                Err(e) => {
+                    warn!("char.select (state_version): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+        // M12.3: позиция (пустая → спавн с персистом, D27) и выбор —
+        // для восстановления сессии при resume (§4.5).
+        let (location_id, location) = self.resolve_location(&row.location_id, &row.id).await;
+        self.char = Some(character_state_of(&row));
+        self.location_id = Some(location_id);
+        self.selected_char_id = Some(row.id.clone());
+        if let Some(account_id) = self.account_id {
+            if let Err(e) = db::accounts::set_last_char(&self.state.pool, account_id, &row.id).await
+            {
+                warn!("last_char_id не обновлён: {e}");
             }
-        };
+        }
         let snapshot = StateSnapshot {
             state_version,
-            char: character_state_of(&row),
-            location: location_snapshot(&row.location_id),
+            char: self.char.clone().expect("выше"),
+            location,
             party: None,
             guild: None,
             server_ts: crate::time::now_epoch(),
             extra: Default::default(),
         };
-        self.char = Some(snapshot.char.clone());
-        self.selected_char_id = Some(row.id.clone());
         vec![
             out_ack(Ack::ok(seq, Some(state_version))),
             out_event(
@@ -519,6 +554,288 @@ impl Session {
         }
     }
 
+    // ── мир (ФР-03, M12.3) ─────────────────────────────────────────────────
+
+    /// Локация персонажа: по `location_id`; пустой → спавн из сида (персист,
+    /// D27); нет в БД (контент не засеян/удалён) → заглушка (D26).
+    async fn resolve_location(
+        &self,
+        location_id: &str,
+        char_id: &str,
+    ) -> (String, LocationSnapshot) {
+        let pool = &self.state.pool;
+        if !location_id.is_empty() {
+            return match db::locations::get(pool, location_id).await {
+                Ok(Some(row)) => (row.id.clone(), row.snapshot()),
+                Ok(None) => {
+                    warn!("локация {location_id} отсутствует в сиде — заглушка");
+                    (location_id.to_string(), location_snapshot(location_id))
+                }
+                Err(e) => {
+                    warn!("чтение локации {location_id}: {e}");
+                    (location_id.to_string(), location_snapshot(location_id))
+                }
+            };
+        }
+        // Пустая позиция (старый/новый персонаж) → спавн из meta.
+        let spawn = match db::locations::spawn_id(pool).await {
+            Ok(Some(spawn)) => spawn,
+            Ok(None) => String::new(),
+            Err(e) => {
+                warn!("спавн из meta: {e}");
+                String::new()
+            }
+        };
+        if spawn.is_empty() {
+            return (String::new(), location_snapshot(""));
+        }
+        if let Err(e) = db::locations::assign_spawn(pool, char_id, &spawn).await {
+            warn!("спавн не персистнут: {e}");
+        }
+        match db::locations::get(pool, &spawn).await {
+            Ok(Some(row)) => (spawn, row.snapshot()),
+            Ok(None) => {
+                warn!("спавн-локация {spawn} отсутствует в БД");
+                let stub = location_snapshot(&spawn);
+                (spawn, stub)
+            }
+            Err(e) => {
+                warn!("чтение спавна {spawn}: {e}");
+                let stub = location_snapshot(&spawn);
+                (spawn, stub)
+            }
+        }
+    }
+
+    /// Поднять последнего выбранного персонажа (если жив) + его локацию —
+    /// resume → `state.resync` → снапшот (§3/§4.5).
+    async fn restore_last_char(&mut self, account_id: i64) {
+        let last = match db::accounts::last_char(&self.state.pool, account_id).await {
+            Ok(last) => last,
+            Err(e) => {
+                warn!("last_char_id: {e}");
+                return;
+            }
+        };
+        let Some(last) = last else {
+            return;
+        };
+        match db::characters::find(&self.state.pool, account_id, &last).await {
+            Ok(Some(row)) => {
+                let (location_id, _) = self.resolve_location(&row.location_id, &row.id).await;
+                self.char = Some(character_state_of(&row));
+                self.location_id = Some(location_id);
+                self.selected_char_id = Some(row.id.clone());
+            }
+            Ok(None) => {} // удалён — клиент начнёт с экрана персонажей
+            Err(e) => warn!("восстановление персонажа {last}: {e}"),
+        }
+    }
+
+    /// Отображаемое имя локации для сводок §5: пустой id → имя спавна.
+    async fn location_display(&self, location_id: &str) -> String {
+        if !location_id.is_empty() {
+            return match db::locations::location_name(&self.state.pool, location_id).await {
+                Ok(Some(name)) => name,
+                Ok(None) => location_id.to_string(),
+                Err(e) => {
+                    warn!("имя локации {location_id}: {e}");
+                    location_id.to_string()
+                }
+            };
+        }
+        let spawn = db::locations::spawn_id(&self.state.pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if spawn.is_empty() {
+            return String::new();
+        }
+        db::locations::location_name(&self.state.pool, &spawn)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    /// Сводка §5 для строки БД — с именем локации из сида.
+    async fn summary_for(&self, row: &db::characters::CharacterRow) -> CharacterSummary {
+        let location = self.location_display(&row.location_id).await;
+        summary_of(row, location)
+    }
+
+    /// `cmd/location.look` (§7): полный снапшот текущей локации.
+    async fn location_look(&mut self, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let current = self.location_id.clone().unwrap_or_default();
+        let (location_id, location) = self.resolve_location(&current, &char_id).await;
+        self.location_id = Some(location_id);
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "location": location }),
+        )]
+    }
+
+    /// `cmd/location.move` (§7): переход по выходу — персист позиции + бамп
+    /// `state_version` (§3/D27), ack с новой локацией, затем
+    /// `evt/location/changed` (журнал мира, ФР-17; доставка остальным — M12.7).
+    async fn location_move(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<LocationMove>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let current = self.location_id.clone().unwrap_or_default();
+        let Some(cur_row) = (match db::locations::get(&self.state.pool, &current).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("location.move (чтение {current}): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ExitBlocked, "персонаж не в мире")];
+        };
+        let Some((_, target)) = cur_row.exit_target(&cmd.exit_id) else {
+            return vec![Self::err(seq, ErrorCode::ExitBlocked, "выход недоступен")];
+        };
+        let state_version =
+            match db::locations::move_char(&self.state.pool, &char_id, &target).await {
+                Ok(v) => v as u64,
+                Err(e) => {
+                    warn!("location.move (персист): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+        self.location_id = Some(target.clone());
+        let location = match db::locations::get(&self.state.pool, &target).await {
+            Ok(Some(row)) => row.snapshot(),
+            Ok(None) => {
+                warn!("целевая локация {target} отсутствует в сиде — заглушка");
+                location_snapshot(&target)
+            }
+            Err(e) => {
+                warn!("чтение локации {target}: {e}");
+                location_snapshot(&target)
+            }
+        };
+        let ack = match Ack::ok_with_payload(
+            seq,
+            Some(state_version),
+            &serde_json::json!({ "location": location.clone() }),
+        ) {
+            Ok(ack) => out_ack(ack),
+            Err(e) => Self::err(seq, ErrorCode::Internal, format!("encode: {e}")),
+        };
+        let changed = out_event(
+            "evt/location/changed",
+            Some(state_version),
+            serde_json::to_value(LocationChanged { location }).unwrap_or_default(),
+        );
+        vec![ack, changed]
+    }
+
+    /// `cmd/entity.info` (§7): осмотр статической сущности текущей локации.
+    /// Лут трупов/игроки появятся с боем (M12.5+).
+    async fn entity_info(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<EntityInfo>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if let Err(out) = self.require_char_id(seq) {
+            return vec![out];
+        }
+        let current = self.location_id.clone().unwrap_or_default();
+        let entities = match db::locations::get(&self.state.pool, &current).await {
+            Ok(Some(row)) => {
+                serde_json::from_value::<Vec<Entity>>(row.entities.clone()).unwrap_or_default()
+            }
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                warn!("entity.info (чтение {current}): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        match entities.into_iter().find(|e| e.id == cmd.entity_id) {
+            Some(entity) => vec![Self::ack_payload(
+                seq,
+                &serde_json::json!({
+                    "entity": entity,
+                    "loot": [],
+                    "was_player": false,
+                    "looted": false,
+                }),
+            )],
+            None => vec![Self::err(seq, ErrorCode::TargetGone, "сущность не найдена")],
+        }
+    }
+
+    /// `cmd/state.resync` (§3): всегда полный снапшот (spec-легально: сервер
+    /// «может достроить» delta, но полная замена стора — валидный ответ;
+    /// генерация delta-патчей — отклонение M12.3). Версия — без бампа.
+    async fn state_resync(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(_cmd) = Self::payload_of::<StateResync>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let account_id = self.account_id.expect("require_auth выше");
+        let Some(row) = (match db::characters::find(&self.state.pool, account_id, &char_id).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("state.resync: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
+        };
+        let state_version = row.state_version as u64;
+        let (location_id, location) = self.resolve_location(&row.location_id, &row.id).await;
+        self.location_id = Some(location_id);
+        let snapshot = StateSnapshot {
+            state_version,
+            char: character_state_of(&row),
+            location,
+            party: None,
+            guild: None,
+            server_ts: crate::time::now_epoch(),
+            extra: Default::default(),
+        };
+        vec![
+            out_ack(Ack::ok(seq, Some(state_version))),
+            out_event(
+                "evt/state/snapshot",
+                Some(state_version),
+                serde_json::to_value(&snapshot).unwrap_or_default(),
+            ),
+        ]
+    }
+
+    /// Текущий персонаж для команд мира (§3: без него «не в мире»).
+    fn require_char_id(&self, seq: u32) -> Result<String, Out> {
+        self.selected_char_id
+            .clone()
+            .ok_or_else(|| Self::err(seq, ErrorCode::NotInLocation, "персонаж не выбран"))
+    }
+
     // ── помощники ────────────────────────────────────────────────────────────
 
     /// Окно rate-limit auth-команд по IP (D30); `Some(retry_after_s)` — отклон.
@@ -574,13 +891,13 @@ impl Session {
 }
 
 /// Сводка §5 `characters[]`: `profile` — поле `CharacterSummary` (D19,
-/// ADR-005 пришло с M11).
-fn summary_of(row: &db::characters::CharacterRow) -> CharacterSummary {
+/// ADR-005 пришло с M11); `location` — **имя** локации из сида (M12.3).
+fn summary_of(row: &db::characters::CharacterRow, location_name: String) -> CharacterSummary {
     CharacterSummary {
         id: row.id.clone(),
         name: row.name.clone(),
         profile: Some(row.profile.clone()),
-        location: row.location_id.clone(),
+        location: location_name,
         summary: None,
         crime: Vec::new(),
         online: false, // реестр online — M12.7 (whisper/группа)

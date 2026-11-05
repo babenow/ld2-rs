@@ -8,6 +8,7 @@
 pub mod app;
 pub mod auth;
 pub mod config;
+pub mod content;
 pub mod db;
 pub mod session;
 pub mod state;

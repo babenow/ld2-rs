@@ -35,6 +35,8 @@ services:
         condition: service_healthy
     volumes:
       - ./deploy/server.toml:/etc/ld2/server.toml:ro
+      # Контент мира (D26): контейнерный CWD=/ → content_dir "content" = /content
+      - ./content:/content:ro
     ports:
       - "24817:24817"
 
