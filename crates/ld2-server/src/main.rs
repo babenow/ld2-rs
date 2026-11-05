@@ -136,15 +136,19 @@ async fn run() -> Result<(), AppError> {
     let listener = tokio::net::TcpListener::bind(&cfg.server.bind).await?;
     let addr = listener.local_addr()?;
     tracing::info!(
-        "сервер «{}» ({}) запускается: {addr}, healthz → http://{addr}/healthz, \
-         контент {:?}, тик {} Гц, автосейв {} с",
+        "сервер «{}» ({}) запускается: {addr}, ws → ws://{addr}/ws, \
+         healthz → http://{addr}/healthz, контент {:?}, тик {} Гц, автосейв {} с",
         cfg.server.name,
         cfg.server.region,
         cfg.world.content_dir,
         cfg.world.tick_hz,
         cfg.world.autosave_interval_s
     );
-    ld2_server::app::serve(listener, pool).await?;
+    let state = std::sync::Arc::new(ld2_server::state::AppState {
+        config: std::sync::Arc::new(cfg),
+        pool,
+    });
+    ld2_server::app::serve(listener, state).await?;
     Ok(())
 }
 

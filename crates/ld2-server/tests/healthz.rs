@@ -1,10 +1,12 @@
 //! `/healthz` на живом сервере с PostgreSQL (гейт: LD2_TEST_DATABASE_URL).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use ld2_server::app;
 use ld2_server::config::Config;
 use ld2_server::db;
+use ld2_server::state::AppState;
 
 fn test_url() -> Option<String> {
     std::env::var("LD2_TEST_DATABASE_URL")
@@ -26,12 +28,16 @@ async fn healthz_returns_ok() {
     cfg.database.url = url;
 
     let pool = db::connect(&cfg.database).await.expect("БД + миграции");
+    let state = Arc::new(AppState {
+        config: Arc::new(cfg),
+        pool,
+    });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     tokio::spawn(async move {
-        let _ = app::serve(listener, pool).await;
+        let _ = app::serve(listener, state).await;
     });
 
     let response = ureq::get(&format!("http://{addr}/healthz"))

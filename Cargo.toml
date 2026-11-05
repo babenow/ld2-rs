@@ -23,8 +23,8 @@ tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.30"
 # Реальный сервер (PLAN-M12): D23 — axum (WS + /healthz + graceful shutdown),
 # D24 — sqlx: runtime-запросы (сборка без DATABASE_URL), авто-миграции, rustls
-# без системного OpenSSL (важно для Windows-сборки и Docker).
-axum = "0.8"
+# без системного OpenSSL (важно для Windows-сборки и Docker). ws — транспорт §1.
+axum = { version = "0.8", features = ["ws"] }
 sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",
