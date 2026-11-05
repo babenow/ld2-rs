@@ -44,8 +44,9 @@ pub async fn run(state: SharedState) {
         tick_once(&state).await;
         ticks += 1;
         if ticks.is_multiple_of(u64::from(tick_hz)) {
-            // Мана-реген — раз в секунду (не каждый тик).
+            // Раз в секунду: мана-реген (§2.4) и истечение статусов (§10).
             regen_step(&state).await;
+            crime_expire_step(&state).await;
         }
     }
 }
@@ -494,5 +495,37 @@ async fn regen_step(state: &SharedState) {
         );
         let world = state.world.lock().expect("мир");
         world.send_to_char(char_id, text);
+    }
+}
+
+/// Истечение статусов преступления раз в секунду (ФР-11, §10): снятие
+/// просроченных → `evt/crime/removed` адресату (подстраховка клиентского
+/// fallback по `expires_at`).
+async fn crime_expire_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let online: Vec<String> = {
+        let world = state.world.lock().expect("мир");
+        world.online_chars()
+    };
+    for char_id in online {
+        let expired = match crate::db::crime::expire(&state.pool, &char_id, now).await {
+            Ok(kinds) => kinds,
+            Err(e) => {
+                warn!("crime (истечение {char_id}): {e}");
+                continue;
+            }
+        };
+        for kind in expired {
+            let text = crate::session::event_text(
+                "evt/crime/removed",
+                None,
+                serde_json::json!({ "kind": kind }),
+            );
+            if text.is_empty() {
+                continue;
+            }
+            let world = state.world.lock().expect("мир");
+            world.send_to_char(&char_id, text);
+        }
     }
 }

@@ -7,19 +7,19 @@ use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
-    ChatSend, CombatAttack, EntityInfo, ItemDrop, ItemEquip, ItemUnequip, ItemUse, LocationMove,
-    MagicRuneCast, MagicScrollCast, SocketExtract, SocketInsert, StateResync, UpgradePreview,
-    UpgradeStart,
+    ChatSend, CombatAttack, CrimeLog, EntityInfo, ItemDrop, ItemEquip, ItemUnequip, ItemUse,
+    LocationMove, MagicRuneCast, MagicScrollCast, SocketExtract, SocketInsert, StateResync,
+    UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
-    CastSource, CharStats, CharXp, CombatHit, CombatKind, EntityHp, ItemAdded, ItemRemovalReason,
-    ItemRemoved, ItemState, LocationChanged, MagicCast, Pong, StateSnapshot, TimeSync,
-    UpgradeResult,
+    CastSource, CharStats, CharXp, CombatHit, CombatKind, CrimeAdded, EntityHp, ItemAdded,
+    ItemRemovalReason, ItemRemoved, ItemState, LocationChanged, MagicCast, Pong, StateSnapshot,
+    TimeSync, UpgradeResult,
 };
 use ld2_protocol::types::{
-    CharacterState, CharacterSummary, Entity, EquipMap, Hp, ItemSnapshot, LocationSnapshot, Mp,
-    Requires, SkillSnapshot, Socket,
+    CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, EquipMap, Hp,
+    ItemSnapshot, LocationSnapshot, Mp, Requires, Severity, SkillSnapshot, Socket,
 };
 use ld2_protocol::ErrorCode;
 use serde::de::DeserializeOwned;
@@ -151,6 +151,8 @@ impl Session {
             "cmd/combat.attack" => self.combat_attack(env, seq).await,
             "cmd/combat.stop" => self.combat_stop(seq).await,
             "cmd/combat.flee" => self.combat_flee(seq).await,
+            // преступность (ФР-11, §10, M12.5d)
+            "cmd/crime.log" => self.crime_log(env, seq).await,
             // улучшение предметов (ФР-10, M12.5c)
             "cmd/upgrade.preview" => self.upgrade_preview(env, seq).await,
             "cmd/upgrade.start" => self.upgrade_start(env, seq).await,
@@ -1094,8 +1096,22 @@ impl Session {
             xp_pool: row.xp_pool,
             equip,
             inventory,
-            crime: Default::default(), // M12.5
-            quests: Vec::new(),        // M12.6
+            crime: CrimeState {
+                // Активные статусы §10 (переживают рестарт, D27).
+                statuses: match db::crime::active_statuses(pool, &row.id, crate::time::now_epoch())
+                    .await
+                {
+                    Ok(rows) => rows
+                        .into_iter()
+                        .map(|(kind, expires_at)| self.crime_status(&kind, expires_at))
+                        .collect(),
+                    Err(e) => {
+                        warn!("crime (статусы {}): {e}", row.id);
+                        Vec::new()
+                    }
+                },
+            },
+            quests: Vec::new(), // M12.6
             extra: Default::default(),
         })
     }
@@ -1570,14 +1586,21 @@ impl Session {
             Ok(None) => vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")],
             Ok(Some(row)) => {
                 let item = item_snapshot(&row, &def);
-                vec![
+                let mut outs = vec![
                     Self::ack_payload(seq, &serde_json::json!({})),
                     out_event(
                         "evt/item/added",
                         None,
                         serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
                     ),
-                ]
+                ];
+                // ФР-11: лут с трупа **игрока** → статус «Мародёр» (§10).
+                if entity.was_player.unwrap_or(false) {
+                    if let Some((_, text)) = self.apply_crime(char_id, "marauder").await {
+                        outs.push(Out::Text(text));
+                    }
+                }
+                outs
             }
             Err(e) => {
                 warn!("take_loot (транзакция): {e}");
@@ -1842,6 +1865,10 @@ impl Session {
         // `/scenario gold <n>` — dev-начисление золота (тесты M12.5c).
         if let Some(amount) = scenario.strip_prefix("gold ") {
             return self.scenario_gold(amount.trim(), seq).await;
+        }
+        // `/scenario crime <kind>` — dev-нарушение (тесты M12.5d).
+        if let Some(kind) = scenario.strip_prefix("crime ") {
+            return self.scenario_crime(kind.trim(), seq).await;
         }
         if scenario != "death" {
             return vec![Self::err(
@@ -2695,6 +2722,20 @@ impl Session {
         vec![Self::ack_payload(seq, &serde_json::json!({}))]
     }
 
+    /// `/scenario crime <kind>` (dev): нарушение через общий поток §10
+    /// (blend + статус + журнал), как при реальном триггере.
+    async fn scenario_crime(&mut self, kind: &str, seq: u32) -> Vec<Out> {
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        if let Some((_, text)) = self.apply_crime(&char_id, kind).await {
+            outs.push(Out::Text(text));
+        }
+        outs
+    }
+
     /// `cmd/upgrade.preview` (§7, ФР-10): превью «сейчас → после» —
     /// `preview_id`, `delta.upgrade`, `cost.gold`, `chance` (если
     /// `shows_chance`). `E_UPGRADE_MAX` — уровень уже предельный.
@@ -2954,6 +2995,110 @@ impl Session {
         let mut result = vec![Self::ack_payload(seq, &serde_json::json!({}))];
         result.extend(outs);
         result
+    }
+
+    /// `cmd/crime.log` (§7): журнал нарушений (новые первые), limit —
+    /// из payload (по умолчанию 50, максимум 500).
+    async fn crime_log(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CrimeLog>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let limit = cmd.limit.unwrap_or(50).clamp(1, 500) as i64;
+        let entries = match db::crime::log(&self.state.pool, &char_id, limit).await {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|(kind, at, delta_s, total_s)| CrimeLogEntry {
+                    kind,
+                    at,
+                    delta_s,
+                    total_s,
+                })
+                .collect::<Vec<_>>(),
+            Err(e) => {
+                warn!("crime.log: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "entries": entries }),
+        )]
+    }
+
+    /// Статус из строки БД: severity — из `crime.kinds` конфига (D25).
+    fn crime_status(&self, kind: &str, expires_at: i64) -> CrimeStatus {
+        let severity = self
+            .state
+            .config
+            .gameplay
+            .crime
+            .kinds
+            .iter()
+            .find(|k| k.kind == kind)
+            .map(|k| crate::auth::severity(&k.severity))
+            .unwrap_or(Severity::Unknown);
+        CrimeStatus {
+            kind: kind.to_string(),
+            severity,
+            expires_at,
+        }
+    }
+
+    /// Новое нарушение (§10): blend-эскалация срока → статус + журнал в БД
+    /// (D27) → `evt/crime/added` адресату. `None` — неизвестный kind.
+    async fn apply_crime(&self, char_id: &str, kind: &str) -> Option<(String, String)> {
+        let cfg = &self.state.config.gameplay.crime;
+        // §5: ключи base — с суффиксом срока (`marauder_s`); kind — без.
+        let base = cfg
+            .base
+            .get(kind)
+            .or_else(|| cfg.base.get(&format!("{kind}_s")))
+            .copied()? as i64;
+        let now = crate::time::now_epoch();
+        let t_cur = db::crime::total_term(&self.state.pool, char_id, now)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("crime (общий срок {char_id}): {e}");
+                0
+            });
+        let (total, delta) =
+            crate::systems::crime_blend(t_cur, base, cfg.t_max_s as i64, cfg.blend_k);
+        if delta <= 0 {
+            return None; // потолок §10 — вклада нет, статус не растёт
+        }
+        let (expires_at, _) =
+            match db::crime::add_status(&self.state.pool, char_id, kind, now, delta, total).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    warn!("crime (добавление {kind} {char_id}): {e}");
+                    return None;
+                }
+            };
+        let payload = CrimeAdded {
+            status: self.crime_status(kind, expires_at),
+            log_entry: CrimeLogEntry {
+                kind: kind.to_string(),
+                at: now,
+                delta_s: delta,
+                total_s: total,
+            },
+        };
+        let text = crate::session::event_text(
+            "evt/crime/added",
+            None,
+            serde_json::to_value(&payload).unwrap_or_default(),
+        );
+        if text.is_empty() {
+            return None;
+        }
+        Some((char_id.to_string(), text))
     }
 
     // ── помощники ────────────────────────────────────────────────────────────

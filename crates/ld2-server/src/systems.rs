@@ -82,6 +82,27 @@ pub fn upgrade_roll(now_ms: i64) -> f64 {
     (mixed.unsigned_abs() % 10_000) as f64 / 10_000.0
 }
 
+/// Вклад нового преступления в общий срок (§10).
+///
+/// `T = 0` (первое преступление) → полный срок `t` — так согласован пример
+/// §10 (murderer=21600 первым); иначе частичное сложение
+/// `k·t·(1 − T/T_MAX)`. Возвращает итоговый общий срок
+/// `T_new = min(T_MAX, T + вклад)` и **дельту** — сколько секунд
+/// добавляется новому статусу (он живёт `delta` секунд).
+pub fn crime_blend(t_cur: i64, t_new: i64, t_max: i64, k: f64) -> (i64, i64) {
+    let t_cur = t_cur.max(0);
+    let t_max = t_max.max(1).max(t_cur);
+    let delta = if t_cur == 0 {
+        // Первое преступление — без «скидки».
+        t_new.max(0)
+    } else {
+        let ratio = (t_cur as f64 / t_max as f64).clamp(0.0, 1.0);
+        (k * t_new.max(0) as f64 * (1.0 - ratio)).round().max(0.0) as i64
+    };
+    let total = (t_cur + delta).min(t_max);
+    (total, (total - t_cur).max(0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +196,37 @@ mod tests {
         // Границы шанса: 0 — всегда провал, 1 — всегда успех.
         assert!(upgrade_roll(42) >= 0.0);
         assert!(upgrade_roll(42) < 1.0);
+    }
+
+    #[test]
+    fn crime_blend_partial_sum_matches_protocol_example() {
+        // §10: k=0.5, T_MAX=604800, murderer=21600, marauder=7200.
+        // Формула — источник истины (числовой пример документа округлён:
+        // 0.5·7200·(1−21600/604800) = 3471.4 → T_new ≈ 25071).
+        let (total, delta) = crime_blend(21600, 7200, 604800, 0.5);
+        assert_eq!(delta, 3471, "вклад ≈ 3471 с");
+        assert_eq!(total, 21600 + 3471);
+        // Первое преступление — полный срок (пример §10: 21600 первым).
+        let (total, delta) = crime_blend(0, 7200, 604800, 0.5);
+        assert_eq!((total, delta), (7200, 7200), "T=0 → полный срок");
+        // При k=1.0 — полный вклад, но множитель (1−T/T_MAX) действует:
+        // 7200·(1−21600/604800) = 6943.
+        let (_total, delta) = crime_blend(21600, 7200, 604800, 1.0);
+        assert_eq!(delta, 6943, "k=1: вклад без «скидки» k");
+        // При T → T_MAX вклад → 0.
+        let (total, delta) = crime_blend(604800, 7200, 604800, 0.5);
+        assert_eq!(delta, 0, "на потолке вклада нет");
+        assert_eq!(total, 604800, "потолок не превышается");
+        // Почти потолок: вклад мал (формула), потолок не превышен.
+        let (total, _delta) = crime_blend(604700, 7200, 604800, 1.0);
+        assert!((604700..=604800).contains(&total), "в пределах потолка");
+        // Огромный срок при k=1: дельта обрезается T_MAX.
+        let (total, delta) = crime_blend(0, 5_000_000, 604800, 1.0);
+        assert_eq!(total, 604800, "потолок");
+        assert_eq!(delta, 604800, "дельта ограничена потолком");
+        // Отрицательный/нулевой срок — не ломает.
+        let (total, delta) = crime_blend(-5, 0, 604800, 0.5);
+        assert_eq!((total, delta), (0, 0));
     }
 
     #[test]

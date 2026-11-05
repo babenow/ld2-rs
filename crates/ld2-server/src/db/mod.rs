@@ -11,6 +11,7 @@
 
 pub mod accounts;
 pub mod characters;
+pub mod crime;
 pub mod items;
 pub mod locations;
 pub mod skills;

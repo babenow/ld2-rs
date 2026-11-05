@@ -188,7 +188,7 @@ fn feature_value(v: &FeatureValue) -> Value {
 }
 
 /// Строка `severity` из конфига → enum §5; неизвестная → нейтральный UI (§2.3).
-fn severity(s: &str) -> Severity {
+pub(crate) fn severity(s: &str) -> Severity {
     match s {
         "low" => Severity::Low,
         "medium" => Severity::Medium,
