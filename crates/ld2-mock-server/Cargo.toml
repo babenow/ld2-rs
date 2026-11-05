@@ -15,3 +15,7 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 time = { version = "0.3", features = ["formatting"] }
+
+[dev-dependencies]
+# Общий контрактный харнесс (D32): те же проверки гоняются на ld2-server.
+ld2-test-kit = { path = "../ld2-test-kit" }

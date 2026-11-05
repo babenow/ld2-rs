@@ -30,6 +30,14 @@ pub struct AuthLogin {
     pub password: String,
 }
 
+/// Регистрация с немедленным входом (ADR-006, D28): ack — как у `login`,
+/// далее `evt/session.start`. Лимиты длины — настройки сервера.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AuthRegister {
+    pub login: String,
+    pub password: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct AuthResume {
     pub refresh_token: String,
@@ -360,6 +368,7 @@ pub struct TimeSync {}
 
 impl_commands!(
     (AuthLogin, "cmd/auth.login", true),
+    (AuthRegister, "cmd/auth.register", true),
     (AuthResume, "cmd/auth.resume", true),
     (AuthLogout, "cmd/auth.logout", true),
     (SessionRefresh, "cmd/session.refresh", true),
@@ -428,6 +437,7 @@ mod tests {
         // Сверка с таблицей §7: все типы вида cmd/<domain>.<action>.
         for ty in [
             AuthLogin::TYPE,
+            AuthRegister::TYPE,
             CharCreate::TYPE,
             LocationMove::TYPE,
             MagicRuneCast::TYPE,
@@ -441,6 +451,8 @@ mod tests {
         // Идемпотентность по §7: повторять можно только безопасные команды.
         const { assert!(Ping::IDEMPOTENT) };
         const { assert!(AuthLogin::IDEMPOTENT) };
+        // Ретрай register после обрыва не создаёт второй аккаунт (ADR-006).
+        const { assert!(AuthRegister::IDEMPOTENT) };
         const { assert!(!LocationMove::IDEMPOTENT) };
         const { assert!(!ChatSend::IDEMPOTENT) };
     }

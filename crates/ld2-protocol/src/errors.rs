@@ -24,6 +24,12 @@ pub enum ProtocolError {
 pub enum ErrorCode {
     AuthExpired,
     BadCredentials,
+    /// Логин занят (`auth.register`, ADR-006).
+    LoginTaken,
+    /// Логин/пароль короче лимитов сервера (`auth.register`, ADR-006).
+    WeakPassword,
+    /// Регистрация выключена настройкой сервера (ADR-006).
+    RegisterDisabled,
     CharLimit,
     NameTaken,
     BadProfile,
@@ -67,6 +73,9 @@ impl ErrorCode {
         match self {
             Self::AuthExpired => "E_AUTH_EXPIRED",
             Self::BadCredentials => "E_BAD_CREDENTIALS",
+            Self::LoginTaken => "E_LOGIN_TAKEN",
+            Self::WeakPassword => "E_WEAK_PASSWORD",
+            Self::RegisterDisabled => "E_REGISTER_DISABLED",
             Self::CharLimit => "E_CHAR_LIMIT",
             Self::NameTaken => "E_NAME_TAKEN",
             Self::BadProfile => "E_BAD_PROFILE",
@@ -112,6 +121,9 @@ impl FromStr for ErrorCode {
         Ok(match s {
             "E_AUTH_EXPIRED" => Self::AuthExpired,
             "E_BAD_CREDENTIALS" => Self::BadCredentials,
+            "E_LOGIN_TAKEN" => Self::LoginTaken,
+            "E_WEAK_PASSWORD" => Self::WeakPassword,
+            "E_REGISTER_DISABLED" => Self::RegisterDisabled,
             "E_CHAR_LIMIT" => Self::CharLimit,
             "E_NAME_TAKEN" => Self::NameTaken,
             "E_BAD_PROFILE" => Self::BadProfile,
@@ -158,6 +170,9 @@ mod tests {
     const DOC_CODES: &[&str] = &[
         "E_AUTH_EXPIRED",
         "E_BAD_CREDENTIALS",
+        "E_LOGIN_TAKEN",
+        "E_WEAK_PASSWORD",
+        "E_REGISTER_DISABLED",
         "E_CHAR_LIMIT",
         "E_NAME_TAKEN",
         "E_BAD_PROFILE",

@@ -281,7 +281,8 @@
 ### 4.5 Сессия и авторизация
 
 ```
-connect → cmd/auth.login { login, password } → ack + evt/session.start (config аккаунта, токены)
+connect → cmd/auth.register { login, password } → ack + evt/session.start (регистрация = вход; лимиты — настройки сервера)
+или     → cmd/auth.login { login, password } → ack + evt/session.start (config аккаунта, токены)
 reconnect → cmd/auth.resume { refresh_token } → evt/session.start | E_AUTH_EXPIRED
 cmd/session.refresh — продление access-token (клиент трекит expiry − 60 с).
 ```
@@ -313,7 +314,7 @@ cmd/session.refresh — продление access-token (клиент треки
 
 | Команда | Payload (кратко) | Назначение |
 |---|---|---|
-| `auth.login / resume / logout` | логин-пароль / refresh | сессия |
+| `auth.login / register / resume / logout` | логин-пароль / refresh | сессия |
 | `char.list / create / select / delete` | `create: { name, profile }` | персонажи |
 | `location.look / move` | `move: { exit_id }` | навигация |
 | `entity.info` | `{ entity_id }` | осмотр |

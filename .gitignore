@@ -14,10 +14,17 @@
 *.local.toml
 client-data/
 
+# Конфиг реального сервера — секреты (D25): шаблон в crates/ld2-server/server.example.toml
+/server.toml
+
 # Логи
 *.log
 opencode.json
+*.py
 
 # Планы вех — локальные рабочие документы (не в репозитории)
 /plans/
-*.py
+
+# Рабочий контекст сессии (статус/ветки/шаги) — не коммитится
+PLAN-CONTEXT.md
+
