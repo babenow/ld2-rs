@@ -9,6 +9,7 @@ members = [
     "crates/ld2-client",
     "crates/ld2-client-gpui",
     "crates/ld2-server",
+    "crates/ld2-test-kit",
 ]
 
 [workspace.package]

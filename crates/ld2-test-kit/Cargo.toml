@@ -1,0 +1,12 @@
+[package]
+name = "ld2-test-kit"
+version.workspace = true
+edition.workspace = true
+description = "Общий WS-харнесс и контрактные проверки: мок и ld2-server (D32, PLAN-M12)"
+publish = false
+
+[dependencies]
+futures-util.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true

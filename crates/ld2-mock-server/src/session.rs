@@ -74,6 +74,11 @@ pub struct Session {
     fail_next_upgrade: bool,
     /// M6: трупы, лут с которых уже собран (защита от повтора).
     looted_corpses: HashSet<String>,
+    /// §2.4.2: окно последних 128 обработанных `seq` → точный кэшированный ack
+    /// (повтор не выполняет действие второй раз).
+    ack_cache: HashMap<u32, String>,
+    /// Порядок добавления `seq` в кэш (вытеснение старых).
+    seq_order: std::collections::VecDeque<u32>,
 }
 
 impl Session {
@@ -97,6 +102,8 @@ impl Session {
             preview_counter: 0,
             fail_next_upgrade: false,
             looted_corpses: HashSet::new(),
+            ack_cache: HashMap::new(),
+            seq_order: std::collections::VecDeque::new(),
         }
     }
 
@@ -123,7 +130,25 @@ impl Session {
             warn!("мок: не-команда от клиента: {}", env.msg_type);
             return vec![];
         }
-        self.dispatch(&env)
+        // §2.4.2: повтор уже обработанного seq → точный кэшированный ack,
+        // без повторного выполнения и повторных событий.
+        if let Some(seq) = env.seq {
+            if let Some(cached) = self.ack_cache.get(&seq) {
+                return vec![Out::Text(cached.clone())];
+            }
+        }
+        let outs = self.dispatch(&env);
+        // Первый ответ диспетчера — всегда ack (§2.2); кэшируем его текст.
+        if let (Some(seq), Some(Out::Text(ack_text))) = (env.seq, outs.first()) {
+            self.ack_cache.insert(seq, ack_text.clone());
+            self.seq_order.push_back(seq);
+            while self.seq_order.len() > 128 {
+                if let Some(old) = self.seq_order.pop_front() {
+                    self.ack_cache.remove(&old);
+                }
+            }
+        }
+        outs
     }
 
     // ── низкоуровневые помощники ────────────────────────────────────────────

@@ -3,14 +3,10 @@
 
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
 use ld2_mock_server::{serve_configured, serve_with_listener, Chaos, Knobs};
+use ld2_test_kit::WsClient as Client;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
-use tokio_tungstenite::tungstenite::Message;
-
-type WsStream =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Поднять сервер на эфемерном порту, вернуть ws-url.
 async fn start_server(chaos: Chaos) -> String {
@@ -32,88 +28,21 @@ async fn start_server_with_slots(limit: u32) -> String {
     format!("ws://{addr}")
 }
 
-struct Client {
-    sink: futures_util::stream::SplitSink<WsStream, Message>,
-    reader: futures_util::stream::SplitStream<WsStream>,
-    seq: u32,
-}
-
-impl Client {
-    async fn connect(url: &str) -> Self {
-        let (ws, _) = tokio_tungstenite::connect_async(url)
-            .await
-            .expect("подключение к моку");
-        let (sink, reader) = ws.split();
-        Self {
-            sink,
-            reader,
-            seq: 0,
-        }
-    }
-
-    async fn send(&mut self, msg_type: &str, payload: Value) -> u32 {
-        self.seq += 1;
-        let env = json!({
-            "v": 1, "type": msg_type, "seq": self.seq,
-            "ts": "2026-11-03T00:00:00Z", "payload": payload
-        });
-        self.sink
-            .send(Message::Text(env.to_string().into()))
-            .await
-            .expect("отправка");
-        self.seq
-    }
-
-    async fn recv_json(&mut self) -> Value {
-        loop {
-            let msg = self
-                .reader
-                .next()
-                .await
-                .expect("поток закрыт раньше события");
-            match msg.expect("ошибка ws") {
-                Message::Text(t) => return serde_json::from_str(t.as_str()).expect("json"),
-                Message::Close(_) => return json!({ "type": "__close__" }),
-                _ => continue,
-            }
-        }
-    }
-
-    async fn wait<F: FnMut(&Value) -> bool>(&mut self, mut pred: F) -> Value {
-        let fut = async {
-            loop {
-                let env = self.recv_json().await;
-                if pred(&env) {
-                    return env;
-                }
-            }
-        };
-        tokio::time::timeout(Duration::from_secs(5), fut)
-            .await
-            .expect("таймаут ожидания события")
-    }
-
-    async fn ack(&mut self, seq: u32) -> Value {
-        self.wait(|v| v["type"] == "ack" && v["seq"] == seq).await
-    }
-
-    async fn wait_close(&mut self) {
-        let fut = async {
-            loop {
-                let msg = self.reader.next().await.expect("поток закрыт");
-                match msg {
-                    Ok(Message::Close(_)) | Err(_) => return,
-                    Ok(_) => continue,
-                }
-            }
-        };
-        tokio::time::timeout(Duration::from_secs(5), fut)
-            .await
-            .expect("таймаут ожидания Close");
-    }
-
+/// Сценарии мока поверх общего харнесса `ld2-test-kit` (D32): транспорт и
+/// базовые проверки контракта — там, здесь — только фикстуры мока.
+trait MockFlow {
     /// Сценарий hello: login demo/demo123 → ack + session.start (payload
     /// наружу — лимит слотов проверяют сами тесты, он конфигурируемый).
+    async fn login(&mut self) -> Value;
+    /// Сценарий snapshot: select c1 → ack + полный снапшот.
+    async fn select(&mut self) -> Value;
+    /// Выбор конкретного персонажа (два аккаунта — c1/c2, DoD M8).
+    async fn select_char(&mut self, char_id: &str) -> Value;
+    /// Вход произвольным аккаунтом (demo / demo2 — DoD M8 «2 клиента»).
+    async fn login_as(&mut self, login: &str, password: &str) -> Value;
+}
+
+impl MockFlow for Client {
     async fn login(&mut self) -> Value {
         let seq = self
             .send(
@@ -141,12 +70,10 @@ impl Client {
         start["payload"].clone()
     }
 
-    /// Сценарий snapshot: select c1 → ack + полный снапшот.
     async fn select(&mut self) -> Value {
         self.select_char("c1").await
     }
 
-    /// Выбор конкретного персонажа (два аккаунта — c1/c2, DoD M8).
     async fn select_char(&mut self, char_id: &str) -> Value {
         let seq = self
             .send("cmd/char.select", json!({ "char_id": char_id }))
@@ -157,7 +84,6 @@ impl Client {
         self.wait(|v| v["type"] == "evt/state/snapshot").await
     }
 
-    /// Вход произвольным аккаунтом (demo / demo2 — DoD M8 «2 клиента»).
     async fn login_as(&mut self, login: &str, password: &str) -> Value {
         let seq = self
             .send(
@@ -291,6 +217,25 @@ async fn register_rejects_weak_password() {
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_WEAK_PASSWORD", "{ack}");
+}
+
+// ─── общий контрактный набор (D32) ────────────────────────────────────────────
+
+/// Проверки `ld2-test-kit` (§1/§2/§5/ADR-006) гоняются и на моке, и на
+/// ld2-server (M12.2): один набор — обе реализации обязаны совпасть.
+#[tokio::test]
+async fn shared_contract_suite_passes_on_mock() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    ld2_test_kit::checks::hello(&mut c, "demo", "demo123", 8).await;
+    ld2_test_kit::checks::ping_and_time_sync(&mut c).await;
+    ld2_test_kit::checks::seq_window_deduplicates(&mut c).await;
+    ld2_test_kit::checks::unknown_command(&mut c).await;
+    // лимит фрейма закрывает соединение — только последней на этом клиенте
+    ld2_test_kit::checks::frame_size_limit(&mut c).await;
+
+    let mut c2 = Client::connect(&url).await;
+    ld2_test_kit::checks::register_flow(&mut c2).await;
 }
 
 #[tokio::test]
@@ -696,7 +641,7 @@ async fn kill_drops_loot_into_inventory() {
     c.select().await;
     c.send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
-    c.ack(c.seq).await;
+    c.ack(c.current_seq()).await;
 
     for i in 0..3 {
         let seq = c
@@ -910,7 +855,7 @@ async fn corpse_loot_maraduer_partial_summation_formula() {
     c.select().await;
     c.send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
-    c.ack(c.seq).await;
+    c.ack(c.current_seq()).await;
 
     // Осмотр трупа игрока: лут доступен.
     let seq = c
@@ -987,7 +932,7 @@ async fn skill_use_emits_hit_and_cooldown() {
     c.select().await;
     c.send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
-    c.ack(c.seq).await;
+    c.ack(c.current_seq()).await;
 
     let seq = c
         .send(
@@ -1021,7 +966,7 @@ async fn quest_progress_then_turn_in_awards_pool() {
     c.select().await;
     c.send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
-    c.ack(c.seq).await;
+    c.ack(c.current_seq()).await;
 
     // Убийство волка (4/5 → 5/5 «к сдаче»).
     for _ in 0..3 {
@@ -1149,7 +1094,7 @@ async fn m8_resume_restores_character_after_disconnect() {
         let start = c.login().await;
         c.select().await;
         // Обрыв: клиент уходит, Drop сессии сохраняет состояние аккаунта.
-        c.sink.send(Message::Close(None)).await.expect("close");
+        c.close().await;
         drop(c);
         start
     };

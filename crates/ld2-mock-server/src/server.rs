@@ -152,6 +152,32 @@ async fn handle(
         };
         match msg {
             Message::Text(text) => {
+                // protocol.md §1: >64 KiB → видимая ошибка и закрытие.
+                if text.len() > ld2_protocol::envelope::MAX_MESSAGE_BYTES {
+                    warn!(
+                        "фрейм {} KiB от {peer} превышает 64 KiB — закрываю",
+                        text.len() / 1024
+                    );
+                    let notice = Envelope::new(
+                        "evt/error",
+                        Some(serde_json::json!({
+                            "code": "E_TOO_LARGE",
+                            "message": "фрейм больше 64 KiB",
+                            "fatal": true
+                        })),
+                    );
+                    if let Ok(t) = notice.to_json_limited() {
+                        sink.send(Message::Text(t.into())).await?;
+                    }
+                    sink.send(Message::Close(Some(
+                        tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                            code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Size,
+                            reason: "E_TOO_LARGE".into(),
+                        },
+                    )))
+                    .await?;
+                    break;
+                }
                 // Запись для e2e-ассертов (до обработки).
                 if let Ok(env) = serde_json::from_str::<Envelope>(text.as_str()) {
                     knobs.received.lock().expect("mutex").push(env);
