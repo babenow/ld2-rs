@@ -32,10 +32,13 @@ pub struct AuthLogin {
 
 /// Регистрация с немедленным входом (ADR-006, D28): ack — как у `login`,
 /// далее `evt/session.start`. Лимиты длины — настройки сервера.
+/// `email` обязателен и уникален (D33, ADR-007): нормализация и валидация
+/// — на сервере (`E_BAD_EMAIL`/`E_EMAIL_TAKEN`).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct AuthRegister {
     pub login: String,
     pub password: String,
+    pub email: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

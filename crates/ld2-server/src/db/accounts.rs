@@ -9,22 +9,34 @@ pub struct AccountRow {
     pub password_hash: String,
 }
 
-/// Новый аккаунт; `None` — логин занят (UNIQUE → `E_LOGIN_TAKEN`).
-/// `password_hash` — argon2id PHC-строка (D30): хэширует вызывающий слой,
-/// репозиторий только хранит.
+/// Новый аккаунт; `None` — логин **или email** занят (UNIQUE →
+/// `E_LOGIN_TAKEN`/`E_EMAIL_TAKEN`; вызывающий заранее проверяет
+/// `email_exists`, чтобы различить причины). `email` — уже нормализованный
+/// (D33, ADR-007). `password_hash` — argon2id PHC-строка (D30): хэширует
+/// вызывающий слой, репозиторий только хранит.
 pub async fn create_account(
     pool: &PgPool,
     login: &str,
     password_hash: &str,
+    email: &str,
 ) -> Result<Option<i64>, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO accounts (login, password_hash) VALUES ($1, $2) \
+        "INSERT INTO accounts (login, password_hash, email) VALUES ($1, $2, $3) \
          ON CONFLICT (login) DO NOTHING RETURNING id",
     )
     .bind(login)
     .bind(password_hash)
+    .bind(email)
     .fetch_optional(pool)
     .await
+}
+
+/// Занят ли email (дешёвая проверка до argon2, D33).
+pub async fn email_exists(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM accounts WHERE email = $1)")
+        .bind(email)
+        .fetch_one(pool)
+        .await
 }
 
 /// Занят ли логин — **включая** баны (забаненный логин не переиспользуется).

@@ -30,6 +30,10 @@ pub enum ErrorCode {
     WeakPassword,
     /// Регистрация выключена настройкой сервера (ADR-006).
     RegisterDisabled,
+    /// Email пуст/невалиден по синтаксису (ADR-007, D33).
+    BadEmail,
+    /// Email уже занят другим аккаунтом (ADR-007, D33).
+    EmailTaken,
     CharLimit,
     NameTaken,
     BadProfile,
@@ -76,6 +80,8 @@ impl ErrorCode {
             Self::LoginTaken => "E_LOGIN_TAKEN",
             Self::WeakPassword => "E_WEAK_PASSWORD",
             Self::RegisterDisabled => "E_REGISTER_DISABLED",
+            Self::BadEmail => "E_BAD_EMAIL",
+            Self::EmailTaken => "E_EMAIL_TAKEN",
             Self::CharLimit => "E_CHAR_LIMIT",
             Self::NameTaken => "E_NAME_TAKEN",
             Self::BadProfile => "E_BAD_PROFILE",
@@ -124,6 +130,8 @@ impl FromStr for ErrorCode {
             "E_LOGIN_TAKEN" => Self::LoginTaken,
             "E_WEAK_PASSWORD" => Self::WeakPassword,
             "E_REGISTER_DISABLED" => Self::RegisterDisabled,
+            "E_BAD_EMAIL" => Self::BadEmail,
+            "E_EMAIL_TAKEN" => Self::EmailTaken,
             "E_CHAR_LIMIT" => Self::CharLimit,
             "E_NAME_TAKEN" => Self::NameTaken,
             "E_BAD_PROFILE" => Self::BadProfile,
@@ -173,6 +181,8 @@ mod tests {
         "E_LOGIN_TAKEN",
         "E_WEAK_PASSWORD",
         "E_REGISTER_DISABLED",
+        "E_BAD_EMAIL",
+        "E_EMAIL_TAKEN",
         "E_CHAR_LIMIT",
         "E_NAME_TAKEN",
         "E_BAD_PROFILE",

@@ -42,7 +42,7 @@ async fn shared_contract_suite_passes_on_real_server() {
     let seq = setup
         .send(
             "cmd/auth.register",
-            json!({ "login": login, "password": "longenough1" }),
+            json!({ "login": login, "password": "longenough1", "email": checks::unique_email() }),
         )
         .await;
     assert_eq!(setup.ack(seq).await["result"], "ok");
