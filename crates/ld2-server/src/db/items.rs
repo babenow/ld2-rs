@@ -211,3 +211,13 @@ pub async fn set_sockets(
         .await?;
     Ok(())
 }
+
+/// Уровень улучшения инстанса (ФР-10; `upgrade` в §6 = def + инстанс).
+pub async fn set_upgrade(pool: &PgPool, uid: &str, upgrade: i32) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE items SET upgrade = $2 WHERE uid = $1")
+        .bind(uid)
+        .bind(upgrade)
+        .execute(pool)
+        .await?;
+    Ok(())
+}

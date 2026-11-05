@@ -1,6 +1,6 @@
 //! Чистые игровые правила (без tokio/sqlx) — юнит-тесты (M12.5).
 
-use crate::config::SkillsSection;
+use crate::config::{SkillsSection, UpgradeSection};
 
 /// Порог ранга: `round(base_xp × growth^rank)` (skills.md §2.2, D25).
 pub fn xp_to_next(rank: u32, cfg: &SkillsSection) -> i64 {
@@ -38,6 +38,48 @@ pub fn apply_kill_xp(
         rank = next;
     }
     (xp, rank)
+}
+
+/// Правило провала улучшения (`features."upgrade.rules"`, ФР-10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeFailRule {
+    /// Уровень не меняется.
+    Keep,
+    /// Уровень падает на 1 (не ниже 0).
+    LevelDown,
+    /// Предмет разрушается.
+    Break,
+}
+
+impl UpgradeFailRule {
+    /// Строковое значение capability из конфига; неизвестное → безопасное
+    /// «без потери» (клиент capability-driven, §5).
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "level_down" => Self::LevelDown,
+            "break_on_fail" => Self::Break,
+            _ => Self::Keep,
+        }
+    }
+}
+
+/// Стоимость улучшения `current → current+1` (золото, D25 — формула из
+/// конфига): `gold_base + gold_per_level × current`.
+pub fn upgrade_cost(current: i64, cfg: &UpgradeSection) -> i64 {
+    (cfg.gold_base + cfg.gold_per_level * current).max(0)
+}
+
+/// Шанс успеха с уровня `current` (`0..=1`): не растёт с уровнем.
+pub fn upgrade_chance(current: i64, cfg: &UpgradeSection) -> f64 {
+    (cfg.chance_base - cfg.chance_per_level * current as f64).clamp(0.0, 1.0)
+}
+
+/// Бросок улучшения: `roll ∈ [0,1)` против шанса (v1: источник — время,
+/// детерминизма не обещаем; тесты выставляют шанс 0/1).
+pub fn upgrade_roll(now_ms: i64) -> f64 {
+    // Взбитое время — без rand-зависимости (как в combat.flee).
+    let mixed = now_ms.wrapping_mul(0x9E37_79B9_7F4A_7C15_u64 as i64);
+    (mixed.unsigned_abs() % 10_000) as f64 / 10_000.0
 }
 
 #[cfg(test)]
@@ -98,5 +140,55 @@ mod tests {
         // skills.md §2.3: xp = base + difficulty × per
         let base = 8 + 3 * 6;
         assert_eq!(base, 26, "пример: difficulty 3 → 26 XP");
+    }
+
+    fn upgrade_cfg() -> crate::config::UpgradeSection {
+        crate::config::UpgradeSection {
+            max_level: 9,
+            preview: true,
+            shows_chance: true,
+            gold_base: 100,
+            gold_per_level: 50,
+            chance_base: 0.9,
+            chance_per_level: 0.05,
+        }
+    }
+
+    #[test]
+    fn upgrade_cost_and_chance_follow_config() {
+        let c = upgrade_cfg();
+        assert_eq!(upgrade_cost(0, &c), 100, "+0 → +1 стоит gold_base");
+        assert_eq!(upgrade_cost(3, &c), 250, "100 + 50×3");
+        assert!((upgrade_chance(0, &c) - 0.9).abs() < f64::EPSILON);
+        assert!((upgrade_chance(4, &c) - 0.7).abs() < 1e-9, "0.9 − 0.05×4");
+        // Шанс не уходит ниже нуля на высоких уровнях.
+        assert_eq!(upgrade_chance(100, &c), 0.0);
+        assert_eq!(upgrade_chance(-5, &c).min(1.0), 1.0, "кламп сверху");
+    }
+
+    #[test]
+    fn upgrade_roll_in_unit_interval() {
+        for t in [0, 1, 999, 123_456_789, i64::MAX / 2] {
+            let roll = upgrade_roll(t);
+            assert!((0.0..1.0).contains(&roll), "roll {roll} вне [0,1)");
+        }
+        // Границы шанса: 0 — всегда провал, 1 — всегда успех.
+        assert!(upgrade_roll(42) >= 0.0);
+        assert!(upgrade_roll(42) < 1.0);
+    }
+
+    #[test]
+    fn upgrade_fail_rule_parses_capability() {
+        assert_eq!(
+            UpgradeFailRule::parse("break_on_fail"),
+            UpgradeFailRule::Break
+        );
+        assert_eq!(
+            UpgradeFailRule::parse("level_down"),
+            UpgradeFailRule::LevelDown
+        );
+        // Неизвестное/отсутствующее — безопасный вариант без потери.
+        assert_eq!(UpgradeFailRule::parse("whatever"), UpgradeFailRule::Keep);
+        assert_eq!(UpgradeFailRule::parse(""), UpgradeFailRule::Keep);
     }
 }

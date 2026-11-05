@@ -138,6 +138,14 @@ pub struct UpgradeSection {
     pub max_level: u32,
     pub preview: bool,
     pub shows_chance: bool,
+    /// Базовая стоимость улучшения в золоте (ФР-10, M12.5c).
+    pub gold_base: i64,
+    /// Прибавка к стоимости за каждый уровень.
+    pub gold_per_level: i64,
+    /// Шанс успеха с уровня +0 (`0..=1`).
+    pub chance_base: f64,
+    /// Снижение шанса за уровень.
+    pub chance_per_level: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -309,6 +317,21 @@ impl Config {
 
         if self.gameplay.upgrade.max_level == 0 {
             out.push("gameplay.upgrade.max_level: должен быть ≥ 1".into());
+        }
+        if self.gameplay.upgrade.gold_base < 0 || self.gameplay.upgrade.gold_per_level < 0 {
+            out.push("gameplay.upgrade.gold_*: не может быть отрицательным".into());
+        }
+        if !(0.0..=1.0).contains(&self.gameplay.upgrade.chance_base) {
+            out.push(format!(
+                "gameplay.upgrade.chance_base: должен быть в 0..=1 (получено: {})",
+                self.gameplay.upgrade.chance_base
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.gameplay.upgrade.chance_per_level) {
+            out.push(format!(
+                "gameplay.upgrade.chance_per_level: должен быть в 0..=1 (получено: {})",
+                self.gameplay.upgrade.chance_per_level
+            ));
         }
 
         if self.gameplay.magic.rune_recharge.trim().is_empty() {

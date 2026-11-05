@@ -8,12 +8,14 @@ use std::net::SocketAddr;
 use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
     ChatSend, CombatAttack, EntityInfo, ItemDrop, ItemEquip, ItemUnequip, ItemUse, LocationMove,
-    MagicRuneCast, MagicScrollCast, SocketExtract, SocketInsert, StateResync,
+    MagicRuneCast, MagicScrollCast, SocketExtract, SocketInsert, StateResync, UpgradePreview,
+    UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
     CastSource, CharStats, CharXp, CombatHit, CombatKind, EntityHp, ItemAdded, ItemRemovalReason,
     ItemRemoved, ItemState, LocationChanged, MagicCast, Pong, StateSnapshot, TimeSync,
+    UpgradeResult,
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, Entity, EquipMap, Hp, ItemSnapshot, LocationSnapshot, Mp,
@@ -53,6 +55,17 @@ pub struct Session {
     location_id: Option<String>,
     /// Канал исходящих конвертов соединения (рассылка тика боя, M12.5).
     out_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// Активное превью улучшения (ФР-10, M12.5c): stale → `E_UPGRADE_PREVIEW_STALE`.
+    preview_state: Option<UpgradePreviewState>,
+}
+
+/// Превью улучшения (одно на соединение; уровень изменился → stale).
+#[derive(Debug, Clone)]
+struct UpgradePreviewState {
+    preview_id: String,
+    item_uid: String,
+    /// Уровень на момент превью.
+    level: i32,
 }
 
 impl Session {
@@ -73,6 +86,7 @@ impl Session {
             selected_char_id: None,
             char: None,
             location_id: None,
+            preview_state: None,
         }
     }
 
@@ -137,6 +151,9 @@ impl Session {
             "cmd/combat.attack" => self.combat_attack(env, seq).await,
             "cmd/combat.stop" => self.combat_stop(seq).await,
             "cmd/combat.flee" => self.combat_flee(seq).await,
+            // улучшение предметов (ФР-10, M12.5c)
+            "cmd/upgrade.preview" => self.upgrade_preview(env, seq).await,
+            "cmd/upgrade.start" => self.upgrade_start(env, seq).await,
             // магия и сокеты (ФР-09, M12.5b)
             "cmd/magic.rune_cast" => self.magic_rune_cast(env, seq).await,
             "cmd/magic.scroll_cast" => self.magic_scroll_cast(env, seq).await,
@@ -1822,6 +1839,10 @@ impl Session {
         if let Some(def_id) = scenario.strip_prefix("give ") {
             return self.scenario_give(def_id.trim(), seq).await;
         }
+        // `/scenario gold <n>` — dev-начисление золота (тесты M12.5c).
+        if let Some(amount) = scenario.strip_prefix("gold ") {
+            return self.scenario_gold(amount.trim(), seq).await;
+        }
         if scenario != "death" {
             return vec![Self::err(
                 seq,
@@ -2656,6 +2677,283 @@ impl Session {
         (0..count.max(0))
             .map(|i| serde_json::json!({ "index": i, "rune": null }))
             .collect()
+    }
+
+    /// `/scenario gold <n>` (dev): начислить золото (тесты M12.5c).
+    async fn scenario_gold(&mut self, amount: &str, seq: u32) -> Vec<Out> {
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let Ok(n) = amount.parse::<i64>() else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректная сумма")];
+        };
+        if let Err(e) = db::characters::add_gold(&self.state.pool, &char_id, n).await {
+            warn!("scenario gold: {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    /// `cmd/upgrade.preview` (§7, ФР-10): превью «сейчас → после» —
+    /// `preview_id`, `delta.upgrade`, `cost.gold`, `chance` (если
+    /// `shows_chance`). `E_UPGRADE_MAX` — уровень уже предельный.
+    async fn upgrade_preview(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<UpgradePreview>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let Some(item) = (match db::items::find(pool, &cmd.item_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("upgrade.preview (поиск): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+        };
+        let Some(def) = (match db::items::def(pool, &item.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("upgrade.preview (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения предмета",
+            )];
+        };
+
+        let cfg = &self.state.config.gameplay.upgrade;
+        let level = def.upgrade + item.upgrade;
+        if level >= cfg.max_level as i32 {
+            return vec![Self::err(seq, ErrorCode::UpgradeMax, "предельный уровень")];
+        }
+        let next = level + 1;
+        let cost = crate::systems::upgrade_cost(i64::from(level), cfg);
+        let chance = crate::systems::upgrade_chance(i64::from(level), cfg);
+        let preview_id = format!("pv_{:x}", crate::time::now_ms());
+        self.preview_state = Some(UpgradePreviewState {
+            preview_id: preview_id.clone(),
+            item_uid: item.uid.clone(),
+            level,
+        });
+
+        let mut payload = serde_json::json!({
+            "preview_id": preview_id,
+            "delta": { "upgrade": format!("+{next}") },
+            "cost": { "gold": cost },
+        });
+        if cfg.shows_chance {
+            payload["chance"] = serde_json::json!(chance);
+        }
+        vec![Self::ack_payload(seq, &payload)]
+    }
+
+    /// `cmd/upgrade.start` (§7): золото списывается всегда, бросок — по
+    /// шансу из конфига; провал — по `features."upgrade.rules"`
+    /// (keep/level_down/break_on_fail). Итог — `evt/upgrade/result`
+    /// (+ `evt/item/state`/`evt/item/removed`). `E_UPGRADE_PREVIEW_STALE` —
+    /// превью не то/устарело.
+    async fn upgrade_start(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<UpgradeStart>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = self.state.pool.clone();
+
+        // Превью: одно на соединение, uid + уровень должны совпасть.
+        let preview = self.preview_state.clone();
+        self.preview_state = None; // одноразово (§7: stale после старта)
+        let Some(preview) = preview else {
+            return vec![Self::err(seq, ErrorCode::UpgradePreviewStale, "нет превью")];
+        };
+        if preview.preview_id != cmd.preview_id || preview.item_uid != cmd.item_uid {
+            return vec![Self::err(
+                seq,
+                ErrorCode::UpgradePreviewStale,
+                "превью устарело",
+            )];
+        }
+
+        let Some(item) = (match db::items::find(&pool, &cmd.item_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("upgrade.start (поиск): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+        };
+        let Some(def) = (match db::items::def(&pool, &item.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("upgrade.start (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения предмета",
+            )];
+        };
+        let cfg = self.state.config.gameplay.upgrade.clone();
+        let level = def.upgrade + item.upgrade;
+        if level >= cfg.max_level as i32 {
+            return vec![Self::err(seq, ErrorCode::UpgradeMax, "предельный уровень")];
+        }
+        if level != preview.level {
+            // Уровень изменился после превью — бросать по свежим данным нельзя.
+            return vec![Self::err(
+                seq,
+                ErrorCode::UpgradePreviewStale,
+                "предмет изменился",
+            )];
+        }
+
+        // Золото списывается всегда (до броска).
+        let cost = crate::systems::upgrade_cost(i64::from(level), &cfg);
+        match db::characters::spend_gold(&pool, &char_id, cost).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Ingredients,
+                    format!("не хватает золота: {cost}"),
+                )];
+            }
+            Err(e) => {
+                warn!("upgrade.start (золото): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+
+        let chance = crate::systems::upgrade_chance(i64::from(level), &cfg);
+        let success = crate::systems::upgrade_roll(crate::time::now_ms()) < chance;
+        let rule = crate::systems::UpgradeFailRule::parse(
+            self.state
+                .config
+                .gameplay
+                .features
+                .get("upgrade.rules")
+                .and_then(|v| match v {
+                    crate::config::FeatureValue::Str(s) => Some(s.as_str()),
+                    _ => None,
+                })
+                .unwrap_or("keep"),
+        );
+        let cost_json = serde_json::json!({ "gold": cost });
+
+        let mut outs = Vec::new();
+        if success {
+            let new_level = level + 1;
+            if let Err(e) = db::items::set_upgrade(&pool, &item.uid, item.upgrade + 1).await {
+                warn!("upgrade.start (запись): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            outs.push(out_event(
+                "evt/upgrade/result",
+                None,
+                serde_json::to_value(UpgradeResult {
+                    uid: item.uid.clone(),
+                    ok: true,
+                    new_upgrade: Some(new_level as u32),
+                    item_destroyed: Some(false),
+                    cost: serde_json::from_value(cost_json.clone()).unwrap_or_default(),
+                })
+                .unwrap_or_default(),
+            ));
+            let mut patch = serde_json::Map::new();
+            patch.insert("upgrade".into(), serde_json::json!(new_level));
+            outs.push(out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: item.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            ));
+        } else {
+            let (new_upgrade, destroyed) = match rule {
+                crate::systems::UpgradeFailRule::Keep => (level, false),
+                crate::systems::UpgradeFailRule::LevelDown => ((level - 1).max(0), false),
+                crate::systems::UpgradeFailRule::Break => (level, true),
+            };
+            if destroyed {
+                if let Err(e) = db::items::delete(&pool, &item.uid).await {
+                    warn!("upgrade.start (разрушение): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+                outs.push(out_event(
+                    "evt/item/removed",
+                    None,
+                    serde_json::to_value(ItemRemoved {
+                        uid: item.uid.clone(),
+                        reason: ItemRemovalReason::Consumed,
+                    })
+                    .unwrap_or_default(),
+                ));
+            } else if new_upgrade != level {
+                if let Err(e) =
+                    db::items::set_upgrade(&pool, &item.uid, new_upgrade - def.upgrade).await
+                {
+                    warn!("upgrade.start (понижение): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+                let mut patch = serde_json::Map::new();
+                patch.insert("upgrade".into(), serde_json::json!(new_upgrade));
+                outs.push(out_event(
+                    "evt/item/state",
+                    None,
+                    serde_json::to_value(ItemState {
+                        uid: item.uid.clone(),
+                        patch,
+                    })
+                    .unwrap_or_default(),
+                ));
+            }
+            let result = UpgradeResult {
+                uid: item.uid.clone(),
+                ok: false,
+                new_upgrade: if destroyed {
+                    None
+                } else {
+                    Some(new_upgrade as u32)
+                },
+                item_destroyed: Some(destroyed),
+                cost: serde_json::from_value(cost_json).unwrap_or_default(),
+            };
+            outs.insert(
+                0,
+                out_event(
+                    "evt/upgrade/result",
+                    None,
+                    serde_json::to_value(result).unwrap_or_default(),
+                ),
+            );
+        }
+
+        // ack → события (§2.2).
+        let mut result = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        result.extend(outs);
+        result
     }
 
     // ── помощники ────────────────────────────────────────────────────────────

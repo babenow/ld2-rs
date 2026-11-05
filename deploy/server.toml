@@ -79,6 +79,10 @@ equip_slots = ["head", "body", "main_hand", "staff", "feet"]
 max_level = 9
 preview = true
 shows_chance = true
+gold_base = 100         # стоимость улучшения +0 → +1 (золото)
+gold_per_level = 50     # прибавка за уровень
+chance_base = 0.9       # шанс успеха с +0
+chance_per_level = 0.05 # снижение шанса за уровень
 
 [gameplay.magic]
 rune_recharge = "item"     # ADR-002

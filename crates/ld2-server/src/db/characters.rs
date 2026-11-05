@@ -18,13 +18,15 @@ pub struct CharacterRow {
     pub state_version: i64,
     /// Базовые/квестовые атрибуты (skills.md §1; JSONB, старт — все 10).
     pub attrs: serde_json::Value,
+    /// Золото (M12.5c): стоимость улучшений, сделки (M12.7).
+    pub gold: i64,
 }
 
 /// Живые персонажи аккаунта (для `char.list` и `evt/session.start` §5).
 pub async fn list(pool: &PgPool, account_id: i64) -> Result<Vec<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
         "SELECT id, name, profile, location_id, hp_cur, hp_max, \
-         mp_cur, mp_max, xp_pool, state_version, attrs \
+         mp_cur, mp_max, xp_pool, state_version, attrs, gold \
          FROM characters \
          WHERE account_id = $1 AND deleted_at IS NULL ORDER BY created_at",
     )
@@ -56,7 +58,7 @@ pub async fn create(
         "INSERT INTO characters (account_id, name, profile) VALUES ($1, $2, $3) \
          ON CONFLICT (name) WHERE deleted_at IS NULL DO NOTHING \
          RETURNING id, name, profile, location_id, hp_cur, hp_max, \
-                  mp_cur, mp_max, xp_pool, state_version, attrs",
+                  mp_cur, mp_max, xp_pool, state_version, attrs, gold",
     )
     .bind(account_id)
     .bind(name)
@@ -73,7 +75,7 @@ pub async fn find(
 ) -> Result<Option<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
         "SELECT id, name, profile, location_id, hp_cur, hp_max, \
-         mp_cur, mp_max, xp_pool, state_version, attrs \
+         mp_cur, mp_max, xp_pool, state_version, attrs, gold \
          FROM characters \
          WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
     )
@@ -99,7 +101,7 @@ pub async fn bump_state_version(pool: &PgPool, char_id: &str) -> Result<i64, sql
 pub async fn get(pool: &PgPool, char_id: &str) -> Result<Option<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
         "SELECT id, name, profile, location_id, hp_cur, hp_max, \
-         mp_cur, mp_max, xp_pool, state_version, attrs \
+         mp_cur, mp_max, xp_pool, state_version, attrs, gold \
          FROM characters WHERE id = $1 AND deleted_at IS NULL",
     )
     .bind(char_id)
@@ -160,4 +162,28 @@ pub async fn soft_delete(
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
+}
+
+/// Атомарная трата золота (улучшение, ФР-10): `false` — не хватает.
+pub async fn spend_gold(pool: &PgPool, char_id: &str, amount: i64) -> Result<bool, sqlx::Error> {
+    let affected = sqlx::query(
+        "UPDATE characters SET gold = gold - $2 \
+         WHERE id = $1 AND gold >= $2 AND deleted_at IS NULL",
+    )
+    .bind(char_id)
+    .bind(amount)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(affected == 1)
+}
+
+/// Начислить золото (dev-сценарий `/scenario gold`, тесты M12.5c).
+pub async fn add_gold(pool: &PgPool, char_id: &str, amount: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE characters SET gold = gold + $2 WHERE id = $1")
+        .bind(char_id)
+        .bind(amount)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
