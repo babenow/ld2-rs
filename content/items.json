@@ -23,6 +23,47 @@
       },
       "gold_value": 25,
       "qty": 1
+    },
+    {
+      "id": "staff_apprentice",
+      "type": "staff",
+      "name": "Посох подмастерья",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "magic": 2
+      },
+      "gold_value": 60,
+      "sockets": 2
+    },
+    {
+      "id": "rune_fire",
+      "type": "rune",
+      "name": "Руна огня",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "spell": "fire_dart",
+        "damage": 12,
+        "school": "fire",
+        "charges": 7,
+        "max": 10
+      },
+      "gold_value": 40
+    },
+    {
+      "id": "scroll_frost",
+      "type": "scroll",
+      "name": "Свиток мороза",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "spell": "frost_bolt",
+        "damage": 9,
+        "school": "frost"
+      },
+      "gold_value": 30,
+      "qty": 1
     }
   ]
 }

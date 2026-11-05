@@ -181,6 +181,13 @@ impl World {
         locs
     }
 
+    /// Персонажи, привязанные к миру (онлайн — реген маны, M12.5b).
+    pub fn online_chars(&self) -> Vec<String> {
+        let mut chars: Vec<String> = self.char_names.keys().cloned().collect();
+        chars.sort();
+        chars
+    }
+
     /// Персонажи в локации (жертвы агрессии).
     pub fn chars_in_location(&self, location_id: &str) -> Vec<String> {
         let mut chars: Vec<String> = self

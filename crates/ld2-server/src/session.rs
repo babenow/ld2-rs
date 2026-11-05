@@ -8,16 +8,16 @@ use std::net::SocketAddr;
 use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
     ChatSend, CombatAttack, EntityInfo, ItemDrop, ItemEquip, ItemUnequip, ItemUse, LocationMove,
-    StateResync,
+    MagicRuneCast, MagicScrollCast, SocketExtract, SocketInsert, StateResync,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
-    CharStats, CharXp, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState, LocationChanged, Pong,
-    StateSnapshot, TimeSync,
+    CastSource, CharStats, CharXp, CombatHit, CombatKind, EntityHp, ItemAdded, ItemRemovalReason,
+    ItemRemoved, ItemState, LocationChanged, MagicCast, Pong, StateSnapshot, TimeSync,
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, Entity, EquipMap, Hp, ItemSnapshot, LocationSnapshot, Mp,
-    Requires, SkillSnapshot,
+    Requires, SkillSnapshot, Socket,
 };
 use ld2_protocol::ErrorCode;
 use serde::de::DeserializeOwned;
@@ -137,6 +137,11 @@ impl Session {
             "cmd/combat.attack" => self.combat_attack(env, seq).await,
             "cmd/combat.stop" => self.combat_stop(seq).await,
             "cmd/combat.flee" => self.combat_flee(seq).await,
+            // магия и сокеты (ФР-09, M12.5b)
+            "cmd/magic.rune_cast" => self.magic_rune_cast(env, seq).await,
+            "cmd/magic.scroll_cast" => self.magic_scroll_cast(env, seq).await,
+            "cmd/socket.insert" => self.socket_insert(env, seq).await,
+            "cmd/socket.extract" => self.socket_extract(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
             "cmd/char.xp_invest" => self.char_xp_invest(env, seq).await,
             "cmd/item.use" => self.item_use(env, seq).await,
@@ -853,6 +858,7 @@ impl Session {
                     qty: def.qty,
                     upgrade: 0,
                     equipped_slot: None,
+                    sockets: serde_json::json!([]),
                 };
                 loot.push(item_snapshot(&row, &def));
             }
@@ -923,6 +929,7 @@ impl Session {
                 qty: def.qty,
                 upgrade: 0,
                 equipped_slot: None,
+                sockets: serde_json::json!([]),
             };
             loot.push(item_snapshot(&row, &def));
         }
@@ -1811,6 +1818,10 @@ impl Session {
     /// `/scenario death` (ФР-06): общий поток смерти (death.rs) — теряется
     /// **только лут**, опыт/пул сохраняются (skills.md §2.2); респаун в спавне.
     async fn scenario(&mut self, scenario: &str, seq: u32) -> Vec<Out> {
+        // `/scenario give <def_id>` — dev-выдача предмета (тесты M12.5+).
+        if let Some(def_id) = scenario.strip_prefix("give ") {
+            return self.scenario_give(def_id.trim(), seq).await;
+        }
         if scenario != "death" {
             return vec![Self::err(
                 seq,
@@ -1844,6 +1855,807 @@ impl Session {
             }
         }
         outs
+    }
+
+    /// `/scenario give <def_id>` (dev): выдать предмет персонажу —
+    /// сокеты посоха создаются сразу (ADR-002, иначе UI не увидит слоты).
+    async fn scenario_give(&mut self, def_id: &str, seq: u32) -> Vec<Out> {
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let Some(def) = (match db::items::def(pool, def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("scenario give (определение {def_id}): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::ItemGone,
+                "нет такого определения",
+            )];
+        };
+        if db::items::count(pool, &char_id).await.unwrap_or(i64::MAX)
+            >= i64::from(self.state.config.gameplay.inventory.slots)
+        {
+            return vec![Self::err(
+                seq,
+                ErrorCode::InventoryFull,
+                "инвентарь заполнен",
+            )];
+        }
+        let mut row = match db::items::insert(pool, &char_id, def_id, i64::from(def.qty)).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("scenario give (insert): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if def.item_type == "staff" && def.sockets > 0 {
+            row.sockets = Self::empty_sockets(def.sockets);
+            if let Err(e) = db::items::set_sockets(pool, &row.uid, row.sockets.clone()).await {
+                warn!("scenario give (сокеты): {e}");
+            }
+        }
+        let item = item_snapshot(&row, &def);
+        vec![
+            Self::ack_payload(seq, &serde_json::json!({})),
+            out_event(
+                "evt/item/added",
+                None,
+                serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+            ),
+        ]
+    }
+
+    /// `cmd/socket.insert` (§7, ADR-002): руна → свободный сокет посоха.
+    /// ack `{staff}`; руна расходуется (`evt/item/removed`/qty), сокеты —
+    /// патчем `evt/item/state`.
+    async fn socket_insert(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<SocketInsert>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+
+        let Some(staff) = (match db::items::find(pool, &cmd.staff_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("socket.insert (поиск посоха): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+        };
+        let Some(staff_def) = (match db::items::def(pool, &staff.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("socket.insert (определение посоха): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения посоха",
+            )];
+        };
+        if staff_def.item_type != "staff" || staff_def.sockets == 0 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoRuneSlot,
+                "у предмета нет сокетов",
+            )];
+        }
+        let Some(rune) = (match db::items::find(pool, &cmd.rune_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("socket.insert (поиск руны): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "руны нет")];
+        };
+        let Some(rune_def) = (match db::items::def(pool, &rune.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("socket.insert (определение руны): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
+        };
+        if rune_def.item_type != "rune" {
+            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "это не руна")];
+        }
+
+        // Ленивая инициализация: пустой массив → слоты по определению.
+        let mut sockets: Vec<Value> =
+            serde_json::from_value(staff.sockets.clone()).unwrap_or_default();
+        if sockets.is_empty() {
+            sockets = Self::empty_sockets_list(staff_def.sockets);
+        }
+        let Some(slot) = sockets.get_mut(cmd.socket_index as usize) else {
+            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "нет такого сокета")];
+        };
+        if slot.get("rune").is_some_and(|r| !r.is_null()) {
+            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "сокет уже занят")];
+        }
+        let charges = rune_def
+            .stats
+            .get("charges")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1);
+        let max = rune_def
+            .stats
+            .get("max")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(charges);
+        let spell = rune_def
+            .stats
+            .get("spell")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        *slot = serde_json::json!({
+            "index": cmd.socket_index,
+            "def_id": rune_def.id,
+            "rune": {
+                "name": rune_def.name,
+                "spell": spell,
+                "charges": charges,
+                "max": max,
+            }
+        });
+        let sockets_value = Value::Array(sockets);
+        if let Err(e) = db::items::set_sockets(pool, &staff.uid, sockets_value).await {
+            warn!("socket.insert (запись): {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+
+        // Руна расходуется (стак −1 либо удаление).
+        let mut outs = Vec::new();
+        if rune.qty > 1 {
+            let new_qty = i64::from(rune.qty) - 1;
+            if let Err(e) = db::items::set_qty(pool, &rune.uid, new_qty).await {
+                warn!("socket.insert (qty руны): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(new_qty));
+            outs.push(out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: rune.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            ));
+        } else {
+            if let Err(e) = db::items::delete(pool, &rune.uid).await {
+                warn!("socket.insert (удаление руны): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            outs.push(out_event(
+                "evt/item/removed",
+                None,
+                serde_json::to_value(ItemRemoved {
+                    uid: rune.uid.clone(),
+                    reason: ItemRemovalReason::Consumed,
+                })
+                .unwrap_or_default(),
+            ));
+        }
+
+        // ack `{staff}` (§7): посох с новыми сокетами.
+        let staff_row = match db::items::find(pool, &staff.uid, &char_id).await {
+            Ok(Some(row)) => row,
+            Ok(None) => staff,
+            Err(e) => {
+                warn!("socket.insert (перечитывание посоха): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let mut result = vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "staff": item_snapshot(&staff_row, &staff_def) }),
+        )];
+        result.extend(outs);
+        result
+    }
+
+    /// `cmd/socket.extract` (§7): извлечь руну → в инвентарь (заряды
+    /// сбрасываются к максимуму — отклонение M12.5b: per-item charges нет).
+    /// ack `{staff, rune}`.
+    async fn socket_extract(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<SocketExtract>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+
+        let Some(staff) = (match db::items::find(pool, &cmd.staff_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("socket.extract (поиск посоха): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+        };
+        let Some(staff_def) = (match db::items::def(pool, &staff.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("socket.extract (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения посоха",
+            )];
+        };
+        let mut sockets: Vec<Value> =
+            serde_json::from_value(staff.sockets.clone()).unwrap_or_default();
+        if sockets.is_empty() {
+            sockets = Self::empty_sockets_list(staff_def.sockets);
+        }
+        let Some(slot) = sockets.get_mut(cmd.socket_index as usize) else {
+            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "нет такого сокета")];
+        };
+        let has_rune = slot.get("rune").is_some_and(|r| !r.is_null());
+        let rune_def_id = slot
+            .get("def_id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        if !has_rune {
+            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "сокет пуст")];
+        }
+        let Some(rune_def_id) = rune_def_id else {
+            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "сокет пуст")];
+        };
+        if db::items::count(pool, &char_id).await.unwrap_or(i64::MAX)
+            >= i64::from(self.state.config.gameplay.inventory.slots)
+        {
+            return vec![Self::err(
+                seq,
+                ErrorCode::InventoryFull,
+                "инвентарь заполнен",
+            )];
+        }
+        *slot = serde_json::json!({ "index": cmd.socket_index, "rune": null });
+        if let Err(e) = db::items::set_sockets(pool, &staff.uid, Value::Array(sockets)).await {
+            warn!("socket.extract (запись): {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        let Some(rune_def) = (match db::items::def(pool, &rune_def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("socket.extract (определение руны): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
+        };
+        let rune_row = match db::items::insert(pool, &char_id, &rune_def_id, 1).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("socket.extract (возврат руны): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let staff_row = match db::items::find(pool, &staff.uid, &char_id).await {
+            Ok(Some(row)) => row,
+            _ => staff,
+        };
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({
+                "staff": item_snapshot(&staff_row, &staff_def),
+                "rune": item_snapshot(&rune_row, &rune_def),
+            }),
+        )]
+    }
+
+    /// `cmd/magic.rune_cast` (§7, D4): мана + заряд руны → урон цели
+    /// (`stats.damage`), `evt/magic/cast` всем в локации, XP убийства — в
+    /// школу (`stats.school`). Ошибки: `E_NO_RUNE_SLOT`, `E_NO_CHARGES`,
+    /// `E_NOT_ENOUGH_MP`, `E_TARGET_GONE`.
+    async fn magic_rune_cast(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<MagicRuneCast>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = self.state.pool.clone();
+
+        let Some(staff) = (match db::items::find(&pool, &cmd.staff_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("rune_cast (поиск посоха): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+        };
+        let Some(staff_def) = (match db::items::def(&pool, &staff.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("rune_cast (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения посоха",
+            )];
+        };
+        let sockets: Vec<Value> = serde_json::from_value(staff.sockets.clone()).unwrap_or_default();
+        let Some(slot) = sockets.get(cmd.socket_index as usize) else {
+            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "нет такого сокета")];
+        };
+        let Some(rune_info) = slot.get("rune").filter(|r| !r.is_null()) else {
+            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "сокет пуст")];
+        };
+        let charges = rune_info
+            .get("charges")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        if charges <= 0 {
+            return vec![Self::err(seq, ErrorCode::NoCharges, "руна разряжена")];
+        }
+        let rune_def_id = slot
+            .get("def_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let Some(rune_def) = (match db::items::def(&pool, &rune_def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("rune_cast (определение руны): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
+        };
+        if staff_def.item_type != "staff" || staff_def.sockets == 0 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoRuneSlot,
+                "у предмета нет сокетов",
+            )];
+        }
+
+        // Мана (D4: каст тратит ману И заряд).
+        let cost = i64::from(self.state.config.gameplay.magic.mana.rune_cost);
+        let Some(row) = (match db::characters::get(&pool, &char_id).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("rune_cast (персонаж): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
+        };
+        if i64::from(row.mp_cur) < cost {
+            return vec![Self::err(seq, ErrorCode::NotEnoughMp, "не хватает маны")];
+        }
+        let spell = rune_info
+            .get("spell")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let damage = rune_def
+            .stats
+            .get("damage")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let school = rune_def
+            .stats
+            .get("school")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        // Цель (опциональна): моб должен быть в локации персонажа.
+        let location = self.current_location(&char_id).await;
+        if let Some(target) = cmd.target_id.as_deref() {
+            let alive = {
+                let world = self.state.world.lock().expect("мир");
+                world.mob_location(target).as_deref() == Some(location.as_str())
+            };
+            if !alive {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "цель недоступна")];
+            }
+        }
+
+        // Расход: мана и заряд руны (D27 — сразу в БД).
+        let new_mp = (i64::from(row.mp_cur) - cost).max(0) as i32;
+        if let Err(e) = db::characters::set_mp(&pool, &char_id, new_mp).await {
+            warn!("rune_cast (mp): {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        let mut sockets: Vec<Value> =
+            serde_json::from_value(staff.sockets.clone()).unwrap_or_default();
+        if let Some(slot) = sockets.get_mut(cmd.socket_index as usize) {
+            if let Some(r) = slot.get_mut("rune") {
+                r["charges"] = serde_json::json!(charges - 1);
+            }
+        }
+        if let Err(e) = db::items::set_sockets(&pool, &staff.uid, Value::Array(sockets)).await {
+            warn!("rune_cast (заряды): {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+
+        let by_name = self
+            .char
+            .as_ref()
+            .map(|c| c.name.clone())
+            .or_else(|| {
+                let world = self.state.world.lock().expect("мир");
+                world.char_name(&char_id)
+            })
+            .unwrap_or_default();
+
+        let cast = MagicCast {
+            by: char_id.clone(),
+            by_name: by_name.clone(),
+            spell: spell.clone(),
+            what: CastSource::Rune,
+            target: cmd.target_id.clone(),
+            charges_left: Some((charges - 1) as i32),
+            mp_left: Some(new_mp),
+            ok: true,
+            extra: Default::default(),
+        };
+        let cast_json = event_payload_text("evt/magic/cast", &cast);
+
+        let mut mine: Vec<Out> = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        if let Some(text) = &cast_json {
+            mine.push(Out::Text(text.clone()));
+        }
+
+        // cast-событие — всем в локации (свой — уже в `mine`).
+        let mut others: Vec<(String, String)> = Vec::new();
+        if let Some(text) = &cast_json {
+            let world = self.state.world.lock().expect("мир");
+            for addr in world.chars_in_location(&location) {
+                if addr != char_id {
+                    others.push((addr, text.clone()));
+                }
+            }
+        }
+        let mut xp_work: Option<crate::tick::KillXp> = None;
+        if let Some(target) = cmd.target_id.as_deref() {
+            let skills_cfg = &self.state.config.skills;
+            let mut plan: Vec<(String, String)> = Vec::new();
+            {
+                let mut world = self.state.world.lock().expect("мир");
+                if let Some(hp) = world.damage_mob(target, damage) {
+                    let mob_name = world
+                        .mob(target)
+                        .map(|m| m.name.clone())
+                        .unwrap_or_default();
+                    let mob_max = world.mob_max_hp(target);
+                    let hit = CombatHit {
+                        source: char_id.clone(),
+                        source_name: by_name.clone(),
+                        target: target.to_string(),
+                        target_name: mob_name.clone(),
+                        kind: CombatKind::Rune,
+                        amount: damage,
+                        crit: false,
+                        miss: false,
+                        text: format!("Заклинание «{spell}»: {mob_name} −{damage}"),
+                        extra: Default::default(),
+                    };
+                    for addr in world.chars_in_location(&location) {
+                        plan.push((
+                            addr.clone(),
+                            event_payload_text("evt/combat/hit", &hit).unwrap_or_default(),
+                        ));
+                        plan.push((
+                            addr,
+                            event_payload_text(
+                                "evt/entity/hp",
+                                &EntityHp {
+                                    entity_id: target.to_string(),
+                                    hp: Hp {
+                                        cur: hp,
+                                        max: mob_max,
+                                    },
+                                },
+                            )
+                            .unwrap_or_default(),
+                        ));
+                    }
+                    if hp == 0 {
+                        xp_work = crate::tick::mob_kill_effects(
+                            &mut world, &mut plan, target, &location, &char_id, skills_cfg,
+                        );
+                        if let Some(work) = &mut xp_work {
+                            // XP убийства — в школу заклинания (skills.md §2.3).
+                            work.skill = school.clone();
+                        }
+                    }
+                }
+            }
+            for (addr, text) in plan {
+                if text.is_empty() {
+                    continue;
+                }
+                if addr == char_id {
+                    mine.push(Out::Text(text));
+                } else {
+                    others.push((addr, text));
+                }
+            }
+        }
+        if let Some(work) = &xp_work {
+            if let Some(text) = crate::tick::grant_kill_xp(&self.state, work).await {
+                mine.push(Out::Text(text));
+            }
+        }
+        {
+            let world = self.state.world.lock().expect("мир");
+            for (addr, text) in others {
+                world.send_to_char(&addr, text);
+            }
+        }
+        mine
+    }
+
+    /// `cmd/magic.scroll_cast` (§7): свиток расходуется, мана не тратится;
+    /// `scroll_requires_target` → цель обязательна (`E_TARGET_GONE`).
+    async fn magic_scroll_cast(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<MagicScrollCast>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = self.state.pool.clone();
+
+        let Some(scroll) = (match db::items::find(&pool, &cmd.item_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("scroll_cast (поиск): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "свитка нет")];
+        };
+        let Some(scroll_def) = (match db::items::def(&pool, &scroll.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("scroll_cast (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения свитка",
+            )];
+        };
+        if scroll_def.item_type != "scroll" {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "это не свиток")];
+        }
+
+        let location = self.current_location(&char_id).await;
+        let requires_target = self.state.config.gameplay.magic.scroll_requires_target;
+        if requires_target && cmd.target_id.is_none() {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "цель не указана")];
+        }
+        if let Some(target) = cmd.target_id.as_deref() {
+            let alive = {
+                let world = self.state.world.lock().expect("мир");
+                world.mob_location(target).as_deref() == Some(location.as_str())
+            };
+            if !alive {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "цель недоступна")];
+            }
+        }
+
+        let spell = scroll_def
+            .stats
+            .get("spell")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let damage = scroll_def
+            .stats
+            .get("damage")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let school = scroll_def
+            .stats
+            .get("school")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        // Расход свитка — до событий (§7: consumable).
+        let mut consumable = Vec::new();
+        if scroll.qty > 1 {
+            let new_qty = i64::from(scroll.qty) - 1;
+            if let Err(e) = db::items::set_qty(&pool, &scroll.uid, new_qty).await {
+                warn!("scroll_cast (qty): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(new_qty));
+            consumable.push(out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: scroll.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            ));
+        } else {
+            if let Err(e) = db::items::delete(&pool, &scroll.uid).await {
+                warn!("scroll_cast (удаление): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            consumable.push(out_event(
+                "evt/item/removed",
+                None,
+                serde_json::to_value(ItemRemoved {
+                    uid: scroll.uid.clone(),
+                    reason: ItemRemovalReason::Consumed,
+                })
+                .unwrap_or_default(),
+            ));
+        }
+
+        let by_name = self
+            .char
+            .as_ref()
+            .map(|c| c.name.clone())
+            .or_else(|| {
+                let world = self.state.world.lock().expect("мир");
+                world.char_name(&char_id)
+            })
+            .unwrap_or_default();
+        let cast = MagicCast {
+            by: char_id.clone(),
+            by_name: by_name.clone(),
+            spell: spell.clone(),
+            what: CastSource::Scroll,
+            target: cmd.target_id.clone(),
+            charges_left: None,
+            mp_left: None,
+            ok: true,
+            extra: Default::default(),
+        };
+        let cast_json = event_payload_text("evt/magic/cast", &cast);
+
+        let mut mine: Vec<Out> = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        if let Some(text) = &cast_json {
+            mine.push(Out::Text(text.clone()));
+        }
+        mine.extend(consumable);
+
+        // cast-событие — остальным в локации (свой уже в `mine`).
+        if let Some(text) = &cast_json {
+            let world = self.state.world.lock().expect("мир");
+            for addr in world.chars_in_location(&location) {
+                if addr != char_id {
+                    world.send_to_char(&addr, text.clone());
+                }
+            }
+        }
+
+        let mut xp_work: Option<crate::tick::KillXp> = None;
+        if let Some(target) = cmd.target_id.as_deref() {
+            let skills_cfg = &self.state.config.skills;
+            let mut plan: Vec<(String, String)> = Vec::new();
+            {
+                let mut world = self.state.world.lock().expect("мир");
+                if let Some(hp) = world.damage_mob(target, damage) {
+                    let mob_name = world
+                        .mob(target)
+                        .map(|m| m.name.clone())
+                        .unwrap_or_default();
+                    let mob_max = world.mob_max_hp(target);
+                    let hit = CombatHit {
+                        source: char_id.clone(),
+                        source_name: by_name.clone(),
+                        target: target.to_string(),
+                        target_name: mob_name.clone(),
+                        kind: CombatKind::Scroll,
+                        amount: damage,
+                        crit: false,
+                        miss: false,
+                        text: format!("Заклинание «{spell}»: {mob_name} −{damage}"),
+                        extra: Default::default(),
+                    };
+                    for addr in world.chars_in_location(&location) {
+                        plan.push((
+                            addr.clone(),
+                            event_payload_text("evt/combat/hit", &hit).unwrap_or_default(),
+                        ));
+                        plan.push((
+                            addr,
+                            event_payload_text(
+                                "evt/entity/hp",
+                                &EntityHp {
+                                    entity_id: target.to_string(),
+                                    hp: Hp {
+                                        cur: hp,
+                                        max: mob_max,
+                                    },
+                                },
+                            )
+                            .unwrap_or_default(),
+                        ));
+                    }
+                    if hp == 0 {
+                        xp_work = crate::tick::mob_kill_effects(
+                            &mut world, &mut plan, target, &location, &char_id, skills_cfg,
+                        );
+                        if let Some(work) = &mut xp_work {
+                            work.skill = school.clone();
+                        }
+                    }
+                }
+            }
+            for (addr, text) in plan {
+                if text.is_empty() {
+                    continue;
+                }
+                if addr == char_id {
+                    mine.push(Out::Text(text));
+                } else {
+                    let world = self.state.world.lock().expect("мир");
+                    world.send_to_char(&addr, text);
+                }
+            }
+        }
+        if let Some(work) = &xp_work {
+            if let Some(text) = crate::tick::grant_kill_xp(&self.state, work).await {
+                mine.push(Out::Text(text));
+            }
+        }
+        mine
+    }
+
+    /// Пустые слоты посоха (форма хранения JSONB, ADR-002).
+    fn empty_sockets(count: i32) -> Value {
+        Value::Array(Self::empty_sockets_list(count))
+    }
+
+    fn empty_sockets_list(count: i32) -> Vec<Value> {
+        (0..count.max(0))
+            .map(|i| serde_json::json!({ "index": i, "rune": null }))
+            .collect()
     }
 
     // ── помощники ────────────────────────────────────────────────────────────
@@ -1928,7 +2740,15 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
             .requires
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        sockets: None, // сокеты рун — M12.5 (ADR-002)
+        sockets: {
+            let sockets: Vec<Socket> =
+                serde_json::from_value(item.sockets.clone()).unwrap_or_default();
+            if sockets.is_empty() {
+                None
+            } else {
+                Some(sockets)
+            }
+        },
         qty: Some(i64::from(item.qty)),
         gold_value: Some(i64::from(def.gold_value)),
         extra: Default::default(),
@@ -1986,6 +2806,16 @@ pub(crate) fn out_event(ty: &str, state_version: Option<u64>, payload: Value) ->
         Out::Close
     } else {
         Out::Text(text)
+    }
+}
+
+/// JSON-текст конверта события из payload'а (`None` — сверх лимита §1).
+fn event_payload_text<T: serde::Serialize>(ty: &str, payload: &T) -> Option<String> {
+    let text = event_text(ty, None, serde_json::to_value(payload).unwrap_or_default());
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
     }
 }
 

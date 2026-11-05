@@ -12,6 +12,9 @@ pub struct ItemRow {
     pub qty: i32,
     pub upgrade: i32,
     pub equipped_slot: Option<String>,
+    /// Сокеты посоха: `[{index, rune?, def_id?}]` (ADR-002; `def_id` —
+    /// служебное поле для извлечения, в §6 не попадает).
+    pub sockets: serde_json::Value,
 }
 
 /// Определение из сида (`content/items.json` → `item_defs`).
@@ -26,12 +29,14 @@ pub struct ItemDefRow {
     pub requires: Option<Value>,
     pub gold_value: i32,
     pub qty: i32,
+    /// Количество сокетов посоха (ADR-002) — ленивая инициализация.
+    pub sockets: i32,
 }
 
 /// Инвентарь персонажа в порядке получения (стабильный порядок UI).
 pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot FROM items \
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items \
          WHERE character_id = $1 ORDER BY created_at, uid",
     )
     .bind(char_id)
@@ -42,7 +47,7 @@ pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sql
 /// Определение предмета; `None` — нет в сиде.
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
-        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty \
+        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)
@@ -53,7 +58,7 @@ pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx
 /// Инстанс в инвентаре конкретного персонажа; `None` — чужой/несуществующий.
 pub async fn find(pool: &PgPool, uid: &str, char_id: &str) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot FROM items \
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items \
          WHERE uid = $1 AND character_id = $2",
     )
     .bind(uid)
@@ -69,7 +74,7 @@ pub async fn find_equipped_in_slot(
     slot: &str,
 ) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot FROM items \
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items \
          WHERE character_id = $1 AND equipped_slot = $2",
     )
     .bind(char_id)
@@ -95,7 +100,7 @@ pub async fn insert(
 ) -> Result<ItemRow, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
         "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
     )
     .bind(char_id)
     .bind(def_id)
@@ -137,7 +142,7 @@ pub async fn delete(pool: &PgPool, uid: &str) -> Result<u64, sqlx::Error> {
 pub async fn delete_all(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
         "DELETE FROM items WHERE character_id = $1 \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
     )
     .bind(char_id)
     .fetch_all(pool)
@@ -182,7 +187,7 @@ pub async fn take_loot_tx(
     }
     let row = sqlx::query_as::<_, ItemRow>(
         "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
     )
     .bind(char_id)
     .bind(def_id)
@@ -191,4 +196,18 @@ pub async fn take_loot_tx(
     .await?;
     tx.commit().await?;
     Ok(Some(row))
+}
+
+/// Записать сокеты посоха (insert/extract рун, ADR-002).
+pub async fn set_sockets(
+    pool: &PgPool,
+    uid: &str,
+    sockets: serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE items SET sockets = $2 WHERE uid = $1")
+        .bind(uid)
+        .bind(sockets)
+        .execute(pool)
+        .await?;
+    Ok(())
 }

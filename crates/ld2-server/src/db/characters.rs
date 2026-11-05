@@ -117,6 +117,16 @@ pub async fn set_hp(pool: &PgPool, char_id: &str, hp_cur: i32) -> Result<(), sql
     Ok(())
 }
 
+/// Текущая мана (реген по тику, §2.4; M12.5b).
+pub async fn set_mp(pool: &PgPool, char_id: &str, mp_cur: i32) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE characters SET mp_cur = $2 WHERE id = $1")
+        .bind(char_id)
+        .bind(mp_cur)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Респаун (смерть, ФР-06): hp полное + позиция = спавн + бамп версии
 /// одним UPDATE (D27) → `(hp_cur, hp_max, state_version)`.
 pub async fn respawn(

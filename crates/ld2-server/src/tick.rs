@@ -1,6 +1,7 @@
 //! Тик-луп мира (D31, M12.5): атаки персонажей и агрессивных мобов,
-//! смерти, XP убийств (skills.md §2.3). Адресация событий — через реестр
-//! соединений мира (§2.4: порядок внутри канала сохраняется).
+//! смерти, XP убийств (skills.md §2.3) и мана-реген (§2.4, конфиг
+//! `[gameplay.magic.mana]`). Адресация событий — через реестр соединений
+//! мира (§2.4: порядок внутри канала сохраняется).
 
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use ld2_protocol::types::Hp;
 use serde_json::json;
 use tracing::warn;
 
-use crate::config::CombatSection;
+use crate::config::{CombatSection, SkillsSection};
 use crate::state::SharedState;
 use crate::world::World;
 
@@ -37,9 +38,15 @@ pub async fn run(state: SharedState) {
     let period = Duration::from_millis((1000 / tick_hz).max(1) as u64);
     let mut interval = tokio::time::interval(period);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut ticks: u64 = 0;
     loop {
         interval.tick().await;
         tick_once(&state).await;
+        ticks += 1;
+        if ticks.is_multiple_of(u64::from(tick_hz)) {
+            // Мана-реген — раз в секунду (не каждый тик).
+            regen_step(&state).await;
+        }
     }
 }
 
@@ -66,7 +73,10 @@ async fn tick_once(state: &SharedState) {
     }
     // 3) XP убийств — в БД и событием (D27).
     for work in &plan.xp {
-        grant_kill_xp(state, work).await;
+        if let Some(text) = grant_kill_xp(state, work).await {
+            let world = state.world.lock().expect("мир");
+            world.send_to_char(&work.char_id, text);
+        }
     }
     plan.events.clear();
     let _ = &mut plan;
@@ -89,11 +99,13 @@ struct MobHit {
     amount: i64,
 }
 
-/// Запланированный XP убийства (навык определяется при применении — из БД).
+/// Запланированный XP убийства. `skill` — `None`: навык берётся из
+/// экипированного оружия при применении; `Some` — школа заклинания (M12.5b).
 #[derive(Debug)]
-struct KillXp {
-    char_id: String,
-    amount: i64,
+pub(crate) struct KillXp {
+    pub(crate) char_id: String,
+    pub(crate) amount: i64,
+    pub(crate) skill: Option<String>,
 }
 
 #[derive(Default)]
@@ -108,7 +120,7 @@ fn plan_combat(
     world: &mut World,
     now_ms: i64,
     cfg: &CombatSection,
-    skills_cfg: &crate::config::SkillsSection,
+    skills_cfg: &SkillsSection,
 ) -> Plan {
     let mut plan = Plan::default();
     let attack_interval_ms = ((cfg.attack_interval_s * 1000.0).round() as i64).max(1);
@@ -149,7 +161,6 @@ fn plan_combat(
             .mob(&target)
             .map(|m| m.name.clone())
             .unwrap_or_default();
-        let difficulty = world.mob(&target).map(|m| m.difficulty).unwrap_or(1);
         let mob_max = world.mob_max_hp(&target);
         let source_name = world.char_name(&char_id).unwrap_or_default();
 
@@ -184,46 +195,12 @@ fn plan_combat(
         );
 
         if hp == 0 {
-            // Убийство: despawn всем в локации + труп с лутом + бой окончен.
-            let corpse_id = world.kill_mob(&target);
-            for addr in world.chars_in_location(&loc) {
-                push_event(
-                    &mut plan,
-                    &addr,
-                    "evt/entity/despawn",
-                    &EntityDespawn {
-                        entity_id: target.clone(),
-                        location_id: loc.clone(),
-                    },
-                );
-                if let Some(corpse_id) = &corpse_id {
-                    if let Some(corpse) = world.corpse(corpse_id) {
-                        let loot_count = corpse.loot.iter().filter(|l| l.is_some()).count() as u32;
-                        push_event(
-                            &mut plan,
-                            &addr,
-                            "evt/corpse/created",
-                            &CorpseCreated {
-                                entity: corpse.entity(),
-                                loot_count,
-                            },
-                        );
-                    }
-                }
+            // Общий путь смерти моба (атака и заклинания, M12.5b).
+            if let Some(kill) =
+                mob_kill_effects(world, &mut plan.events, &target, &loc, &char_id, skills_cfg)
+            {
+                plan.xp.push(kill);
             }
-            world.end_combat(&char_id);
-            push_event(
-                &mut plan,
-                &char_id,
-                "evt/combat/end",
-                &CombatEnd {
-                    reason: "цель уничтожена".into(),
-                },
-            );
-            // skills.md §2.3: xp = base + difficulty × per; навык оружия
-            // определяется при применении (grant_kill_xp, из БД).
-            let amount = kill_xp_for(skills_cfg, difficulty);
-            plan.xp.push(KillXp { char_id, amount });
         }
     }
 
@@ -282,15 +259,78 @@ fn plan_combat(
     plan
 }
 
-/// XP за убийство: kill_xp_base + difficulty × kill_xp_per_difficulty.
-fn kill_xp_for(cfg: &crate::config::SkillsSection, difficulty: i64) -> i64 {
-    cfg.kill_xp_base + difficulty * cfg.kill_xp_per_difficulty
+/// События смерти моба (деспан/труп всем в локации + бой окончен) и XP
+/// убийства — общий путь для атаки и заклинаний (M12.5b). События — в
+/// `plan`, XP — возвращается.
+pub(crate) fn mob_kill_effects(
+    world: &mut World,
+    plan: &mut Vec<(String, String)>,
+    target: &str,
+    loc: &str,
+    attacker: &str,
+    skills_cfg: &SkillsSection,
+) -> Option<KillXp> {
+    let difficulty = world.mob(target).map(|m| m.difficulty).unwrap_or(1);
+    let amount = skills_cfg.kill_xp_base + difficulty * skills_cfg.kill_xp_per_difficulty;
+    let corpse_id = world.kill_mob(target);
+    for addr in world.chars_in_location(loc) {
+        push_text(
+            plan,
+            &addr,
+            "evt/entity/despawn",
+            &EntityDespawn {
+                entity_id: target.to_string(),
+                location_id: loc.to_string(),
+            },
+        );
+        if let Some(corpse_id) = &corpse_id {
+            if let Some(corpse) = world.corpse(corpse_id) {
+                let loot_count = corpse.loot.iter().filter(|l| l.is_some()).count() as u32;
+                push_text(
+                    plan,
+                    &addr,
+                    "evt/corpse/created",
+                    &CorpseCreated {
+                        entity: corpse.entity(),
+                        loot_count,
+                    },
+                );
+            }
+        }
+    }
+    world.end_combat(attacker);
+    push_text(
+        plan,
+        attacker,
+        "evt/combat/end",
+        &CombatEnd {
+            reason: "цель уничтожена".into(),
+        },
+    );
+    Some(KillXp {
+        char_id: attacker.to_string(),
+        amount,
+        skill: None,
+    })
 }
 
 fn push_event<T: serde::Serialize>(plan: &mut Plan, addr: &str, ty: &str, payload: &T) {
-    let text =
-        crate::session::event_text(ty, None, serde_json::to_value(payload).unwrap_or_default());
+    let text = event_text(ty, payload);
     plan.events.push((addr.to_string(), text));
+}
+
+fn push_text<T: serde::Serialize>(
+    plan: &mut Vec<(String, String)>,
+    addr: &str,
+    ty: &str,
+    payload: &T,
+) {
+    let text = event_text(ty, payload);
+    plan.push((addr.to_string(), text));
+}
+
+fn event_text<T: serde::Serialize>(ty: &str, payload: &T) -> String {
+    crate::session::event_text(ty, None, serde_json::to_value(payload).unwrap_or_default())
 }
 
 /// Урон моба персонажу (БД, D27): урон → `evt/char/stats`; 0 hp → общий
@@ -331,26 +371,32 @@ async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String
 }
 
 /// Применить XP убийства: навык оружия персонажа (экипировка → `item_defs.skill`,
-/// иначе `unarmed`), ранг — с ограничением гейтов (systems::apply_kill_xp).
-async fn grant_kill_xp(state: &SharedState, work: &KillXp) {
+/// иначе `unarmed`) либо заданная школа (заклинания); ранг — с ограничением
+/// гейтов (systems::apply_kill_xp). `Some(text)` — событие `evt/char/xp`.
+pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<String> {
     let pool = &state.pool;
-    // Навык: экипированное оружие с `skill` (skills.md §2.3).
-    let skill_id: String = sqlx::query_scalar(
-        "SELECT COALESCE( \
-            (SELECT d.skill FROM items i \
-             JOIN item_defs d ON d.id = i.def_id \
-             WHERE i.character_id = $1 AND i.equipped_slot IS NOT NULL \
-               AND d.skill IS NOT NULL \
-             ORDER BY i.created_at LIMIT 1), \
-            'unarmed')",
-    )
-    .bind(&work.char_id)
-    .fetch_one(pool)
-    .await
-    .unwrap_or_else(|e| {
-        warn!("тик (навык оружия {}): {e}", work.char_id);
-        "unarmed".to_string()
-    });
+    let skill_id = match &work.skill {
+        Some(skill) => skill.clone(),
+        None => {
+            // Навык: экипированное оружие с `skill` (skills.md §2.3).
+            sqlx::query_scalar(
+                "SELECT COALESCE( \
+                    (SELECT d.skill FROM items i \
+                     JOIN item_defs d ON d.id = i.def_id \
+                     WHERE i.character_id = $1 AND i.equipped_slot IS NOT NULL \
+                       AND d.skill IS NOT NULL \
+                     ORDER BY i.created_at LIMIT 1), \
+                    'unarmed')",
+            )
+            .bind(&work.char_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("тик (навык оружия {}): {e}", work.char_id);
+                "unarmed".to_string()
+            })
+        }
+    };
 
     let (xp, rank, max_attr) = match (
         crate::db::skills::learned_one(pool, &work.char_id, &skill_id).await,
@@ -365,37 +411,88 @@ async fn grant_kill_xp(state: &SharedState, work: &KillXp) {
         }
         (Err(e), _) | (_, Err(e)) => {
             warn!("тик (XP {}): {e}", work.char_id);
-            return;
+            return None;
         }
-        _ => return,
+        _ => return None,
     };
 
     let (new_xp, new_rank) =
         crate::systems::apply_kill_xp(xp, rank, work.amount, &state.config.skills, max_attr);
     if new_xp == xp && new_rank == rank {
-        return; // без изменений — не пишем
+        return None; // без изменений — не пишем
     }
     if let Err(e) =
         crate::db::skills::grant_tx(pool, &work.char_id, &skill_id, new_xp, new_rank).await
     {
         warn!("тик (XP-вклад {}): {e}", work.char_id);
-        return;
+        return None;
     }
     // evt/char/xp — навыку; pool_left не трогаем (вклад идёт напрямую).
     let need = crate::systems::xp_to_next(new_rank.max(0) as u32, &state.config.skills);
-    let text = crate::session::event_text(
+    Some(event_text(
         "evt/char/xp",
-        None,
-        serde_json::to_value(ld2_protocol::evt::CharXp {
+        &ld2_protocol::evt::CharXp {
             skill_id,
             amount: work.amount,
             skill_xp: new_xp,
             rank: Some(new_rank.max(0) as u32),
             xp_to_next: Some(need),
             pool_left: None,
-        })
-        .unwrap_or_default(),
-    );
-    let world = state.world.lock().expect("мир");
-    world.send_to_char(&work.char_id, text);
+        },
+    ))
+}
+
+/// Мана-реген раз в секунту (skills.md §2.4, конфиг `[gameplay.magic.mana]`):
+/// вне боя — полный бар за `regen_out_s`, в бою — `regen_in_pct` %/с.
+/// Дробная мана округляется вверх — v1-допущение (отклонение M12.5b).
+async fn regen_step(state: &SharedState) {
+    let mana = &state.config.gameplay.magic.mana;
+    let online: Vec<String> = {
+        let world = state.world.lock().expect("мир");
+        world.online_chars()
+    };
+    if online.is_empty() {
+        return;
+    }
+    for char_id in &online {
+        let in_combat = {
+            let world = state.world.lock().expect("мир");
+            world.in_combat(char_id)
+        };
+        let row = match crate::db::characters::get(&state.pool, char_id).await {
+            Ok(Some(row)) => row,
+            _ => continue,
+        };
+        let max = i64::from(row.mp_max);
+        let cur = i64::from(row.mp_cur);
+        if cur >= max {
+            continue; // полная мана — молчим (без шума каждый тик)
+        }
+        let delta = if in_combat {
+            (f64::from(row.mp_max) * mana.regen_in_pct_s / 100.0)
+                .ceil()
+                .max(1.0) as i64
+        } else {
+            (f64::from(row.mp_max) / (mana.regen_out_s.max(1) as f64))
+                .ceil()
+                .max(1.0) as i64
+        };
+        let new = (cur + delta).min(max);
+        if new <= cur {
+            continue;
+        }
+        if let Err(e) = crate::db::characters::set_mp(&state.pool, char_id, new as i32).await {
+            warn!("реген (mp {}): {e}", char_id);
+            continue;
+        }
+        let mut patch = serde_json::Map::new();
+        patch.insert("mp".into(), json!({ "cur": new, "max": max }));
+        let text = crate::session::event_text(
+            "evt/char/stats",
+            None,
+            serde_json::to_value(CharStats { patch }).unwrap_or_default(),
+        );
+        let world = state.world.lock().expect("мир");
+        world.send_to_char(char_id, text);
+    }
 }
