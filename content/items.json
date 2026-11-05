@@ -1,0 +1,23 @@
+{
+  "items": [
+    {
+      "id": "dagger_knife",
+      "type": "weapon",
+      "name": "Кинжал",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": { "dmg": "2..4" },
+      "gold_value": 35
+    },
+    {
+      "id": "potion_heal",
+      "type": "potion",
+      "name": "Зелье лечения",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": { "heal": 30 },
+      "gold_value": 25,
+      "qty": 1
+    }
+  ]
+}

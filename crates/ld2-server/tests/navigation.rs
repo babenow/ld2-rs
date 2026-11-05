@@ -4,52 +4,9 @@
 
 mod common;
 
-use ld2_test_kit::checks;
+use common::in_world;
 use ld2_test_kit::WsClient;
 use serde_json::json;
-
-/// Регистрация + персонаж: клиент в мире готов к навигации.
-async fn in_world(ws: &str) -> (WsClient, String, String) {
-    let mut c = WsClient::connect(ws).await;
-    let login = checks::unique_login();
-    let seq = c
-        .send(
-            "cmd/auth.register",
-            json!({ "login": login, "password": "longenough1" }),
-        )
-        .await;
-    let ack = c.ack(seq).await;
-    assert_eq!(ack["result"], "ok", "регистрация: {ack}");
-    c.wait_event("evt/session.start").await;
-
-    let name = format!(
-        "Следопыт_{:x}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("время")
-            .as_nanos()
-    );
-    let seq = c
-        .send(
-            "cmd/char.create",
-            json!({ "name": name, "profile": "warrior" }),
-        )
-        .await;
-    let ack = c.ack(seq).await;
-    assert_eq!(ack["result"], "ok", "создание персонажа: {ack}");
-    let char_id = ack["payload"]["character"]["id"]
-        .as_str()
-        .expect("id")
-        .to_string();
-
-    let seq = c
-        .send("cmd/char.select", json!({ "char_id": char_id }))
-        .await;
-    let ack = c.ack(seq).await;
-    assert_eq!(ack["result"], "ok", "выбор персонажа: {ack}");
-    c.wait_event("evt/state/snapshot").await;
-    (c, login, char_id)
-}
 
 async fn move_exit(c: &mut WsClient, exit_id: &str) -> serde_json::Value {
     let seq = c

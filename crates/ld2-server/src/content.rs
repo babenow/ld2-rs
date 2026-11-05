@@ -1,15 +1,17 @@
-//! Контент-сид (D26, M12.3): статический мир из `world.content_dir`
+//! Контент-сид (D26, M12.3/M12.4): статический мир из `world.content_dir`
 //! (JSON, версионируется в git) → PostgreSQL **идемпотентно**.
 //!
-//! Сверка `meta.content_version` = sha256 по всем файлам каталога: версия
-//! не изменилась → БД не трогается вообще (ручные правки в БД переживают
-//! перезапуск — критерий M12.3); версия изменилась → upsert локаций и
-//! обновление версии (контент — источник истины). Удалённые из контента
-//! локации из БД **не** удаляются (на них могут ссылаться персонажи).
+//! Файлы каталога: `locations.json`, `skills.json`, `items.json` — все
+//! обязательны. Сверка `meta.content_version` = sha256 по каноническому
+//! дереву **всего** контента: версия не изменилась → БД не трогается
+//! вообще (ручные правки переживают перезапуск — критерий M12.3);
+//! изменилась → upsert локаций/навыков/предметов и обновление версии.
+//! Удалённые из контента сущности из БД **не** дропаются (на них могут
+//! ссылаться персонажи).
 
 use std::path::{Path, PathBuf};
 
-use ld2_protocol::types::{Entity, Exit};
+use ld2_protocol::types::{Entity, Exit, Requires};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -53,10 +55,56 @@ pub struct ContentLocation {
     pub entities: Vec<Entity>,
 }
 
-/// Корень `locations.json`.
-#[derive(Debug, Serialize, Deserialize)]
-struct ContentRoot {
+/// Навык из `skills.json` (skills.md §3: id + имя; группа — для UI).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentSkill {
+    pub id: String,
+    pub name: String,
+    pub group: String,
+}
+
+/// Определение предмета из `items.json` (§6 `ItemSnapshot`-ядро).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentItemDef {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub name: String,
+    pub rarity: String,
+    #[serde(default)]
+    pub upgrade: i32,
+    #[serde(default)]
+    pub stats: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub requires: Option<Requires>,
+    #[serde(default)]
+    pub gold_value: i64,
+    /// Стартовое количество стака при взятии/выдаче.
+    #[serde(default)]
+    pub qty: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocationsRoot {
     locations: Vec<ContentLocation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillsRoot {
+    skills: Vec<ContentSkill>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ItemsRoot {
+    items: Vec<ContentItemDef>,
+}
+
+/// Весь контент каталога (для версии и сида).
+#[derive(Debug, Serialize)]
+pub struct GameContent {
+    locations: Vec<ContentLocation>,
+    skills: Vec<ContentSkill>,
+    items: Vec<ContentItemDef>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -82,9 +130,8 @@ pub struct SeedReport {
 
 /// Сид контента в PostgreSQL (D26). Вызывается при старте сервера.
 pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, ContentError> {
-    let dir = dir.as_ref();
-    let root = load(dir)?;
-    let version = content_version(&root)?;
+    let content = load(dir.as_ref())?;
+    let version = content_version(&content)?;
 
     let current: Option<String> =
         sqlx::query_scalar("SELECT value FROM meta WHERE key = 'content_version'")
@@ -97,14 +144,14 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         });
     }
 
-    let spawn = root
+    let spawn = content
         .locations
         .iter()
         .find(|l| l.spawn)
         .map(|l| l.id.clone());
 
     let mut tx = pool.begin().await?;
-    for loc in &root.locations {
+    for loc in &content.locations {
         let exits = serde_json::to_value(&loc.exits).unwrap_or_default();
         let entities = serde_json::to_value(&loc.entities).unwrap_or_default();
         sqlx::query(
@@ -120,6 +167,41 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         .bind(&loc.text)
         .bind(exits)
         .bind(entities)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for skill in &content.skills {
+        sqlx::query(
+            "INSERT INTO skills (id, name, skill_group) VALUES ($1, $2, $3) \
+             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, \
+               skill_group = EXCLUDED.skill_group",
+        )
+        .bind(&skill.id)
+        .bind(&skill.name)
+        .bind(&skill.group)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for item in &content.items {
+        let stats = serde_json::Value::Object(item.stats.clone());
+        let requires = serde_json::to_value(&item.requires).unwrap_or(serde_json::Value::Null);
+        sqlx::query(
+            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+             ON CONFLICT (id) DO UPDATE SET \
+               item_type = EXCLUDED.item_type, name = EXCLUDED.name, rarity = EXCLUDED.rarity, \
+               upgrade = EXCLUDED.upgrade, stats = EXCLUDED.stats, requires = EXCLUDED.requires, \
+               gold_value = EXCLUDED.gold_value, qty = EXCLUDED.qty",
+        )
+        .bind(&item.id)
+        .bind(&item.item_type)
+        .bind(&item.name)
+        .bind(&item.rarity)
+        .bind(item.upgrade)
+        .bind(stats)
+        .bind(requires)
+        .bind(item.gold_value)
+        .bind(item.qty.unwrap_or(1))
         .execute(&mut *tx)
         .await?;
     }
@@ -150,33 +232,34 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
     })
 }
 
-/// Загрузка всех `*.json` каталога (сортировка по имени — версия стабильна).
-fn load(dir: &Path) -> Result<ContentRoot, ContentError> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| ContentError::Io(dir.to_path_buf(), e))?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
-        .collect();
-    files.sort();
+/// Загрузка трёх обязательных файлов каталога.
+fn load(dir: &Path) -> Result<GameContent, ContentError> {
+    let read = |name: &str| -> Result<String, ContentError> {
+        let path = dir.join(name);
+        std::fs::read_to_string(&path).map_err(|e| ContentError::Io(path, e))
+    };
 
-    let mut locations = Vec::new();
-    for file in files {
-        let text = std::fs::read_to_string(&file).map_err(|e| ContentError::Io(file.clone(), e))?;
-        let root: ContentRoot =
-            serde_json::from_str(&text).map_err(|e| ContentError::Json(file.clone(), e))?;
-        locations.extend(root.locations);
-    }
-    if locations.is_empty() {
+    let locations: LocationsRoot = serde_json::from_str(&read("locations.json")?)
+        .map_err(|e| ContentError::Json(dir.join("locations.json"), e))?;
+    let skills: SkillsRoot = serde_json::from_str(&read("skills.json")?)
+        .map_err(|e| ContentError::Json(dir.join("skills.json"), e))?;
+    let items: ItemsRoot = serde_json::from_str(&read("items.json")?)
+        .map_err(|e| ContentError::Json(dir.join("items.json"), e))?;
+
+    if locations.locations.is_empty() {
         return Err(ContentError::Empty(dir.to_path_buf()));
     }
-    Ok(ContentRoot { locations })
+    Ok(GameContent {
+        locations: locations.locations,
+        skills: skills.skills,
+        items: items.items,
+    })
 }
 
-/// Версия контента: sha256 от канонического дерева локаций (порядок полей —
-/// порядок объявления, неизменное содержимое → неизменная версия независимо
-/// от имён/числа файлов).
-fn content_version(root: &ContentRoot) -> Result<String, ContentError> {
-    let canonical = serde_json::to_string(&root.locations)
+/// Версия контента: sha256 от канонического дерева **всего** контента
+/// (неизменное содержимое → неизменная версия независимо от имён файлов).
+fn content_version(content: &GameContent) -> Result<String, ContentError> {
+    let canonical = serde_json::to_string(content)
         .map_err(|e| ContentError::Json(PathBuf::from("<canonical>"), e))?;
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());

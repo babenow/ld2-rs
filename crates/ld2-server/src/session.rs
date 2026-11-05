@@ -2,16 +2,22 @@
 //! → `ack` + `evt/*` (§2.2: события — строго после своего ack) и
 //! авторизация соединения (ADR-006, D29/D30).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
-    AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, EntityInfo,
-    LocationMove, StateResync,
+    AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
+    ChatSend, EntityInfo, ItemDrop, ItemEquip, ItemUnequip, ItemUse, LocationMove, StateResync,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
-use ld2_protocol::evt::{LocationChanged, Pong, StateSnapshot, TimeSync};
-use ld2_protocol::types::{CharacterState, CharacterSummary, Entity, Hp, LocationSnapshot, Mp};
+use ld2_protocol::evt::{
+    CharDeath, CharStats, CharXp, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState,
+    LocationChanged, LostItem, Pong, Respawn, StateSnapshot, TimeSync,
+};
+use ld2_protocol::types::{
+    CharacterState, CharacterSummary, Entity, EquipMap, Hp, ItemSnapshot, LocationSnapshot, Mp,
+    Requires, SkillSnapshot,
+};
 use ld2_protocol::ErrorCode;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -119,6 +125,14 @@ impl Session {
             "cmd/location.move" => self.location_move(env, seq).await,
             "cmd/entity.info" => self.entity_info(env, seq).await,
             "cmd/state.resync" => self.state_resync(env, seq).await,
+            // лист/инвентарь/опыт (ФР-04/07, M12.4)
+            "cmd/char.xp_invest" => self.char_xp_invest(env, seq).await,
+            "cmd/item.use" => self.item_use(env, seq).await,
+            "cmd/item.equip" => self.item_equip(env, seq).await,
+            "cmd/item.unequip" => self.item_unequip(env, seq).await,
+            "cmd/item.drop" => self.item_drop(env, seq).await,
+            // dev-сценарии (`/scenario …`); чат — ФР-13 в фазе M12.7
+            "cmd/chat.send" => self.chat_send(env, seq).await,
             // Сервисный ping (§7): ack + echo; RTT клиент считает по своему
             // `ts` — сервер отвечает 0, как и мок.
             "cmd/ping" => {
@@ -477,7 +491,14 @@ impl Session {
         // M12.3: позиция (пустая → спавн с персистом, D27) и выбор —
         // для восстановления сессии при resume (§4.5).
         let (location_id, location) = self.resolve_location(&row.location_id, &row.id).await;
-        self.char = Some(character_state_of(&row));
+        let char_state = match self.character_state(&row).await {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("char.select (лист персонажа): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        self.char = Some(char_state);
         self.location_id = Some(location_id);
         self.selected_char_id = Some(row.id.clone());
         if let Some(account_id) = self.account_id {
@@ -623,9 +644,14 @@ impl Session {
         match db::characters::find(&self.state.pool, account_id, &last).await {
             Ok(Some(row)) => {
                 let (location_id, _) = self.resolve_location(&row.location_id, &row.id).await;
-                self.char = Some(character_state_of(&row));
-                self.location_id = Some(location_id);
-                self.selected_char_id = Some(row.id.clone());
+                match self.character_state(&row).await {
+                    Ok(state) => {
+                        self.char = Some(state);
+                        self.location_id = Some(location_id);
+                        self.selected_char_id = Some(row.id.clone());
+                    }
+                    Err(e) => warn!("восстановление листа персонажа: {e}"),
+                }
             }
             Ok(None) => {} // удалён — клиент начнёт с экрана персонажей
             Err(e) => warn!("восстановление персонажа {last}: {e}"),
@@ -746,8 +772,9 @@ impl Session {
         vec![ack, changed]
     }
 
-    /// `cmd/entity.info` (§7): осмотр статической сущности текущей локации.
-    /// Лут трупов/игроки появятся с боем (M12.5+).
+    /// `cmd/entity.info` (§7): осмотр статической сущности текущей локации
+    /// вместе с её лутом (однократное взятие, M12.4); динамические трупы —
+    /// M12.5.
     async fn entity_info(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
@@ -755,9 +782,10 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<EntityInfo>(env, seq) else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
-        if let Err(out) = self.require_char_id(seq) {
-            return vec![out];
-        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
         let current = self.location_id.clone().unwrap_or_default();
         let entities = match db::locations::get(&self.state.pool, &current).await {
             Ok(Some(row)) => {
@@ -769,18 +797,54 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
-        match entities.into_iter().find(|e| e.id == cmd.entity_id) {
-            Some(entity) => vec![Self::ack_payload(
-                seq,
-                &serde_json::json!({
-                    "entity": entity,
-                    "loot": [],
-                    "was_player": false,
-                    "looted": false,
-                }),
-            )],
-            None => vec![Self::err(seq, ErrorCode::TargetGone, "сущность не найдена")],
+        let Some(entity) = entities.into_iter().find(|e| e.id == cmd.entity_id) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "сущность не найдена")];
+        };
+        // Лут статической сущности (§6 `extra.loot` — id определений):
+        // взятый не показываем (однократное взятие, M12.4).
+        let defs = entity_loot_defs(&entity);
+        let was_player = entity.was_player.unwrap_or(false);
+        let mut loot = Vec::new();
+        let mut remaining = 0usize;
+        for (i, def_id) in defs.iter().enumerate() {
+            let loot_uid = format!("loot:{}:{}", entity.id, i);
+            match db::items::loot_taken_exists(&self.state.pool, &loot_uid, &char_id).await {
+                Ok(true) => continue,
+                Ok(false) => remaining += 1,
+                Err(e) => {
+                    warn!("entity.info (лут {loot_uid}): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+            let def = match db::items::def(&self.state.pool, def_id).await {
+                Ok(Some(def)) => def,
+                Ok(None) => {
+                    warn!("лут ссылается на неизвестное определение {def_id}");
+                    continue;
+                }
+                Err(e) => {
+                    warn!("entity.info (определение {def_id}): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let row = db::items::ItemRow {
+                uid: loot_uid,
+                def_id: def_id.clone(),
+                qty: def.qty,
+                upgrade: 0,
+                equipped_slot: None,
+            };
+            loot.push(item_snapshot(&row, &def));
         }
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({
+                "entity": entity,
+                "loot": loot,
+                "was_player": was_player,
+                "looted": !defs.is_empty() && remaining == 0,
+            }),
+        )]
     }
 
     /// `cmd/state.resync` (§3): всегда полный снапшот (spec-легально: сервер
@@ -810,9 +874,16 @@ impl Session {
         let state_version = row.state_version as u64;
         let (location_id, location) = self.resolve_location(&row.location_id, &row.id).await;
         self.location_id = Some(location_id);
+        let char_state = match self.character_state(&row).await {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("state.resync (лист персонажа): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
         let snapshot = StateSnapshot {
             state_version,
-            char: character_state_of(&row),
+            char: char_state,
             location,
             party: None,
             guild: None,
@@ -834,6 +905,773 @@ impl Session {
         self.selected_char_id
             .clone()
             .ok_or_else(|| Self::err(seq, ErrorCode::NotInLocation, "персонаж не выбран"))
+    }
+
+    // ── лист, инвентарь, опыт (ФР-04/07, M12.4) ────────────────────────────
+
+    /// Полный лист персонажа §3: строка БД + атрибуты (skills.md §1) +
+    /// **все** навыки контента (вложенные — со своим XP, нет — нули) +
+    /// инвентарь/экипировка (слоты — из конфига, D25).
+    async fn character_state(
+        &self,
+        row: &db::characters::CharacterRow,
+    ) -> Result<CharacterState, sqlx::Error> {
+        let pool = &self.state.pool;
+        let attrs: BTreeMap<String, i64> =
+            serde_json::from_value(row.attrs.clone()).unwrap_or_default();
+
+        let mut learned = HashMap::new();
+        for skill in db::skills::learned(pool, &row.id).await? {
+            learned.insert(skill.skill_id, (skill.xp, skill.rank));
+        }
+        let mut skills = Vec::new();
+        for skill in db::skills::content_skills(pool).await? {
+            let (xp, rank) = learned.get(&skill.id).copied().unwrap_or((0, 0));
+            let rank_u32 = rank.max(0) as u32;
+            skills.push(SkillSnapshot {
+                id: skill.id,
+                name: Some(skill.name),
+                rank: rank_u32,
+                xp,
+                xp_to_next: xp_to_next(rank_u32, &self.state.config.skills),
+            });
+        }
+
+        let mut equip: EquipMap = self
+            .state
+            .config
+            .gameplay
+            .inventory
+            .equip_slots
+            .iter()
+            .map(|slot| (slot.clone(), None))
+            .collect();
+        let mut inventory = Vec::new();
+        for item in db::items::inventory(pool, &row.id).await? {
+            let Some(def) = db::items::def(pool, &item.def_id).await? else {
+                warn!("нет определения {} для предмета {}", item.def_id, item.uid);
+                continue;
+            };
+            if let Some(slot) = &item.equipped_slot {
+                equip.insert(slot.clone(), Some(item.uid.clone()));
+            }
+            inventory.push(item_snapshot(&item, &def));
+        }
+
+        Ok(CharacterState {
+            id: row.id.clone(),
+            name: row.name.clone(),
+            attrs,
+            skills,
+            professions: Vec::new(), // M12.6
+            hp: Hp {
+                cur: i64::from(row.hp_cur),
+                max: i64::from(row.hp_max),
+            },
+            mp: Mp {
+                cur: i64::from(row.mp_cur),
+                max: i64::from(row.mp_max),
+            },
+            xp_pool: row.xp_pool,
+            equip,
+            inventory,
+            crime: Default::default(), // M12.5
+            quests: Vec::new(),        // M12.6
+            extra: Default::default(),
+        })
+    }
+
+    /// Перечитать лист персонажа из БД в сессию (после мутаций, для ack
+    /// с `char` §7).
+    async fn reload_char(&mut self, seq: u32, char_id: &str) -> Result<CharacterState, Out> {
+        let row = db::characters::get(&self.state.pool, char_id)
+            .await
+            .map_err(|e| {
+                warn!("reload листа (БД): {e}");
+                Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")
+            })?
+            .ok_or_else(|| Self::err(seq, ErrorCode::NameTaken, "персонаж не найден"))?;
+        self.character_state(&row)
+            .await
+            .map_err(|e| {
+                warn!("reload листа: {e}");
+                Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")
+            })
+            .inspect(|state| {
+                self.char = Some(state.clone());
+            })
+    }
+
+    /// `cmd/char.xp_invest` (§7): вложение XP-пула в навык — транзакционно
+    /// (D27), потолок/гейты — skills.md §2.2 (конфиг `[skills]`, D25).
+    async fn char_xp_invest(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CharXpInvest>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        if cmd.points <= 0 {
+            return vec![Self::err(seq, ErrorCode::XpPool, "points должен быть > 0")];
+        }
+        let pool = &self.state.pool;
+        match db::skills::content_skill(pool, &cmd.skill_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return vec![Self::err(seq, ErrorCode::XpPool, "нет такого навыка")];
+            }
+            Err(e) => {
+                warn!("xp_invest (навык): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let pool_now = match db::skills::xp_pool(pool, &char_id).await {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("xp_invest (пул): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if pool_now < cmd.points {
+            return vec![Self::err(seq, ErrorCode::XpPool, "не хватает очков опыта")];
+        }
+        let (mut xp, mut rank) = match db::skills::learned(pool, &char_id).await {
+            Ok(rows) => rows
+                .into_iter()
+                .find(|s| s.skill_id == cmd.skill_id)
+                .map(|s| (s.xp, s.rank))
+                .unwrap_or((0, 0)),
+            Err(e) => {
+                warn!("xp_invest (прогресс): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let cfg = &self.state.config.skills;
+        xp += cmd.points;
+        loop {
+            let need = xp_to_next(rank.max(0) as u32, cfg);
+            if xp < need {
+                break;
+            }
+            if rank >= cfg.rank_max as i32 {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::RankCap,
+                    "достигнут потолок ранга",
+                )];
+            }
+            let next = rank + 1;
+            // Гейт атрибутов (§2.2): конфиг даёт значение порога; сравниваем
+            // с максимальным из пяти атрибутов персонажа.
+            if let Some(gate) = cfg.gates.iter().find(|g| g.rank as i32 == next) {
+                let max_attr = self
+                    .char
+                    .as_ref()
+                    .map(|c| c.attrs.values().max().copied().unwrap_or(0))
+                    .unwrap_or(0);
+                if max_attr < gate.attr {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::RequirementAttr,
+                        format!(
+                            "ранг {next} требует атрибут {} (максимум {max_attr})",
+                            gate.attr
+                        ),
+                    )];
+                }
+            }
+            xp -= need;
+            rank = next;
+        }
+        let pool_left = pool_now - cmd.points;
+        if let Err(e) =
+            db::skills::invest_tx(pool, &char_id, &cmd.skill_id, xp, rank, pool_left).await
+        {
+            warn!("xp_invest (транзакция): {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        vec![
+            Self::ack_payload(seq, &serde_json::json!({ "pool_left": pool_left })),
+            out_event(
+                "evt/char/xp",
+                None,
+                serde_json::to_value(CharXp {
+                    skill_id: cmd.skill_id,
+                    amount: cmd.points,
+                    skill_xp: xp,
+                    rank: Some(rank.max(0) as u32),
+                    xp_to_next: Some(xp_to_next(rank.max(0) as u32, cfg)),
+                    pool_left: Some(pool_left),
+                })
+                .unwrap_or_default(),
+            ),
+        ]
+    }
+
+    /// `cmd/item.use` (§7): взятие статического лута (`loot:*`) или расход
+    /// зелья (heal из stats §6 → HP + убыль стака).
+    async fn item_use(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ItemUse>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        if cmd.item_uid.starts_with("loot:") {
+            return self.take_loot(seq, &char_id, &cmd.item_uid).await;
+        }
+        let pool = &self.state.pool;
+        let Some(item) = (match db::items::find(pool, &cmd.item_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("item.use (поиск): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+        };
+        let Some(def) = (match db::items::def(pool, &item.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("item.use (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения предмета",
+            )];
+        };
+        // Зелье: heal из stats (открытый объект §6).
+        if def.item_type == "potion" {
+            if let Some(heal) = def.stats.get("heal").and_then(|v| v.as_i64()) {
+                let row = match db::characters::get(pool, &char_id).await {
+                    Ok(Some(row)) => row,
+                    Ok(None) => {
+                        return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
+                    }
+                    Err(e) => {
+                        warn!("item.use (персонаж): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                };
+                let max = i64::from(row.hp_max);
+                let new_cur = (i64::from(row.hp_cur).min(max) + heal).min(max);
+                if let Err(e) = db::characters::set_hp(pool, &char_id, new_cur as i32).await {
+                    warn!("item.use (hp): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+                let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+                if item.qty > 1 {
+                    let new_qty = i64::from(item.qty) - 1;
+                    if let Err(e) = db::items::set_qty(pool, &item.uid, new_qty).await {
+                        warn!("item.use (qty): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                    let mut patch = serde_json::Map::new();
+                    patch.insert("qty".into(), serde_json::json!(new_qty));
+                    outs.push(out_event(
+                        "evt/item/state",
+                        None,
+                        serde_json::to_value(ItemState {
+                            uid: item.uid.clone(),
+                            patch,
+                        })
+                        .unwrap_or_default(),
+                    ));
+                } else {
+                    if let Err(e) = db::items::delete(pool, &item.uid).await {
+                        warn!("item.use (удаление): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                    outs.push(out_event(
+                        "evt/item/removed",
+                        None,
+                        serde_json::to_value(ItemRemoved {
+                            uid: item.uid.clone(),
+                            reason: ItemRemovalReason::Consumed,
+                        })
+                        .unwrap_or_default(),
+                    ));
+                }
+                let mut patch = serde_json::Map::new();
+                patch.insert(
+                    "hp".into(),
+                    serde_json::json!({ "cur": new_cur, "max": max }),
+                );
+                outs.push(out_event(
+                    "evt/char/stats",
+                    None,
+                    serde_json::to_value(CharStats { patch }).unwrap_or_default(),
+                ));
+                return outs;
+            }
+        }
+        vec![Self::err(
+            seq,
+            ErrorCode::ItemGone,
+            "предмет нельзя применить",
+        )]
+    }
+
+    /// Взятие лута сущности: `loot:<сущность>:<idx>` — однократно
+    /// (`loot_taken`, D27), лимит слотов — из конфига (D25).
+    async fn take_loot(&mut self, seq: u32, char_id: &str, loot_uid: &str) -> Vec<Out> {
+        let Some(rest) = loot_uid.strip_prefix("loot:") else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "некорректный uid лута")];
+        };
+        let Some((entity_id, idx)) = rest.rsplit_once(':') else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "некорректный uid лута")];
+        };
+        let Ok(idx) = idx.parse::<usize>() else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "некорректный uid лута")];
+        };
+        let pool = &self.state.pool;
+        let current = self.location_id.clone().unwrap_or_default();
+        let Some(loc_row) = (match db::locations::get(pool, &current).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("take_loot (локация): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "персонаж не в мире")];
+        };
+        let entities: Vec<Entity> =
+            serde_json::from_value(loc_row.entities.clone()).unwrap_or_default();
+        let Some(entity) = entities.into_iter().find(|e| e.id == entity_id) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "сущность не найдена")];
+        };
+        let defs = entity_loot_defs(&entity);
+        let Some(def_id) = defs.get(idx).cloned() else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого лута")];
+        };
+        // Лимит слотов (D25) — до транзакции.
+        match db::items::count(pool, char_id).await {
+            Ok(n) if n >= i64::from(self.state.config.gameplay.inventory.slots) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::InventoryFull,
+                    "инвентарь заполнен",
+                )];
+            }
+            Ok(_) => {}
+            Err(e) => {
+                warn!("take_loot (слоты): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let Some(def) = (match db::items::def(pool, &def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("take_loot (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения предмета",
+            )];
+        };
+        match db::items::take_loot_tx(pool, loot_uid, char_id, &def_id, i64::from(def.qty)).await {
+            Ok(None) => vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")],
+            Ok(Some(row)) => {
+                let item = item_snapshot(&row, &def);
+                vec![
+                    Self::ack_payload(seq, &serde_json::json!({})),
+                    out_event(
+                        "evt/item/added",
+                        None,
+                        serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+                    ),
+                ]
+            }
+            Err(e) => {
+                warn!("take_loot (транзакция): {e}");
+                vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
+            }
+        }
+    }
+
+    /// `cmd/item.equip` (§7): слот — из конфига (D25), требования — из
+    /// определения (§6 `requires`); занятый слот снимает прежний предмет.
+    async fn item_equip(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ItemEquip>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        if !self
+            .state
+            .config
+            .gameplay
+            .inventory
+            .equip_slots
+            .contains(&cmd.slot)
+        {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "слот недоступен")];
+        }
+        let pool = self.state.pool.clone();
+        let Some(item) = (match db::items::find(&pool, &cmd.item_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("item.equip (поиск): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+        };
+        if item.equipped_slot.is_some() {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмет уже надет")];
+        }
+        let Some(def) = (match db::items::def(&pool, &item.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("item.equip (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения предмета",
+            )];
+        };
+        // Требования предмета (§6) → E_REQUIREMENT_ATTR.
+        if let Some(requires) = def
+            .requires
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<Requires>(v.clone()).ok())
+        {
+            let attrs = self
+                .char
+                .as_ref()
+                .map(|c| c.attrs.clone())
+                .unwrap_or_default();
+            for (attr, need) in &requires.attr {
+                let have = attrs.get(attr).copied().unwrap_or(0);
+                if have < *need {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::RequirementAttr,
+                        format!("не хватает {attr}: {have} < {need}"),
+                    )];
+                }
+            }
+        }
+        // Переэкипка: прежний предмет слота снимается (без события —
+        // клиент получает полный `char` в ack, §7).
+        match db::items::find_equipped_in_slot(&pool, &char_id, &cmd.slot).await {
+            Ok(Some(prev)) => {
+                if let Err(e) = db::items::set_equipped(&pool, &prev.uid, None).await {
+                    warn!("item.equip (снятие прежнего): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!("item.equip (слот): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        if let Err(e) = db::items::set_equipped(&pool, &item.uid, Some(&cmd.slot)).await {
+            warn!("item.equip (надевание): {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        let char_state = match self.reload_char(seq, &char_id).await {
+            Ok(state) => state,
+            Err(out) => return vec![out],
+        };
+        let updated = match db::items::find(&pool, &item.uid, &char_id).await {
+            Ok(Some(row)) => item_snapshot(&row, &def),
+            _ => {
+                return vec![Self::err(seq, ErrorCode::Internal, "предмет исчез")];
+            }
+        };
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "char": char_state, "item": updated }),
+        )]
+    }
+
+    /// `cmd/item.unequip` (§7): снять предмет слота → ack `{char, item}`.
+    async fn item_unequip(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ItemUnequip>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = self.state.pool.clone();
+        let Some(item) = (match db::items::find_equipped_in_slot(&pool, &char_id, &cmd.slot).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("item.unequip (слот): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "в этом слоте пусто")];
+        };
+        if let Err(e) = db::items::set_equipped(&pool, &item.uid, None).await {
+            warn!("item.unequip: {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        let char_state = match self.reload_char(seq, &char_id).await {
+            Ok(state) => state,
+            Err(out) => return vec![out],
+        };
+        let Some(def) = (match db::items::def(&pool, &item.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("item.unequip (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "нет определения предмета",
+            )];
+        };
+        let updated = item_snapshot(&item, &def);
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "char": char_state, "item": updated }),
+        )]
+    }
+
+    /// `cmd/item.drop` (§7): полный выброс → `evt/item/removed`
+    /// (reason=dropped), частичный → `evt/item/state` с новым qty.
+    async fn item_drop(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ItemDrop>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let Some(item) = (match db::items::find(pool, &cmd.item_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("item.drop (поиск): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+        };
+        let qty = cmd.qty.unwrap_or(i64::from(item.qty));
+        if qty <= 0 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::ItemGone,
+                "некорректное количество",
+            )];
+        }
+        if qty >= i64::from(item.qty) {
+            if let Err(e) = db::items::delete(pool, &item.uid).await {
+                warn!("item.drop: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                out_event(
+                    "evt/item/removed",
+                    None,
+                    serde_json::to_value(ItemRemoved {
+                        uid: item.uid.clone(),
+                        reason: ItemRemovalReason::Dropped,
+                    })
+                    .unwrap_or_default(),
+                ),
+            ]
+        } else {
+            let new_qty = i64::from(item.qty) - qty;
+            if let Err(e) = db::items::set_qty(pool, &item.uid, new_qty).await {
+                warn!("item.drop (qty): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(new_qty));
+            vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                out_event(
+                    "evt/item/state",
+                    None,
+                    serde_json::to_value(ItemState {
+                        uid: item.uid.clone(),
+                        patch,
+                    })
+                    .unwrap_or_default(),
+                ),
+            ]
+        }
+    }
+
+    /// `cmd/chat.send` (§7): dev-сценарии `/scenario …` (ФР-06/тесты);
+    /// полноценный чат (ФР-13) — фаза M12.7.
+    async fn chat_send(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ChatSend>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if let Some(scenario) = cmd.text.strip_prefix("/scenario ") {
+            return self.scenario(scenario.trim(), seq).await;
+        }
+        vec![Self::err(
+            seq,
+            ErrorCode::Internal,
+            "чат появится в фазе M12.7",
+        )]
+    }
+
+    /// `/scenario death` (ФР-06): теряется **только лут** — опыт навыков и
+    /// XP-пул сохраняются (skills.md §2.2); респаун в спавне, hp полное.
+    async fn scenario(&mut self, scenario: &str, seq: u32) -> Vec<Out> {
+        if scenario != "death" {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                format!("неизвестный сценарий: {scenario}"),
+            )];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+
+        // Весь инвентарь теряется (ФР-06) — возвращаем строки для lost_items.
+        let lost_rows = match db::items::delete_all(pool, &char_id).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("/scenario death (инвентарь): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let mut lost_items = Vec::with_capacity(lost_rows.len());
+        for row in &lost_rows {
+            let (name, rarity) = match db::items::def(pool, &row.def_id).await {
+                Ok(Some(def)) => (def.name, Some(def.rarity)),
+                Ok(None) => (row.def_id.clone(), None),
+                Err(e) => {
+                    warn!("/scenario death (определение {}): {e}", row.def_id);
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            lost_items.push(LostItem {
+                uid: row.uid.clone(),
+                name,
+                rarity,
+                extra: Default::default(),
+            });
+        }
+
+        // Респаун: hp полное + позиция = спавн + бамп — одним UPDATE (D27).
+        let spawn = match db::locations::spawn_id(pool).await {
+            Ok(spawn) => spawn.unwrap_or_default(),
+            Err(e) => {
+                warn!("/scenario death (спавн): {e}");
+                String::new()
+            }
+        };
+        let target = if spawn.is_empty() {
+            self.location_id.clone().unwrap_or_default()
+        } else {
+            spawn
+        };
+        let Some((hp_cur, hp_max, sv)) =
+            (match db::characters::respawn(pool, &char_id, &target).await {
+                Ok(row) => row,
+                Err(e) => {
+                    warn!("/scenario death (респаун): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            })
+        else {
+            return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
+        };
+        let state_version = sv as u64;
+
+        // Обновить сессию под новое состояние.
+        let (location_id, location) = self.resolve_location(&target, &char_id).await;
+        self.location_id = Some(location_id);
+        if let Ok(Some(row)) = db::characters::get(pool, &char_id).await {
+            if let Ok(state) = self.character_state(&row).await {
+                self.char = Some(state);
+            }
+        }
+
+        let death = CharDeath {
+            victim_char: true,
+            lost_items,
+            corpse: format!("cor_{}", char_id),
+            respawn: Respawn {
+                location_id: target,
+                delay_s: 0,
+                extra: Default::default(),
+            },
+            extra: Default::default(),
+        };
+        let mut outs = vec![
+            out_ack(Ack::ok(seq, Some(state_version))),
+            out_event(
+                "evt/char/death",
+                Some(state_version),
+                serde_json::to_value(&death).unwrap_or_default(),
+            ),
+        ];
+        for item in &death.lost_items {
+            outs.push(out_event(
+                "evt/item/removed",
+                Some(state_version),
+                serde_json::to_value(ItemRemoved {
+                    uid: item.uid.clone(),
+                    reason: ItemRemovalReason::LostOnDeath,
+                })
+                .unwrap_or_default(),
+            ));
+        }
+        let mut patch = serde_json::Map::new();
+        patch.insert(
+            "hp".into(),
+            serde_json::json!({ "cur": hp_cur, "max": hp_max }),
+        );
+        outs.push(out_event(
+            "evt/char/stats",
+            Some(state_version),
+            serde_json::to_value(CharStats { patch }).unwrap_or_default(),
+        ));
+        outs.push(out_event(
+            "evt/location/changed",
+            Some(state_version),
+            serde_json::to_value(LocationChanged { location }).unwrap_or_default(),
+        ));
+        outs
     }
 
     // ── помощники ────────────────────────────────────────────────────────────
@@ -905,30 +1743,44 @@ fn summary_of(row: &db::characters::CharacterRow, location_name: String) -> Char
     }
 }
 
-/// Лист персонажа §3: M12.2 — база из строки БД; навыки/инвентарь/квесты
-/// добавляются фазами M12.4+.
-fn character_state_of(row: &db::characters::CharacterRow) -> CharacterState {
-    CharacterState {
-        id: row.id.clone(),
-        name: row.name.clone(),
-        attrs: Default::default(),
-        skills: Vec::new(),
-        professions: Vec::new(),
-        hp: Hp {
-            cur: i64::from(row.hp_cur),
-            max: i64::from(row.hp_max),
-        },
-        mp: Mp {
-            cur: i64::from(row.mp_cur),
-            max: i64::from(row.mp_max),
-        },
-        xp_pool: row.xp_pool,
-        equip: Default::default(),
-        inventory: Vec::new(),
-        crime: Default::default(),
-        quests: Vec::new(),
+/// Порог ранга: `round(base_xp × growth^rank)` (skills.md §2.2,
+/// конфиг `[skills]`, D25).
+fn xp_to_next(rank: u32, cfg: &crate::config::SkillsSection) -> i64 {
+    ((cfg.base_xp as f64) * cfg.growth.powi(rank as i32)).round() as i64
+}
+
+/// Проводной вид предмета §6: поля инстанса + определение из сида (D26).
+fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> ItemSnapshot {
+    ItemSnapshot {
+        uid: item.uid.clone(),
+        item_type: def.item_type.clone(),
+        name: def.name.clone(),
+        rarity: def.rarity.clone(),
+        upgrade: def.upgrade + item.upgrade,
+        stats: def.stats.clone().as_object().cloned().unwrap_or_default(),
+        requires: def
+            .requires
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        sockets: None, // сокеты рун — M12.5 (ADR-002)
+        qty: Some(i64::from(item.qty)),
+        gold_value: Some(i64::from(def.gold_value)),
         extra: Default::default(),
     }
+}
+
+/// id определений лута сущности (§6 `extra.loot` — открытый объект).
+fn entity_loot_defs(entity: &Entity) -> Vec<String> {
+    entity
+        .extra
+        .get("loot")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Локация снапшота: до сида контента (M12.3, D26) — заглушка по id

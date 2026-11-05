@@ -23,6 +23,8 @@ pub struct Config {
     pub auth: AuthSection,
     pub gameplay: GameplaySection,
     pub world: WorldSection,
+    /// Модель опыта навыков (skills.md §2/§8).
+    pub skills: SkillsSection,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -167,6 +169,26 @@ pub struct WorldSection {
     pub autosave_interval_s: u64,
 }
 
+/// Константы модели опыта навыков (skills.md §8 — «конфиг сервера», D25).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillsSection {
+    /// `xp_to_next(rank) = round(base_xp × growth^rank)`.
+    pub base_xp: i64,
+    pub growth: f64,
+    /// Потолок ранга (skills.md §2.2) → `E_RANK_CAP`.
+    pub rank_max: u32,
+    /// Гейты по атрибутам: ранг → требуемое значение (→ `E_REQUIREMENT_ATTR`).
+    pub gates: Vec<SkillGate>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillGate {
+    pub rank: u32,
+    pub attr: i64,
+}
+
 /// Ошибка загрузки/валидации конфига. Всегда указывает путь к файлу, а
 /// [`ConfigError::Invalid`] — имена ключей.
 #[derive(Debug, thiserror::Error)]
@@ -297,6 +319,35 @@ impl Config {
         }
         if self.world.autosave_interval_s == 0 {
             out.push("world.autosave_interval_s: должен быть ≥ 1".into());
+        }
+
+        // [skills] (skills.md §8)
+        if self.skills.base_xp < 1 {
+            out.push("skills.base_xp: должен быть ≥ 1".into());
+        }
+        if self.skills.growth <= 1.0 {
+            out.push(format!(
+                "skills.growth: должен быть > 1.0 (получено: {})",
+                self.skills.growth
+            ));
+        }
+        if self.skills.rank_max == 0 {
+            out.push("skills.rank_max: должен быть ≥ 1".into());
+        }
+        let mut gate_ranks = HashSet::new();
+        for (i, gate) in self.skills.gates.iter().enumerate() {
+            if gate.rank == 0 || gate.rank > self.skills.rank_max {
+                out.push(format!(
+                    "skills.gates[{i}].rank: должен быть в 1..={} (получено: {})",
+                    self.skills.rank_max, gate.rank
+                ));
+            }
+            if gate.attr < 1 {
+                out.push(format!("skills.gates[{i}].attr: должен быть ≥ 1"));
+            }
+            if !gate_ranks.insert(gate.rank) {
+                out.push(format!("skills.gates: дубликат ранга {}", gate.rank));
+            }
         }
 
         out

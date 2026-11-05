@@ -11,7 +11,9 @@
 
 pub mod accounts;
 pub mod characters;
+pub mod items;
 pub mod locations;
+pub mod skills;
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;

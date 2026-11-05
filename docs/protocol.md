@@ -215,7 +215,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "hp": { "cur": 30, "max": 55 },           // у npc/corpse может отсутствовать
   "tags": ["marauder"],                     // любые игровые теги-статусы
   "was_player": true,                       // только для corpse — труп игрока (!!)
-  "aggro": false }
+  "aggro": false,
+  "…": "…" }                                // расширимые поля (extra) сохраняются, §11.2
 
 // Exit
 { "id": "e_north", "label": "тропа на север", "dir": "north" }   // dir — опционально

@@ -55,10 +55,15 @@ async fn migrations_up_idempotent_and_revert_cycle() {
     let mut expected = [
         "_sqlx_migrations",
         "accounts",
+        "character_skills",
         "characters",
+        "item_defs",
+        "items",
         "locations",
+        "loot_taken",
         "meta",
         "refresh_tokens",
+        "skills",
     ]
     .map(|s| s.to_string());
     expected.sort();

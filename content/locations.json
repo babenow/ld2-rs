@@ -29,6 +29,13 @@
           "hp": { "cur": 18, "max": 18 },
           "tags": ["aggro"],
           "aggro": true
+        },
+        {
+          "id": "cor_9",
+          "kind": "corpse",
+          "name": "Труп: Ким-младший",
+          "was_player": true,
+          "loot": ["dagger_knife", "potion_heal"]
         }
       ]
     }

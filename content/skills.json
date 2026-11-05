@@ -1,0 +1,37 @@
+{
+  "skills": [
+    { "id": "sword", "name": "Владение мечом", "group": "weapon" },
+    { "id": "axe", "name": "Владение топором", "group": "weapon" },
+    { "id": "polearm", "name": "Древковое оружие", "group": "weapon" },
+    { "id": "bow", "name": "Стрельба", "group": "weapon" },
+    { "id": "dagger", "name": "Владение кинжалом", "group": "weapon" },
+    { "id": "twohand", "name": "Двуручное оружие", "group": "weapon" },
+    { "id": "unarmed", "name": "Рукопашный бой", "group": "weapon" },
+
+    { "id": "armor_heavy", "name": "Тяжёлая броня", "group": "defense" },
+    { "id": "armor_light", "name": "Лёгкая броня", "group": "defense" },
+    { "id": "block", "name": "Блок", "group": "defense" },
+    { "id": "evasion", "name": "Уклонение", "group": "defense" },
+
+    { "id": "fire", "name": "Огонь", "group": "magic" },
+    { "id": "frost", "name": "Мороз", "group": "magic" },
+    { "id": "storm", "name": "Шторм", "group": "magic" },
+    { "id": "healing", "name": "Исцеление", "group": "magic" },
+    { "id": "arcana", "name": "Аркана", "group": "magic" },
+    { "id": "dark", "name": "Тёмная магия", "group": "magic" },
+
+    { "id": "stealth", "name": "Скрытность", "group": "stealth" },
+    { "id": "lockpicking", "name": "Взлом замков", "group": "stealth" },
+    { "id": "pickpocket", "name": "Карманная кража", "group": "stealth" },
+    { "id": "disarm", "name": "Обезвреживание", "group": "stealth" },
+
+    { "id": "mining", "name": "Добыча", "group": "practice" },
+    { "id": "woodcutting", "name": "Лесозаготовка", "group": "practice" },
+    { "id": "survival", "name": "Выживание", "group": "practice" },
+    { "id": "bestiary", "name": "Знание монстров", "group": "practice" },
+
+    { "id": "haggle", "name": "Торговля", "group": "social" },
+    { "id": "lore", "name": "Знания", "group": "social" },
+    { "id": "leadership", "name": "Командование", "group": "social" }
+  ]
+}

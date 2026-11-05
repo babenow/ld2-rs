@@ -92,3 +92,20 @@ rune_cost = 10
 content_dir = "content"    # статический контент (JSON) → сид в PostgreSQL (D26)
 tick_hz = 10               # тик-луп мира (D31), 1..=100
 autosave_interval_s = 30   # периодический флаш онлайн-состояния (D27)
+
+[skills]                   # skills.md §8: xp_to_next = round(base_xp × growth^rank)
+base_xp = 120
+growth = 1.32
+rank_max = 30
+
+[[skills.gates]]           # ранг → требуемый атрибут (§2.2; E_REQUIREMENT_ATTR)
+rank = 10
+attr = 12
+
+[[skills.gates]]
+rank = 20
+attr = 18
+
+[[skills.gates]]
+rank = 30
+attr = 25

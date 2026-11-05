@@ -230,6 +230,7 @@ pub fn village() -> LocationSnapshot {
             tags: None,
             was_player: None,
             aggro: None,
+            extra: Default::default(),
         }],
         extra: Default::default(),
     }
@@ -255,6 +256,7 @@ pub fn forest() -> LocationSnapshot {
                 tags: Some(vec!["aggro".into()]),
                 was_player: None,
                 aggro: Some(true),
+                extra: Default::default(),
             },
             Entity {
                 id: "p_77".into(),
@@ -264,6 +266,7 @@ pub fn forest() -> LocationSnapshot {
                 tags: Some(vec!["marauder".into()]),
                 was_player: None,
                 aggro: None,
+                extra: Default::default(),
             },
             Entity {
                 id: "cor_9".into(),
@@ -273,6 +276,7 @@ pub fn forest() -> LocationSnapshot {
                 tags: None,
                 was_player: Some(true),
                 aggro: None,
+                extra: Default::default(),
             },
         ],
         extra: Default::default(),

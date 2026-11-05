@@ -53,3 +53,51 @@ pub async fn start_server_with(db_url: &str, tweak: impl FnOnce(&mut Config)) ->
 pub async fn start_ws_server(db_url: &str) -> String {
     format!("ws://{}/ws", start_server_with(db_url, |_| {}).await)
 }
+
+use ld2_test_kit::checks;
+use ld2_test_kit::WsClient;
+use serde_json::json;
+
+/// Регистрация + персонаж + выбор: клиент в мире (общий e2e-флоу).
+/// Возвращает (клиент, логин, char_id).
+pub async fn in_world(ws: &str) -> (WsClient, String, String) {
+    let mut c = WsClient::connect(ws).await;
+    let login = checks::unique_login();
+    let seq = c
+        .send(
+            "cmd/auth.register",
+            json!({ "login": login, "password": "longenough1" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "регистрация: {ack}");
+    c.wait_event("evt/session.start").await;
+
+    let name = format!(
+        "Следопыт_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("время")
+            .as_nanos()
+    );
+    let seq = c
+        .send(
+            "cmd/char.create",
+            json!({ "name": name, "profile": "warrior" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "создание персонажа: {ack}");
+    let char_id = ack["payload"]["character"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    let seq = c
+        .send("cmd/char.select", json!({ "char_id": char_id }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "выбор персонажа: {ack}");
+    c.wait_event("evt/state/snapshot").await;
+    (c, login, char_id)
+}
