@@ -14,5 +14,9 @@
 *.local.toml
 client-data/
 
+# Конфиг реального сервера — секреты (D25): шаблон в crates/ld2-server/server.example.toml
+/server.toml
+
 # Логи
 *.log
+plans/
