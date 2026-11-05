@@ -57,6 +57,8 @@ async fn migrations_up_idempotent_and_revert_cycle() {
         "accounts",
         "character_skills",
         "characters",
+        "crime_log",
+        "crime_statuses",
         "item_defs",
         "items",
         "locations",

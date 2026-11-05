@@ -7,12 +7,13 @@ use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
-    ChatSend, EntityInfo, ItemDrop, ItemEquip, ItemUnequip, ItemUse, LocationMove, StateResync,
+    ChatSend, CombatAttack, EntityInfo, ItemDrop, ItemEquip, ItemUnequip, ItemUse, LocationMove,
+    StateResync,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
-    CharDeath, CharStats, CharXp, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState,
-    LocationChanged, LostItem, Pong, Respawn, StateSnapshot, TimeSync,
+    CharStats, CharXp, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState, LocationChanged, Pong,
+    StateSnapshot, TimeSync,
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, Entity, EquipMap, Hp, ItemSnapshot, LocationSnapshot, Mp,
@@ -50,13 +51,20 @@ pub struct Session {
     char: Option<CharacterState>,
     /// Текущая локация персонажа (M12.3): разрешается при входе/переходе.
     location_id: Option<String>,
+    /// Канал исходящих конвертов соединения (рассылка тика боя, M12.5).
+    out_tx: tokio::sync::mpsc::UnboundedSender<String>,
 }
 
 impl Session {
-    pub fn new(state: SharedState, peer: SocketAddr) -> Self {
+    pub fn new(
+        state: SharedState,
+        peer: SocketAddr,
+        out_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Self {
         Self {
             state,
             peer,
+            out_tx,
             ack_cache: HashMap::new(),
             seq_order: VecDeque::new(),
             account_id: None,
@@ -125,6 +133,10 @@ impl Session {
             "cmd/location.move" => self.location_move(env, seq).await,
             "cmd/entity.info" => self.entity_info(env, seq).await,
             "cmd/state.resync" => self.state_resync(env, seq).await,
+            // бой (ФР-05, M12.5)
+            "cmd/combat.attack" => self.combat_attack(env, seq).await,
+            "cmd/combat.stop" => self.combat_stop(seq).await,
+            "cmd/combat.flee" => self.combat_flee(seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
             "cmd/char.xp_invest" => self.char_xp_invest(env, seq).await,
             "cmd/item.use" => self.item_use(env, seq).await,
@@ -298,6 +310,13 @@ impl Session {
                 warn!("отзыв refresh не удался: {e}");
             }
         }
+        // Сессия выходит из мира: бой и рассылка (M12.5).
+        if let Some(char_id) = self.selected_char_id.take() {
+            let mut world = self.state.world.lock().expect("мир");
+            world.unbind_char(&char_id);
+        }
+        self.char = None;
+        self.location_id = None;
         self.authenticated = false;
         self.account_id = None;
         self.login = None;
@@ -499,8 +518,14 @@ impl Session {
             }
         };
         self.char = Some(char_state);
-        self.location_id = Some(location_id);
+        self.location_id = Some(location_id.clone());
         self.selected_char_id = Some(row.id.clone());
+        // Реестр мира (M12.5): рассылка тика боя + мишени агрессии.
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.bind_char(&row.id, &row.name, self.out_tx.clone());
+            world.set_char_location(&row.id, &location_id);
+        }
         if let Some(account_id) = self.account_id {
             if let Err(e) = db::accounts::set_last_char(&self.state.pool, account_id, &row.id).await
             {
@@ -647,8 +672,11 @@ impl Session {
                 match self.character_state(&row).await {
                     Ok(state) => {
                         self.char = Some(state);
-                        self.location_id = Some(location_id);
+                        self.location_id = Some(location_id.clone());
                         self.selected_char_id = Some(row.id.clone());
+                        let mut world = self.state.world.lock().expect("мир");
+                        world.bind_char(&row.id, &row.name, self.out_tx.clone());
+                        world.set_char_location(&row.id, &location_id);
                     }
                     Err(e) => warn!("восстановление листа персонажа: {e}"),
                 }
@@ -745,6 +773,11 @@ impl Session {
                 }
             };
         self.location_id = Some(target.clone());
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.set_char_location(&char_id, &target);
+            world.end_combat(&char_id); // смена локации прерывает бой (M12.5)
+        }
         let location = match db::locations::get(&self.state.pool, &target).await {
             Ok(Some(row)) => row.snapshot(),
             Ok(None) => {
@@ -786,6 +819,65 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
+
+        // Динамический труп (M12.5): живёт в мире, не в строке локации.
+        let dyn_loot = {
+            let world = self.state.world.lock().expect("мир");
+            world
+                .dynamic_corpse(&cmd.entity_id)
+                .map(|c| (c.id.clone(), c.name.clone(), c.loot.clone()))
+        };
+        if let Some((corpse_id, corpse_name, slots)) = dyn_loot {
+            let mut loot = Vec::new();
+            let mut remaining = 0usize;
+            for (i, def_id) in slots.iter().enumerate() {
+                let Some(def_id) = def_id else {
+                    continue; // слот уже взят
+                };
+                remaining += 1;
+                let loot_uid = format!("loot:{corpse_id}:{i}");
+                let def = match db::items::def(&self.state.pool, def_id).await {
+                    Ok(Some(def)) => def,
+                    Ok(None) => {
+                        warn!("лут трупа {corpse_id}: нет определения {def_id}");
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!("entity.info (определение {def_id}): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                };
+                let row = db::items::ItemRow {
+                    uid: loot_uid,
+                    def_id: def_id.clone(),
+                    qty: def.qty,
+                    upgrade: 0,
+                    equipped_slot: None,
+                };
+                loot.push(item_snapshot(&row, &def));
+            }
+            let entity = Entity {
+                id: corpse_id,
+                kind: ld2_protocol::types::EntityKind::Corpse,
+                name: corpse_name,
+                hp: None,
+                tags: None,
+                was_player: None,
+                aggro: None,
+                extra: Default::default(),
+            };
+            return vec![Self::ack_payload(
+                seq,
+                &serde_json::json!({
+                    "entity": entity,
+                    "loot": loot,
+                    "was_player": false,
+                    "looted": !slots.is_empty() && remaining == 0,
+                }),
+            )];
+        }
+
+        // Статическая сущность из сида (D26) вместе с её лутом (однократно).
         let current = self.location_id.clone().unwrap_or_default();
         let entities = match db::locations::get(&self.state.pool, &current).await {
             Ok(Some(row)) => {
@@ -800,8 +892,6 @@ impl Session {
         let Some(entity) = entities.into_iter().find(|e| e.id == cmd.entity_id) else {
             return vec![Self::err(seq, ErrorCode::TargetGone, "сущность не найдена")];
         };
-        // Лут статической сущности (§6 `extra.loot` — id определений):
-        // взятый не показываем (однократное взятие, M12.4).
         let defs = entity_loot_defs(&entity);
         let was_player = entity.was_player.unwrap_or(false);
         let mut loot = Vec::new();
@@ -900,6 +990,11 @@ impl Session {
         ]
     }
 
+    /// Выбранный персонаж (для отвязки от мира при дисконнекте, M12.5).
+    pub fn selected_char(&self) -> Option<String> {
+        self.selected_char_id.clone()
+    }
+
     /// Текущий персонаж для команд мира (§3: без него «не в мире»).
     fn require_char_id(&self, seq: u32) -> Result<String, Out> {
         self.selected_char_id
@@ -933,7 +1028,7 @@ impl Session {
                 name: Some(skill.name),
                 rank: rank_u32,
                 xp,
-                xp_to_next: xp_to_next(rank_u32, &self.state.config.skills),
+                xp_to_next: crate::systems::xp_to_next(rank_u32, &self.state.config.skills),
             });
         }
 
@@ -1002,6 +1097,104 @@ impl Session {
             })
     }
 
+    /// Текущая позиция из БД (источник истины): тик-смерть/респаун меняют
+    /// её вне сессии — кэш синхронизируется (M12.5).
+    async fn current_location(&mut self, char_id: &str) -> String {
+        match crate::db::characters::get(&self.state.pool, char_id).await {
+            Ok(Some(row)) => {
+                if self.location_id.as_deref() != Some(row.location_id.as_str()) {
+                    self.location_id = Some(row.location_id.clone());
+                }
+                row.location_id
+            }
+            Ok(None) => self.location_id.clone().unwrap_or_default(),
+            Err(e) => {
+                warn!("чтение позиции {char_id}: {e}");
+                self.location_id.clone().unwrap_or_default()
+            }
+        }
+    }
+
+    /// `cmd/combat.attack` (§7): начать/сменить бой с мобом текущей локации
+    /// (тик-луп мира наносит удары, M12.5).
+    async fn combat_attack(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CombatAttack>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let location = self.current_location(&char_id).await;
+        let now = crate::time::now_ms();
+        let started = {
+            let mut world = self.state.world.lock().expect("мир");
+            world.start_combat(&char_id, &location, &cmd.target_id, now)
+        };
+        if !started {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "цель недоступна")];
+        }
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    /// `cmd/combat.stop` (§7): выйти из боя.
+    async fn combat_stop(&mut self, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.end_combat(&char_id);
+        }
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    /// `cmd/combat.flee` (§7): шанс побега из конфига `[gameplay.combat]`;
+    /// провал → `E_RATE`-стиль `E_COOLDOWN` с `retry_after_s`.
+    async fn combat_flee(&mut self, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let in_combat = {
+            let world = self.state.world.lock().expect("мир");
+            world.in_combat(&char_id)
+        };
+        if !in_combat {
+            return vec![Self::err(seq, ErrorCode::NotInLocation, "вы не в бою")];
+        }
+        let cfg = &self.state.config.gameplay.combat;
+        // Детерминированный «случай» по времени (без rand-зависимости).
+        let roll = (crate::time::now_ms() % 100) as f64 / 100.0;
+        let fled = roll < cfg.flee_chance;
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            if fled {
+                world.end_combat(&char_id);
+            }
+        }
+        if fled {
+            vec![Self::ack_payload(seq, &serde_json::json!({}))]
+        } else {
+            let retry = (cfg.attack_interval_s.ceil() as u64).max(1);
+            let mut ack = Ack::error(seq, None, &ErrorCode::Cooldown, "не удалось сбежать");
+            if let Some(err) = ack.error.as_mut() {
+                err.retry_after_s = Some(retry);
+            }
+            vec![out_ack(ack)]
+        }
+    }
+
     /// `cmd/char.xp_invest` (§7): вложение XP-пула в навык — транзакционно
     /// (D27), потолок/гейты — skills.md §2.2 (конфиг `[skills]`, D25).
     async fn char_xp_invest(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
@@ -1053,7 +1246,7 @@ impl Session {
         let cfg = &self.state.config.skills;
         xp += cmd.points;
         loop {
-            let need = xp_to_next(rank.max(0) as u32, cfg);
+            let need = crate::systems::xp_to_next(rank.max(0) as u32, cfg);
             if xp < need {
                 break;
             }
@@ -1104,7 +1297,7 @@ impl Session {
                     amount: cmd.points,
                     skill_xp: xp,
                     rank: Some(rank.max(0) as u32),
-                    xp_to_next: Some(xp_to_next(rank.max(0) as u32, cfg)),
+                    xp_to_next: Some(crate::systems::xp_to_next(rank.max(0) as u32, cfg)),
                     pool_left: Some(pool_left),
                 })
                 .unwrap_or_default(),
@@ -1235,9 +1428,76 @@ impl Session {
         let Ok(idx) = idx.parse::<usize>() else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "некорректный uid лута")];
         };
-        let pool = &self.state.pool;
-        let current = self.location_id.clone().unwrap_or_default();
-        let Some(loc_row) = (match db::locations::get(pool, &current).await {
+        let pool = self.state.pool.clone();
+
+        // Динамический труп (M12.5): слот в памяти; лимит — до изъятия.
+        let dynamic = {
+            let world = self.state.world.lock().expect(" мир");
+            world
+                .dynamic_corpse(entity_id)
+                .and_then(|c| c.loot.get(idx).cloned())
+        };
+        if let Some(slot) = dynamic {
+            let Some(def_id) = slot else {
+                return vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")];
+            };
+            match db::items::count(&pool, char_id).await {
+                Ok(n) if n >= i64::from(self.state.config.gameplay.inventory.slots) => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::InventoryFull,
+                        "инвентарь заполнен",
+                    )];
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!("take_loot (слоты): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+            let Some(def) = (match db::items::def(&pool, &def_id).await {
+                Ok(def) => def,
+                Err(e) => {
+                    warn!("take_loot (определение): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }) else {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "нет определения предмета",
+                )];
+            };
+            // Изъятие из памяти: None — кто-то успел раньше (гонок нет —
+            // обработка последовательна, но проверка честная).
+            let took = {
+                let mut world = self.state.world.lock().expect("мир");
+                world.take_dynamic_loot(entity_id, idx)
+            };
+            if took.is_none() {
+                return vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")];
+            }
+            let row = match db::items::insert(&pool, char_id, &def_id, i64::from(def.qty)).await {
+                Ok(row) => row,
+                Err(e) => {
+                    warn!("take_loot (insert): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let item = item_snapshot(&row, &def);
+            return vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                out_event(
+                    "evt/item/added",
+                    None,
+                    serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+                ),
+            ];
+        }
+
+        // Статический лут из сида (D26): однократно на персонажа.
+        let current = self.current_location(char_id).await;
+        let Some(loc_row) = (match db::locations::get(&pool, &current).await {
             Ok(row) => row,
             Err(e) => {
                 warn!("take_loot (локация): {e}");
@@ -1255,8 +1515,7 @@ impl Session {
         let Some(def_id) = defs.get(idx).cloned() else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого лута")];
         };
-        // Лимит слотов (D25) — до транзакции.
-        match db::items::count(pool, char_id).await {
+        match db::items::count(&pool, char_id).await {
             Ok(n) if n >= i64::from(self.state.config.gameplay.inventory.slots) => {
                 return vec![Self::err(
                     seq,
@@ -1270,7 +1529,7 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         }
-        let Some(def) = (match db::items::def(pool, &def_id).await {
+        let Some(def) = (match db::items::def(&pool, &def_id).await {
             Ok(def) => def,
             Err(e) => {
                 warn!("take_loot (определение): {e}");
@@ -1283,7 +1542,7 @@ impl Session {
                 "нет определения предмета",
             )];
         };
-        match db::items::take_loot_tx(pool, loot_uid, char_id, &def_id, i64::from(def.qty)).await {
+        match db::items::take_loot_tx(&pool, loot_uid, char_id, &def_id, i64::from(def.qty)).await {
             Ok(None) => vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")],
             Ok(Some(row)) => {
                 let item = item_snapshot(&row, &def);
@@ -1549,8 +1808,8 @@ impl Session {
         )]
     }
 
-    /// `/scenario death` (ФР-06): теряется **только лут** — опыт навыков и
-    /// XP-пул сохраняются (skills.md §2.2); респаун в спавне, hp полное.
+    /// `/scenario death` (ФР-06): общий поток смерти (death.rs) — теряется
+    /// **только лут**, опыт/пул сохраняются (skills.md §2.2); респаун в спавне.
     async fn scenario(&mut self, scenario: &str, seq: u32) -> Vec<Out> {
         if scenario != "death" {
             return vec![Self::err(
@@ -1563,114 +1822,27 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
-        let pool = &self.state.pool;
+        let events = crate::death::kill_character(&self.state, &char_id).await;
 
-        // Весь инвентарь теряется (ФР-06) — возвращаем строки для lost_items.
-        let lost_rows = match db::items::delete_all(pool, &char_id).await {
-            Ok(rows) => rows,
-            Err(e) => {
-                warn!("/scenario death (инвентарь): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        };
-        let mut lost_items = Vec::with_capacity(lost_rows.len());
-        for row in &lost_rows {
-            let (name, rarity) = match db::items::def(pool, &row.def_id).await {
-                Ok(Some(def)) => (def.name, Some(def.rarity)),
-                Ok(None) => (row.def_id.clone(), None),
-                Err(e) => {
-                    warn!("/scenario death (определение {}): {e}", row.def_id);
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                }
-            };
-            lost_items.push(LostItem {
-                uid: row.uid.clone(),
-                name,
-                rarity,
-                extra: Default::default(),
-            });
-        }
-
-        // Респаун: hp полное + позиция = спавн + бамп — одним UPDATE (D27).
-        let spawn = match db::locations::spawn_id(pool).await {
-            Ok(spawn) => spawn.unwrap_or_default(),
-            Err(e) => {
-                warn!("/scenario death (спавн): {e}");
-                String::new()
-            }
-        };
-        let target = if spawn.is_empty() {
-            self.location_id.clone().unwrap_or_default()
-        } else {
-            spawn
-        };
-        let Some((hp_cur, hp_max, sv)) =
-            (match db::characters::respawn(pool, &char_id, &target).await {
-                Ok(row) => row,
-                Err(e) => {
-                    warn!("/scenario death (респаун): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                }
-            })
-        else {
-            return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
-        };
-        let state_version = sv as u64;
-
-        // Обновить сессию под новое состояние.
-        let (location_id, location) = self.resolve_location(&target, &char_id).await;
-        self.location_id = Some(location_id);
-        if let Ok(Some(row)) = db::characters::get(pool, &char_id).await {
+        // Свежее состояние после респауна: ack со sv, сессия и мир синхронны.
+        let mut outs = vec![out_ack(Ack::ok(seq, None))];
+        if let Ok(Some(row)) = db::characters::get(&self.state.pool, &char_id).await {
+            let state_version = row.state_version as u64;
+            outs[0] = out_ack(Ack::ok(seq, Some(state_version)));
+            let (location_id, _) = self.resolve_location(&row.location_id, &char_id).await;
+            self.location_id = Some(location_id.clone());
             if let Ok(state) = self.character_state(&row).await {
                 self.char = Some(state);
             }
+            let mut world = self.state.world.lock().expect("мир");
+            world.set_char_location(&char_id, &location_id);
+            world.end_combat(&char_id);
         }
-
-        let death = CharDeath {
-            victim_char: true,
-            lost_items,
-            corpse: format!("cor_{}", char_id),
-            respawn: Respawn {
-                location_id: target,
-                delay_s: 0,
-                extra: Default::default(),
-            },
-            extra: Default::default(),
-        };
-        let mut outs = vec![
-            out_ack(Ack::ok(seq, Some(state_version))),
-            out_event(
-                "evt/char/death",
-                Some(state_version),
-                serde_json::to_value(&death).unwrap_or_default(),
-            ),
-        ];
-        for item in &death.lost_items {
-            outs.push(out_event(
-                "evt/item/removed",
-                Some(state_version),
-                serde_json::to_value(ItemRemoved {
-                    uid: item.uid.clone(),
-                    reason: ItemRemovalReason::LostOnDeath,
-                })
-                .unwrap_or_default(),
-            ));
+        for (addr, text) in events {
+            if !text.is_empty() && addr == char_id {
+                outs.push(Out::Text(text));
+            }
         }
-        let mut patch = serde_json::Map::new();
-        patch.insert(
-            "hp".into(),
-            serde_json::json!({ "cur": hp_cur, "max": hp_max }),
-        );
-        outs.push(out_event(
-            "evt/char/stats",
-            Some(state_version),
-            serde_json::to_value(CharStats { patch }).unwrap_or_default(),
-        ));
-        outs.push(out_event(
-            "evt/location/changed",
-            Some(state_version),
-            serde_json::to_value(LocationChanged { location }).unwrap_or_default(),
-        ));
         outs
     }
 
@@ -1743,12 +1915,6 @@ fn summary_of(row: &db::characters::CharacterRow, location_name: String) -> Char
     }
 }
 
-/// Порог ранга: `round(base_xp × growth^rank)` (skills.md §2.2,
-/// конфиг `[skills]`, D25).
-fn xp_to_next(rank: u32, cfg: &crate::config::SkillsSection) -> i64 {
-    ((cfg.base_xp as f64) * cfg.growth.powi(rank as i32)).round() as i64
-}
-
 /// Проводной вид предмета §6: поля инстанса + определение из сида (D26).
 fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> ItemSnapshot {
     ItemSnapshot {
@@ -1783,6 +1949,12 @@ fn entity_loot_defs(entity: &Entity) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Локация-заглушка: id отсутствует в сиде/БД (D26). pub(crate) —
+/// используется death.rs для респаун-событий.
+pub(crate) fn stub_location(location_id: &str) -> LocationSnapshot {
+    location_snapshot(location_id)
+}
+
 /// Локация снапшота: до сида контента (M12.3, D26) — заглушка по id
 /// (таблицы locations ещё нет: имя = id, описание/выходы/сущности пустые).
 fn location_snapshot(location_id: &str) -> LocationSnapshot {
@@ -1808,15 +1980,23 @@ fn out_ack(ack: Ack) -> Out {
 
 /// Событие → текст конверта (§2.3) с `ts`; сверх лимита §1 — закрытие
 /// (нарезка крупных событий — M12.8, §1).
-fn out_event(ty: &str, state_version: Option<u64>, payload: Value) -> Out {
+pub(crate) fn out_event(ty: &str, state_version: Option<u64>, payload: Value) -> Out {
+    let text = event_text(ty, state_version, payload);
+    if text.is_empty() {
+        Out::Close
+    } else {
+        Out::Text(text)
+    }
+}
+
+/// Текст конверта события (§2.3); пустая строка — сверх лимита §1
+/// (death.rs адресует события строками).
+pub(crate) fn event_text(ty: &str, state_version: Option<u64>, payload: Value) -> String {
     let mut env = Envelope::new(ty, Some(payload));
     env.state_version = state_version;
     env.ts = Some(crate::time::now_rfc3339());
-    match env.to_json_limited() {
-        Ok(text) => Out::Text(text),
-        Err(e) => {
-            warn!("событие {ty} не влезает в лимит 64 KiB: {e}");
-            Out::Close
-        }
-    }
+    env.to_json_limited().unwrap_or_else(|e| {
+        warn!("событие {ty} не влезает в лимит 64 KiB: {e}");
+        String::new()
+    })
 }

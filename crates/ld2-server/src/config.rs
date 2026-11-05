@@ -74,6 +74,8 @@ pub struct GameplaySection {
     /// Лимит слотов персонажей → §5 `char_slot_limit` (DoD M2: конфиг, не код).
     pub char_slot_limit: u32,
     pub profession_limit: u32,
+    /// Бой (M12.5): тик-луп атак и правила побега.
+    pub combat: CombatSection,
     /// Capability-флаги §5: ключи с точками — **в кавычках**:
     /// `"loot.roll" = false`. Неизвестные ключи разрешены (фичи открыты).
     pub features: HashMap<String, FeatureValue>,
@@ -180,6 +182,9 @@ pub struct SkillsSection {
     pub rank_max: u32,
     /// Гейты по атрибутам: ранг → требуемое значение (→ `E_REQUIREMENT_ATTR`).
     pub gates: Vec<SkillGate>,
+    /// Опыт за убийство (skills.md §2.3): `(base + difficulty × per)`.
+    pub kill_xp_base: i64,
+    pub kill_xp_per_difficulty: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -187,6 +192,18 @@ pub struct SkillsSection {
 pub struct SkillGate {
     pub rank: u32,
     pub attr: i64,
+}
+
+/// Параметры боя (M12.5, D25 — всё в конфиге).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CombatSection {
+    /// Период атак в бою, с (тик-луп `combat.attack`).
+    pub attack_interval_s: f64,
+    /// Базовый урон персонажа (v1 без формул оружия — см. отклонение).
+    pub base_damage: i64,
+    /// Шанс успешного побега (`cmd/combat.flee`), `0..=1`.
+    pub flee_chance: f64,
 }
 
 /// Ошибка загрузки/валидации конфига. Всегда указывает путь к файлу, а
@@ -348,6 +365,28 @@ impl Config {
             if !gate_ranks.insert(gate.rank) {
                 out.push(format!("skills.gates: дубликат ранга {}", gate.rank));
             }
+        }
+        if self.skills.kill_xp_base < 0 || self.skills.kill_xp_per_difficulty < 0 {
+            out.push("skills.kill_xp_*: не может быть отрицательным".into());
+        }
+
+        // [gameplay.combat] (M12.5)
+        if !(self.gameplay.combat.attack_interval_s >= 0.1
+            && self.gameplay.combat.attack_interval_s <= 60.0)
+        {
+            out.push(format!(
+                "gameplay.combat.attack_interval_s: должен быть в 0.1..=60 (получено: {})",
+                self.gameplay.combat.attack_interval_s
+            ));
+        }
+        if self.gameplay.combat.base_damage < 1 {
+            out.push("gameplay.combat.base_damage: должен быть ≥ 1".into());
+        }
+        if !(0.0..=1.0).contains(&self.gameplay.combat.flee_chance) {
+            out.push(format!(
+                "gameplay.combat.flee_chance: должен быть в 0..=1 (получено: {})",
+                self.gameplay.combat.flee_chance
+            ));
         }
 
         out

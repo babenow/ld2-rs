@@ -84,3 +84,41 @@ pub async fn invest_tx(
     tx.commit().await?;
     Ok(())
 }
+
+/// Прогресс одного навыка персонажа; `None` — ещё не вложен.
+pub async fn learned_one(
+    pool: &PgPool,
+    char_id: &str,
+    skill_id: &str,
+) -> Result<Option<(i64, i32)>, sqlx::Error> {
+    sqlx::query_as::<_, (i64, i32)>(
+        "SELECT xp, rank FROM character_skills          WHERE character_id = $1 AND skill_id = $2",
+    )
+    .bind(char_id)
+    .bind(skill_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Вклад XP убийства (без пула, D27): апсерт прогресса навыка.
+pub async fn grant_tx(
+    pool: &PgPool,
+    char_id: &str,
+    skill_id: &str,
+    xp: i64,
+    rank: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO character_skills (character_id, skill_id, xp, rank) \
+         VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (character_id, skill_id) DO UPDATE SET \
+           xp = EXCLUDED.xp, rank = EXCLUDED.rank",
+    )
+    .bind(char_id)
+    .bind(skill_id)
+    .bind(xp)
+    .bind(rank)
+    .execute(pool)
+    .await?;
+    Ok(())
+}

@@ -33,6 +33,11 @@ min_password_len = 8
 char_slot_limit = 8        # → §5 char_slot_limit (DoD M2: конфиг, не код)
 profession_limit = 2       # → §5 profession_limit
 
+[gameplay.combat]           # M12.5: тик-луп атак (D25)
+attack_interval_s = 1.0     # период атак в бою, с
+base_damage = 6             # базовый урон персонажа (v1)
+flee_chance = 0.5           # шанс cmd/combat.flee, 0..=1
+
 [gameplay.features]        # → §5 features; неизвестные ключи разрешены
 "loot.roll" = false
 "respawn.inn" = true
@@ -97,6 +102,8 @@ autosave_interval_s = 30   # периодический флаш онлайн-с
 base_xp = 120
 growth = 1.32
 rank_max = 30
+kill_xp_base = 8
+kill_xp_per_difficulty = 6
 
 [[skills.gates]]           # ранг → требуемый атрибут (§2.2; E_REQUIREMENT_ATTR)
 rank = 10

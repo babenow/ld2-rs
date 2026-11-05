@@ -174,6 +174,17 @@ async fn run() -> Result<(), AppError> {
         cfg.world.autosave_interval_s
     );
     let state = std::sync::Arc::new(ld2_server::state::AppState::new(cfg, pool));
+
+    // Живой мир: мобы из сида (эфемерны — D26/отклонение M12.5) + тик-луп
+    // боя (D31): атаки, смерти, XP убийств (M12.5).
+    ld2_server::tick::init(&state)
+        .await
+        .map_err(|e| AppError::Runtime(anyhow::Error::new(e)))?;
+    tracing::info!("мир: мобов из сида — {}", {
+        let world = state.world.lock().expect("мир");
+        world.mob_count()
+    });
+
     ld2_server::app::serve(listener, state).await?;
     Ok(())
 }

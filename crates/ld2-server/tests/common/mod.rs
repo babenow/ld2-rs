@@ -39,6 +39,7 @@ pub async fn start_server_with(db_url: &str, tweak: impl FnOnce(&mut Config)) ->
         .await
         .expect("сид контента");
     let state = Arc::new(AppState::new(cfg, pool));
+    ld2_server::tick::init(&state).await.expect("мир + тик-луп");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -73,12 +74,16 @@ pub async fn in_world(ws: &str) -> (WsClient, String, String) {
     assert_eq!(ack["result"], "ok", "регистрация: {ack}");
     c.wait_event("evt/session.start").await;
 
+    // nanos может совпасть внутри одного процесса (параллельные тесты,
+    // гранулярность часов) — добавляем счётчик.
+    static NAME_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let name = format!(
-        "Следопыт_{:x}",
+        "Следопыт_{:x}_{:x}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("время")
-            .as_nanos()
+            .as_nanos(),
+        NAME_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     );
     let seq = c
         .send(

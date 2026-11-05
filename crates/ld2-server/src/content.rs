@@ -82,6 +82,10 @@ pub struct ContentItemDef {
     /// Стартовое количество стака при взятии/выдаче.
     #[serde(default)]
     pub qty: Option<i64>,
+    /// Навык, который качается убийством этим оружием (skills.md §2.3);
+    /// `None` → `unarmed`.
+    #[serde(default)]
+    pub skill: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -186,12 +190,12 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         let stats = serde_json::Value::Object(item.stats.clone());
         let requires = serde_json::to_value(&item.requires).unwrap_or(serde_json::Value::Null);
         sqlx::query(
-            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
              ON CONFLICT (id) DO UPDATE SET \
                item_type = EXCLUDED.item_type, name = EXCLUDED.name, rarity = EXCLUDED.rarity, \
                upgrade = EXCLUDED.upgrade, stats = EXCLUDED.stats, requires = EXCLUDED.requires, \
-               gold_value = EXCLUDED.gold_value, qty = EXCLUDED.qty",
+               gold_value = EXCLUDED.gold_value, qty = EXCLUDED.qty, skill = EXCLUDED.skill",
         )
         .bind(&item.id)
         .bind(&item.item_type)
@@ -202,6 +206,7 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         .bind(requires)
         .bind(item.gold_value)
         .bind(item.qty.unwrap_or(1))
+        .bind(&item.skill)
         .execute(&mut *tx)
         .await?;
     }
