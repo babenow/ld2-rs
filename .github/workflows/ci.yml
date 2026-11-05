@@ -45,3 +45,39 @@ jobs:
 
       - name: build
         run: cargo build --workspace
+
+  # Реальный сервер (PLAN-M12.1, D24): тесты с БД — только здесь; в матрице
+  # 3 ОС LD2_TEST_DATABASE_URL не задан и эти тесты пропускаются.
+  server:
+    name: ld2-server (postgres)
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ld2
+          POSTGRES_PASSWORD: ld2
+          POSTGRES_DB: ld2
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ld2 -d ld2"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      LD2_TEST_DATABASE_URL: postgres://ld2:ld2@127.0.0.1:5432/ld2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: clippy (-D warnings)
+        run: cargo clippy -p ld2-server --all-targets -- -D warnings
+
+      - name: test (с PostgreSQL)
+        run: cargo test -p ld2-server

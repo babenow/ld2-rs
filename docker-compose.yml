@@ -1,0 +1,42 @@
+# PostgreSQL + ld2-server одной командой (PLAN-M12.1, D25/D24).
+#
+#   docker compose up --build -d
+#   curl http://127.0.0.1:24817/healthz   # → 200 ok
+#   docker compose down
+#
+# Конфиг контейнера — deploy/server.toml (хост БД `postgres`); свой файл:
+#   volumes: ["./my-server.toml:/etc/ld2/server.toml:ro"]
+# Локальный запуск без Docker: cp crates/ld2-server/server.example.toml server.toml
+# и правьте database.url на 127.0.0.1. Порт 24817 занимает и мок — не
+# запускайте их одновременно.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ld2
+      POSTGRES_PASSWORD: ld2
+      POSTGRES_DB: ld2
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ld2 -d ld2"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./deploy/server.toml:/etc/ld2/server.toml:ro
+    ports:
+      - "24817:24817"
+
+volumes:
+  pgdata:
