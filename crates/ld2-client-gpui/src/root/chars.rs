@@ -3,7 +3,7 @@
 //! + таймер (вход в игру отменяет). Диалоги — Ely `Dialog` поверх.
 
 use ely::forms::{Choice, Input, Select};
-use ely::layout::Card;
+use ely::layout::{Card, ScrollArea};
 use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div};
 use ld2_core::l10n::{t, tf, Key};
@@ -204,12 +204,11 @@ impl Root {
             list = list.child(card);
         }
         col = col.child(
-            div()
-                .id("ld2-chars-list")
+            ScrollArea::new("ld2-chars-list")
+                .vertical()
                 .w_full()
                 .flex_grow_1()
                 .min_h_0()
-                .overflow_y_scroll()
                 .child(list),
         );
 

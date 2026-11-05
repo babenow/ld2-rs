@@ -1258,15 +1258,20 @@ impl Render for Root {
             .bg(rgb(pal.bg))
             .text_color(rgb(pal.text))
             .child(self.header(cx, &pal))
-            .child(if self.settings_open {
-                self.settings_screen(cx, &pal)
-            } else {
-                match self.store.screen {
-                    Screen::Login => self.login_screen(cx, &pal),
-                    Screen::Characters => self.characters_screen(cx, &pal),
-                    Screen::Game => self.game_screen(cx, &pal),
-                }
-            })
+            .child(
+                // Экран — на остаток высоты между шапкой и статус-баром:
+                // size_full внутри даёт 100 % этого контейнера, а не окна
+                // (иначе низ уходил за границу, баг M11).
+                div().flex_grow_1().min_h_0().child(if self.settings_open {
+                    self.settings_screen(cx, &pal)
+                } else {
+                    match self.store.screen {
+                        Screen::Login => self.login_screen(cx, &pal),
+                        Screen::Characters => self.characters_screen(cx, &pal),
+                        Screen::Game => self.game_screen(cx, &pal),
+                    }
+                }),
+            )
             // Статус сервера — внизу окна (запрос).
             .child(self.status_bar(&pal))
             // M11.2: всплывающий диалог поверх контента (скрим + панель).
