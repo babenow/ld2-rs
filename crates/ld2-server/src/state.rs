@@ -7,6 +7,7 @@ use sqlx::PgPool;
 
 use crate::auth::AuthRateLimiter;
 use crate::config::Config;
+use crate::social::SocialState;
 use crate::world::World;
 
 /// Разделяемое состояние: конфиг (D25), пул PostgreSQL (D24) и
@@ -20,6 +21,8 @@ pub struct AppState {
     /// Остановка фоновых задач (тик-луп): `true` → завершаемся. Нужна и
     /// prod (graceful shutdown), и тестам («рестарт» сервера, M12.6).
     shutdown: tokio::sync::watch::Sender<bool>,
+    /// Социальное состояние в памяти: группы (ФР-14, M12.7b) — эфемерно.
+    pub social: Mutex<SocialState>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -33,6 +36,7 @@ impl AppState {
             rate: AuthRateLimiter::new(),
             world: Mutex::new(World::default()),
             shutdown,
+            social: Mutex::new(SocialState::default()),
         }
     }
 

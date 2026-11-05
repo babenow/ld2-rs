@@ -12,6 +12,7 @@ pub mod content;
 pub mod db;
 pub mod death;
 pub mod session;
+pub mod social;
 pub mod state;
 pub mod systems;
 pub mod tick;

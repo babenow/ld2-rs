@@ -115,10 +115,35 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
         }
     }
 
-    // Отвязка персонажа: бой и рассылка (M12.5).
+    // Отвязка персонажа: бой и рассылка (M12.5) + соц-чистка (M12.7):
+    // приглашения снимаются, активная сделка отменяется с событием
+    // `evt/trade/closed` партнёру.
     if let Some(char_id) = session.selected_char() {
-        let mut world = state.world.lock().expect("мир");
-        world.unbind_char(&char_id);
+        {
+            let mut world = state.world.lock().expect("мир");
+            world.unbind_char(&char_id);
+        }
+        let closed = {
+            let mut social = state.social.lock().expect("соц");
+            social.drop_invites_for(&char_id);
+            social.drop_guild_invites_for(&char_id);
+            social.drop_trades_for(&char_id)
+        };
+        if let Some((participants, offer_id)) = closed {
+            let text = crate::session::event_text(
+                "evt/trade/closed",
+                None,
+                serde_json::json!({ "offer_id": offer_id, "reason": "cancelled" }),
+            );
+            if !text.is_empty() {
+                let world = state.world.lock().expect("мир");
+                for addr in participants {
+                    if addr != char_id {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                }
+            }
+        }
     }
     info!("ws: соединение {peer} закрыто");
 }

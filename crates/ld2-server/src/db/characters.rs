@@ -198,3 +198,12 @@ pub async fn add_xp_pool(pool: &PgPool, char_id: &str, amount: i64) -> Result<i6
     .fetch_one(pool)
     .await
 }
+
+/// Баланс золота персонажа (сделки, ФР-15).
+pub async fn gold_of(pool: &PgPool, char_id: &str) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT gold FROM characters WHERE id = $1 AND deleted_at IS NULL")
+        .bind(char_id)
+        .fetch_optional(pool)
+        .await
+        .map(|opt| opt.unwrap_or(0))
+}

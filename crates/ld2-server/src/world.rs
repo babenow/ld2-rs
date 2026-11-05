@@ -169,6 +169,19 @@ impl World {
             .insert(char_id.to_string(), location_id.to_string());
     }
 
+    /// Обратный поиск: имя персонажа → char_id (whisper, ФР-13).
+    pub fn char_id_by_name(&self, name: &str) -> Option<String> {
+        self.char_names
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(name))
+            .map(|(id, _)| id.clone())
+    }
+
+    /// Локация персонажа (проверка сделки «в одной локации», ФР-15).
+    pub fn char_location(&self, char_id: &str) -> Option<String> {
+        self.char_loc.get(char_id).cloned()
+    }
+
     pub fn char_name(&self, char_id: &str) -> Option<String> {
         self.char_names.get(char_id).cloned()
     }

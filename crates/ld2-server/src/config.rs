@@ -87,6 +87,8 @@ pub struct GameplaySection {
     pub magic: MagicSection,
     /// Профессии и крафт (skills.md §8, M12.6).
     pub professions: ProfessionsSection,
+    /// Максимум участников группы (ФР-14, M12.7b).
+    pub party_max_members: u32,
 }
 
 /// Значение capability-флага §5: булево или строка (`upgrade.rules`).
@@ -350,6 +352,10 @@ impl Config {
                 "gameplay.upgrade.chance_per_level: должен быть в 0..=1 (получено: {})",
                 self.gameplay.upgrade.chance_per_level
             ));
+        }
+
+        if self.gameplay.party_max_members < 2 {
+            out.push("gameplay.party_max_members: должен быть ≥ 2".into());
         }
 
         // [gameplay.professions] (M12.6)

@@ -7,9 +7,11 @@ use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
-    ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo, ItemDrop,
-    ItemEquip, ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, SocketExtract,
-    SocketInsert, StateResync, UpgradePreview, UpgradeStart,
+    ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
+    GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip,
+    ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, PartyAccept, PartyInvite,
+    PartyKick, SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen,
+    TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -59,6 +61,8 @@ pub struct Session {
     out_tx: tokio::sync::mpsc::UnboundedSender<String>,
     /// Активное превью улучшения (ФР-10, M12.5c): stale → `E_UPGRADE_PREVIEW_STALE`.
     preview_state: Option<UpgradePreviewState>,
+    /// Кулдаун чата (`chat.cooldown_s`, ФР-13): момент последнего сообщения.
+    last_chat_at: Option<std::time::Instant>,
 }
 
 /// Превью улучшения (одно на соединение; уровень изменился → stale).
@@ -89,6 +93,7 @@ impl Session {
             char: None,
             location_id: None,
             preview_state: None,
+            last_chat_at: None,
         }
     }
 
@@ -153,6 +158,28 @@ impl Session {
             "cmd/combat.attack" => self.combat_attack(env, seq).await,
             "cmd/combat.stop" => self.combat_stop(seq).await,
             "cmd/combat.flee" => self.combat_flee(seq).await,
+            // гильдия (ФР-16, M12.7d)
+            "cmd/guild.browse" => self.guild_browse(env, seq).await,
+            "cmd/guild.create" => self.guild_create(env, seq).await,
+            "cmd/guild.join" => self.guild_join(env, seq).await,
+            "cmd/guild.leave" => self.guild_leave(seq).await,
+            "cmd/guild.invite" => self.guild_invite(env, seq).await,
+            "cmd/guild.kick" => self.guild_kick(env, seq).await,
+            "cmd/guild.rank_set" => self.guild_rank_set(env, seq).await,
+            // сделка (ФР-15, M12.7c)
+            "cmd/trade.open" => self.trade_open(env, seq).await,
+            "cmd/trade.add_item" => self.trade_add_item(env, seq).await,
+            "cmd/trade.set_gold" => self.trade_set_gold(env, seq).await,
+            "cmd/trade.propose" => self.trade_lock_cmd(env, seq).await,
+            "cmd/trade.accept" => self.trade_lock_cmd(env, seq).await,
+            "cmd/trade.cancel" => self.trade_cancel(env, seq).await,
+            // группа (ФР-14, M12.7b)
+            "cmd/party.create" => self.party_create(seq).await,
+            "cmd/party.invite" => self.party_invite(env, seq).await,
+            "cmd/party.accept" => self.party_accept(env, seq).await,
+            "cmd/party.decline" => self.party_decline(env, seq).await,
+            "cmd/party.leave" => self.party_leave(seq).await,
+            "cmd/party.kick" => self.party_kick(env, seq).await,
             // профессии/крафт (ФР-08, M12.6)
             "cmd/craft.list" => self.craft_list(seq).await,
             "cmd/craft.recipes" => self.craft_recipes(env, seq).await,
@@ -568,23 +595,28 @@ impl Session {
                 warn!("last_char_id не обновлён: {e}");
             }
         }
+        let party = self.state.social.lock().expect("соц").party_of(&row.id);
+        let guild = self.guild_state_of(&row.id).await;
         let snapshot = StateSnapshot {
             state_version,
             char: self.char.clone().expect("выше"),
             location,
-            party: None,
-            guild: None,
+            party,
+            guild,
             server_ts: crate::time::now_epoch(),
             extra: Default::default(),
         };
-        vec![
+        let mut outs = vec![
             out_ack(Ack::ok(seq, Some(state_version))),
             out_event(
                 "evt/state/snapshot",
                 Some(state_version),
                 serde_json::to_value(&snapshot).unwrap_or_default(),
             ),
-        ]
+        ];
+        // ФР-13/§5: реплей истории чата (server_history) после снапшота.
+        outs.extend(self.chat_history_events().await);
+        outs
     }
 
     async fn char_delete(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
@@ -1009,12 +1041,14 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
+        let party = self.state.social.lock().expect("соц").party_of(&row.id);
+        let guild = self.guild_state_of(&row.id).await;
         let snapshot = StateSnapshot {
             state_version,
             char: char_state,
             location,
-            party: None,
-            guild: None,
+            party,
+            guild,
             server_ts: crate::time::now_epoch(),
             extra: Default::default(),
         };
@@ -1882,11 +1916,202 @@ impl Session {
         if let Some(scenario) = cmd.text.strip_prefix("/scenario ") {
             return self.scenario(scenario.trim(), seq).await;
         }
-        vec![Self::err(
-            seq,
-            ErrorCode::Internal,
-            "чат появится в фазе M12.7",
-        )]
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        // Копия нужного из конфига (D25): cfg-заимствование мешает &mut ниже.
+        let (channels, max_len, cooldown_s, history_limit) = {
+            let chat = &self.state.config.gameplay.chat;
+            (
+                chat.channels.clone(),
+                chat.max_len,
+                chat.cooldown_s,
+                chat.server_history,
+            )
+        };
+
+        // Канал из конфига §5 (открытый список).
+        if !channels.contains(&cmd.channel) {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                format!("нет канала: {}", cmd.channel),
+            )];
+        }
+        // Длина текста (§12.2: chat.max_len → E_RATE_LIMITED).
+        if cmd.text.chars().count() > max_len as usize {
+            return vec![Self::err(
+                seq,
+                ErrorCode::RateLimited,
+                format!("слишком длинное сообщение (до {max_len})"),
+            )];
+        }
+        if cmd.text.trim().is_empty() {
+            return vec![Self::err(seq, ErrorCode::Internal, "пустое сообщение")];
+        }
+        // Кулдаун (§12.2: chat.cooldown_s → E_RATE_LIMITED + retry_after_s).
+        if let Some(last) = self.last_chat_at {
+            let elapsed = last.elapsed().as_secs_f64();
+            if elapsed < cooldown_s {
+                let retry = (cooldown_s - elapsed).ceil().max(1.0) as u64;
+                return vec![Self::ack_rate_limited(seq, retry)];
+            }
+        }
+
+        // Рассылка: location — в локации, global/system — всем онлайн,
+        // whisper — адресату (по имени) и автору, party/guild — участникам
+        // (группы/гильдии — M12.7b/d: до тех пор только автор).
+        let name = self
+            .char
+            .as_ref()
+            .map(|c| c.name.clone())
+            .or_else(|| {
+                let world = self.state.world.lock().expect("мир");
+                world.char_name(&char_id)
+            })
+            .unwrap_or_default();
+        let location = self.current_location(&char_id).await;
+        // Каналы группы/гильдии (ФР-13): участникам своего состава.
+        if cmd.channel == "party" {
+            let members = {
+                let social = self.state.social.lock().expect("соц");
+                social.party_members(&char_id)
+            };
+            if members.is_empty() {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "вы не в группе")];
+            }
+            return self
+                .chat_deliver(seq, &cmd, &char_id, &name, &members, history_limit)
+                .await;
+        }
+        if cmd.channel == "guild" {
+            let guild = db::guilds::guild_of(&self.state.pool, &char_id)
+                .await
+                .ok()
+                .flatten();
+            let Some(guild) = guild else {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::GuildPermission,
+                    "вы не в гильдии",
+                )];
+            };
+            let members = db::guilds::members(&self.state.pool, &guild.0)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, _, _)| id)
+                .collect::<Vec<_>>();
+            return self
+                .chat_deliver(seq, &cmd, &char_id, &name, &members, history_limit)
+                .await;
+        }
+        let recipients: Vec<String> = {
+            let world = self.state.world.lock().expect("мир");
+            match cmd.channel.as_str() {
+                "location" => world.chars_in_location(&location),
+                "global" | "system" => world.online_chars(),
+                "whisper" => {
+                    let target = cmd.to.as_deref().and_then(|to| world.char_id_by_name(to));
+                    match target {
+                        Some(id) if id != char_id => vec![char_id.clone(), id],
+                        Some(_) => {
+                            return vec![Self::err(
+                                seq,
+                                ErrorCode::TargetGone,
+                                "нельзя шептать себе",
+                            )];
+                        }
+                        None => {
+                            return vec![Self::err(seq, ErrorCode::TargetGone, "игрок не в сети")];
+                        }
+                    }
+                }
+                _ => vec![char_id.clone()],
+            }
+        };
+
+        self.chat_deliver(seq, &cmd, &char_id, &name, &recipients, history_limit)
+            .await
+    }
+
+    /// Общая доставка сообщения: история в БД (кольцо server_history,
+    /// D25) → рассылка адресатам → ack (§2.2: ack раньше событий).
+    async fn chat_deliver(
+        &mut self,
+        seq: u32,
+        cmd: &ChatSend,
+        char_id: &str,
+        name: &str,
+        recipients: &[String],
+        history_limit: u32,
+    ) -> Vec<Out> {
+        let sent_at = match db::chat::push(
+            &self.state.pool,
+            &cmd.channel,
+            char_id,
+            name,
+            cmd.text.trim(),
+            history_limit,
+        )
+        .await
+        {
+            Ok(ts) => ts,
+            Err(e) => {
+                warn!("chat (история): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        self.last_chat_at = Some(std::time::Instant::now());
+
+        let payload = ld2_protocol::evt::ChatMessage {
+            channel: cmd.channel.clone(),
+            from: char_id.to_string(),
+            name: name.to_string(),
+            text: cmd.text.trim().to_string(),
+            tags: None,
+            sent_at,
+            extra: Default::default(),
+        };
+        let text = event_payload_text("evt/chat/message", &payload);
+        if let Some(text) = text {
+            let world = self.state.world.lock().expect("мир");
+            for addr in recipients {
+                world.send_to_char(addr, text.clone());
+            }
+        }
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    /// Реплей истории чата при выборе персонажа (§5 `server_history`):
+    /// события `evt/chat/message` после snapshot (кольцо переживает рестарт).
+    async fn chat_history_events(&self) -> Vec<Out> {
+        let limit = self.state.config.gameplay.chat.server_history;
+        if limit == 0 {
+            return Vec::new();
+        }
+        let rows = match db::chat::recent(&self.state.pool, limit).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("chat (реплей истории): {e}");
+                return Vec::new();
+            }
+        };
+        rows.into_iter()
+            .filter_map(|(channel, from, name, text, sent_at)| {
+                let payload = ld2_protocol::evt::ChatMessage {
+                    channel,
+                    from,
+                    name,
+                    text,
+                    tags: None,
+                    sent_at,
+                    extra: Default::default(),
+                };
+                event_payload_text("evt/chat/message", &payload).map(Out::Text)
+            })
+            .collect()
     }
 
     /// `/scenario death` (ФР-06): общий поток смерти (death.rs) — теряется
@@ -3151,6 +3376,1247 @@ impl Session {
             return None;
         }
         Some((char_id.to_string(), text))
+    }
+
+    // ── сделка (ФР-15, M12.7c) ──────────────────────────────────────────────
+
+    /// Payload `evt/trade/state` для конкретного участника (зеркальная
+    /// перспектива §8: `you` — своя сторона, `them` — чужая).
+    async fn trade_state_payload(
+        &self,
+        char_id: &str,
+        trade: &crate::social::Trade,
+    ) -> serde_json::Value {
+        let pool = &self.state.pool;
+        let (mine, theirs) = if trade.a == char_id {
+            (&trade.side_a, &trade.side_b)
+        } else {
+            (&trade.side_b, &trade.side_a)
+        };
+        let snapshots = |side: &crate::social::TradeSide| {
+            let pool = pool.clone();
+            let uids: Vec<String> = side.items.iter().map(|(u, _)| u.clone()).collect();
+            async move {
+                let mut out = Vec::new();
+                for uid in uids {
+                    if let Ok(Some(item)) = db::items::find_any(&pool, &uid).await {
+                        if let Ok(Some(def)) = db::items::def(&pool, &item.def_id).await {
+                            out.push(item_snapshot(&item, &def));
+                        }
+                    }
+                }
+                out
+            }
+        };
+        let you = snapshots(mine).await;
+        let them = snapshots(theirs).await;
+        serde_json::json!({
+            "offer_id": trade.id,
+            "version": trade.version,
+            "you": you,
+            "them": them,
+            "you_gold": mine.gold,
+            "them_gold": theirs.gold,
+            "you_locked": mine.locked,
+            "them_locked": theirs.locked,
+        })
+    }
+
+    /// Рассылка `evt/trade/state` обоим участникам (зеркала разные).
+    async fn trade_broadcast_state(&self, trade: &crate::social::Trade) {
+        let (a, b) = (trade.a.clone(), trade.b.clone());
+        let payload_a = self.trade_state_payload(&a, trade).await;
+        let payload_b = self.trade_state_payload(&b, trade).await;
+        let text_a = event_payload_text("evt/trade/state", &payload_a);
+        let text_b = event_payload_text("evt/trade/state", &payload_b);
+        let world = self.state.world.lock().expect("мир");
+        if let Some(t) = text_a {
+            world.send_to_char(&a, t);
+        }
+        if let Some(t) = text_b {
+            world.send_to_char(&b, t);
+        }
+    }
+
+    /// Закрыть сделку событием `evt/trade/closed` (§8).
+    async fn trade_close_event(
+        &self,
+        offer_id: &str,
+        participants: &[String],
+        reason: &str,
+        result: Option<serde_json::Value>,
+    ) {
+        let mut payload = serde_json::json!({ "offer_id": offer_id, "reason": reason });
+        if let Some(result) = result {
+            payload["result"] = result;
+        }
+        let Some(text) = event_payload_text("evt/trade/closed", &payload) else {
+            return;
+        };
+        let world = self.state.world.lock().expect("мир");
+        for addr in participants {
+            world.send_to_char(addr, text.clone());
+        }
+    }
+
+    /// `cmd/trade.open` (§7): открыть сделку — оба онлайн и в одной
+    /// локации (ФР-15) → ack `{offer_id}` + `evt/trade/state` обоим.
+    async fn trade_open(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<TradeOpen>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        if cmd.player_id == char_id {
+            return vec![Self::err(
+                seq,
+                ErrorCode::TradePartnerGone,
+                "нельзя торговать с собой",
+            )];
+        }
+        let location = self.current_location(&char_id).await;
+        {
+            let world = self.state.world.lock().expect("мир");
+            let partner_loc = world.char_location(&cmd.player_id);
+            if partner_loc.as_deref() != Some(location.as_str()) {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::TradePartnerGone,
+                    "партнёр не в вашей локации",
+                )];
+            }
+            if world.char_name(&cmd.player_id).is_none() {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::TradePartnerGone,
+                    "партнёр не в сети",
+                )];
+            }
+        }
+        let opened = {
+            let mut social = self.state.social.lock().expect("соц");
+            social
+                .open_trade(&char_id, &cmd.player_id)
+                .map(|id| social.trade(&id).cloned().expect("создана"))
+        };
+        match opened {
+            Ok(trade) => {
+                let offer_id = trade.id.clone();
+                self.trade_broadcast_state(&trade).await;
+                vec![Self::ack_payload(
+                    seq,
+                    &serde_json::json!({ "offer_id": offer_id }),
+                )]
+            }
+            Err(e) => vec![Self::err(seq, ErrorCode::TradeStale, e.message())],
+        }
+    }
+
+    /// `cmd/trade.add_item` (§7): предмет в предложение (проверка
+    /// владельца) → version+1, блокировки сняты → state обоим.
+    async fn trade_add_item(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<TradeAddItem>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        // Владелец и остаток стака — до изменения состава.
+        let Some(item) = (match db::items::find(pool, &cmd.item_uid, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("trade.add (поиск): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+        };
+        let qty = cmd
+            .qty
+            .unwrap_or(i64::from(item.qty))
+            .clamp(1, i64::from(item.qty));
+
+        let added = {
+            let mut social = self.state.social.lock().expect("соц");
+            social
+                .trade_add_item(&char_id, &cmd.offer_id, &cmd.item_uid, qty)
+                .cloned()
+        };
+        let trade = match added {
+            Ok(trade) => trade,
+            Err(e) => {
+                let code = match e {
+                    crate::social::TradeError::Stale => ErrorCode::TradeStale,
+                    crate::social::TradeError::Gone => ErrorCode::TradePartnerGone,
+                    _ => ErrorCode::ItemGone,
+                };
+                return vec![Self::err(seq, code, e.message())];
+            }
+        };
+        self.trade_broadcast_state(&trade).await;
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    /// `cmd/trade.set_gold` (§7): золото стороны (баланс — из БД).
+    async fn trade_set_gold(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<TradeSetGold>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let balance = match db::characters::gold_of(&self.state.pool, &char_id).await {
+            Ok(gold) => gold,
+            Err(e) => {
+                warn!("trade.gold (баланс): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if cmd.gold > balance {
+            return vec![Self::err(
+                seq,
+                ErrorCode::TradeStale,
+                format!("золота меньше: {balance}"),
+            )];
+        }
+        let set = {
+            let mut social = self.state.social.lock().expect("соц");
+            social
+                .trade_set_gold(&char_id, &cmd.offer_id, cmd.gold)
+                .cloned()
+        };
+        let trade = match set {
+            Ok(trade) => trade,
+            Err(e) => {
+                let code = match e {
+                    crate::social::TradeError::Stale => ErrorCode::TradeStale,
+                    _ => ErrorCode::TradePartnerGone,
+                };
+                return vec![Self::err(seq, code, e.message())];
+            }
+        };
+        self.trade_broadcast_state(&trade).await;
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    /// `cmd/trade.propose` / `cmd/trade.accept` (§7): блокировка стороны
+    /// со сверкой `version` (устаревшая → `E_TRADE_STALE`); обе стороны
+    /// заблокированы → исполнение в одной транзакции (D27).
+    async fn trade_lock_cmd(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<TradePropose>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let both_locked = {
+            let mut social = self.state.social.lock().expect("соц");
+            match social.trade_lock(&char_id, &cmd.offer_id, cmd.version) {
+                Ok(locked) => locked,
+                Err(e) => {
+                    drop(social);
+                    let code = match e {
+                        crate::social::TradeError::Stale => ErrorCode::TradeStale,
+                        _ => ErrorCode::TradePartnerGone,
+                    };
+                    return vec![Self::err(seq, code, e.message())];
+                }
+            }
+        };
+        let trade = {
+            let social = self.state.social.lock().expect("соц");
+            social.trade(&cmd.offer_id).cloned()
+        };
+        let Some(trade) = trade else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::TradePartnerGone,
+                "сделка не найдена",
+            )];
+        };
+        if !both_locked {
+            self.trade_broadcast_state(&trade).await;
+            return vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        }
+        // Оба заблокированы → исполнение одной транзакцией (предметы+золото).
+        match self.trade_execute(&trade).await {
+            Ok(result) => {
+                {
+                    let mut social = self.state.social.lock().expect("соц");
+                    social.close_trade(&trade.id);
+                }
+                self.trade_close_event(
+                    &trade.id,
+                    &[trade.a.clone(), trade.b.clone()],
+                    "done",
+                    Some(result),
+                )
+                .await;
+                vec![Self::ack_payload(seq, &serde_json::json!({}))]
+            }
+            Err(e) => {
+                {
+                    let mut social = self.state.social.lock().expect("соц");
+                    social.close_trade(&trade.id);
+                }
+                self.trade_close_event(
+                    &trade.id,
+                    &[trade.a.clone(), trade.b.clone()],
+                    "failed",
+                    Some(serde_json::json!({ "error": e })),
+                )
+                .await;
+                vec![Self::err(seq, ErrorCode::TradeStale, e)]
+            }
+        }
+    }
+
+    /// Исполнение сделки: перемещение предметов и золота сторон **одной**
+    /// транзакцией (D27); при любом конфликте — откат и `failed`.
+    async fn trade_execute(
+        &self,
+        trade: &crate::social::Trade,
+    ) -> Result<serde_json::Value, String> {
+        let pool = &self.state.pool;
+        let mut tx = pool.begin().await.map_err(|e| format!("tx: {e}"))?;
+        let sides = [
+            (&trade.a, &trade.b, &trade.side_a),
+            (&trade.b, &trade.a, &trade.side_b),
+        ];
+        let mut moved = Vec::new();
+        for (from, to, side) in sides {
+            for (uid, qty) in &side.items {
+                // Предмет всё ещё у стороны? Частичный перенос стака.
+                let cur: Option<(i32, String)> =
+                    sqlx::query_as("SELECT qty, character_id FROM items WHERE uid = $1 FOR UPDATE")
+                        .bind(uid)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(|e| format!("читаю {uid}: {e}"))?;
+                let Some((cur_qty, owner)) = cur else {
+                    return Err(format!("предмет {uid} исчез"));
+                };
+                if owner != *from {
+                    return Err(format!("предмет {uid} не у владельца"));
+                }
+                if i64::from(cur_qty) < *qty {
+                    return Err(format!("предмет {uid}: не хватает стака"));
+                }
+                if i64::from(cur_qty) == *qty {
+                    sqlx::query("UPDATE items SET character_id = $2 WHERE uid = $1")
+                        .bind(uid)
+                        .bind(to)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| format!("перенос {uid}: {e}"))?;
+                } else {
+                    sqlx::query("UPDATE items SET qty = qty - $2 WHERE uid = $1")
+                        .bind(uid)
+                        .bind(qty)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| format!("уменьшение {uid}: {e}"))?;
+                    let def_id: String =
+                        sqlx::query_scalar("SELECT def_id FROM items WHERE uid = $1")
+                            .bind(uid)
+                            .fetch_one(&mut *tx)
+                            .await
+                            .map_err(|e| format!("деф {uid}: {e}"))?;
+                    sqlx::query(
+                        "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3)",
+                    )
+                    .bind(to)
+                    .bind(&def_id)
+                    .bind(qty)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("вставка {uid}: {e}"))?;
+                }
+                moved.push(serde_json::json!({ "uid": uid, "qty": qty }));
+            }
+            // Золото: атомарное списание с проверкой баланса.
+            if side.gold > 0 {
+                let affected = sqlx::query(
+                    "UPDATE characters SET gold = gold - $2 \
+                     WHERE id = $1 AND gold >= $2 AND deleted_at IS NULL",
+                )
+                .bind(from)
+                .bind(side.gold)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("золото {from}: {e}"))?
+                .rows_affected();
+                if affected != 1 {
+                    return Err(format!("недостаточно золота у {from}"));
+                }
+                sqlx::query("UPDATE characters SET gold = gold + $2 WHERE id = $1")
+                    .bind(to)
+                    .bind(side.gold)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("зачисление {to}: {e}"))?;
+            }
+        }
+        tx.commit().await.map_err(|e| format!("commit: {e}"))?;
+        Ok(serde_json::json!({ "moved": moved }))
+    }
+
+    /// `cmd/trade.cancel` (§7): отмена любой стороной.
+    async fn trade_cancel(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<TradeCancel>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let closed = {
+            let mut social = self.state.social.lock().expect("соц");
+            let is_member = social
+                .trade(&cmd.offer_id)
+                .is_some_and(|t| t.a == char_id || t.b == char_id);
+            if is_member {
+                social.close_trade(&cmd.offer_id)
+            } else {
+                None
+            }
+        };
+        let Some((participants, trade)) = closed else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::TradePartnerGone,
+                "сделка не найдена",
+            )];
+        };
+        self.trade_close_event(&trade.id, &participants, "cancelled", None)
+            .await;
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    // ── гильдия (ФР-16, M12.7d) ─────────────────────────────────────────────
+
+    /// `GuildState` из БД: участники + online по реестру мира.
+    async fn guild_state(&self, guild_id: &str) -> Option<ld2_protocol::types::GuildState> {
+        let row = db::guilds::find(&self.state.pool, guild_id).await.ok()??;
+        let members = db::guilds::members(&self.state.pool, guild_id)
+            .await
+            .unwrap_or_default();
+        let world = self.state.world.lock().expect("мир");
+        let members = members
+            .into_iter()
+            .map(|(id, name, rank)| ld2_protocol::types::GuildMember {
+                online: world.char_name(&id).is_some(),
+                id,
+                name,
+                rank,
+                extra: Default::default(),
+            })
+            .collect();
+        Some(ld2_protocol::types::GuildState {
+            id: row.0,
+            name: row.1,
+            members,
+            extra: Default::default(),
+        })
+    }
+
+    /// Рассылка `evt/guild/updated` адресатам (свой — в outs после ack).
+    fn guild_broadcast(
+        &self,
+        recipients: &[String],
+        payload: &serde_json::Value,
+        outs: &mut Vec<Out>,
+        author: &str,
+    ) {
+        let Some(text) = event_payload_text("evt/guild/updated", payload) else {
+            return;
+        };
+        let world = self.state.world.lock().expect("мир");
+        for addr in recipients {
+            if addr == author {
+                outs.push(Out::Text(text.clone()));
+            } else {
+                world.send_to_char(addr, text.clone());
+            }
+        }
+    }
+
+    /// Гильдия персонажа для снапшота (§3 `guild: null` — не состоит).
+    async fn guild_state_of(&self, char_id: &str) -> Option<ld2_protocol::types::GuildState> {
+        let guild = db::guilds::guild_of(&self.state.pool, char_id)
+            .await
+            .ok()
+            .flatten()?;
+        self.guild_state(&guild.0).await
+    }
+
+    /// `cmd/guild.browse` (§7): поиск гильдий → `{guilds[]}`.
+    async fn guild_browse(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<GuildBrowse>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let guilds = match db::guilds::browse(&self.state.pool, cmd.query.as_deref()).await {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|(id, name)| serde_json::json!({ "id": id, "name": name }))
+                .collect::<Vec<_>>(),
+            Err(e) => {
+                warn!("guild.browse: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "guilds": guilds }),
+        )]
+    }
+
+    /// `cmd/guild.create` (§7): создание (правило сервера: имя уникально,
+    /// автор — лидер) → ack `{guild}` + журнал.
+    async fn guild_create(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<GuildCreate>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let name = cmd.name.trim();
+        if name.is_empty() || name.chars().count() > 50 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "имя гильдии: 1..=50 символов",
+            )];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        if db::guilds::guild_of(&self.state.pool, &char_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return vec![Self::err(seq, ErrorCode::GuildLimit, "вы уже в гильдии")];
+        }
+        let guild_id = match db::guilds::create(&self.state.pool, name, &char_id).await {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                return vec![Self::err(seq, ErrorCode::GuildLimit, "имя занято")];
+            }
+            Err(e) => {
+                warn!("guild.create: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let state = self.guild_state(&guild_id).await;
+        let mut outs = vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "guild": state }),
+        )];
+        self.guild_log_event(&guild_id, &mut outs).await;
+        outs
+    }
+
+    /// `cmd/guild.join` (§7): вступление (открытое или по приглашению —
+    /// `guild_id` из инвайта) → ack `{guild}`.
+    async fn guild_join(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<GuildJoin>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        if db::guilds::guild_of(&self.state.pool, &char_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return vec![Self::err(seq, ErrorCode::GuildLimit, "вы уже в гильдии")];
+        }
+        // Приглашение (если есть) подтверждает вступление и закрывается.
+        let invited = {
+            let mut social = self.state.social.lock().expect("соц");
+            let mut found = None;
+            if let Some((invite_id, _)) = social
+                .guild_invites_of(&char_id)
+                .into_iter()
+                .find(|(_, gid)| cmd.guild_id.as_deref().is_none_or(|g| g == gid))
+            {
+                if let Some(invite) = social.take_guild_invite(&char_id, &invite_id) {
+                    found = Some(invite.guild_id);
+                }
+            }
+            found
+        };
+        let guild_id = match cmd.guild_id.clone().or(invited) {
+            Some(id) => id,
+            None => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::GuildPermission,
+                    "нет приглашения в гильдию",
+                )];
+            }
+        };
+        let Some(guild) = (match db::guilds::find(&self.state.pool, &guild_id).await {
+            Ok(g) => g,
+            Err(e) => {
+                warn!("guild.join (гильдия): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::GuildPermission, "гильдии нет")];
+        };
+        match db::guilds::join(&self.state.pool, &guild_id, &char_id, "member").await {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(seq, ErrorCode::GuildLimit, "уже состоите")];
+            }
+            Err(e) => {
+                warn!("guild.join: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let state = self.guild_state(&guild_id).await;
+        let mut outs = vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "guild": state }),
+        )];
+        // Событие — всем участникам (включая нового).
+        if let Some(state) = &state {
+            let members: Vec<String> = state.members.iter().map(|m| m.id.clone()).collect();
+            let payload = serde_json::json!({ "guild": state });
+            self.guild_broadcast(&members, &payload, &mut outs, &char_id);
+        }
+        let _ = guild;
+        self.guild_log_event(&guild_id, &mut outs).await;
+        outs
+    }
+
+    /// `cmd/guild.leave` (§7): выход (лидер передаёт ранг первому).
+    async fn guild_leave(&mut self, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        // Перед выходом лидера — ранг первому оставшемуся (атомарно в БД).
+        let my_rank = db::guilds::rank_of(&self.state.pool, &char_id)
+            .await
+            .ok()
+            .flatten();
+        if my_rank.as_deref() == Some("leader") {
+            let _ = self.promote_first_member(&char_id).await;
+        }
+        let closed = match db::guilds::leave(&self.state.pool, &char_id).await {
+            Ok(id) => id,
+            Err(e) => {
+                warn!("guild.leave: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let Some(guild_id) = closed else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "вы не в гильдии",
+            )];
+        };
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        // Оставшимся — обновлённый состав; ушедшему — guild: null.
+        if let Some(state) = self.guild_state(&guild_id).await {
+            let members: Vec<String> = state.members.iter().map(|m| m.id.clone()).collect();
+            let payload = serde_json::json!({ "guild": state });
+            self.guild_broadcast(&members, &payload, &mut outs, &char_id);
+        }
+        let null = serde_json::json!({ "guild": serde_json::Value::Null });
+        self.guild_broadcast(std::slice::from_ref(&char_id), &null, &mut outs, "");
+        self.guild_log_event(&guild_id, &mut outs).await;
+        outs
+    }
+
+    /// Передать лидерство первому участнику при выходе лидера.
+    async fn promote_first_member(&self, leaving: &str) -> Result<(), sqlx::Error> {
+        let Some(guild) = db::guilds::guild_of(&self.state.pool, leaving).await? else {
+            return Ok(());
+        };
+        let members = db::guilds::members(&self.state.pool, &guild.0).await?;
+        let Some(first) = members
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .find(|id| id != leaving)
+        else {
+            return Ok(());
+        };
+        db::guilds::set_rank(&self.state.pool, &guild.0, &first, "leader").await?;
+        Ok(())
+    }
+
+    /// `cmd/guild.invite` (§7): приглашение → `evt/guild/updated` адресату.
+    async fn guild_invite(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<GuildInvite>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let my_rank = db::guilds::rank_of(&self.state.pool, &char_id)
+            .await
+            .ok()
+            .flatten();
+        let Some(my_rank) = my_rank else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "вы не в гильдии",
+            )];
+        };
+        if !matches!(my_rank.as_str(), "leader" | "officer") {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "нет прав приглашать",
+            )];
+        }
+        let Some(guild) = (match db::guilds::guild_of(&self.state.pool, &char_id).await {
+            Ok(g) => g,
+            Err(e) => {
+                warn!("guild.invite: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "вы не в гильдии",
+            )];
+        };
+        {
+            let world = self.state.world.lock().expect("мир");
+            if world.char_name(&cmd.player_id).is_none() {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "игрок не в сети")];
+            }
+        }
+        if db::guilds::rank_of(&self.state.pool, &cmd.player_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return vec![Self::err(seq, ErrorCode::GuildLimit, "игрок уже в гильдии")];
+        }
+        let from_name = self.current_name();
+        let invite_id = {
+            let mut social = self.state.social.lock().expect("соц");
+            social.guild_invite(&cmd.player_id, &char_id, &from_name, &guild.0, &guild.1)
+        };
+        let payload = {
+            let social = self.state.social.lock().expect("соц");
+            let invite = social.guild_invite_payload(&invite_id);
+            let mut payload = serde_json::json!({ "guild": serde_json::Value::Null });
+            if let Some(invite) = invite {
+                payload["invite"] = invite;
+            }
+            payload
+        };
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        self.guild_broadcast(
+            std::slice::from_ref(&cmd.player_id),
+            &payload,
+            &mut outs,
+            "",
+        );
+        outs
+    }
+
+    /// `cmd/guild.kick` (§7): исключение (leader/officer).
+    async fn guild_kick(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<GuildKick>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let Some(my_rank) = db::guilds::rank_of(&self.state.pool, &char_id)
+            .await
+            .ok()
+            .flatten()
+        else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "вы не в гильдии",
+            )];
+        };
+        if !matches!(my_rank.as_str(), "leader" | "officer") {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "нет прав исключать",
+            )];
+        }
+        if cmd.player_id == char_id {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "нельзя исключить себя (выйдите через guild.leave)",
+            )];
+        }
+        // Нельзя исключить лидера; офицер не исключает офицера.
+        let target_rank = db::guilds::rank_of(&self.state.pool, &cmd.player_id)
+            .await
+            .ok()
+            .flatten();
+        match target_rank.as_deref() {
+            None => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::GuildPermission,
+                    "игрок не в гильдии",
+                )];
+            }
+            Some("leader") => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::GuildPermission,
+                    "нельзя исключить лидера",
+                )];
+            }
+            Some("officer") if my_rank == "officer" => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::GuildPermission,
+                    "офицер не может исключить офицера",
+                )];
+            }
+            _ => {}
+        }
+        match db::guilds::kick(&self.state.pool, &cmd.player_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::GuildPermission,
+                    "игрок не в гильдии",
+                )];
+            }
+            Err(e) => {
+                warn!("guild.kick: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let guild_id = db::guilds::guild_of(&self.state.pool, &char_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|g| g.0);
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        if let Some(guild_id) = &guild_id {
+            if let Some(state) = self.guild_state(guild_id).await {
+                let members: Vec<String> = state.members.iter().map(|m| m.id.clone()).collect();
+                let payload = serde_json::json!({ "guild": state });
+                self.guild_broadcast(&members, &payload, &mut outs, &char_id);
+            }
+            let null = serde_json::json!({ "guild": serde_json::Value::Null });
+            self.guild_broadcast(std::slice::from_ref(&cmd.player_id), &null, &mut outs, "");
+            self.guild_log_event(guild_id, &mut outs).await;
+        }
+        outs
+    }
+
+    /// `cmd/guild.rank_set` (§7): смена ранга (атомарно; только leader).
+    async fn guild_rank_set(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<GuildRankSet>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if !matches!(cmd.rank.as_str(), "leader" | "officer" | "member") {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "неизвестный ранг",
+            )];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let Some(guild) = (match db::guilds::guild_of(&self.state.pool, &char_id).await {
+            Ok(g) => g,
+            Err(e) => {
+                warn!("guild.rank_set: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "вы не в гильдии",
+            )];
+        };
+        if db::guilds::rank_of(&self.state.pool, &char_id)
+            .await
+            .ok()
+            .flatten()
+            .as_deref()
+            != Some("leader")
+        {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "только лидер меняет ранги",
+            )];
+        }
+        if cmd.player_id == char_id {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "нельзя менять ранг себе",
+            )];
+        }
+        match db::guilds::set_rank(&self.state.pool, &guild.0, &cmd.player_id, &cmd.rank).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::GuildPermission,
+                    "игрок не в гильдии",
+                )];
+            }
+            Err(e) => {
+                warn!("guild.rank_set: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        if let Some(state) = self.guild_state(&guild.0).await {
+            let mut members: Vec<String> = state.members.iter().map(|m| m.id.clone()).collect();
+            if !members.contains(&cmd.player_id) {
+                members.push(cmd.player_id.clone());
+            }
+            let payload = serde_json::json!({ "guild": state });
+            self.guild_broadcast(&members, &payload, &mut outs, &char_id);
+        }
+        self.guild_log_event(&guild.0, &mut outs).await;
+        outs
+    }
+
+    /// Реплей журнала гильдии → события `evt/guild/log` (ФР-16: системный
+    /// лог при входе; кольцо — последние 50).
+    async fn guild_log_event(&self, guild_id: &str, outs: &mut Vec<Out>) {
+        let entries = match db::guilds::log_entries(&self.state.pool, guild_id).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                warn!("guild (журнал {guild_id}): {e}");
+                return;
+            }
+        };
+        for (kind, text, at) in entries {
+            let payload = serde_json::json!({
+                "entry": { "kind": kind, "text": text, "at": at }
+            });
+            if let Some(t) = event_payload_text("evt/guild/log", &payload) {
+                outs.push(Out::Text(t));
+            }
+        }
+    }
+
+    // ── группа (ФР-14, M12.7b) ──────────────────────────────────────────────
+
+    /// Текущее имя персонажа (для участников группы §8).
+    fn current_name(&self) -> String {
+        self.char
+            .as_ref()
+            .map(|c| c.name.clone())
+            .or_else(|| {
+                let char_id = self.selected_char_id.clone()?;
+                let world = self.state.world.lock().expect("мир");
+                world.char_name(&char_id)
+            })
+            .unwrap_or_default()
+    }
+
+    /// Рассылка `evt/party/updated` адресатам (свой конверт — в ack-ветке
+    /// нельзя: события строго после своего ack, §2.2 — поэтому событие
+    /// автору идёт через `outs`, остальным — в каналы соединений).
+    fn party_broadcast(
+        &self,
+        recipients: &[String],
+        payload: &serde_json::Value,
+        outs: &mut Vec<Out>,
+        author: &str,
+    ) {
+        let text = event_payload_text("evt/party/updated", payload);
+        let Some(text) = text else { return };
+        let world = self.state.world.lock().expect("мир");
+        for addr in recipients {
+            if addr == author {
+                outs.push(Out::Text(text.clone()));
+            } else {
+                world.send_to_char(addr, text.clone());
+            }
+        }
+    }
+
+    /// Payload `evt/party/updated` `{party}` (+ опц. `invite`, §11).
+    fn party_payload(
+        party: Option<ld2_protocol::types::PartyState>,
+        invite: Option<serde_json::Value>,
+    ) -> serde_json::Value {
+        let mut payload = serde_json::json!({ "party": party });
+        if let Some(invite) = invite {
+            payload["invite"] = invite;
+        }
+        payload
+    }
+
+    /// `cmd/party.create` (§7): создать группу (лидер — автор) → `{party}`.
+    async fn party_create(&mut self, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let name = self.current_name();
+        let mut social = self.state.social.lock().expect("соц");
+        match social.create_party(&char_id, &name) {
+            Some(party) => {
+                drop(social);
+                vec![Self::ack_payload(
+                    seq,
+                    &serde_json::json!({ "party": party }),
+                )]
+            }
+            None => {
+                drop(social);
+                vec![Self::err(seq, ErrorCode::Internal, "вы уже в группе")]
+            }
+        }
+    }
+
+    /// `cmd/party.invite` (§7): приглашение → `evt/party/updated` c
+    /// `invite` адресату (§11).
+    async fn party_invite(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<PartyInvite>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        // Адресат по id: в мире (онлайн) — иначе отказ.
+        let target_name = {
+            let world = self.state.world.lock().expect("мир");
+            match world.char_name(&cmd.player_id) {
+                Some(name) => name,
+                None => {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "игрок не в сети")];
+                }
+            }
+        };
+        let _ = target_name;
+        let name = self.current_name();
+        let mut social = self.state.social.lock().expect("соц");
+        match social.invite(&char_id, &name, &cmd.player_id) {
+            Ok(invite_id) => {
+                let invite = social.invite_payload(&invite_id);
+                let payload = Self::party_payload(None, invite);
+                drop(social);
+                let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+                self.party_broadcast(
+                    std::slice::from_ref(&cmd.player_id),
+                    &payload,
+                    &mut outs,
+                    "",
+                );
+                outs
+            }
+            Err(e) => {
+                drop(social);
+                vec![Self::err(seq, ErrorCode::PartyFull, e.message())]
+            }
+        }
+    }
+
+    /// `cmd/party.accept` (§7): принять приглашение → `{party}` +
+    /// `evt/party/updated` всем участникам.
+    async fn party_accept(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        self.party_answer(env, seq, true).await
+    }
+
+    /// `cmd/party.decline` (§7): отклонить → `{}`.
+    async fn party_decline(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        self.party_answer(env, seq, false).await
+    }
+
+    /// Общий обработчик accept/decline.
+    async fn party_answer(&mut self, env: &Envelope, seq: u32, accept: bool) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<PartyAccept>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let name = self.current_name();
+        let max = self.state.config.gameplay.party_max_members;
+        let mut social = self.state.social.lock().expect("соц");
+        if !accept {
+            if social.decline_invite(&char_id, &cmd.invite_id) {
+                return vec![Self::ack_payload(seq, &serde_json::json!({}))];
+            }
+            return vec![Self::err(
+                seq,
+                ErrorCode::TargetGone,
+                "приглашение не найдено",
+            )];
+        }
+        match social.accept_invite(&char_id, &name, &cmd.invite_id, max) {
+            Ok((party, members)) => {
+                let payload = Self::party_payload(Some(party.clone()), None);
+                drop(social);
+                let mut outs = vec![Self::ack_payload(
+                    seq,
+                    &serde_json::json!({ "party": party }),
+                )];
+                self.party_broadcast(&members, &payload, &mut outs, &char_id);
+                outs
+            }
+            Err(e) => {
+                drop(social);
+                let code = match e {
+                    crate::social::InviteError::Full => ErrorCode::PartyFull,
+                    _ => ErrorCode::TargetGone,
+                };
+                vec![Self::err(seq, code, e.message())]
+            }
+        }
+    }
+
+    /// `cmd/party.leave` (§7): выйти → `{}` + `evt/party/updated` бывшим
+    /// участникам (`party: null` — если группа распалась).
+    async fn party_leave(&mut self, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let mut social = self.state.social.lock().expect("соц");
+        match social.leave_party(&char_id) {
+            Some((party, members)) => {
+                // Оставшимся — обновлённый состав; ушедшему — party: null.
+                let remaining: Vec<String> = members
+                    .iter()
+                    .filter(|id| *id != &char_id)
+                    .cloned()
+                    .collect();
+                let payload = Self::party_payload(party, None);
+                drop(social);
+                let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+                let left = Self::party_payload(None, None);
+                self.party_broadcast(&remaining, &payload, &mut outs, "");
+                self.party_broadcast(std::slice::from_ref(&char_id), &left, &mut outs, "");
+                outs
+            }
+            None => {
+                drop(social);
+                vec![Self::err(seq, ErrorCode::TargetGone, "вы не в группе")]
+            }
+        }
+    }
+
+    /// `cmd/party.kick` (§7): исключить участника (только лидер).
+    async fn party_kick(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<PartyKick>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let mut social = self.state.social.lock().expect("соц");
+        match social.kick_member(&char_id, &cmd.player_id) {
+            Ok((party, members)) => {
+                // Оставшимся — состав без исключённого; исключённому — null.
+                let remaining: Vec<String> = members
+                    .iter()
+                    .filter(|id| *id != &cmd.player_id)
+                    .cloned()
+                    .collect();
+                let payload = Self::party_payload(party, None);
+                drop(social);
+                let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+                self.party_broadcast(&remaining, &payload, &mut outs, &char_id);
+                let removed = Self::party_payload(None, None);
+                self.party_broadcast(
+                    std::slice::from_ref(&cmd.player_id),
+                    &removed,
+                    &mut outs,
+                    "",
+                );
+                outs
+            }
+            Err(e) => {
+                drop(social);
+                vec![Self::err(seq, ErrorCode::GuildPermission, e.message())]
+            }
+        }
     }
 
     // ── профессии и крафт (ФР-08, M12.6) ───────────────────────────────────

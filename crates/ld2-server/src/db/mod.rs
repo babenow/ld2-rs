@@ -11,8 +11,10 @@
 
 pub mod accounts;
 pub mod characters;
+pub mod chat;
 pub mod craft;
 pub mod crime;
+pub mod guilds;
 pub mod items;
 pub mod locations;
 pub mod professions;

@@ -305,7 +305,7 @@ async fn inventory_loot_equip_use_drop() {
         .expect("инвентарь");
     assert!(inv.is_empty(), "инвентарь пуст: {inv:?}");
 
-    // Обычный текст — чат появится в M12.7.
+    // Обычный текст: чат работает с M12.7 — ack + evt/chat/message.
     let seq = c
         .send(
             "cmd/chat.send",
@@ -313,7 +313,11 @@ async fn inventory_loot_equip_use_drop() {
         )
         .await;
     let ack = c.ack(seq).await;
-    assert!(ack["result"] == "error", "чат ещё не готов: {ack}");
+    assert_eq!(ack["result"], "ok", "чат: {ack}");
+    let msg = c
+        .wait(|v| v["type"] == "evt/chat/message" && v["payload"]["text"] == "привет")
+        .await;
+    assert_eq!(msg["payload"]["channel"], "global");
     pool.close().await;
 }
 

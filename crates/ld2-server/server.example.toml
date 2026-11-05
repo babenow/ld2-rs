@@ -33,6 +33,8 @@ min_password_len = 8
 char_slot_limit = 8        # → §5 char_slot_limit (DoD M2: конфиг, не код)
 profession_limit = 2       # → §5 profession_limit
 
+party_max_members = 4   # ФР-14: лимит состава группы
+
 [gameplay.combat]           # M12.5: тик-луп атак (D25)
 attack_interval_s = 1.0     # период атак в бою, с
 base_damage = 6             # базовый урон персонажа (v1)

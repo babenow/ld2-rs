@@ -320,3 +320,14 @@ pub async fn insert_by_type(
     };
     insert(pool, char_id, &def_id, qty).await.map(Some)
 }
+
+/// Строка предмета по uid **без** проверки владельца (сделки: предмет
+/// ещё у стороны-владельца, но читаем для зеркала §8).
+pub async fn find_any(pool: &PgPool, uid: &str) -> Result<Option<ItemRow>, sqlx::Error> {
+    sqlx::query_as::<_, ItemRow>(
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items WHERE uid = $1",
+    )
+    .bind(uid)
+    .fetch_optional(pool)
+    .await
+}

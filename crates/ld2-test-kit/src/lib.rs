@@ -293,11 +293,15 @@ pub mod checks {
     }
 
     /// Уникальный логин для прогонов против персистентной БД.
+    /// nanos может совпасть внутри одного процесса (параллельные тесты,
+    /// гранулярность часов) — добавляем счётчик.
     pub fn unique_login() -> String {
+        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("время монотонно")
             .as_nanos();
-        format!("t{nanos:x}")
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        format!("t{nanos:x}_{n:x}")
     }
 }
