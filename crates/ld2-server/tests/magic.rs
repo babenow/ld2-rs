@@ -286,11 +286,14 @@ async fn mana_regen_out_of_combat() {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
     };
-    // Полный бар за 6 с → реген ~10 маны/с (без боя).
+    // Полный бар за 6 с → реген ~10 маны/с (без боя). rune_cost = 30:
+    // два каста обнуляют бар, а для набора 30 маны регену нужно 3 с —
+    // «пустой бар» детерминирован даже на медленном CI (гонка мс vs 3 с).
     let ws = format!(
         "ws://{}/ws",
         common::start_server_with(&db_url, |cfg| {
             cfg.gameplay.magic.mana.regen_out_s = 6;
+            cfg.gameplay.magic.mana.rune_cost = 30;
         })
         .await
     );
@@ -306,8 +309,8 @@ async fn mana_regen_out_of_combat() {
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
 
-    // 6 кастов × 10 маны → 0.
-    for i in 0..6 {
+    // 2 каста × 30 маны → 0 (бар 60).
+    for i in 0..2 {
         let seq = c
             .send(
                 "cmd/magic.rune_cast",
@@ -316,7 +319,12 @@ async fn mana_regen_out_of_combat() {
             .await;
         let ack = c.ack(seq).await;
         assert_eq!(ack["result"], "ok", "каст #{i}: {ack}");
-        c.wait_event("evt/magic/cast").await;
+        let cast = c.wait_event("evt/magic/cast").await;
+        assert_eq!(
+            cast["payload"]["mp_left"],
+            60 - 30 * (i + 1),
+            "расход маны D4: {cast}"
+        );
     }
     let seq = c
         .send(
@@ -327,15 +335,15 @@ async fn mana_regen_out_of_combat() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_NOT_ENOUGH_MP", "бар пуст: {ack}");
 
-    // Реген по тику (§2.4): событие mp > 0, затем каст снова проходит.
+    // Реген по тику (§2.4): бар поднимается до цены каста (~3 с при 10/с).
     let stats = c
         .wait(|v| {
             v["type"] == "evt/char/stats"
-                && v["payload"]["patch"]["mp"]["cur"].as_i64().unwrap_or(0) > 0
+                && v["payload"]["patch"]["mp"]["cur"].as_i64().unwrap_or(0) >= 30
         })
         .await;
     let mp = stats["payload"]["patch"]["mp"]["cur"].as_i64().expect("mp");
-    assert!(mp >= 10, "реген поднял бар хотя бы до цены каста: {mp}");
+    assert!(mp >= 30, "реген поднял бар хотя бы до цены каста: {mp}");
 
     let seq = c
         .send(

@@ -272,6 +272,11 @@ impl World {
         self.combat.contains_key(char_id)
     }
 
+    /// Привязан ли персонаж к миру (есть канал соединения) — онлайн.
+    pub fn is_bound(&self, char_id: &str) -> bool {
+        self.conns.contains_key(char_id)
+    }
+
     /// Отправить конверт соединению персонажа (best-effort).
     pub fn send_to_char(&self, char_id: &str, text: String) {
         if let Some(tx) = self.conns.get(char_id) {

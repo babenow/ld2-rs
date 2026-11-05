@@ -33,6 +33,9 @@ pub enum Screen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Act {
     Login,
+    /// `cmd/auth.register` — ошибки формы регистрации (M13, D35): поле +
+    /// текст сервера, маппинг кодов — [`crate::register::register_field_for`].
+    Register,
     Create,
     Select,
     Delete,
@@ -160,6 +163,9 @@ pub struct AppStore {
     pub pending: Option<Act>,
     /// Ошибки форм (текст сервера — русский, §9).
     pub login_error: Option<String>,
+    /// Ошибка формы регистрации (M13): поле для inline-подсветки + текст
+    /// (сервера §9 или клиентской проверки D34 — локализует UI).
+    pub register_error: Option<crate::register::RegisterError>,
     pub create_error: Option<String>,
     pub select_error: Option<String>,
     /// Ошибки действий мира (move/attack/examine), ФР-03.
@@ -351,6 +357,7 @@ impl AppStore {
             transport: TransportStatus::Connecting,
             pending: None,
             login_error: None,
+            register_error: None,
             create_error: None,
             select_error: None,
             world_error: None,
@@ -456,6 +463,16 @@ impl AppStore {
                 .unwrap_or_else(|| format!("{:?}", ack.error_code()));
             match act {
                 Act::Login => self.login_error = Some(msg),
+                Act::Register => {
+                    // D35: код §9 → поле формы; текст — серверный (fallback §9).
+                    let code = ack
+                        .error_code()
+                        .unwrap_or(ld2_protocol::ErrorCode::Internal);
+                    self.register_error = Some(crate::register::RegisterError {
+                        field: crate::register::register_field_for(&code),
+                        message: msg,
+                    });
+                }
                 Act::Create => self.create_error = Some(msg),
                 Act::Select => self.select_error = Some(msg),
                 Act::Delete => {
@@ -485,6 +502,11 @@ impl AppStore {
         match act {
             // Успех логина подтверждён ack'ом; дальше ждём evt/session.start.
             Act::Login => {}
+            // Регистрация = немедленный вход (ADR-006): ack ok → тоже
+            // ждём evt/session.start; ошибки — в register_error (M13).
+            Act::Register => {
+                self.register_error = None;
+            }
             Act::Select => {}
             Act::Delete => {
                 // M11.7: ack — карточка уходит из списка (ФР-02).
@@ -1516,6 +1538,16 @@ impl AppStore {
         self.login_error = None;
         self.notice = None;
         self.pending = Some(Act::Login);
+    }
+
+    /// Пользователь нажал «Зарегистрироваться» — команда ушла (M13).
+    pub fn on_register_sent(&mut self, login: &str) {
+        self.last_login = Some(login.to_string());
+        self.session_login = Some(login.to_string());
+        self.login_error = None;
+        self.register_error = None;
+        self.notice = None;
+        self.pending = Some(Act::Register);
     }
 
     pub fn on_create_sent(&mut self) {

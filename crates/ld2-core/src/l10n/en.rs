@@ -27,6 +27,17 @@ pub(super) fn t(key: Key) -> &'static str {
         StatusAuthExpired => "Session expired",
         StatusStopped => "Disconnected",
         ErrFillFields => "Enter login and password",
+        // M13: registration (D35)
+        RegisterTitle => "Create account",
+        RegisterSubtitle => "Login is the primary ID; email is required",
+        FieldEmail => "Email",
+        FieldPassword2 => "Repeat password",
+        BtnRegister => "Register",
+        RegisterSending => "Registering…",
+        ErrRegisterFill => "Fill in all fields",
+        ErrPasswordMismatch => "Passwords do not match",
+        ErrBadEmail => "Invalid email (expected name@domain.tld)",
+        ErrRetryAfter => "Too many attempts — retry in {s}s",
         // M2: characters
         CharactersTitle => "Characters",
         CharactersEmpty => "No characters yet — create the first one",

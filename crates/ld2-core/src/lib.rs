@@ -6,6 +6,7 @@
 //! - [`transport`] — WebSocket, `seq`/ack, reconnect/resync (свой tokio-runtime);
 //! - [`l10n`] — таблицы ru/en;
 //! - [`config`] — `config.toml`, guard release-сборки, горячие клавиши;
+//! - [`register`] — форма регистрации и её валидация (M13, D34);
 //! - [`secrets`] — keyring-токены;
 //! - [`notify`] — OS-уведомления (D7);
 //! - [`update_check`] — проверка GitHub Releases (§12).
@@ -17,6 +18,7 @@ pub mod config;
 pub mod l10n;
 pub mod logging;
 pub mod notify;
+pub mod register;
 pub mod secrets;
 pub mod store;
 pub mod transport;
