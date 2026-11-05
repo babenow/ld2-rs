@@ -16,6 +16,9 @@ ld2-server — реальный игровой сервер ld2 (docs/protocol.m
   ld2-server [--config PATH] [run]     запуск (значение по умолчанию)
   ld2-server [--config PATH] check     только проверить конфиг и выйти
   ld2-server [--config PATH] migrate   применить миграции и выйти
+  ld2-server [--config PATH] revert    откатить ПОСЛЕДНЮЮ миграцию (одна
+                                       версия вниз; данные откатываемой
+                                       миграции теряются — up/down-пары)
   ld2-server --help                    эта справка
 
   --config PATH   путь к server.toml (по умолчанию ./server.toml;
@@ -30,6 +33,7 @@ enum Command {
     Run,
     Check,
     Migrate,
+    Revert,
 }
 
 enum Args {
@@ -49,7 +53,7 @@ fn parse_args() -> Result<Args, String> {
                 let value = args.next().ok_or("--config: ожидается путь к файлу")?;
                 config = Some(PathBuf::from(value));
             }
-            "run" | "check" | "migrate" => {
+            "run" | "check" | "migrate" | "revert" => {
                 if command_name.is_some() {
                     return Err(format!("подкоманда указана дважды: {arg}"));
                 }
@@ -63,6 +67,7 @@ fn parse_args() -> Result<Args, String> {
         None | Some("run") => Command::Run,
         Some("check") => Command::Check,
         Some("migrate") => Command::Migrate,
+        Some("revert") => Command::Revert,
         Some(other) => unreachable!("подкоманда проверена в цикле: {other}"),
     };
     let config = config
@@ -122,6 +127,11 @@ async fn run() -> Result<(), AppError> {
         EnvFilter::try_new(&cfg.server.log_level).expect("log_level прошёл валидацию конфига");
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    // Откат — ДО connect(): тот сначала поднял бы схему вперёд (up).
+    if matches!(command, Command::Revert) {
+        return revert_one_step(&cfg).await;
+    }
+
     let pool = ld2_server::db::connect(&cfg.database).await?;
     tracing::info!(
         "миграции применены, БД готова (пул: {} соед.)",
@@ -146,6 +156,45 @@ async fn run() -> Result<(), AppError> {
     );
     let state = std::sync::Arc::new(ld2_server::state::AppState::new(cfg, pool));
     ld2_server::app::serve(listener, state).await?;
+    Ok(())
+}
+
+/// Откат **последней** применённой миграции (одна версия вниз): цель —
+/// предыдущая применённая версия (или 0, если применена одна). Данные
+/// откатываемых миграций удаляются безвозвратно.
+async fn revert_one_step(cfg: &Config) -> Result<(), AppError> {
+    let pool = ld2_server::db::pool(&cfg.database).await?;
+    let map_err = |e: sqlx::Error| AppError::Runtime(anyhow::Error::new(e));
+
+    // Свежая БД без лога миграций — откатывать нечего.
+    let has_log: bool = sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
+        .fetch_one(&pool)
+        .await
+        .map_err(map_err)?;
+    let applied: Vec<i64> = if has_log {
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&pool)
+            .await
+            .map_err(map_err)?
+    } else {
+        Vec::new()
+    };
+
+    let target = match applied.as_slice() {
+        [] => {
+            tracing::info!("нет применённых миграций — откат не нужен");
+            pool.close().await;
+            return Ok(());
+        }
+        [_] => 0,
+        rest => rest[rest.len() - 2],
+    };
+    sqlx::migrate!("./migrations")
+        .undo(&pool, target)
+        .await
+        .map_err(|e| AppError::Runtime(anyhow::Error::new(e)))?;
+    tracing::info!("откат до версии {target}: данные откатённых миграций удалены");
+    pool.close().await;
     Ok(())
 }
 

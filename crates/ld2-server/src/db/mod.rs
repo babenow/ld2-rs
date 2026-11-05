@@ -1,8 +1,10 @@
 //! PostgreSQL: пул соединений и миграции (D24, PLAN-M12).
 //!
-//! Миграции — `migrations/*.sql` (sqlx): применяются при каждом подключении,
-//! отслеживаются в `_sqlx_migrations` — повторный запуск идемпотентен.
-//! Сборка не требует DATABASE_URL (runtime-запросы, без `query!`).
+//! Миграции — `migrations/*.sql` в **реверсируемой паре**: `<N>_<имя>.up.sql`
+//! применяется при старте, `<N>_<имя>.down.sql` — откат (`ld2-server revert`,
+//! одна версия вниз; данные откаченной миграции теряются). Лог применённых —
+//! `_sqlx_migrations`; повторный запуск up идемпотентен. Сборка не требует
+//! DATABASE_URL (runtime-запросы, без `query!`).
 //!
 //! Репозитории по доменам: [`accounts`] — аккаунты и токены (M12.2);
 //! репозиторий персонажей появится в фазе «персонажи».
@@ -23,17 +25,29 @@ pub enum DbError {
     Migrate(#[source] sqlx::migrate::MigrateError),
 }
 
-/// Пул + миграции. Любая ошибка — fail-fast до старта слушателя.
-pub async fn connect(cfg: &DatabaseSection) -> Result<PgPool, DbError> {
-    let pool = PgPoolOptions::new()
+/// Пул **без** миграций — для `revert` (откат не должен сначала поднимать
+/// схему) и для ручного управления.
+pub async fn pool(cfg: &DatabaseSection) -> Result<PgPool, DbError> {
+    PgPoolOptions::new()
         .max_connections(cfg.max_connections)
         .connect(&cfg.url)
         .await
-        .map_err(DbError::Connect)?;
+        .map_err(DbError::Connect)
+}
+
+/// Применить все неприменённые миграции (up; пары down при этом не трогаются).
+pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
     sqlx::migrate!("./migrations")
-        .run(&pool)
+        .run(pool)
         .await
-        .map_err(DbError::Migrate)?;
+        .map_err(DbError::Migrate)
+}
+
+/// Пул + миграции — основной путь (`run`/`check`/`migrate`). Fail-fast до
+/// старта слушателя.
+pub async fn connect(cfg: &DatabaseSection) -> Result<PgPool, DbError> {
+    let pool = pool(cfg).await?;
+    migrate(&pool).await?;
     Ok(pool)
 }
 
