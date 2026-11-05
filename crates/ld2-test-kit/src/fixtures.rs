@@ -1,4 +1,4 @@
-//! Фикстуры мока — из канонических примеров:
+//! Фикстуры контракта — эталонные тестовые данные из канонических примеров:
 //! `docs/protocol.md` §5 (session.start, дословно), §6 (типы),
 //! `docs/tz.md` §4.8.2 (снапшот), `docs/skills.md` §9 (рецепты/профессии).
 
@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 pub const LOGIN: &str = "demo";
 pub const PASSWORD: &str = "demo123";
 pub const REFRESH_TOKEN: &str = "rt_mock_refresh";
-/// Второй аккаунт (DoD M8: «2 клиента против мока») — свой персонаж `c2`.
+/// Второй фикстурный аккаунт (DoD M8: «2 клиента») — свой персонаж `c2`.
 pub const LOGIN2: &str = "demo2";
 /// Пароль тот же — тестам удобнее, логин разный.
 pub const PASSWORD2: &str = "demo123";
@@ -46,8 +46,17 @@ pub fn session_config(char_slot_limit: u32) -> SessionConfig {
 pub fn session_config_for(login: &str, char_slot_limit: u32) -> SessionConfig {
     let mut cfg = session_config_impl(char_slot_limit);
     cfg.characters = chars_for(login);
-    cfg.session.refresh.token = crate::world::refresh_token_for(login);
+    cfg.session.refresh.token = refresh_token_for(login);
     cfg
+}
+
+/// Refresh-токен фикстурного аккаунта: `demo` — свой, остальные — `rt_{login}`.
+fn refresh_token_for(login: &str) -> String {
+    if login == LOGIN {
+        REFRESH_TOKEN.to_string()
+    } else {
+        format!("rt_{login}")
+    }
 }
 
 /// Персонажи аккаунта (список слотов §5 `characters[]`).
@@ -59,17 +68,17 @@ pub fn chars_for(login: &str) -> Vec<CharacterSummary> {
     }
 }
 
-/// Проверка учётных данных любого из аккаунтов мока.
+/// Проверка учётных данных фикстурных аккаунтов.
 pub fn account(login: &str, password: &str) -> bool {
     (login == LOGIN && password == PASSWORD) || (login == LOGIN2 && password == PASSWORD2)
 }
 
-/// Есть ли логин среди фикстур (зарегистрированные аккаунты — в World).
+/// Есть ли логин среди фикстур (зарегистрированные учитываются отдельно).
 pub fn account_exists(login: &str) -> bool {
     login == LOGIN || login == LOGIN2
 }
 
-/// Лимиты `cmd/auth.register` в моке — дефолты шаблона `server.example.toml`
+/// Лимиты `cmd/auth.register` в тестах — дефолты шаблона `server.example.toml`
 /// (`[auth]`); у реального сервера — настройки конфига (ADR-006, D25).
 pub const MIN_LOGIN_LEN: usize = 3;
 pub const MIN_PASSWORD_LEN: usize = 8;

@@ -5,7 +5,7 @@ edition.workspace = true
 description = "Ядро десктоп-клиента ld2: store, transport, l10n, config, secrets, notify, update-check (без UI)"
 
 [dev-dependencies]
-ld2-mock-server = { path = "../ld2-mock-server" }
+ld2-test-kit = { path = "../ld2-test-kit" }
 
 [dependencies]
 ld2-protocol = { path = "../ld2-protocol" }

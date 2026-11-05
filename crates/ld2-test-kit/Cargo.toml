@@ -2,11 +2,13 @@
 name = "ld2-test-kit"
 version.workspace = true
 edition.workspace = true
-description = "Общий WS-харнесс и контрактные проверки: мок и ld2-server (D32, PLAN-M12)"
+description = "Тестовая поддержка ld2: WS-харнесс, контрактные проверки, фикстуры (D32, PLAN-M12)"
 publish = false
 
 [dependencies]
 futures-util.workspace = true
+ld2-protocol = { path = "../ld2-protocol" }
 serde_json.workspace = true
+time = { version = "0.3", features = ["formatting"] }
 tokio.workspace = true
 tokio-tungstenite.workspace = true

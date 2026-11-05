@@ -2,6 +2,7 @@ name: Release
 
 # §12 ТЗ: артефакты релиза на тег vX.Y.Z — Windows portable, macOS .app/.dmg
 # (universal, ad-hoc подпись = dev-only build), Linux .tar.gz + .deb.
+# Единственный клиент — gpui (бинарь ld2-gpui, пакет ld2-client).
 on:
   push:
     tags: ["v*"]
@@ -31,7 +32,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: build (release)
-        run: cargo build --release -p ld2-client -p ld2-client-gpui -p ld2-mock-server
+        run: cargo build --release -p ld2-client
 
       # ── Linux: .tar.gz + .deb (AppImage — P1, см. PLAN-M9) ──
       - name: package (linux)
@@ -42,12 +43,12 @@ jobs:
           VER="${GITHUB_REF_NAME#v}"
           DIR="ld2-${VER}-linux-x86_64"
           mkdir -p "$DIR"
-          cp target/release/ld2-client target/release/ld2-gpui target/release/ld2-mock-server "$DIR/"
+          cp target/release/ld2-gpui "$DIR/"
           cp README.md "$DIR/" 2>/dev/null || true
           tar -czf "${DIR}.tar.gz" "$DIR"
           # .deb (dpkg-deb есть на ubuntu-runner).
           mkdir -p pkg/DEBIAN pkg/usr/bin
-          cp target/release/ld2-client target/release/ld2-gpui target/release/ld2-mock-server pkg/usr/bin/
+          cp target/release/ld2-gpui pkg/usr/bin/
           cat > pkg/DEBIAN/control <<EOF
           Package: ld2
           Version: ${VER}
@@ -55,8 +56,8 @@ jobs:
           Priority: optional
           Architecture: amd64
           Maintainer: ld2 devs <dev@example.com>
-          Description: ld2 desktop client and mock server
-           Text online MMORPG client (eframe/egui) with bundled mock server.
+          Description: ld2 desktop client
+           Text online MMORPG client (gpui) with real game server.
           EOF
           dpkg-deb --build pkg "ld2-${VER}_amd64.deb"
           echo "ASSETS=${DIR}.tar.gz,ld2-${VER}_amd64.deb" >> "$GITHUB_ENV"
@@ -70,19 +71,14 @@ jobs:
           VER="${GITHUB_REF_NAME#v}"
           # Universal binaries: arm64 (нативный) + x86_64 (кросс, best effort).
           rustup target add x86_64-apple-darwin
-          if cargo build --release -p ld2-client -p ld2-client-gpui --target x86_64-apple-darwin; then
-            for bin in ld2-client ld2-gpui; do
-              lipo -create "target/release/$bin" "target/x86_64-apple-darwin/release/$bin" -output "universal-$bin"
-            done
+          if cargo build --release -p ld2-client --target x86_64-apple-darwin; then
+            lipo -create "target/release/ld2-gpui" "target/x86_64-apple-darwin/release/ld2-gpui" -output "universal-ld2-gpui"
           fi
-          BIN="universal-ld2-client"
           GPUI_BIN="universal-ld2-gpui"
           if [ ! -f "$GPUI_BIN" ]; then GPUI_BIN="target/release/ld2-gpui"; fi
           APP="ld2.app"
           mkdir -p "$APP/Contents/MacOS"
-          cp "$BIN" "$APP/Contents/MacOS/ld2"
           cp "$GPUI_BIN" "$APP/Contents/MacOS/ld2-gpui"
-          cp target/release/ld2-mock-server "$APP/Contents/MacOS/" 2>/dev/null || true
           cat > "$APP/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -92,7 +88,7 @@ jobs:
             <key>CFBundleIdentifier</key><string>ru.ld2.client</string>
             <key>CFBundleVersion</key><string>${VER}</string>
             <key>CFBundleShortVersionString</key><string>${VER}</string>
-            <key>CFBundleExecutable</key><string>ld2</string>
+            <key>CFBundleExecutable</key><string>ld2-gpui</string>
             <key>CFBundlePackageType</key><string>APPL</string>
           </dict>
           </plist>
@@ -111,9 +107,7 @@ jobs:
           $ver = $env:GITHUB_REF_NAME.TrimStart("v")
           $dir = "ld2-$ver-windows-x86_64"
           New-Item -ItemType Directory -Path $dir | Out-Null
-          Copy-Item target/release/ld2-client.exe $dir/
           Copy-Item target/release/ld2-gpui.exe $dir/
-          Copy-Item target/release/ld2-mock-server.exe $dir/
           if (Test-Path README.md) { Copy-Item README.md $dir/ }
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
           "ASSETS=$dir.zip" | Out-File -FilePath $env:GITHUB_ENV -Append

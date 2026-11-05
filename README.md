@@ -27,9 +27,10 @@
 ## Технологии
 
 - **Язык:** Rust (стабильный toolchain, зафиксирован в `rust-toolchain.toml`)
-- **UI:** [eframe / egui](https://www.egui.rs/) — immediate-mode GUI, кроссплатформенно
-- **Асинхронность и сеть:** `tokio` + `tokio-tungstenite` (WebSocket, push-события в реальном времени)
-- **Тесты:** `cargo test` + мок-сервер сценариев, golden-тесты редукторов, e2e
+- **UI:** [gpui](https://gpui.rs/) (Zed) + [Ely](https://elygpui.com/) — единственный UI-слой (ADR-004)
+- **Асинхронность и сеть:** `tokio` + WebSocket (push-события в реальном времени)
+- **Сервер:** `ld2-server` — PostgreSQL (sqlx, авто-миграции), настройки в `server.toml`
+- **Тесты:** golden-тесты контракта, контрактные/e2e-тесты против реального сервера с БД
 - **CI/CD:** GitHub Actions, матрица Windows / macOS / Linux, релизные артефакты по тегу
 
 ## Структура репозитория (по ТЗ §9)
@@ -38,31 +39,38 @@
 ld2-rs/
 ├── crates/
 │   ├── ld2-protocol/       # serde-типы контракта §4 ТЗ (без зависимостей от UI/сети)
-│   ├── ld2-mock-server/    # детерминированный игровой сервер для разработки и e2e
-│   └── ld2-client/         # desktop-клиент (eframe)
+│   ├── ld2-core/           # ядро клиента: store/transport/l10n/config + общие тесты
+│   ├── ld2-client/         # desktop-клиент (gpui + Ely, бинарь ld2-gpui)
+│   ├── ld2-server/         # реальный сервер: PostgreSQL, server.toml, WS §1/§2
+│   └── ld2-test-kit/       # тестовая поддержка: WS-харнесс, проверки, фикстуры (dev-only)
 ├── docs/                   # tz.md · protocol.md · skills.md · decisions/ (ADR)
 ├── .github/workflows/      # ci.yml, release.yml
 └── README.md · CONTRIBUTING.md · ROADMAP.md · PLAN-M0.md
 ```
 
-## Сборка и запуск (после M0)
+## Сборка и запуск
 
 ```bash
-# клиент
+# клиент (gpui; бинарь ld2-gpui)
 cargo run -p ld2-client
 
-# мок-сервер (в отдельном терминале); сценарии: hello | snapshot | chaos | all
-cargo run -p ld2-mock-server -- --scenario all
-cargo run -p ld2-mock-server -- --help
+# реальный сервер: PostgreSQL + сервер одной командой (docker compose)
+docker compose up --build -d
+curl http://127.0.0.1:24817/healthz        # → 200 ok
 
-# тесты + статический анализ
+# локальный запуск сервера без Docker (конфиг: шаблон server.example.toml)
+cp crates/ld2-server/server.example.toml server.toml
+cargo run -p ld2-server -- --config server.toml check   # валидация конфига
+
+# тесты + статический анализ (тесты с БД — при заданном LD2_TEST_DATABASE_URL)
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Тестовый аккаунт мока: `demo` / `demo123`. Хост по умолчанию — `ws://127.0.0.1:24817/ws`
-(настраивается в конфиге клиента; релизная сборка работает только по `wss://`).
+Хост по умолчанию — `ws://127.0.0.1:24817/ws` (настраивается в конфиге клиента;
+релизная сборка работает только по `wss://`). Все настройки сервера — в `server.toml`
+(шаблон с комментариями — `crates/ld2-server/server.example.toml`).
 
 ## Дорожная карта
 
@@ -71,7 +79,7 @@ cargo fmt --check
 | Этап | Результат |
 |---|---|
 | M0 | Каркас workspace, CI под 3 ОС, конфиг/логинг/keyring |
-| M1 | Контракт v1 + WS-транспорт (reconnect/resync) + мок-сервер |
+| M1 | Контракт v1 + WS-транспорт (reconnect/resync) |
 | M2 | Авторизация, персонажи (динамический лимит слотов) |
 | M3 | Локации, навигация, список сущностей, лог мира |
 | M4 | Лист персонажа, навыки/XP, инвентарь, лут, смерть и потеря всего |

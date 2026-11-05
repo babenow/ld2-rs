@@ -2,20 +2,21 @@
 name = "ld2-client"
 version.workspace = true
 edition.workspace = true
-description = "Desktop-клиент текстовой онлайн-MMORPG ld2 (eframe/egui)"
+description = "Десктоп-клиент ld2 (gpui + Ely, единственный UI-слой)"
 
-[dev-dependencies]
-ld2-mock-server = { path = "../ld2-mock-server" }
-tokio-tungstenite = { workspace = true }
-futures-util = { workspace = true }
+[[bin]]
+name = "ld2-gpui"
+path = "src/main.rs"
 
 [dependencies]
 ld2-protocol = { path = "../ld2-protocol" }
-ld2-core = { path = "../ld2-core" }
-eframe = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
+ld2-core = { path = "../ld2-core" }
+gpui = { workspace = true }
+gpui_platform = { workspace = true }
+ely = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
 tracing = { workspace = true }
 keyring = { workspace = true }
-anyhow = { workspace = true }
-tokio = { workspace = true }
+unicode-segmentation = "1"

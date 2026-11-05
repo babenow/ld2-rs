@@ -2,10 +2,8 @@
 resolver = "2"
 members = [
     "crates/ld2-protocol",
-    "crates/ld2-mock-server",
     "crates/ld2-core",
     "crates/ld2-client",
-    "crates/ld2-client-gpui",
     "crates/ld2-server",
     "crates/ld2-test-kit",
 ]
@@ -45,7 +43,6 @@ thiserror = "2"
 anyhow = "1"
 
 # UI
-eframe = "0.37"
 # gpui (D16/ADR-004: crates.io-снапшот gpui Zed, жёсткий пин =0.3.10 —
 # ровно столько требует Ely 0.1.x; git-пин v1.26.2 снят вместе со стабом
 # gpui_web: wasm-бэкенд из графа уходит, конфликт unicode-properties неактуален).

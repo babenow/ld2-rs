@@ -1771,7 +1771,7 @@ pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ld2_mock_server::fixtures;
+    use ld2_test_kit::fixtures;
 
     // ─── M11.6: E2E-тест вехи — диспетчер всплывающих диалогов ─────────────
     // Прогон сценария: создание персонажа → мир → смерть → лут → инвайт;

@@ -10,8 +10,8 @@
 //! - [`notify`] — OS-уведомления (D7);
 //! - [`update_check`] — проверка GitHub Releases (§12).
 //!
-//! Отсюда зависят оба клиента: egui (`ld2-client`) и gpui
-//! (`ld2-client-gpui`) — логика игры и тесты общие.
+//! Отсюда зависит десктоп-клиент (`ld2-client`, бинарь `ld2-gpui`) —
+//! логика игры и тесты общие.
 
 pub mod config;
 pub mod l10n;
