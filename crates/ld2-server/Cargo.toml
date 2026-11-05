@@ -24,5 +24,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+# e2e M13.2: ядро клиента (форма/валидация/register_error) против реального
+# сервера — цикла нет: ld2-core не зависит от ld2-server.
+ld2-core = { path = "../ld2-core" }
 ld2-test-kit = { path = "../ld2-test-kit" }
 ureq.workspace = true

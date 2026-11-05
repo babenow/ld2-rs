@@ -4120,6 +4120,7 @@ dependencies = [
  "axum",
  "futures-util",
  "getrandom 0.3.4",
+ "ld2-core",
  "ld2-protocol",
  "ld2-test-kit",
  "serde",

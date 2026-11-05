@@ -27,6 +27,17 @@ pub(super) fn t(key: Key) -> &'static str {
         StatusAuthExpired => "Сессия истекла",
         StatusStopped => "Нет связи",
         ErrFillFields => "Заполните логин и пароль",
+        // M13: регистрация (D35)
+        RegisterTitle => "Создание аккаунта",
+        RegisterSubtitle => "Логин — основной идентификатор, email обязателен",
+        FieldEmail => "Email",
+        FieldPassword2 => "Повторите пароль",
+        BtnRegister => "Зарегистрироваться",
+        RegisterSending => "Регистрация…",
+        ErrRegisterFill => "Заполните все поля",
+        ErrPasswordMismatch => "Пароли не совпадают",
+        ErrBadEmail => "Некорректный email (ожидается name@domain.tld)",
+        ErrRetryAfter => "Слишком часто — повторите через {s} с",
         // M2: персонажи
         CharactersTitle => "Персонажи",
         CharactersEmpty => "Персонажей нет — создайте первого",
