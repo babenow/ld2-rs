@@ -85,64 +85,23 @@ impl Root {
                 )
             )));
 
-        // Кнопки действий — сверху списка (запрос): создание + выход.
-        let full = used as u32 >= limit;
-        let create_label = if full {
-            t(lang, Key::SlotsFull)
-        } else {
-            t(lang, Key::BtnCreate)
-        };
-        let mut toolbar = div().flex().flex_row().gap_2().mt(px(4.0));
-        if !full && !pending {
-            toolbar = toolbar.child(act_btn(
-                cx,
-                create_label,
-                pal.accent,
-                pal.accent_text,
-                |this, cx| {
-                    this.create_open = true;
-                    this.create_submitted = false;
-                    if let Some(name) = this.create_name.clone() {
-                        name.update(cx, |i, cx| i.set_text(String::new(), cx));
-                    }
-                },
-            ));
-        } else {
-            toolbar = toolbar.child(
-                div()
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(pal.border))
-                    .text_color(rgb(pal.muted))
-                    .child(create_label),
-            );
-        }
-        toolbar = toolbar.child(act_btn(
-            cx,
-            t(lang, Key::BtnLogout),
-            pal.panel,
-            pal.danger,
-            |this, cx| {
-                this.logout();
-                let _ = cx;
-            },
-        ));
-        col = col.child(toolbar);
-
-        // Аккаунт может быть без персонажей (M11.7) — подсказка.
-        if session.characters.is_empty() {
-            col = col.child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::CharactersEmpty)),
-            );
-        }
         if let Some(err) = &self.store.select_error {
             col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
         }
         if let Some(notice) = &self.store.notice {
             col = col.child(div().text_color(rgb(pal.muted)).child(notice.clone()));
+        }
+
+        // Список — отдельный скролл-лейаут: занимает всё оставшееся
+        // место экрана и скроллится (запрос).
+        let mut list = div().flex().flex_col().gap_2().items_center();
+        // Аккаунт может быть без персонажей (M11.7) — подсказка.
+        if session.characters.is_empty() {
+            list = list.child(
+                div()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::CharactersEmpty)),
+            );
         }
 
         let dark = pal.bg == palette("dark").bg;
@@ -242,8 +201,62 @@ impl Root {
                 .child(head)
                 .child(meta)
                 .footer(footer);
-            col = col.child(card);
+            list = list.child(card);
         }
+        col = col.child(
+            div()
+                .id("ld2-chars-list")
+                .w_full()
+                .flex_grow_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(list),
+        );
+
+        // Кнопки действий — внизу окна (запрос): создание + выход.
+        let full = used as u32 >= limit;
+        let create_label = if full {
+            t(lang, Key::SlotsFull)
+        } else {
+            t(lang, Key::BtnCreate)
+        };
+        let mut toolbar = div().flex().flex_row().gap_2().mt(px(4.0)).flex_shrink_0();
+        if !full && !pending {
+            toolbar = toolbar.child(act_btn(
+                cx,
+                create_label,
+                pal.accent,
+                pal.accent_text,
+                |this, cx| {
+                    this.create_open = true;
+                    this.create_submitted = false;
+                    if let Some(name) = this.create_name.clone() {
+                        name.update(cx, |i, cx| i.set_text(String::new(), cx));
+                    }
+                },
+            ));
+        } else {
+            toolbar = toolbar.child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.border))
+                    .text_color(rgb(pal.muted))
+                    .child(create_label),
+            );
+        }
+        toolbar = toolbar.child(act_btn(
+            cx,
+            t(lang, Key::BtnLogout),
+            pal.panel,
+            pal.danger,
+            |this, cx| {
+                this.logout();
+                let _ = cx;
+            },
+        ));
+        col = col.child(toolbar);
 
         col
     }
