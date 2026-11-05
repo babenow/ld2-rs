@@ -180,8 +180,10 @@ pub enum ConfigError {
     #[error("невалидный TOML в {}: {toml_err}", .path.display())]
     Parse {
         path: PathBuf,
+        /// В боксе: вариант ≥128 байт на Windows-ABI → clippy
+        /// `result_large_err` (CI, -D warnings).
         #[source]
-        toml_err: toml::de::Error,
+        toml_err: Box<toml::de::Error>,
     },
     #[error("конфиг {} не прошёл валидацию:\n  - {}", .path.display(), .problems.join("\n  - "))]
     Invalid {
@@ -200,7 +202,7 @@ impl Config {
         })?;
         let cfg: Config = toml::from_str(&text).map_err(|toml_err| ConfigError::Parse {
             path: path.to_path_buf(),
-            toml_err,
+            toml_err: Box::new(toml_err),
         })?;
         let problems = cfg.problems();
         if !problems.is_empty() {
