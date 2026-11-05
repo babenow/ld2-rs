@@ -593,7 +593,7 @@ ld2-rs/
 
 ## 12. Сборка, CI/CD, релизы
 
-- **CI (GitHub Actions)**: матрица `[windows-latest, macos-14, ubuntu-22.04]`: fmt→clippy→test→build(debug) + e2e c моком.
+- **CI (GitHub Actions)**: матрица `[windows-latest, macos-15, ubuntu-22.04]`: fmt→clippy→test→build(debug) + e2e c моком.
 - **Release (тег `vX.Y.Z`)**: артефакты:
   - Windows: portable `.exe` (+ `.msi` через `cargo-wix`, P1)
   - macOS: universal (arm64+x86_64) `.app` в `.dmg` (codesign+notarize — секреты CI, P1; без нотаризации — dev-only build)

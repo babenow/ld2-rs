@@ -20,7 +20,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             name: linux
-          - os: macos-14
+          - os: macos-15   # macOS 14 retired GitHub-ом 2026-11-02
             name: macos
           - os: windows-latest
             name: windows
