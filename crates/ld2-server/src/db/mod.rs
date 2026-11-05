@@ -8,6 +8,7 @@
 //! репозиторий персонажей появится в фазе «персонажи».
 
 pub mod accounts;
+pub mod characters;
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;

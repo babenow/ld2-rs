@@ -5,9 +5,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 
-use ld2_protocol::cmd::{AuthLogin, AuthRegister, AuthResume};
+use ld2_protocol::cmd::{AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect};
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
-use ld2_protocol::evt::{Pong, TimeSync};
+use ld2_protocol::evt::{Pong, StateSnapshot, TimeSync};
+use ld2_protocol::types::{CharacterState, CharacterSummary, Hp, LocationSnapshot, Mp};
 use ld2_protocol::ErrorCode;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -35,6 +36,9 @@ pub struct Session {
     #[allow(dead_code)] // журнал/логика персонажей — M12.2 (фаза «персонажи»)
     login: Option<String>,
     authenticated: bool,
+    /// Выбранный персонаж (`char.select`, §3): снапшот и ack-версии — его.
+    selected_char_id: Option<String>,
+    char: Option<CharacterState>,
 }
 
 impl Session {
@@ -47,6 +51,8 @@ impl Session {
             account_id: None,
             login: None,
             authenticated: false,
+            selected_char_id: None,
+            char: None,
         }
     }
 
@@ -97,6 +103,11 @@ impl Session {
             "cmd/auth.resume" => self.auth_resume(env, seq).await,
             "cmd/auth.logout" => self.auth_logout(seq).await,
             "cmd/session.refresh" => self.auth_refresh(seq).await,
+            // персонажи (ФР-02, §5/§3)
+            "cmd/char.list" => self.char_list(seq).await,
+            "cmd/char.create" => self.char_create(env, seq).await,
+            "cmd/char.select" => self.char_select(env, seq).await,
+            "cmd/char.delete" => self.char_delete(env, seq).await,
             // Сервисный ping (§7): ack + echo; RTT клиент считает по своему
             // `ts` — сервер отвечает 0, как и мок.
             "cmd/ping" => {
@@ -303,8 +314,17 @@ impl Session {
         self.account_id = Some(account_id);
         self.login = Some(login);
         self.authenticated = true;
-        // Список персонажей заполняется в фазе «персонажи» (M12.2).
-        let config = auth::session_config(&cfg, access.clone(), refresh, Vec::new());
+        self.selected_char_id = None;
+        self.char = None;
+        // §5 characters[]: живые персонажи аккаунта (ошибка — не ломает вход).
+        let chars = match db::characters::list(&self.state.pool, account_id).await {
+            Ok(rows) => rows.iter().map(summary_of).collect(),
+            Err(e) => {
+                warn!("список персонажей при входе: {e}");
+                Vec::new()
+            }
+        };
+        let config = auth::session_config(&cfg, access.clone(), refresh, chars);
         vec![
             Self::ack_payload(
                 seq,
@@ -319,6 +339,184 @@ impl Session {
                 serde_json::to_value(&config).unwrap_or_default(),
             ),
         ]
+    }
+
+    // ── персонажи (ФР-02, §5/§3) ─────────────────────────────────────────────
+
+    async fn char_list(&mut self, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let account_id = self.account_id.expect("require_auth выше");
+        match db::characters::list(&self.state.pool, account_id).await {
+            Ok(rows) => {
+                let characters: Vec<CharacterSummary> = rows.iter().map(summary_of).collect();
+                vec![Self::ack_payload(
+                    seq,
+                    &serde_json::json!({ "characters": characters }),
+                )]
+            }
+            Err(e) => {
+                warn!("char.list: {e}");
+                vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
+            }
+        }
+    }
+
+    async fn char_create(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CharCreate>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let account_id = self.account_id.expect("require_auth выше");
+        let pool = &self.state.pool;
+        // Лимит слотов — из конфига (D25, DoD M2: конфиг, не код).
+        let limit = i64::from(self.state.config.gameplay.char_slot_limit);
+        match db::characters::count_alive(pool, account_id).await {
+            Ok(count) if count >= limit => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::CharLimit,
+                    "все слоты персонажей заняты",
+                )];
+            }
+            Ok(_) => {}
+            Err(e) => {
+                warn!("char.create (лимит): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        if cmd.name.trim().chars().count() < 2 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NameTaken,
+                "имя занято или некорректно",
+            )];
+        }
+        if !PROFILES.contains(&cmd.profile.as_str()) {
+            return vec![Self::err(
+                seq,
+                ErrorCode::BadProfile,
+                format!("неизвестный профиль: {}", cmd.profile),
+            )];
+        }
+        match db::characters::create(pool, account_id, &cmd.name, &cmd.profile).await {
+            Ok(Some(row)) => vec![Self::ack_payload(
+                seq,
+                &serde_json::json!({ "character": summary_of(&row) }),
+            )],
+            Ok(None) => {
+                vec![Self::err(
+                    seq,
+                    ErrorCode::NameTaken,
+                    "имя занято или некорректно",
+                )]
+            }
+            Err(e) => {
+                warn!("char.create: {e}");
+                vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
+            }
+        }
+    }
+
+    async fn char_select(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CharSelect>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let account_id = self.account_id.expect("require_auth выше");
+        let pool = &self.state.pool;
+        let Some(row) = (match db::characters::find(pool, account_id, &cmd.char_id).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("char.select: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            // Паритет с моком: не найден/чужой → «персонаж не найден».
+            return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
+        };
+        // §3: state_version монотонен на сессию персонажа и переживает
+        // reconnect — бамп атомарный в БД.
+        let state_version = match db::characters::bump_state_version(pool, &row.id).await {
+            Ok(v) => v as u64,
+            Err(e) => {
+                warn!("char.select (state_version): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let snapshot = StateSnapshot {
+            state_version,
+            char: character_state_of(&row),
+            location: location_snapshot(&row.location_id),
+            party: None,
+            guild: None,
+            server_ts: crate::time::now_epoch(),
+            extra: Default::default(),
+        };
+        self.char = Some(snapshot.char.clone());
+        self.selected_char_id = Some(row.id.clone());
+        vec![
+            out_ack(Ack::ok(seq, Some(state_version))),
+            out_event(
+                "evt/state/snapshot",
+                Some(state_version),
+                serde_json::to_value(&snapshot).unwrap_or_default(),
+            ),
+        ]
+    }
+
+    async fn char_delete(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CharDelete>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let account_id = self.account_id.expect("require_auth выше");
+        let pool = &self.state.pool;
+        let found = match db::characters::find(pool, account_id, &cmd.char_id).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("char.delete: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if found.is_none() {
+            return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
+        }
+        match db::characters::count_alive(pool, account_id).await {
+            Ok(count) if count <= 1 => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::CharLimit,
+                    "нельзя удалить последнего персонажа",
+                )];
+            }
+            Ok(_) => {}
+            Err(e) => {
+                warn!("char.delete (лимит): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        match db::characters::soft_delete(pool, account_id, &cmd.char_id).await {
+            Ok(0) => vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")],
+            Ok(_) => {
+                if self.selected_char_id.as_deref() == Some(cmd.char_id.as_str()) {
+                    self.selected_char_id = None;
+                    self.char = None;
+                }
+                vec![out_ack(Ack::ok(seq, None))]
+            }
+            Err(e) => {
+                warn!("char.delete: {e}");
+                vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
+            }
+        }
     }
 
     // ── помощники ────────────────────────────────────────────────────────────
@@ -374,6 +572,69 @@ impl Session {
         out_ack(ack)
     }
 }
+
+/// Сводка §5 `characters[]`: `profile` кладём в `extra` — поле появится в
+/// `ld2-protocol` при мерже ADR-005 (M11), wire-JSON идентичен (D19).
+fn summary_of(row: &db::characters::CharacterRow) -> CharacterSummary {
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "profile".into(),
+        serde_json::Value::String(row.profile.clone()),
+    );
+    CharacterSummary {
+        id: row.id.clone(),
+        name: row.name.clone(),
+        location: row.location_id.clone(),
+        summary: None,
+        crime: Vec::new(),
+        online: false, // реестр online — M12.7 (whisper/группа)
+        extra,
+    }
+}
+
+/// Лист персонажа §3: M12.2 — база из строки БД; навыки/инвентарь/квесты
+/// добавляются фазами M12.4+.
+fn character_state_of(row: &db::characters::CharacterRow) -> CharacterState {
+    CharacterState {
+        id: row.id.clone(),
+        name: row.name.clone(),
+        attrs: Default::default(),
+        skills: Vec::new(),
+        professions: Vec::new(),
+        hp: Hp {
+            cur: i64::from(row.hp_cur),
+            max: i64::from(row.hp_max),
+        },
+        mp: Mp {
+            cur: i64::from(row.mp_cur),
+            max: i64::from(row.mp_max),
+        },
+        xp_pool: row.xp_pool,
+        equip: Default::default(),
+        inventory: Vec::new(),
+        crime: Default::default(),
+        quests: Vec::new(),
+        extra: Default::default(),
+    }
+}
+
+/// Локация снапшота: до сида контента (M12.3, D26) — заглушка по id
+/// (таблицы locations ещё нет: имя = id, описание/выходы/сущности пустые).
+fn location_snapshot(location_id: &str) -> LocationSnapshot {
+    LocationSnapshot {
+        id: location_id.to_string(),
+        name: location_id.to_string(),
+        flags: Vec::new(),
+        text: String::new(),
+        exits: Vec::new(),
+        entities: Vec::new(),
+        extra: Default::default(),
+    }
+}
+
+/// Стартовые профили `char.create` (ADR-003: Воин/Вор/Маг) — тройка v1;
+/// расширение списка — capability сервера (§7).
+const PROFILES: &[&str] = &["warrior", "rogue", "mage"];
 
 /// Ack → текст конверта (§2.2).
 fn out_ack(ack: Ack) -> Out {
