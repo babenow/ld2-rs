@@ -1,0 +1,20 @@
+[package]
+name = "ld2-server"
+version.workspace = true
+edition.workspace = true
+description = "Реальный игровой сервер ld2: docs/protocol.md + PostgreSQL (PLAN-M12)"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+serde.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+ureq.workspace = true
