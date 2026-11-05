@@ -229,6 +229,70 @@ async fn char_slot_limit_comes_from_config() {
     );
 }
 
+// ─── регистрация (ADR-006, M12.2) ────────────────────────────────────────────
+
+#[tokio::test]
+async fn register_creates_account_and_logs_in() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    let seq = c
+        .send(
+            "cmd/auth.register",
+            json!({ "login": "newbie", "password": "longenough1" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "регистрация: {ack}");
+    assert!(
+        ack["payload"]["access_token"].is_string(),
+        "ack — как у login (§7)"
+    );
+    let start = c.wait(|v| v["type"] == "evt/session.start").await;
+    assert!(
+        start["payload"]["characters"]
+            .as_array()
+            .expect("characters")
+            .is_empty(),
+        "новый аккаунт — без персонажей"
+    );
+
+    // Вход теми же кредами с нового соединения (ADR-006: register = вход).
+    let mut c2 = Client::connect(&url).await;
+    let start = c2.login_as("newbie", "longenough1").await;
+    assert!(start["characters"]
+        .as_array()
+        .expect("characters")
+        .is_empty());
+}
+
+#[tokio::test]
+async fn register_rejects_taken_login() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    let seq = c
+        .send(
+            "cmd/auth.register",
+            json!({ "login": "demo", "password": "longenough1" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_LOGIN_TAKEN", "{ack}");
+}
+
+#[tokio::test]
+async fn register_rejects_weak_password() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    let seq = c
+        .send(
+            "cmd/auth.register",
+            json!({ "login": "ok_name", "password": "short" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_WEAK_PASSWORD", "{ack}");
+}
+
 #[tokio::test]
 async fn bad_credentials_rejected() {
     let url = start_server(Chaos::disabled()).await;

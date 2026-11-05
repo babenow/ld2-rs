@@ -64,6 +64,16 @@ pub fn account(login: &str, password: &str) -> bool {
     (login == LOGIN && password == PASSWORD) || (login == LOGIN2 && password == PASSWORD2)
 }
 
+/// Есть ли логин среди фикстур (зарегистрированные аккаунты — в World).
+pub fn account_exists(login: &str) -> bool {
+    login == LOGIN || login == LOGIN2
+}
+
+/// Лимиты `cmd/auth.register` в моке — дефолты шаблона `server.example.toml`
+/// (`[auth]`); у реального сервера — настройки конфига (ADR-006, D25).
+pub const MIN_LOGIN_LEN: usize = 3;
+pub const MIN_PASSWORD_LEN: usize = 8;
+
 fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
     let mut features = serde_json::Map::new();
     features.insert("loot.roll".into(), json!(false));

@@ -112,6 +112,9 @@ pub struct World {
     homes: HashMap<String, Home>,
     /// `refresh-токен → login` (resume без повторного пароля, §4.5).
     tokens: HashMap<String, String>,
+    /// Аккаунты, зарегистрированные через `cmd/auth.register` (ADR-006):
+    /// `login → password`; фикстуры (`demo`/`demo2`) — отдельно, в fixtures.
+    registered: HashMap<String, String>,
     /// Глобальный счётчик id персонажей (создание — `c{n}`; фикстуры заняты
     /// c1/c2, поэтому стартует с 3 — два аккаунта не должны конфликтовать).
     char_counter: u64,
@@ -137,6 +140,7 @@ impl World {
             conn_player: HashMap::new(),
             homes: HashMap::new(),
             tokens: HashMap::new(),
+            registered: HashMap::new(),
             char_counter: 3,
             party: None,
             invites: HashMap::new(),
@@ -284,6 +288,22 @@ impl World {
     /// Логин по refresh-токену (неизвестный токен → resume без аккаунта).
     pub fn login_by_token(&self, refresh: &str) -> Option<String> {
         self.tokens.get(refresh).cloned()
+    }
+
+    /// Регистрация нового аккаунта (`cmd/auth.register`, ADR-006):
+    /// `false` — логин занят фикстурой или уже зарегистрирован.
+    pub fn try_register(&mut self, login: &str, password: &str) -> bool {
+        if fixtures::account_exists(login) || self.registered.contains_key(login) {
+            return false;
+        }
+        self.registered
+            .insert(login.to_string(), password.to_string());
+        true
+    }
+
+    /// Проверка пароля зарегистрированного (не фикстурного) аккаунта.
+    pub fn check_registered(&self, login: &str, password: &str) -> bool {
+        self.registered.get(login).is_some_and(|p| p == password)
     }
 
     /// Свежий уникальный id персонажа (`char.create`, фикстуры заняли c1/c2).

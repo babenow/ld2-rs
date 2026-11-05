@@ -5,11 +5,11 @@
 use std::collections::HashMap;
 
 use ld2_protocol::cmd::{
-    AuthLogin, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest, ChatSend,
-    CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo, GuildBrowse,
-    GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse, LocationMove, MagicRuneCast,
-    PartyInvite, PartyKick, QuestAccept, SkillUse, SocketExtract, SocketInsert, StateResync,
-    TradeAddItem, TradeOpen, TradeSetGold, UpgradePreview, UpgradeStart,
+    AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
+    ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
+    GuildBrowse, GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse, LocationMove,
+    MagicRuneCast, PartyInvite, PartyKick, QuestAccept, SkillUse, SocketExtract, SocketInsert,
+    StateResync, TradeAddItem, TradeOpen, TradeSetGold, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope};
 use ld2_protocol::evt::{
@@ -194,6 +194,7 @@ impl Session {
         match env.msg_type.as_str() {
             // auth / session
             "cmd/auth.login" => return self.auth_login(env, seq),
+            "cmd/auth.register" => return self.auth_register(env, seq),
             "cmd/auth.resume" => return self.auth_resume(env, seq),
             "cmd/auth.logout" => {
                 self.authenticated = false;
@@ -401,7 +402,9 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<AuthLogin>(env, seq) else {
             return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
         };
-        if !fixtures::account(&cmd.login, &cmd.password) {
+        if !fixtures::account(&cmd.login, &cmd.password)
+            && !self.w().check_registered(&cmd.login, &cmd.password)
+        {
             return vec![self.ack_err(
                 seq,
                 None,
@@ -409,15 +412,65 @@ impl Session {
                 "неверный логин или пароль",
             )];
         }
-        // Аккаунт определяет список персонажей и refresh-токен (§5).
+        // Аккаунт определяет список персонажей и refresh-токен (§5); у
+        // зарегистрированных (ADR-006) персонажей пока нет.
         self.login = Some(cmd.login.clone());
         self.authenticated = true;
-        self.chars = fixtures::chars_for(&cmd.login);
+        self.chars = if fixtures::account_exists(&cmd.login) {
+            fixtures::chars_for(&cmd.login)
+        } else {
+            Vec::new()
+        };
         self.restore_home(&cmd.login);
         let refresh = crate::world::refresh_token_for(&cmd.login);
         self.w().bind_token(&refresh, &cmd.login);
         let sv = self.bump();
-        let config = fixtures::session_config_for(&cmd.login, self.char_slot_limit);
+        let mut config = fixtures::session_config_for(&cmd.login, self.char_slot_limit);
+        config.characters = self.chars.clone();
+        vec![
+            self.ack_ok_payload(
+                seq,
+                Some(sv),
+                &json!({ "access_token": "at_mock", "expires_in_s": 900 }),
+            ),
+            self.event(
+                "evt/session.start",
+                Some(sv),
+                serde_json::to_value(&config).unwrap_or_default(),
+            ),
+        ]
+    }
+
+    /// `cmd/auth.register` (ADR-006): лимиты — константы мока, затем вход
+    /// тем же потоком, что и `auth.login` (регистрация = немедленный вход).
+    fn auth_register(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        let Ok(cmd) = Self::payload_of::<AuthRegister>(env, seq) else {
+            return vec![self.ack_err(seq, None, ErrorCode::Internal, "некорректный payload")];
+        };
+        let (login_len, password_len) = (cmd.login.chars().count(), cmd.password.chars().count());
+        if login_len < fixtures::MIN_LOGIN_LEN || password_len < fixtures::MIN_PASSWORD_LEN {
+            return vec![self.ack_err(
+                seq,
+                None,
+                ErrorCode::WeakPassword,
+                format!(
+                    "логин — от {} символов, пароль — от {}",
+                    fixtures::MIN_LOGIN_LEN,
+                    fixtures::MIN_PASSWORD_LEN
+                ),
+            )];
+        }
+        if !self.w().try_register(&cmd.login, &cmd.password) {
+            return vec![self.ack_err(seq, None, ErrorCode::LoginTaken, "логин занят")];
+        }
+        self.login = Some(cmd.login.clone());
+        self.authenticated = true;
+        self.chars = Vec::new();
+        let refresh = crate::world::refresh_token_for(&cmd.login);
+        self.w().bind_token(&refresh, &cmd.login);
+        let sv = self.bump();
+        let mut config = fixtures::session_config_for(&cmd.login, self.char_slot_limit);
+        config.characters = Vec::new();
         vec![
             self.ack_ok_payload(
                 seq,
@@ -453,12 +506,17 @@ impl Session {
             Some(login) => {
                 self.login = Some(login.clone());
                 let home = self.w().load_home(login);
-                self.chars = home
-                    .as_ref()
-                    .map(|h| h.chars.clone())
-                    .unwrap_or_else(|| fixtures::chars_for(login));
+                self.chars = home.as_ref().map(|h| h.chars.clone()).unwrap_or_else(|| {
+                    if fixtures::account_exists(login) {
+                        fixtures::chars_for(login)
+                    } else {
+                        Vec::new()
+                    }
+                });
                 self.restore_home(login);
-                fixtures::session_config_for(login, self.char_slot_limit)
+                let mut config = fixtures::session_config_for(login, self.char_slot_limit);
+                config.characters = self.chars.clone();
+                config
             }
             None => fixtures::session_config_for(fixtures::LOGIN, self.char_slot_limit),
         };
