@@ -27,6 +27,40 @@ pub fn delete_token(host: &str, login: &str) -> keyring::Result<()> {
     entry.delete_credential()
 }
 
+/// Чтение токена с таймаутом: зависший диалог доступа macOS не должен
+/// блокировать запуск приложения (инциденты M4/M5). Общий для обоих
+/// клиентов (D12).
+pub fn get_token_with_timeout(
+    host: &str,
+    login: &str,
+    timeout: std::time::Duration,
+) -> Option<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let host = host.to_string();
+    let login = login.to_string();
+    std::thread::spawn(move || {
+        let _ = tx.send(get_token(&host, &login));
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(token)) => Some(token),
+        Ok(Err(keyring::Error::NoEntry)) => {
+            tracing::debug!("keyring: токена нет — нужен вход");
+            None
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("keyring: ошибка чтения: {e}");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                "keyring: нет ответа за {timeout:?} — стартую без resume \
+                 (диалог доступа macOS отложен)"
+            );
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +89,23 @@ mod tests {
                 eprintln!("keyring smoke ПРОПУСК: окружение без хранилища ключей ({e})");
             }
         }
+    }
+
+    /// M10.3: обёртка чтения keyring обязана вернуться за таймаут даже при
+    /// зависшем диалоге доступа (инцидент M4/M5).
+    #[test]
+    fn get_token_with_timeout_returns_none_for_missing_entry() {
+        let start = std::time::Instant::now();
+        let token = get_token_with_timeout(
+            "ws://test-never:1/ws",
+            "no-such-login",
+            std::time::Duration::from_secs(2),
+        );
+        assert!(token.is_none(), "нет записи → None");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(3),
+            "обёртка не зависает: {:?}",
+            start.elapsed()
+        );
     }
 }

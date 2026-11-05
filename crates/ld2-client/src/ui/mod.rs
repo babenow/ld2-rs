@@ -7,7 +7,6 @@
 
 use eframe::egui;
 
-use crate::l10n::Key;
 use crate::store::{AppStore, Effect};
 use crate::transport::TransportHandle;
 
@@ -83,38 +82,8 @@ pub struct LoginForm {
     pub password: String,
 }
 
-/// Профиль персонажа (D3: Воин/Вор/Маг — wire-значения для `char.create`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Profile {
-    #[default]
-    Warrior,
-    Rogue,
-    Mage,
-}
-
-impl Profile {
-    pub fn all() -> [Profile; 3] {
-        [Profile::Warrior, Profile::Rogue, Profile::Mage]
-    }
-
-    /// Wire-значение `cmd/char.create.profile`.
-    pub fn value(self) -> &'static str {
-        match self {
-            Profile::Warrior => "warrior",
-            Profile::Rogue => "rogue",
-            Profile::Mage => "mage",
-        }
-    }
-
-    /// Локализованное название профиля.
-    pub fn label_key(self) -> Key {
-        match self {
-            Profile::Warrior => Key::ProfileWarrior,
-            Profile::Rogue => Key::ProfileRogue,
-            Profile::Mage => Key::ProfileMage,
-        }
-    }
-}
+/// Профиль персонажа — переедал в `ld2-core` (D12, общий с gpui).
+pub use ld2_core::store::Profile;
 
 #[derive(Default)]
 pub struct CreateForm {
@@ -209,58 +178,10 @@ impl Forms {
 /// Эффекты экранов — исполняет `App` (не редьюсер).
 pub type ScreenEffects = Vec<Effect>;
 
-/// Формат длительности (ФР-11): `{h}ч{m}м` / `{m}м{s}с` / `{s}с`.
-pub fn format_duration(lang: crate::l10n::Lang, secs: i64) -> String {
-    use crate::l10n::{tf, Key};
-    let secs = secs.max(0);
-    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
-    if h > 0 {
-        tf(
-            lang,
-            Key::DurHm,
-            &[("h", &h.to_string()), ("m", &m.to_string())],
-        )
-    } else if m > 0 {
-        tf(
-            lang,
-            Key::DurMs,
-            &[("m", &m.to_string()), ("s", &s.to_string())],
-        )
-    } else {
-        tf(lang, Key::DurS, &[("s", &s.to_string())])
-    }
-}
-
-/// Для чужих/бейджей: округление вверх до минут (ФР-11).
-pub fn format_duration_ceil(lang: crate::l10n::Lang, secs: i64) -> String {
-    use crate::l10n::{tf, Key};
-    if secs <= 0 {
-        return tf(lang, Key::DurS, &[("s", "0")]);
-    }
-    let mins = (secs + 59) / 60;
-    if mins >= 60 {
-        tf(
-            lang,
-            Key::DurHm,
-            &[
-                ("h", &(mins / 60).to_string()),
-                ("m", &(mins % 60).to_string()),
-            ],
-        )
-    } else {
-        tf(lang, Key::DurMs, &[("m", &mins.to_string()), ("s", "0")])
-    }
-}
-
-/// Название статуса: из `session.crime.kinds` (§5), фолбэк — сам `kind`.
-pub fn crime_kind_title(store: &crate::store::AppStore, kind: &str) -> String {
-    store
-        .session
-        .as_ref()
-        .and_then(|s| s.crime.kinds.iter().find(|k| k.kind == kind))
-        .map(|k| k.title.clone())
-        .unwrap_or_else(|| kind.to_string())
-}
+/// Форматирование длительностей и заголовков преступлений — переиспользует
+/// `ld2-core` (D12: общая логика обоих клиентов).
+pub use ld2_core::l10n::{format_duration, format_duration_ceil};
+pub use ld2_core::store::crime_kind_title;
 
 /// Цвет по severity (§7.4/§5).
 pub fn severity_color(severity: ld2_protocol::types::Severity) -> egui::Color32 {

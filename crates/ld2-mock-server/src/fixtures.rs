@@ -165,6 +165,7 @@ pub fn character_summary() -> CharacterSummary {
     CharacterSummary {
         id: "c1".into(),
         name: "Ким".into(),
+        profile: Some("warrior".into()),
         location: "Черный лес".into(),
         summary: Some("Навыки: меч 5, аркана 1".into()),
         crime: vec!["murderer".into()],
@@ -178,6 +179,7 @@ pub fn character_summary2() -> CharacterSummary {
     CharacterSummary {
         id: "c2".into(),
         name: "Астра".into(),
+        profile: Some("mage".into()),
         location: "Черный лес".into(),
         summary: Some("Навыки: лук 3".into()),
         crime: vec![],

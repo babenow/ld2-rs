@@ -276,6 +276,10 @@ pub struct CharacterState {
 pub struct CharacterSummary {
     pub id: String,
     pub name: String,
+    /// Класс из `char.create` (ADR-005, аддитивно): `warrior`/`rogue`/`mage`.
+    /// Опционально: серверы без поля → UI рисует нейтральный цвет.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     pub location: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,

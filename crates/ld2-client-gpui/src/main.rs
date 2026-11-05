@@ -1,101 +1,137 @@
-//! gpui-клиент ld2 — спайк M10.1 (PLAN-M10): окно с экраном входа.
+//! gpui-клиент ld2 — точка входа (M10.3: шелл, экраны, настройки;
+//! M11.1: gpui-pre + каркас Ely — ADR-004).
 //!
-//! Цель фазы: проверить git-pin gpui v1.26.2, рендер кириллицы на
-//! embedded-шрифте (§13 ТЗ: фиксированный набор, не системные) и сборку
-//! на 3 ОС (gate Windows). Функциональность (вход, store) — фазы M10.2+.
+//! Логика игры — в `ld2-core` (D12): здесь только gpui-рендер, опрос
+//! ingress-канала транспорта и исполнение эффектов (см. [`crate::root`]).
+
+mod palette;
+mod root;
 
 use std::borrow::Cow;
+use std::time::Duration;
 
-use gpui::{
-    div, prelude::*, px, rgb, size, App, Bounds, Context, SharedString, TitlebarOptions, Window,
-    WindowBounds, WindowOptions,
-};
+use ely::{theme::Mode, theme::Theme, Assets};
+use gpui::{px, size, App, AppContext, Bounds, QuitMode, WindowBounds, WindowOptions};
 use gpui_platform::application;
+use ld2_core::config::ConfigStore;
+use ld2_core::l10n::Lang;
+use ld2_core::store::AppStore;
+use ld2_core::transport::{self, TransportConfig};
+use tokio::sync::mpsc;
 
-/// Экран входа (статический макет — функциональность появится в M10.3).
-struct LoginSpike {
-    version: SharedString,
-}
+use crate::root::{Root, Shell};
 
-impl Render for LoginSpike {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .size_full()
-            .justify_center()
-            .items_center()
-            .bg(rgb(0x1e1e24))
-            .text_color(rgb(0xeceff4))
-            .child(
-                div()
-                    .text_2xl()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child("ld2 — вход в мир"),
-            )
-            // Статичные поля формы (паритет макета egui-экрана входа).
-            .child(field("Логин"))
-            .child(field("Пароль"))
-            .child(
-                div()
-                    .px_6()
-                    .py_2()
-                    .rounded_md()
-                    .bg(rgb(0x4a90d9))
-                    .text_color(rgb(0xffffff))
-                    .child("Войти"),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(0x8a8f98))
-                    .child(format!("v{} · demo/demo123", self.version)),
-            )
-    }
-}
+fn main() -> anyhow::Result<()> {
+    let _log_guard = ld2_core::logging::init()?;
+    tracing::info!("ld2-gpui v{} — старт", env!("CARGO_PKG_VERSION"));
 
-fn field(label: &str) -> impl IntoElement {
-    div()
-        .w(px(280.0))
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(0x5a5f68))
-        .bg(rgb(0x2a2a30))
-        .text_color(rgb(0x9a9fa8))
-        .child(label.to_string())
-}
+    let store = ConfigStore::open()?;
+    let config = store.load()?;
+    tracing::info!("конфиг: host={}, lang={}", config.host, config.lang);
+    let lang = Lang::from_code(&config.lang);
 
-fn main() {
-    application().run(|cx: &mut App| {
-        // §13: embedded-шрифт с кириллицей (PT Sans, OFL) — без системных.
-        let fonts = [
-            Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Regular.ttf").as_slice()),
-            Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Bold.ttf").as_slice()),
-        ];
-        if let Err(e) = cx.text_system().add_fonts(fonts.into()) {
-            eprintln!("не удалось загрузить шрифты: {e:#}");
+    // Keyring-resume (ФР-01): входили раньше — экран входа пропускаем.
+    let mut tcfg = TransportConfig::new(config.host.clone());
+    if let Some(login) = &config.last_login {
+        if let Some(token) =
+            ld2_core::secrets::get_token_with_timeout(&config.host, login, Duration::from_secs(1))
+        {
+            tcfg.refresh_token = Some(token);
+            tracing::info!("keyring: resume-токен найден ({login})");
         }
+    }
+    let (tx, rx) = mpsc::unbounded_channel();
+    let transport = transport::spawn(tcfg, tx);
 
-        let bounds = Bounds::centered(None, size(px(640.0), px(480.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some("ld2 (gpui)".into()),
+    // НФР «Обновления»: проверка GitHub Releases в фоне (не блокирует).
+    let (update_tx, update_rx) = std::sync::mpsc::channel();
+    ld2_core::update_check::spawn_check(update_tx);
+
+    let mut app_store = AppStore::new();
+    // НФР §8/ФР-19: лимит истории чата — из конфига.
+    app_store.chat_limit = config.chat_limit;
+
+    // M11.5: тема/шрифт/масштаб Ely ↔ config (ФР-19, §13, НФР min 12px).
+    let theme_light = config.theme == "light";
+    let font_scale = config.font_scale;
+
+    let shell = Shell {
+        store: app_store,
+        config,
+        config_store: store,
+        lang,
+        transport,
+        ingress: rx,
+        update_rx,
+    };
+
+    // D16/M11.1: gpui-pre 0.3.10 + ассеты Ely (шрифты Inter/JetBrains Mono,
+    // Lucide-иконки, PLEX для svg-рендерера) — `init` грузит их через AssetSource.
+    application()
+        .with_assets(Assets)
+        // macOS по умолчанию QuitMode::Explicit — закрытие окна не
+        // завершало процесс (баг M11); LastWindowClosed — на всех ОС.
+        .with_quit_mode(QuitMode::LastWindowClosed)
+        .run(move |cx: &mut App| {
+            // Ely: шрифты+тема+Tab-биндинги — «call once, first» (README).
+            ely::init(cx).expect("Ely init");
+            // Тема из config (ФР-19): без фейда при старте.
+            Theme::set_mode_now(if theme_light { Mode::Light } else { Mode::Dark }, cx);
+            // §13: PT Sans — основной шрифт Ely-компонентов (кириллица embedded);
+            // масштаб — НФР «размер шрифта» (min 12px применяет сам Ely).
+            {
+                let theme = cx.global_mut::<Theme>();
+                theme.font_family = "PT Sans".into();
+                theme.font_scale = font_scale;
+            }
+            cx.refresh_windows();
+
+            // §13: embedded-шрифт с кириллицей (PT Sans, OFL) — без системных.
+            let fonts = [
+                Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Regular.ttf").as_slice()),
+                Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Bold.ttf").as_slice()),
+            ];
+            if let Err(e) = cx.text_system().add_fonts(fonts.into()) {
+                tracing::warn!("не удалось загрузить шрифты: {e:#}");
+            }
+
+            let root = cx.new(|cx| Root::new(cx, shell));
+
+            // Навигация мира (ФР-03) по хоткеям из config.toml (ФР-19) —
+            // логика в Root::handle_keystroke (модулю main поля Root не видны).
+            let nav_root = root.clone();
+            cx.observe_keystrokes(move |ev, window, cx| {
+                nav_root.update(cx, |root, cx| {
+                    root.handle_keystroke(&ev.keystroke, window, cx);
+                });
+            })
+            .detach();
+
+            // Фоновый цикл: опрос транспорта с idle-backoff (НФР §8).
+            let poller = root.clone();
+            cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+                let mut delay = Duration::from_millis(50);
+                loop {
+                    cx.background_executor().timer(delay).await;
+                    delay = poller.update(cx, |root, cx| root.tick(cx));
+                }
+            })
+            .detach();
+
+            let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    titlebar: Some(gpui::TitlebarOptions {
+                        title: Some("Likedimion".into()),
+                        ..Default::default()
+                    }),
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
-                }),
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| {
-                cx.new(|_| LoginSpike {
-                    version: env!("CARGO_PKG_VERSION").into(),
-                })
-            },
-        )
-        .expect("окно");
-        cx.activate(true);
-    });
+                },
+                move |_, _| root.clone(),
+            )
+            .expect("окно");
+            cx.activate(true);
+        });
+    Ok(())
 }

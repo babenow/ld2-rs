@@ -343,7 +343,7 @@ fn delete_modal(
                     };
                     match ctx.transport.send(&cmd) {
                         Ok(_) => {
-                            ctx.store.on_delete_sent();
+                            ctx.store.on_delete_sent(id);
                             close = true;
                         }
                         Err(e) => ctx.store.notice = Some(format!("нет связи: {e}")),

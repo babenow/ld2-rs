@@ -223,9 +223,11 @@ async fn char_slot_limit_comes_from_config() {
     // Список отражает лимит
     let seq = c.send("cmd/char.list", json!({})).await;
     let ack = c.ack(seq).await;
+    let chars = ack["payload"]["characters"].as_array().expect("list");
+    assert_eq!(chars.len(), 3);
     assert_eq!(
-        ack["payload"]["characters"].as_array().expect("list").len(),
-        3
+        chars[0]["profile"], "warrior",
+        "profile из char.create в списке (ADR-005)"
     );
 }
 
@@ -1008,6 +1010,10 @@ async fn m8_two_accounts_do_not_clobber_each_other() {
             .collect()
     };
     assert_eq!(names(&start_a), vec!["Ким"], "аккаунт demo → только c1");
+    assert_eq!(
+        start_a["characters"][0]["profile"], "warrior",
+        "profile в session.start (ADR-005)"
+    );
     assert_eq!(names(&start_b), vec!["Астра"], "аккаунт demo2 → только c2");
 
     let snap_a = a.select().await;
@@ -1259,4 +1265,27 @@ async fn m8_trade_mirrored_versioned_exchange_two_clients() {
     let removed_a = a.wait(|v| v["type"] == "evt/item/removed").await;
     assert_eq!(removed_a["payload"]["uid"], "m_1");
     assert_eq!(removed_a["payload"]["reason"], "traded", "§8 ItemRemoved");
+}
+
+#[tokio::test]
+async fn created_char_profile_in_list() {
+    let url = start_server(Chaos::disabled()).await;
+    let mut c = Client::connect(&url).await;
+    c.login().await;
+    let seq = c
+        .send(
+            "cmd/char.create",
+            json!({ "name": "Тест", "profile": "rogue" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert!(ack["error"].is_null(), "create: {ack}");
+    let seq = c.send("cmd/char.list", json!({})).await;
+    let ack = c.ack(seq).await;
+    let chars = ack["payload"]["characters"].as_array().expect("list");
+    let created = chars
+        .iter()
+        .find(|x| x["name"] == "Тест")
+        .expect("созданный в списке");
+    assert_eq!(created["profile"], "rogue", "profile созданного персонажа");
 }

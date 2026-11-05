@@ -20,7 +20,7 @@ pub mod ui;
 
 /// Точка входа приложения (вызывается бинарником `ld2-client`).
 pub fn run() -> anyhow::Result<()> {
-    let _log_guard = init_logging()?;
+    let _log_guard = ld2_core::logging::init()?;
     tracing::info!("ld2 client v{} — старт", env!("CARGO_PKG_VERSION"));
 
     let store = config::ConfigStore::open()?;
@@ -40,22 +40,4 @@ pub fn run() -> anyhow::Result<()> {
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, cfg, store)))),
     )?;
     Ok(())
-}
-
-/// Rolling-лог в `<data_dir>/logs/ld2.log` (ТЗ НФР: логи без секретов).
-/// Возвращает guard — держать живым всё время работы приложения.
-fn init_logging() -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
-    let dirs = config::project_dirs()?;
-    let log_dir = dirs.data_dir().join("logs");
-    std::fs::create_dir_all(&log_dir)?;
-
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "ld2.log");
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .with_writer(non_blocking)
-        .init();
-    Ok(guard)
 }

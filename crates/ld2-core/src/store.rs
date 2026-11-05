@@ -228,6 +228,10 @@ pub struct AppStore {
     pub visited: Vec<VisitedLocation>,
     /// Результат `entity.info` — модалка осмотра (включая лут трупа).
     pub entity_detail: Option<serde_json::Value>,
+    /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
+    pub pending_delete: Option<PendingDelete>,
+    /// M11.7: цель текущего `char.delete` — снять карточку по ack.
+    pub deleting_char: Option<String>,
     /// Логин текущей сессии — для ключа keyring (`<host>:<login>`).
     session_login: Option<String>,
 }
@@ -235,6 +239,106 @@ pub struct AppStore {
 impl Default for AppStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Отложенное удаление персонажа (M11.7, D20/ADR-005): клиент шлёт
+/// `char.delete` по таймеру; смена экрана (вход в игру/логаут) — отмена.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingDelete {
+    pub char_id: String,
+    pub name: String,
+    /// Эпоха в секундах ([`local_epoch`]): когда уходит `char.delete`.
+    pub deadline: i64,
+}
+
+/// M11: какой всплывающий диалог активен. Приоритет и гейт экрана — здесь
+/// же их читает UI-диспетчер gpui-клиента (E2E-тест вехи M11.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dialog {
+    /// ФР-06: смерть — закрывается только серверным подтверждением.
+    Death,
+    Examine,
+    Loot,
+    PartyInvite,
+    GuildInvite,
+    Trade,
+    Item,
+    Upgrade,
+    Socket,
+    Create,
+    Delete,
+}
+
+impl AppStore {
+    /// Активный диалог (M11.2): экран персонажей — создание/удаление;
+    /// игра — смерть > осмотр > лут > группа > гильдия > сделка > предмет >
+    /// улучшение > инкрустация; вне игры/персонажей — None. `create_open` и
+    /// `delete_open` — флаги UI (Root), остальное — состояние store.
+    pub fn active_dialog(&self, create_open: bool, delete_open: bool) -> Option<Dialog> {
+        match self.screen {
+            Screen::Characters => {
+                if create_open {
+                    Some(Dialog::Create)
+                } else if delete_open {
+                    Some(Dialog::Delete)
+                } else {
+                    None
+                }
+            }
+            Screen::Game => {
+                if self.death.is_some() {
+                    Some(Dialog::Death)
+                } else if self.entity_detail.is_some() {
+                    Some(Dialog::Examine)
+                } else if self.loot_confirm.is_some() {
+                    Some(Dialog::Loot)
+                } else if self.party_invite.is_some() {
+                    Some(Dialog::PartyInvite)
+                } else if self.guild_invite.is_some() {
+                    Some(Dialog::GuildInvite)
+                } else if self.trade.is_some() {
+                    Some(Dialog::Trade)
+                } else if self.item_detail.is_some() {
+                    Some(Dialog::Item)
+                } else if self.upgrade.is_some() {
+                    Some(Dialog::Upgrade)
+                } else if self.socketing.is_some() {
+                    Some(Dialog::Socket)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// M11.7 (D20): отложить `char.delete` на `delay_s` секунд от `now`
+    /// (замещает прежнее немедленное подтверждение удаления).
+    pub fn schedule_delete(&mut self, char_id: String, name: String, now: i64, delay_s: i64) {
+        self.pending_delete = Some(PendingDelete {
+            char_id,
+            name,
+            deadline: now + delay_s,
+        });
+    }
+
+    /// M11.7: отмена (вход в игру, логаут, явный отказ — D20).
+    pub fn cancel_delete(&mut self) {
+        self.pending_delete = None;
+    }
+
+    /// M11.7: срок истёк — `Some(char_id)`, состояние снимается (одноразово).
+    pub fn tick_delete(&mut self, now: i64) -> Option<String> {
+        let due = self
+            .pending_delete
+            .as_ref()
+            .is_some_and(|p| now >= p.deadline);
+        if due {
+            self.pending_delete.take().map(|p| p.char_id)
+        } else {
+            None
+        }
     }
 }
 
@@ -282,6 +386,8 @@ impl AppStore {
             log: VecDeque::new(),
             visited: Vec::new(),
             entity_detail: None,
+            pending_delete: None,
+            deleting_char: None,
             session_login: None,
         }
     }
@@ -352,7 +458,10 @@ impl AppStore {
                 Act::Login => self.login_error = Some(msg),
                 Act::Create => self.create_error = Some(msg),
                 Act::Select => self.select_error = Some(msg),
-                Act::Delete => self.notice = Some(msg),
+                Act::Delete => {
+                    self.deleting_char = None;
+                    self.notice = Some(msg);
+                }
                 Act::Move | Act::Attack | Act::Examine => self.world_error = Some(msg),
                 Act::Invest
                 | Act::Equip
@@ -377,7 +486,15 @@ impl AppStore {
             // Успех логина подтверждён ack'ом; дальше ждём evt/session.start.
             Act::Login => {}
             Act::Select => {}
-            Act::Delete => {}
+            Act::Delete => {
+                // M11.7: ack — карточка уходит из списка (ФР-02).
+                if let Some(id) = self.deleting_char.take() {
+                    if let Some(session) = self.session.as_mut() {
+                        session.characters.retain(|c| c.id != id);
+                    }
+                }
+                self.notice = Some("Персонаж удалён".into());
+            }
             Act::Invest => {
                 // §7: ack несёт остаток пула.
                 if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
@@ -1411,9 +1528,10 @@ impl AppStore {
         self.pending = Some(Act::Select);
     }
 
-    pub fn on_delete_sent(&mut self) {
+    pub fn on_delete_sent(&mut self, char_id: &str) {
         self.notice = None;
         self.pending = Some(Act::Delete);
+        self.deleting_char = Some(char_id.to_string());
     }
 
     /// Hot-switch: вернуться к выбору персонажей БЕЗ ре-логина (ФР-02).
@@ -1605,10 +1723,156 @@ pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&s
     }
 }
 
+/// Профиль персонажа (D3: Воин/Вор/Маг — wire-значения для `char.create`).
+/// Общий для обоих клиентов (D12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Profile {
+    #[default]
+    Warrior,
+    Rogue,
+    Mage,
+}
+
+impl Profile {
+    pub fn all() -> [Profile; 3] {
+        [Profile::Warrior, Profile::Rogue, Profile::Mage]
+    }
+
+    /// Wire-значение `cmd/char.create.profile`.
+    pub fn value(self) -> &'static str {
+        match self {
+            Profile::Warrior => "warrior",
+            Profile::Rogue => "rogue",
+            Profile::Mage => "mage",
+        }
+    }
+
+    /// Локализованное название профиля.
+    pub fn label_key(self) -> crate::l10n::Key {
+        use crate::l10n::Key;
+        match self {
+            Profile::Warrior => Key::ProfileWarrior,
+            Profile::Rogue => Key::ProfileRogue,
+            Profile::Mage => Key::ProfileMage,
+        }
+    }
+}
+
+/// Заголовок преступления из конфига сервера (§5 kinds), фолбэк — kind.
+pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
+    store
+        .session
+        .as_ref()
+        .and_then(|s| s.crime.kinds.iter().find(|k| k.kind == kind))
+        .map(|k| k.title.clone())
+        .unwrap_or_else(|| kind.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ld2_mock_server::fixtures;
+
+    // ─── M11.6: E2E-тест вехи — диспетчер всплывающих диалогов ─────────────
+    // Прогон сценария: создание персонажа → мир → смерть → лут → инвайт;
+    // тот же AppStore::active_dialog читает UI-диспетчер gpui-клиента.
+
+    #[test]
+    fn dialog_dispatch_e2e() {
+        let mut s = AppStore::new();
+        // Вне игры/персонажей диалогов нет, даже с флагами UI.
+        assert_eq!(s.active_dialog(true, true), None);
+
+        // Экран персонажей: создание > удаление.
+        s.screen = Screen::Characters;
+        assert_eq!(s.active_dialog(false, false), None);
+        assert_eq!(s.active_dialog(false, true), Some(Dialog::Delete));
+        assert_eq!(s.active_dialog(true, true), Some(Dialog::Create));
+
+        // Мир: флаги персонажей не действуют.
+        s.screen = Screen::Game;
+        assert_eq!(s.active_dialog(true, false), None);
+
+        // Смерть главнее всего (ФР-06), осмотр/лут — после неё.
+        s.death = Some(
+            serde_json::from_value(serde_json::json!({
+                "victim_char": true,
+                "corpse": "c1",
+                "respawn": {"location_id": "l1", "delay_s": 0}
+            }))
+            .expect("death"),
+        );
+        s.entity_detail = Some(serde_json::json!({"entity": {"name": "x"}}));
+        s.loot_confirm = Some(("uid".into(), "Труп".into()));
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Death));
+        s.death = None;
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Examine));
+        s.entity_detail = None;
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Loot));
+        s.loot_confirm = None;
+
+        // Инвайт в группу > гильдия > сделка (ФР-14/15/16).
+        s.party_invite = Some(PartyInviteView {
+            invite_id: "i1".into(),
+            from: "p1".into(),
+            from_name: "Игрок".into(),
+        });
+        s.guild_invite = Some(GuildInviteView {
+            guild_id: "g1".into(),
+            guild_name: "Г".into(),
+            from_name: "Игрок".into(),
+        });
+        s.trade = Some(
+            serde_json::from_value(serde_json::json!({
+                "offer_id": "o1", "version": 1,
+                "you_gold": 0, "them_gold": 0,
+                "you_locked": false, "them_locked": false
+            }))
+            .expect("trade"),
+        );
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::PartyInvite));
+        s.party_invite = None;
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::GuildInvite));
+        s.guild_invite = None;
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Trade));
+        s.trade = None;
+
+        // Лист: предмет > улучшение > инкрустация (ФР-07/09/10).
+        s.item_detail = Some(serde_json::json!({"name": "x"}));
+        s.socketing = Some("staff".into());
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Item));
+        s.item_detail = None;
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Socket));
+        s.socketing = None;
+        assert_eq!(s.active_dialog(false, false), None);
+    }
+
+    // ─── M11.7: таймер удаления (D20) ──────────────────────────────────────
+
+    #[test]
+    fn deletion_timer_schedule_tick_cancel() {
+        let mut s = AppStore::new();
+        s.schedule_delete("c1".into(), "Ким".into(), 1_000, 10);
+        assert_eq!(s.tick_delete(1_005), None, "до срока — не уходит");
+        assert!(s.pending_delete.is_some());
+        assert_eq!(s.tick_delete(1_010), Some("c1".into()), "срок истёк");
+        assert!(s.pending_delete.is_none(), "одноразово");
+        assert_eq!(s.tick_delete(1_020), None, "повторный тик — пусто");
+
+        s.schedule_delete("c2".into(), "Астра".into(), 2_000, 30);
+        s.cancel_delete();
+        assert_eq!(s.tick_delete(3_000), None, "отменено — не уходит");
+        assert!(s.pending_delete.is_none());
+
+        // Новая запись замещает старую (отложенных — не больше одного).
+        s.schedule_delete("c1".into(), "Ким".into(), 3_000, 5);
+        s.schedule_delete("c2".into(), "Астра".into(), 3_000, 60);
+        assert_eq!(s.tick_delete(3_010), None, "старая заменена");
+        assert_eq!(
+            s.pending_delete.as_ref().map(|p| p.char_id.as_str()),
+            Some("c2")
+        );
+    }
 
     // ─── M8: чат (ФР-13) ───────────────────────────────────────────────────
 
@@ -2178,11 +2442,26 @@ mod tests {
     #[test]
     fn delete_ack_error_surfaces_notice() {
         let mut store = store_with_session();
-        store.on_delete_sent();
+        let id = store.session.as_ref().unwrap().characters[0].id.clone();
+        store.on_delete_sent(&id);
         let ack = ld2_protocol::Ack::error(9, None, &ErrorCode::CharLimit, "нельзя удалить");
         store.apply(IngressEvent::Ack(ack));
         assert_eq!(store.notice.as_deref(), Some("нельзя удалить"));
         assert_eq!(store.slot_usage(), (1, 8), "список не изменился");
+    }
+
+    /// M11.7: успешный ack удаления снимает карточку (ФР-02).
+    #[test]
+    fn delete_ack_removes_character_from_list() {
+        let mut store = store_with_session();
+        assert_eq!(store.slot_usage(), (1, 8), "до удаления");
+        let id = store.session.as_ref().unwrap().characters[0].id.clone();
+        store.on_delete_sent(&id);
+        let ack = ld2_protocol::Ack::ok(10, Some(1004));
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.slot_usage(), (0, 8), "карточка убрана по ack");
+        assert_eq!(store.notice.as_deref(), Some("Персонаж удалён"));
+        assert!(store.deleting_char.is_none());
     }
 
     #[test]

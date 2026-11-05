@@ -63,6 +63,7 @@ pub enum Key {
     ErrFillFields,
     // M2: персонажи (ФР-02)
     CharactersTitle,
+    CharactersEmpty,
     SlotsUsed,
     SlotsFull,
     BtnEnter,
@@ -79,6 +80,11 @@ pub enum Key {
     ProfileHint,
     DeleteTitle,
     DeleteConfirm,
+    DeleteTypeNick,
+    DeleteTimerLabel,
+    DeleteIn,
+    DeleteCancelBtn,
+    DeleteGameHint,
     Loading,
     GamePlaceholder,
     LocationLabel,
@@ -244,6 +250,9 @@ pub enum Key {
     HkPress,
     SettingsBtn,
     UpdateBadge,
+    On,
+    Off,
+    BtnClose,
     NotifyDeath,
     NotifyPartyInvite,
     NotifyGuildInvite,
@@ -261,6 +270,63 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
 
 /// Строка с подстановкой плейсхолдеров `{name}`:
 /// `tf(lang, Key::SlotsUsed, &[("used", "2"), ("limit", "8")])`.
+/// Форматирование длительности (ФР-11/НФР): «{h}ч{m}м» / «{m}м{s}с» / «{s}с».
+pub fn format_duration(lang: crate::l10n::Lang, secs: i64) -> String {
+    use crate::l10n::{tf, Key};
+    let secs = secs.max(0);
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    if h > 0 {
+        tf(
+            lang,
+            Key::DurHm,
+            &[("h", &h.to_string()), ("m", &m.to_string())],
+        )
+    } else if m > 0 {
+        tf(
+            lang,
+            Key::DurMs,
+            &[("m", &m.to_string()), ("s", &s.to_string())],
+        )
+    } else {
+        tf(lang, Key::DurS, &[("s", &s.to_string())])
+    }
+}
+
+/// Округление вверх — для обратных отсчётов статусов.
+pub fn format_duration_ceil(lang: crate::l10n::Lang, secs: i64) -> String {
+    use crate::l10n::{tf, Key};
+    if secs <= 0 {
+        return tf(lang, Key::DurS, &[("s", "0")]);
+    }
+    let mins = (secs + 59) / 60;
+    if mins >= 60 {
+        tf(
+            lang,
+            Key::DurHm,
+            &[
+                ("h", &(mins / 60).to_string()),
+                ("m", &(mins % 60).to_string()),
+            ],
+        )
+    } else {
+        tf(lang, Key::DurMs, &[("m", &mins.to_string()), ("s", "0")])
+    }
+}
+
+/// Локализованное тело OS-уведомления (D7) — используется обоими клиентами.
+pub fn notify_body(lang: Lang, kind: crate::store::NotifyKind) -> String {
+    use crate::store::NotifyKind::*;
+    let key = match kind {
+        Death => Key::NotifyDeath,
+        PartyInvite => Key::NotifyPartyInvite,
+        GuildInvite => Key::NotifyGuildInvite,
+        TradeOpen => Key::NotifyTradeOpen,
+        Whisper => Key::NotifyWhisper,
+        Upgrade => Key::NotifyUpgrade,
+    };
+    t(lang, key).to_string()
+}
+
 pub fn tf(lang: Lang, key: Key, subs: &[(&str, &str)]) -> String {
     let mut s = t(lang, key).to_string();
     for (name, value) in subs {
@@ -296,6 +362,7 @@ mod tests {
         Key::StatusStopped,
         Key::ErrFillFields,
         Key::CharactersTitle,
+        Key::CharactersEmpty,
         Key::SlotsUsed,
         Key::SlotsFull,
         Key::BtnEnter,
@@ -312,6 +379,11 @@ mod tests {
         Key::ProfileHint,
         Key::DeleteTitle,
         Key::DeleteConfirm,
+        Key::DeleteTypeNick,
+        Key::DeleteTimerLabel,
+        Key::DeleteIn,
+        Key::DeleteCancelBtn,
+        Key::DeleteGameHint,
         Key::Loading,
         Key::GamePlaceholder,
         Key::LocationLabel,
@@ -469,6 +541,9 @@ mod tests {
         Key::HkPress,
         Key::SettingsBtn,
         Key::UpdateBadge,
+        Key::On,
+        Key::Off,
+        Key::BtnClose,
         Key::NotifyDeath,
         Key::NotifyPartyInvite,
         Key::NotifyGuildInvite,
