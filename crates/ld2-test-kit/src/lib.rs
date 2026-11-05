@@ -259,10 +259,11 @@ pub mod checks {
     /// переживает перезапуски).
     pub async fn register_flow(c: &mut WsClient) {
         let login = unique_login();
+        let email = unique_email();
         let seq = c
             .send(
                 "cmd/auth.register",
-                json!({ "login": login, "password": "longenough1" }),
+                json!({ "login": login, "password": "longenough1", "email": email }),
             )
             .await;
         let ack = c.ack(seq).await;
@@ -275,21 +276,60 @@ pub mod checks {
             "новый аккаунт — без персонажей: {start}"
         );
 
+        // D33/ADR-007: слабый пароль проверяется до email/занятости.
         let seq = c
             .send(
                 "cmd/auth.register",
-                json!({ "login": "other_name", "password": "short" }),
+                json!({ "login": "other_name", "password": "short", "email": unique_email() }),
             )
             .await;
         assert_eq!(c.ack(seq).await["error"]["code"], "E_WEAK_PASSWORD");
 
+        // Невалидный email → E_BAD_EMAIL (после лимитов длины).
         let seq = c
             .send(
                 "cmd/auth.register",
-                json!({ "login": login, "password": "longenough1" }),
+                json!({
+                    "login": unique_login(),
+                    "password": "longenough1",
+                    "email": "not_an_email",
+                }),
+            )
+            .await;
+        assert_eq!(c.ack(seq).await["error"]["code"], "E_BAD_EMAIL");
+
+        // Занятый логин → E_LOGIN_TAKEN.
+        let seq = c
+            .send(
+                "cmd/auth.register",
+                json!({ "login": login, "password": "longenough1", "email": unique_email() }),
             )
             .await;
         assert_eq!(c.ack(seq).await["error"]["code"], "E_LOGIN_TAKEN");
+
+        // Занятый email → E_EMAIL_TAKEN (нормализация: другой регистр).
+        let seq = c
+            .send(
+                "cmd/auth.register",
+                json!({
+                    "login": unique_login(),
+                    "password": "longenough1",
+                    "email": email.to_uppercase(),
+                }),
+            )
+            .await;
+        assert_eq!(c.ack(seq).await["error"]["code"], "E_EMAIL_TAKEN");
+    }
+
+    /// Уникальный email для прогонов (персистентная БД, D33).
+    pub fn unique_email() -> String {
+        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("время монотонно")
+            .as_nanos();
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        format!("t{nanos:x}_{n:x}@example.com")
     }
 
     /// Уникальный логин для прогонов против персистентной БД.

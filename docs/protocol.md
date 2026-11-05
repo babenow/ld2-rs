@@ -124,7 +124,7 @@
 
 ```
 connect
-  → cmd/auth.register { login, password }           → ack {payload: access_token, expires_in_s}
+  → cmd/auth.register { login, password, email }    → ack {payload: access_token, expires_in_s}
                                                   ← evt/session.start (регистрация = немедленный вход)
   → cmd/auth.login { login, password }            → ack {payload: access_token, expires_in_s}
   ← evt/session.start { config, characters[], refresh_token {token, expires_in_s} }
@@ -135,7 +135,7 @@ connect
 
 | Команда/событие | Назначение |
 |---|---|
-| `cmd/auth.register` `{login, password}` | регистрация и **немедленный вход** (ack + `session.start`, как `login`); лимиты длины — настройки сервера; пароль только по TLS/WSS |
+| `cmd/auth.register` `{login, password, email}` | регистрация и **немедленный вход** (ack + `session.start`, как `login`); **email обязателен, нормализуется (`trim` + lowercase) и уникален** (D33, ADR-007); лимиты длины — настройки сервера; пароль только по TLS/WSS |
 | `cmd/auth.login` `{login, password}` | первый вход; пароль уходит только по TLS/WSS |
 | `cmd/auth.resume` `{refresh_token}` | восстановление сессии при reconnect (вместо login) |
 | `cmd/session.refresh` | → ack с новым `access_token` (клиент трекает `expires_in_s − 60 с`) |
@@ -256,7 +256,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | Команда | Payload | Ack payload | Идемп. | Назначение |
 |---|---|---|---|---|
 | `auth.login` | `{login, password}` | `{access_token, expires_in_s}` | + | вход |
-| `auth.register` | `{login, password}` | `{access_token, expires_in_s}` | + | регистрация и немедленный вход (→ `evt/session.start`); лимиты — настройки сервера |
+| `auth.register` | `{login, password, email}` | `{access_token, expires_in_s}` | + | регистрация и немедленный вход (→ `evt/session.start`); лимиты — настройки сервера; `email` обязателен и уникален (`E_BAD_EMAIL`/`E_EMAIL_TAKEN`) |
 | `auth.resume` | `{refresh_token}` | `{access_token, expires_in_s}` | + | reconnect |
 | `auth.logout` | `{}` | `{}` | + | выход |
 | `session.refresh` | `{}` | `{access_token, expires_in_s}` | + | ротация токена |
@@ -390,6 +390,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_LOGIN_TAKEN` | логин уже занят (`auth.register`) |
 | `E_WEAK_PASSWORD` | логин/пароль короче лимитов сервера (`auth.register`) |
 | `E_REGISTER_DISABLED` | регистрация выключена настройкой сервера |
+| `E_BAD_EMAIL` | email пуст/невалиден по синтаксису (`auth.register`, D33) |
+| `E_EMAIL_TAKEN` | email уже занят другим аккаунтом (`auth.register`, D33) |
 | `E_CHAR_LIMIT` | слотов персонажей больше нет (`char_slot_limit`) |
 | `E_NAME_TAKEN` | имя занято/невалидно |
 | `E_BAD_PROFILE` | неизвестный/недоступный `profile` в `char.create` |
@@ -538,7 +540,8 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 - [ ] Всё содержимое лимитов/фич — в `evt/session.start` (§5), без «сюрпризов» в коде клиента.
 - [ ] Коды ошибок §9; локализуемый `message` по-русски; `retry_after_s` там, где есть троттлинг.
 - [ ] `cmd/auth.register`: лимиты длины из конфига (`E_WEAK_PASSWORD`), уникальность
-      (`E_LOGIN_TAKEN`), выключенный флаг (`E_REGISTER_DISABLED`), rate-limit → `E_RATE_LIMITED`.
+      (`E_LOGIN_TAKEN`), выключенный флаг (`E_REGISTER_DISABLED`), rate-limit → `E_RATE_LIMITED`;
+      email: синтаксис/нормализация (`E_BAD_EMAIL`), уникальность (`E_EMAIL_TAKEN`, D33).
 - [ ] Модель преступности §10 через конфиг `crime.*`; статусы включаются присутствием `kind` в `crime.kinds` (в моке: murderer, marauder, **thief**).
 - [ ] Мана (D4): сервер проверяет `mp` перед кастом руны (`E_NOT_ENOUGH_MP`), свитки — без маны; реген по `magic.mana` из §5.
 - [ ] Неизвестные `cmd` от клиента (старее/новее по версии) — `E_INTERNAL`/игнор по §11, без падений.

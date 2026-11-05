@@ -118,7 +118,7 @@ pub async fn in_world(ws: &str) -> (WsClient, String, String) {
     let seq = c
         .send(
             "cmd/auth.register",
-            json!({ "login": login, "password": "longenough1" }),
+            json!({ "login": login, "password": "longenough1", "email": checks::unique_email() }),
         )
         .await;
     let ack = c.ack(seq).await;

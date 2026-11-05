@@ -22,7 +22,7 @@ async fn register_login_logout_resume_flow() {
     let seq = c
         .send(
             "cmd/auth.register",
-            json!({ "login": login, "password": "longenough1" }),
+            json!({ "login": login, "password": "longenough1", "email": checks::unique_email() }),
         )
         .await;
     let ack = c.ack(seq).await;
@@ -47,7 +47,7 @@ async fn register_login_logout_resume_flow() {
     // ack, а НЕ E_LOGIN_TAKEN.
     c.send_with_seq(
         "cmd/auth.register",
-        json!({ "login": login, "password": "longenough1" }),
+        json!({ "login": login, "password": "longenough1", "email": checks::unique_email() }),
         seq,
     )
     .await;
@@ -83,7 +83,7 @@ async fn register_login_logout_resume_flow() {
     let seq = c3
         .send(
             "cmd/auth.login",
-            json!({ "login": login, "password": "longenough1" }),
+            json!({ "login": login, "password": "longenough1", "email": checks::unique_email() }),
         )
         .await;
     assert_eq!(c3.ack(seq).await["result"], "ok");
@@ -110,7 +110,7 @@ async fn credential_errors_and_register_disabled() {
     let seq = c
         .send(
             "cmd/auth.register",
-            json!({ "login": "ok_name", "password": "short" }),
+            json!({ "login": "ok_name", "password": "short", "email": checks::unique_email() }),
         )
         .await;
     assert_eq!(c.ack(seq).await["error"]["code"], "E_WEAK_PASSWORD");
@@ -119,14 +119,14 @@ async fn credential_errors_and_register_disabled() {
     let seq = c
         .send(
             "cmd/auth.register",
-            json!({ "login": taken, "password": "longenough1" }),
+            json!({ "login": taken, "password": "longenough1", "email": checks::unique_email() }),
         )
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
     let seq = c
         .send(
             "cmd/auth.register",
-            json!({ "login": taken, "password": "longenough1" }),
+            json!({ "login": taken, "password": "longenough1", "email": checks::unique_email() }),
         )
         .await;
     assert_eq!(c.ack(seq).await["error"]["code"], "E_LOGIN_TAKEN");
@@ -140,7 +140,7 @@ async fn credential_errors_and_register_disabled() {
     let seq = c2
         .send(
             "cmd/auth.register",
-            json!({ "login": checks::unique_login(), "password": "longenough1" }),
+            json!({ "login": checks::unique_login(), "password": "longenough1", "email": checks::unique_email() }),
         )
         .await;
     assert_eq!(c2.ack(seq).await["error"]["code"], "E_REGISTER_DISABLED");

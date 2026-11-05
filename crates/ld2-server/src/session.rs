@@ -279,7 +279,17 @@ impl Session {
                 ),
             )];
         }
-        // Сначала дешёвая проверка занятости: argon2 дорогой (защита от DoS).
+        // Email: нормализация + синтаксис (D33, ADR-007) — до любых
+        // обращений к БД (serde уже гарантировал наличие поля).
+        let email = auth::normalize_email(&cmd.email);
+        if !auth::validate_email(&email) {
+            return vec![Self::err(
+                seq,
+                ErrorCode::BadEmail,
+                "некорректный email (ожидается name@domain.tld)",
+            )];
+        }
+        // Дешёвая проверка занятости: argon2 дорогой (защита от DoS).
         match db::accounts::login_exists(&self.state.pool, &cmd.login).await {
             Ok(true) => {
                 return vec![Self::err(seq, ErrorCode::LoginTaken, "логин занят")];
@@ -290,11 +300,49 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         }
-        let hash = auth::hash_password(&cmd.password);
-        match db::accounts::create_account(&self.state.pool, &cmd.login, &hash).await {
-            Ok(Some(id)) => self.finish_login(seq, id, cmd.login).await,
-            Ok(None) => vec![Self::err(seq, ErrorCode::LoginTaken, "логин занят")],
+        match db::accounts::email_exists(&self.state.pool, &email).await {
+            Ok(true) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::EmailTaken,
+                    "email уже зарегистрирован",
+                )];
+            }
+            Ok(false) => {}
             Err(e) => {
+                warn!("ошибка БД при регистрации: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let hash = auth::hash_password(&cmd.password);
+        match db::accounts::create_account(&self.state.pool, &cmd.login, &hash, &email).await {
+            Ok(Some(id)) => self.finish_login(seq, id, cmd.login).await,
+            // Гонка двух регистраций: UNIQUE решает — логин или email занят.
+            Ok(None) => {
+                if db::accounts::email_exists(&self.state.pool, &email)
+                    .await
+                    .unwrap_or(false)
+                {
+                    vec![Self::err(
+                        seq,
+                        ErrorCode::EmailTaken,
+                        "email уже зарегистрирован",
+                    )]
+                } else {
+                    vec![Self::err(seq, ErrorCode::LoginTaken, "логин занят")]
+                }
+            }
+            Err(e) => {
+                // Частичный UNIQUE по email (не по login) тоже возможен в гонке.
+                if let sqlx::Error::Database(db_err) = &e {
+                    if db_err.constraint() == Some("accounts_email_idx") {
+                        return vec![Self::err(
+                            seq,
+                            ErrorCode::EmailTaken,
+                            "email уже зарегистрирован",
+                        )];
+                    }
+                }
                 warn!("ошибка БД при регистрации: {e}");
                 vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
             }

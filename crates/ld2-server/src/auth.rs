@@ -40,6 +40,45 @@ pub fn verify_password(plain: &str, phc: &str) -> bool {
         .unwrap_or(false)
 }
 
+// ─── email (D33, ADR-007) ────────────────────────────────────────────────────
+
+/// Нормализация email: `trim` + lowercase — применяется перед вставью и
+/// сравнением (UNIQUE действует по нормализованному значению, D33).
+pub fn normalize_email(raw: &str) -> String {
+    raw.trim().to_lowercase()
+}
+
+/// Синтаксис email (D33): непуст, ≤254, ровно один `@`, локальная часть
+/// непуста, домен содержит точку и не начинается/не заканчивается ею,
+/// без пробелов. Сервер — источник истины (D34), проверка намеренно
+/// консервативная: форматную валидацию защищает от опечаток, а не
+/// заменяет проверку почтового сервиса (MX — вне v1, ADR-007).
+pub fn validate_email(normalized: &str) -> bool {
+    if normalized.is_empty() || normalized.len() > 254 {
+        return false;
+    }
+    if normalized
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control())
+    {
+        return false;
+    }
+    let Some((local, domain)) = normalized.split_once('@') else {
+        return false;
+    };
+    // Ровно один '@': второй @ остаётся в домене → домен с '@' невалиден.
+    if local.is_empty() || domain.contains('@') {
+        return false;
+    }
+    if !domain.contains('.') || domain.starts_with('.') || domain.ends_with('.') {
+        return false;
+    }
+    if domain.contains("..") || local.ends_with('.') || local.starts_with('.') {
+        return false;
+    }
+    true
+}
+
 // ─── токены (D29) ────────────────────────────────────────────────────────────
 
 /// Новый opaque-токен: 32 байта CSPRNG → hex; второе значение — sha256-хэш
@@ -200,6 +239,50 @@ pub(crate) fn severity(s: &str) -> Severity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn email_normalize_trims_and_lowercases() {
+        assert_eq!(
+            normalize_email("  Player@Example.COM "),
+            "player@example.com"
+        );
+        assert_eq!(normalize_email("A@B.RU"), "a@b.ru");
+    }
+
+    #[test]
+    fn email_validation_accepts_normal_addresses() {
+        for ok in [
+            "player@example.com",
+            "a@b.co",
+            "first.last+tag@sub.example.org",
+            "пользователь@пример.рф", // IDN допустим по UTF-8 (сервер не транслитерирует)
+        ] {
+            assert!(validate_email(&normalize_email(ok)), "валиден: {ok}");
+        }
+    }
+
+    #[test]
+    fn email_validation_rejects_broken_addresses() {
+        for bad in [
+            "",
+            "   ",
+            "no-at-sign.example.com",
+            "@example.com",
+            "player@",
+            "two@@example.com",
+            "player@example", // домен без точки
+            "player@.example.com",
+            "player@example.",
+            "player@example..com",
+            "play er@example.com", // пробел
+        ] {
+            let normalized = normalize_email(bad);
+            assert!(!validate_email(&normalized), "невалиден: {bad:?}");
+        }
+        // Длина >254.
+        let too_long = format!("{}@e.com", "x".repeat(250));
+        assert!(!validate_email(&normalize_email(&too_long)), "длина >254");
+    }
 
     #[test]
     fn password_hash_round_trip() {

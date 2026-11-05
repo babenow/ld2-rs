@@ -24,7 +24,7 @@ async fn registered(ws: &str) -> (WsClient, String) {
     let seq = c
         .send(
             "cmd/auth.register",
-            json!({ "login": login, "password": "longenough1" }),
+            json!({ "login": login, "password": "longenough1", "email": checks::unique_email() }),
         )
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
@@ -125,7 +125,7 @@ async fn character_lifecycle_persists_across_reconnect() {
     let seq = c2
         .send(
             "cmd/auth.login",
-            json!({ "login": login, "password": "longenough1" }),
+            json!({ "login": login, "password": "longenough1", "email": checks::unique_email() }),
         )
         .await;
     assert_eq!(c2.ack(seq).await["result"], "ok");
