@@ -560,6 +560,16 @@ async fn craft_finish_step(state: &SharedState) {
         }
     };
     for (job_id, char_id, recipe_id, total_qty, xp) in jobs {
+        // Джоб НЕ забираем, пока персонаж офлайн: событие ушло бы в
+        // непривязанный канал и результат потерялся бы (D27 — рестарт не
+        // теряет: материалы списаны, выдача ждёт входа игрока).
+        let online = {
+            let world = state.world.lock().expect("мир");
+            world.is_bound(&char_id)
+        };
+        if !online {
+            continue;
+        }
         if !crate::db::craft::take_job(&state.pool, job_id)
             .await
             .unwrap_or(false)
