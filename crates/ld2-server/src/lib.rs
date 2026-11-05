@@ -2,10 +2,11 @@
 //!
 //! M12.1 (P0): каркас — конфиг с валидацией (fail-fast), пул sqlx + миграции
 //! (`migrations/*.sql`, D24), `/healthz`, graceful shutdown. M12.2 (P1):
-//! WS-транспорт §1/§2 (seq-окно, ack), авторизация и персонажи; поведение
-//! контракта — `docs/protocol.md`.
+//! WS-транспорт §1/§2 (seq-окно, ack), авторизация (ADR-006) и персонажи;
+//! поведение контракта — `docs/protocol.md`.
 
 pub mod app;
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod session;

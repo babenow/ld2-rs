@@ -7,11 +7,14 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+argon2 = "0.6"
 axum.workspace = true
 futures-util.workspace = true
+getrandom = "0.3"
 ld2-protocol = { path = "../ld2-protocol" }
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 sqlx.workspace = true
 thiserror.workspace = true
 time = { version = "0.3", features = ["formatting"] }

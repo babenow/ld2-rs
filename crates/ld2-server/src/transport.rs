@@ -4,7 +4,7 @@
 use std::net::SocketAddr;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::ConnectInfo;
+use axum::extract::{ConnectInfo, State};
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use ld2_protocol::envelope::{Envelope, MAX_MESSAGE_BYTES};
@@ -12,22 +12,24 @@ use serde_json::json;
 use tracing::{info, warn};
 
 use crate::session::{Out, Session};
+use crate::state::SharedState;
 
 /// `GET /ws`: подключение (§1). Subprotocol `ld2.v1` — рекомендация §1:
 /// если клиент его запросил — отвечаем им, иначе принимаем без него.
 pub async fn ws_handler(
+    State(state): State<SharedState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     upgrade
         .protocols(["ld2.v1"])
-        .on_upgrade(move |socket| run_connection(socket, peer))
+        .on_upgrade(move |socket| run_connection(socket, peer, state))
 }
 
-async fn run_connection(socket: WebSocket, peer: SocketAddr) {
+async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState) {
     info!("ws: подключился {peer}");
     let (mut sink, mut reader) = socket.split();
-    let mut session = Session::new();
+    let mut session = Session::new(state, peer);
     loop {
         let msg = match reader.next().await {
             Some(Ok(msg)) => msg,

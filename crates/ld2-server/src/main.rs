@@ -144,10 +144,7 @@ async fn run() -> Result<(), AppError> {
         cfg.world.tick_hz,
         cfg.world.autosave_interval_s
     );
-    let state = std::sync::Arc::new(ld2_server::state::AppState {
-        config: std::sync::Arc::new(cfg),
-        pool,
-    });
+    let state = std::sync::Arc::new(ld2_server::state::AppState::new(cfg, pool));
     ld2_server::app::serve(listener, state).await?;
     Ok(())
 }

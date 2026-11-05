@@ -3,6 +3,11 @@
 //! Миграции — `migrations/*.sql` (sqlx): применяются при каждом подключении,
 //! отслеживаются в `_sqlx_migrations` — повторный запуск идемпотентен.
 //! Сборка не требует DATABASE_URL (runtime-запросы, без `query!`).
+//!
+//! Репозитории по доменам: [`accounts`] — аккаунты и токены (M12.2);
+//! репозиторий персонажей появится в фазе «персонажи».
+
+pub mod accounts;
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;

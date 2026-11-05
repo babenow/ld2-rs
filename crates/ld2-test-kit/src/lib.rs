@@ -291,7 +291,7 @@ pub mod checks {
     }
 
     /// Уникальный логин для прогонов против персистентной БД.
-    fn unique_login() -> String {
+    pub fn unique_login() -> String {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("время монотонно")
