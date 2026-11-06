@@ -48,6 +48,9 @@ impl RegisterIssue {
 pub struct RegisterError {
     pub field: RegisterField,
     pub message: String,
+    /// `retry_after_s` из ack (§9, `E_RATE_LIMITED`) — UI показывает
+    /// обратный отсчёт ключом `ErrRetryAfter`.
+    pub retry_after_s: Option<u64>,
 }
 
 /// Маппинг серверного кода ошибки → поле формы (D35: одна таблица в ядре;
