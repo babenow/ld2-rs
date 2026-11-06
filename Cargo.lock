@@ -4063,7 +4063,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
 name = "ld2-client"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "ely-gpui-component",
@@ -4080,7 +4080,7 @@ dependencies = [
 
 [[package]]
 name = "ld2-core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -4104,7 +4104,7 @@ dependencies = [
 
 [[package]]
 name = "ld2-protocol"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4113,7 +4113,7 @@ dependencies = [
 
 [[package]]
 name = "ld2-server"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4138,7 +4138,7 @@ dependencies = [
 
 [[package]]
 name = "ld2-test-kit"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "futures-util",
  "ld2-protocol",
