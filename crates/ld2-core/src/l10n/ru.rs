@@ -236,5 +236,9 @@ pub(super) fn t(key: Key) -> &'static str {
         NotifyTradeOpen => "С кем-то открыта сделка",
         NotifyWhisper => "Новое сообщение (шёпот)",
         NotifyUpgrade => "Улучшение завершено",
+        // M14 F1: шапка окна
+        BadgePvp => "PvP",
+        BadgeSafe => "Безопасно",
+        HeaderMenu => "Меню",
     }
 }
