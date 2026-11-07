@@ -63,6 +63,8 @@ impl SocialState {
     }
 
     /// Пригласить игрока в группу приглашающего; `Err` — причина отказа.
+    /// M14: группы у приглашающего ещё нет — она создаётся автоматически
+    /// (окно группы при этом скрыто, пока участников <2).
     pub fn invite(
         &mut self,
         from_id: &str,
@@ -72,14 +74,19 @@ impl SocialState {
         if from_id == to_id {
             return Err(InviteError::SelfInvite);
         }
-        let party_id = self
-            .char_party
-            .get(from_id)
-            .cloned()
-            .ok_or(InviteError::NoParty)?;
+        // Отказы адресата — ДО автосоздания (иначе при отказе остаётся
+        // пустая группа приглашающего).
         if self.char_party.contains_key(to_id) {
             return Err(InviteError::TargetInParty);
         }
+        let party_id = match self.char_party.get(from_id).cloned() {
+            Some(id) => id,
+            None => {
+                self.create_party(from_id, from_name)
+                    .ok_or(InviteError::NoParty)?
+                    .id
+            }
+        };
         // Одно активное приглашение на адресата (перезапись).
         self.invites.retain(|_, i| i.to != to_id);
         self.invite_seq += 1;

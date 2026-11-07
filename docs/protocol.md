@@ -396,6 +396,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_NAME_TAKEN` | имя занято/невалидно |
 | `E_BAD_PROFILE` | неизвестный/недоступный `profile` в `char.create` |
 | `E_NOT_IN_LOCATION` | команда вне контекста локации |
+| `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `char.xp_invest`, M14) |
 | `E_EXIT_BLOCKED` | выход закрыт (завал, требование, правило) |
 | `E_TARGET_GONE` | цели нет (умерла/ушла) |
 | `E_NOT_IN_COMBAT` / `E_IN_COMBAT` | бой разрешён/запрещён здесь |
@@ -542,6 +543,8 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 - [ ] `cmd/auth.register`: лимиты длины из конфига (`E_WEAK_PASSWORD`), уникальность
       (`E_LOGIN_TAKEN`), выключенный флаг (`E_REGISTER_DISABLED`), rate-limit → `E_RATE_LIMITED`;
       email: синтаксис/нормализация (`E_BAD_EMAIL`), уникальность (`E_EMAIL_TAKEN`, D33).
+- [ ] `craft.learn`/`char.xp_invest`: тренер в локации (`E_NO_TRAINER`), оплата золотом/предметами
+      по цене тренера (`E_INGREDIENTS`, M14); кулдаун/гейт `skill.use` (`E_COOLDOWN`/`E_REQUIREMENT_ATTR`).
 - [ ] Модель преступности §10 через конфиг `crime.*`; статусы включаются присутствием `kind` в `crime.kinds` (в моке: murderer, marauder, **thief**).
 - [ ] Мана (D4): сервер проверяет `mp` перед кастом руны (`E_NOT_ENOUGH_MP`), свитки — без маны; реген по `magic.mana` из §5.
 - [ ] Неизвестные `cmd` от клиента (старее/новее по версии) — `E_INTERNAL`/игнор по §11, без падений.

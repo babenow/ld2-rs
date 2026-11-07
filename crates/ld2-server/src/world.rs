@@ -100,6 +100,8 @@ pub struct World {
     char_names: HashMap<String, String>,
     /// char_id → текущая локация (мишени агрессивных мобов).
     char_loc: HashMap<String, String>,
+    /// (char_id, skill_id) → до какого момента кулдаун (epoch-с, §4/M14).
+    ability_cd: HashMap<(String, String), i64>,
     corpse_seq: u64,
 }
 
@@ -161,6 +163,7 @@ impl World {
         self.char_names.remove(char_id);
         self.char_loc.remove(char_id);
         self.combat.remove(char_id);
+        self.ability_cd.retain(|(c, _), _| c != char_id);
     }
 
     /// Позиция персонажа в мире (мишени мобов, бой по локации).
@@ -232,6 +235,20 @@ impl World {
         if let Some(combat) = self.combat.get_mut(char_id) {
             combat.next_attack_at = at_ms;
         }
+    }
+
+    /// Кулдаун активной способности: `Some(остаток_с)` (M14, §4).
+    pub fn ability_cooldown_left(&self, char_id: &str, skill: &str, now_s: i64) -> Option<i64> {
+        let until = self
+            .ability_cd
+            .get(&(char_id.to_string(), skill.to_string()))?;
+        Some(*until - now_s).filter(|left| *left > 0)
+    }
+
+    /// Записать кулдаун активной способности (until = now + cooldown_s).
+    pub fn set_ability_cooldown(&mut self, char_id: &str, skill: &str, until_s: i64) {
+        self.ability_cd
+            .insert((char_id.to_string(), skill.to_string()), until_s);
     }
 
     /// Момент следующей атаки моба (агрессия по тику).

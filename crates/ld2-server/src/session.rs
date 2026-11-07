@@ -10,14 +10,14 @@ use ld2_protocol::cmd::{
     ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
     GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip,
     ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, PartyAccept, PartyInvite,
-    PartyKick, SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen,
-    TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
+    PartyKick, SkillUse, SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel,
+    TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
-    CastSource, CharStats, CharXp, CombatHit, CombatKind, CraftProfession, CrimeAdded, EntityHp,
-    ItemAdded, ItemRemovalReason, ItemRemoved, ItemState, LocationChanged, MagicCast, Pong,
-    StateSnapshot, TimeSync, UpgradeResult,
+    CastSource, CharStats, CharXp, CombatCooldown, CombatHit, CombatKind, CraftProfession,
+    CrimeAdded, EntityHp, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState, LocationChanged,
+    MagicCast, Pong, StateSnapshot, TimeSync, UpgradeResult,
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, EquipMap, Hp,
@@ -33,6 +33,7 @@ use crate::auth;
 use crate::content::ContentInput;
 use crate::db;
 use crate::state::SharedState;
+use crate::trainers;
 
 /// Исходящее сообщение соединения (как в моке: ack → события → опц. закрытие).
 #[derive(Debug)]
@@ -195,6 +196,8 @@ impl Session {
             // улучшение предметов (ФР-10, M12.5c)
             "cmd/upgrade.preview" => self.upgrade_preview(env, seq).await,
             "cmd/upgrade.start" => self.upgrade_start(env, seq).await,
+            // активные способности (§4, M14)
+            "cmd/skill.use" => self.skill_use(env, seq).await,
             // магия и сокеты (ФР-09, M12.5b)
             "cmd/magic.rune_cast" => self.magic_rune_cast(env, seq).await,
             "cmd/magic.scroll_cast" => self.magic_scroll_cast(env, seq).await,
@@ -1351,6 +1354,195 @@ impl Session {
         }
     }
 
+    /// `cmd/skill.use` (§7, skills.md §4, M14): активная способность.
+    /// v1 — `power_strike`: ×`damage_mult` от `base_damage` по цели-мобу,
+    /// серверный кулдаун (`skills.active.<id>.cooldown_s`) → `E_COOLDOWN`,
+    /// гейт навыка → `E_REQUIREMENT_ATTR`, нет цели → `E_TARGET_GONE`.
+    async fn skill_use(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<SkillUse>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let Some(active) = self.state.config.skills.active.get(&cmd.skill_id).cloned() else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                format!("неизвестная способность: {}", cmd.skill_id),
+            )];
+        };
+        // Локация до заимствования pool (current_location требует &mut self).
+        let location = self.current_location(&char_id).await;
+        let pool = &self.state.pool;
+        let now_s = crate::time::now_epoch();
+
+        // Гейт по навыку (§4: открывается рангом).
+        if let Some(req) = active.req_skill.as_deref() {
+            let rank = db::skills::learned_one(pool, &char_id, req)
+                .await
+                .ok()
+                .flatten()
+                .map(|(_, r)| r)
+                .unwrap_or(0);
+            if rank < active.req_rank as i32 {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::RequirementAttr,
+                    format!(
+                        "нужен навык «{req}» ранг {} (сейчас {rank})",
+                        active.req_rank
+                    ),
+                )];
+            }
+        }
+
+        // Цель: моб в локации персонажа (одна цель — §4).
+        let Some(target) = cmd.target_id.as_deref() else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "цель не указана")];
+        };
+        {
+            let world = self.state.world.lock().expect("мир");
+            let alive = world.mob_location(target).as_deref() == Some(location.as_str());
+            if !alive {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "цель недоступна")];
+            }
+        }
+
+        // Серверный кулдаун (§4/E_COOLDOWN + retry_after_s) — после гейта
+        // и цели: запрос валидируется целиком, потом — rate-limit.
+        {
+            let world = self.state.world.lock().expect("мир");
+            if let Some(left) = world.ability_cooldown_left(&char_id, &cmd.skill_id, now_s) {
+                let mut ack = Ack::error(
+                    seq,
+                    None,
+                    &ErrorCode::Cooldown,
+                    "способность перезаряжается",
+                );
+                if let Some(err) = ack.error.as_mut() {
+                    err.retry_after_s = Some(left.max(1) as u64);
+                }
+                return vec![out_ack(ack)];
+            }
+        }
+
+        // Урон: base_damage × множитель способности (§4: ×1.8).
+        let damage = ((self.state.config.gameplay.combat.base_damage as f64) * active.damage_mult)
+            .round()
+            .max(1.0) as i64;
+
+        // Кулдаун фиксируем ДО удара (защита от двойного нажатия в одном тике).
+        let until = now_s + active.cooldown_s.ceil() as i64;
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.set_ability_cooldown(&char_id, &cmd.skill_id, until);
+        }
+
+        let by_name = self
+            .char
+            .as_ref()
+            .map(|c| c.name.clone())
+            .or_else(|| {
+                let world = self.state.world.lock().expect("мир");
+                world.char_name(&char_id)
+            })
+            .unwrap_or_default();
+
+        let mut mine: Vec<Out> = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        mine.push(out_event(
+            "evt/combat/cooldown",
+            None,
+            serde_json::to_value(CombatCooldown {
+                skill_id: Some(cmd.skill_id.clone()),
+                until_epoch: until,
+            })
+            .unwrap_or_default(),
+        ));
+
+        // Урон цели: hit/hp → при смерти: despawn/труп/бой окончен + XP.
+        let mut others: Vec<(String, String)> = Vec::new();
+        let mut xp_work: Option<crate::tick::KillXp> = None;
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            if let Some(hp) = world.damage_mob(target, damage) {
+                let mob_name = world
+                    .mob(target)
+                    .map(|m| m.name.clone())
+                    .unwrap_or_default();
+                let mob_max = world.mob_max_hp(target);
+                let hit = CombatHit {
+                    source: char_id.clone(),
+                    source_name: by_name.clone(),
+                    target: target.to_string(),
+                    target_name: mob_name,
+                    kind: CombatKind::Skill,
+                    amount: damage,
+                    crit: false,
+                    miss: false,
+                    text: format!("«{}»: −{damage}", cmd.skill_id),
+                    extra: Default::default(),
+                };
+                for addr in world.chars_in_location(&location) {
+                    push_evt(&mut others, &addr, "evt/combat/hit", &hit);
+                    push_evt(
+                        &mut others,
+                        &addr,
+                        "evt/entity/hp",
+                        &EntityHp {
+                            entity_id: target.to_string(),
+                            hp: Hp {
+                                cur: hp,
+                                max: mob_max,
+                            },
+                        },
+                    );
+                }
+                if hp == 0 {
+                    let skills_cfg = &self.state.config.skills;
+                    xp_work = crate::tick::mob_kill_effects(
+                        &mut world,
+                        &mut others,
+                        target,
+                        &location,
+                        &char_id,
+                        skills_cfg,
+                    );
+                }
+            }
+        }
+        for (addr, text) in others {
+            if text.is_empty() {
+                continue;
+            }
+            if addr == char_id {
+                mine.push(Out::Text(text));
+            } else {
+                let world = self.state.world.lock().expect("мир");
+                world.send_to_char(&addr, text);
+            }
+        }
+        if let Some(work) = &xp_work {
+            if let Some(text) = crate::tick::grant_kill_xp(&self.state, work).await {
+                mine.push(Out::Text(text));
+            }
+            if let Some(target) = &work.target {
+                for (_, text) in
+                    crate::tick::quest_kill_progress(&self.state, &char_id, target).await
+                {
+                    if !text.is_empty() {
+                        mine.push(Out::Text(text));
+                    }
+                }
+            }
+        }
+        mine
+    }
+
     /// `cmd/char.xp_invest` (§7): вложение XP-пула в навык — транзакционно
     /// (D27), потолок/гейты — skills.md §2.2 (конфиг `[skills]`, D25).
     async fn char_xp_invest(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
@@ -1367,6 +1559,8 @@ impl Session {
         if cmd.points <= 0 {
             return vec![Self::err(seq, ErrorCode::XpPool, "points должен быть > 0")];
         }
+        // Локация до заимствования pool (current_location требует &mut self).
+        let location = self.current_location(&char_id).await;
         let pool = &self.state.pool;
         match db::skills::content_skill(pool, &cmd.skill_id).await {
             Ok(Some(_)) => {}
@@ -1378,6 +1572,28 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         }
+        // M14: вложение/повышение — только у тренера по навыку в локации.
+        let Some(price) = (match trainers::trainer_price(
+            pool,
+            &location,
+            trainers::TrainerKind::Skill,
+            &cmd.skill_id,
+        )
+        .await
+        {
+            Ok(price) => price,
+            Err(e) => {
+                warn!("xp_invest (тренер): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoTrainer,
+                "здесь нет тренера по этому навыку",
+            )];
+        };
+
         let pool_now = match db::skills::xp_pool(pool, &char_id).await {
             Ok(p) => p,
             Err(e) => {
@@ -1399,6 +1615,9 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
+        // Ранг на момент запроса — по нему считается цена (вложение не
+        // дорожает от того, что само же повышает ранг).
+        let rank_at_start = rank;
         let cfg = &self.state.config.skills;
         xp += cmd.points;
         loop {
@@ -1436,6 +1655,13 @@ impl Session {
             xp -= need;
             rank = next;
         }
+        // M14: оплата тренеру — ПОСЛЕ всех проверок (тренер → пул → ранг →
+        // гейт атрибутов): за неудачное вложение золото не списывается.
+        let gold = trainers::gold_price(&price, i64::from(rank_at_start));
+        if let Err(e) = self.pay_trainer(seq, &char_id, &price, gold).await {
+            return vec![e];
+        }
+
         let pool_left = pool_now - cmd.points;
         if let Err(e) =
             db::skills::invest_tx(pool, &char_id, &cmd.skill_id, xp, rank, pool_left).await
@@ -3322,6 +3548,94 @@ impl Session {
         result
     }
 
+    /// Оплата тренеру (M14): сначала **проверки** (золото и предметы),
+    /// потом списания — иначе отказ «нет предмета» съедал бы уже
+    /// уплаченное золото. Нехватка → `E_INGREDIENTS` (гейт тренера и
+    /// остальные проверки выполнены до вызова).
+    async fn pay_trainer(
+        &self,
+        seq: u32,
+        char_id: &str,
+        price: &trainers::TrainerPrice,
+        gold: i64,
+    ) -> Result<(), Out> {
+        let pool = &self.state.pool;
+
+        // 1) Проверки.
+        if gold > 0 {
+            let have: i64 =
+                match sqlx::query_scalar("SELECT COALESCE(gold, 0) FROM characters WHERE id = $1")
+                    .bind(char_id)
+                    .fetch_one(pool)
+                    .await
+                {
+                    Ok(have) => have,
+                    Err(e) => {
+                        warn!("тренер (золото): {e}");
+                        return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                    }
+                };
+            if have < gold {
+                return Err(Self::err(
+                    seq,
+                    ErrorCode::Ingredients,
+                    format!("не хватает золота: {gold}"),
+                ));
+            }
+        }
+        for (item_type, need) in &price.items {
+            let have = match db::items::count_by_type(pool, char_id, item_type).await {
+                Ok(have) => have,
+                Err(e) => {
+                    warn!("тренер (предмет {item_type}): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            };
+            if have < *need {
+                return Err(Self::err(
+                    seq,
+                    ErrorCode::Ingredients,
+                    format!("нужен предмет: {item_type} ×{need} (есть {have})"),
+                ));
+            }
+        }
+
+        // 2) Списания (все проверки прошли).
+        if gold > 0 {
+            match db::characters::spend_gold(pool, char_id, gold).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("не хватает золота: {gold}"),
+                    ));
+                }
+                Err(e) => {
+                    warn!("тренер (золото): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            }
+        }
+        for (item_type, need) in &price.items {
+            match db::items::consume_by_type(pool, char_id, item_type, *need).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("нужен предмет: {item_type} ×{need}"),
+                    ));
+                }
+                Err(e) => {
+                    warn!("тренер (списание {item_type}): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// `cmd/crime.log` (§7): журнал нарушений (новые первые), limit —
     /// из payload (по умолчанию 50, максимум 500).
     async fn crime_log(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
@@ -4749,6 +5063,8 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
+        // Локация до заимствования pool (current_location требует &mut self).
+        let location = self.current_location(&char_id).await;
         let pool = &self.state.pool;
 
         let prof_type = match sqlx::query_scalar::<_, String>(
@@ -4767,6 +5083,48 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
+        // Уже изучена → идемпотентный ack без повторной оплаты (§7, M14).
+        // Профессии живут в character_professions, а не в character_skills.
+        match db::professions::learned(pool, &char_id).await {
+            Ok(rows) => {
+                if let Some((_, xp, rank)) =
+                    rows.into_iter().find(|(id, _, _)| id == &cmd.profession_id)
+                {
+                    let snapshot = self.profession_snapshot(&cmd.profession_id, xp, rank);
+                    return vec![Self::ack_payload(
+                        seq,
+                        &serde_json::json!({ "profession": snapshot }),
+                    )];
+                }
+            }
+            Err(e) => {
+                warn!("craft.learn (изученные): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+
+        // M14: обучение только у тренера в локации (E_NO_TRAINER).
+        let Some(price) = (match trainers::trainer_price(
+            pool,
+            &location,
+            trainers::TrainerKind::Profession,
+            &cmd.profession_id,
+        )
+        .await
+        {
+            Ok(price) => price,
+            Err(e) => {
+                warn!("craft.learn (тренер): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoTrainer,
+                "здесь нет тренера по этой профессии",
+            )];
+        };
+
         if prof_type == "primary" {
             let limit = i64::from(self.state.config.gameplay.profession_limit);
             match db::professions::primary_count(pool, &char_id).await {
@@ -4784,6 +5142,13 @@ impl Session {
                 }
             }
         }
+
+        // M14: оплата тренеру (новая профессия — ранг 0 → базовая цена).
+        let gold = trainers::gold_price(&price, 0);
+        if let Err(e) = self.pay_trainer(seq, &char_id, &price, gold).await {
+            return vec![e];
+        }
+
         match db::professions::learn(pool, &char_id, &cmd.profession_id).await {
             Ok(_) => {}
             Err(e) => {
@@ -5290,6 +5655,18 @@ pub(crate) fn out_event(ty: &str, state_version: Option<u64>, payload: Value) ->
         Out::Close
     } else {
         Out::Text(text)
+    }
+}
+
+/// Событие в список адресованной рассылки (адресат, текст) — планы боя/каста.
+fn push_evt<T: serde::Serialize>(
+    plan: &mut Vec<(String, String)>,
+    addr: &str,
+    ty: &str,
+    payload: &T,
+) {
+    if let Some(text) = event_payload_text(ty, payload) {
+        plan.push((addr.to_string(), text));
     }
 }
 

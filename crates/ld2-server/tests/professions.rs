@@ -50,6 +50,8 @@ async fn learn_profession_with_limit() {
         .await
     );
     let (mut c, _login, _char) = in_world(&ws).await;
+    // M14: обучение у тренера платное — даём золото (2 × 100).
+    give_gold(&mut c, 1000).await;
 
     // Вторичная профессия лимит не занимает.
     let seq = c
@@ -109,6 +111,8 @@ async fn craft_requires_profession_station_tool_and_items() {
     };
     let ws = common::start_ws_server(&db_url).await;
     let (mut c, _login, _char) = in_world(&ws).await;
+    // M14: обучение у тренера платное — даём золото (2 × 100).
+    give_gold(&mut c, 1000).await;
 
     // Рецепты доступны без профессии (красная подсветка — ФР-08).
     let seq = c.send("cmd/craft.recipes", json!({})).await;
@@ -219,6 +223,8 @@ async fn craft_job_finishes_and_survives_restart() {
     let server = common::start_server_guarded(&db_url, |_| {}).await;
     let ws = server.ws.clone();
     let (mut c, login, _char) = in_world(&ws).await;
+    // M14: обучение у тренера платное — даём золото.
+    give_gold(&mut c, 1000).await;
 
     let seq = c
         .send("cmd/craft.learn", json!({ "profession_id": "herbalist" }))

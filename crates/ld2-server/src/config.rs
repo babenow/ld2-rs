@@ -213,6 +213,27 @@ pub struct SkillsSection {
     /// Опыт за убийство (skills.md §2.3): `(base + difficulty × per)`.
     pub kill_xp_base: i64,
     pub kill_xp_per_difficulty: i64,
+    /// Активные способности `cmd/skill.use` (skills.md §4, M14):
+    /// id → параметры (кулдаун, множитель урона, гейт по навыку).
+    #[serde(default)]
+    pub active: std::collections::HashMap<String, ActiveSkill>,
+}
+
+/// Параметры активной способности (§4: открывается навыком, кулдаун,
+/// эффект) — всё в конфиге (D25).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActiveSkill {
+    /// Кулдаун, с (серверный, E_COOLDOWN + retry_after_s).
+    pub cooldown_s: f64,
+    /// Множитель урона от `gameplay.combat.base_damage` (§4: ×1.8).
+    pub damage_mult: f64,
+    /// Открывается рангом этого навыка (`E_REQUIREMENT_ATTR`); пусто — без гейта.
+    #[serde(default)]
+    pub req_skill: Option<String>,
+    /// Требуемый ранг `req_skill`.
+    #[serde(default)]
+    pub req_rank: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -438,6 +459,20 @@ impl Config {
         }
         if self.skills.kill_xp_base < 0 || self.skills.kill_xp_per_difficulty < 0 {
             out.push("skills.kill_xp_*: не может быть отрицательным".into());
+        }
+        for (id, act) in &self.skills.active {
+            if !act.cooldown_s.is_finite() || act.cooldown_s <= 0.0 {
+                out.push(format!("skills.active.{id}.cooldown_s: должен быть > 0"));
+            }
+            if act.damage_mult < 1.0 {
+                out.push(format!("skills.active.{id}.damage_mult: должен быть ≥ 1.0"));
+            }
+            if act.req_rank > self.skills.rank_max {
+                out.push(format!(
+                    "skills.active.{id}.req_rank: больше skills.rank_max ({})",
+                    self.skills.rank_max
+                ));
+            }
         }
 
         // [gameplay.combat] (M12.5)
