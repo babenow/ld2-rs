@@ -17,5 +17,6 @@ pub mod state;
 pub mod systems;
 pub mod tick;
 pub mod time;
+pub mod trainers;
 pub mod transport;
 pub mod world;

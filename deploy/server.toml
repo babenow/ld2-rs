@@ -115,6 +115,13 @@ rank_max = 30
 kill_xp_base = 8
 kill_xp_per_difficulty = 6
 
+# M14: активные способности cmd/skill.use (skills.md §4; D25)
+[skills.active.power_strike]
+cooldown_s = 8        # §4: кулдаун «Мощного удара»
+damage_mult = 1.8     # §4: ×1.8 урона
+req_skill = "sword"   # открывается: владение мечом 5
+req_rank = 5
+
 [[skills.gates]]           # ранг → требуемый атрибут (§2.2; E_REQUIREMENT_ATTR)
 rank = 10
 attr = 12

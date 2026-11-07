@@ -109,3 +109,167 @@ async fn combat_stop_ends_battle() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_NOT_IN_LOCATION", "нет боя: {ack}");
 }
+
+/// Ранг навыка напрямую в БД (гейт `power_strike`: владение мечом 5).
+async fn set_skill_rank(db_url: &str, char_id: &str, skill: &str, rank: i32) {
+    let cfg = common::test_config(db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    sqlx::query(
+        "INSERT INTO character_skills (character_id, skill_id, xp, rank) \
+         VALUES ($1, $2, 0, $3) \
+         ON CONFLICT (character_id, skill_id) DO UPDATE SET rank = EXCLUDED.rank",
+    )
+    .bind(char_id)
+    .bind(skill)
+    .bind(rank)
+    .execute(&pool)
+    .await
+    .expect("ранг");
+    pool.close().await;
+}
+
+/// `cmd/skill.use` (§4, M14): гейт навыка, урон ×1.8, серверный кулдаун
+/// `E_COOLDOWN` + `retry_after_s`, ошибки цели.
+#[tokio::test]
+async fn skill_use_power_strike_gate_damage_and_cooldown() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+
+    // 1) Гейт (§4: открывается владением мечом 5) → E_REQUIREMENT_ATTR;
+    //    проверяется раньше цели — моб в другой локации не мешает.
+    let seq = c
+        .send(
+            "cmd/skill.use",
+            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_REQUIREMENT_ATTR",
+        "гейт без ранга: {ack}"
+    );
+
+    // 2) Ранг есть → удар проходит: урон 6 × 1.8 = 10.8 → 11 (§4).
+    set_skill_rank(&db_url, &char_id, "sword", 5).await;
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    let seq = c
+        .send(
+            "cmd/skill.use",
+            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "удар");
+    let cd = c.wait_event("evt/combat/cooldown").await;
+    assert_eq!(cd["payload"]["skill_id"], "power_strike");
+    assert!(
+        cd["payload"]["until_epoch"].as_i64().unwrap_or(0) > 0,
+        "until_epoch: {cd}"
+    );
+    let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
+    assert_eq!(hit["payload"]["amount"], 11, "6 × 1.8 = 11: {hit}");
+    assert_eq!(hit["payload"]["kind"], "skill");
+    assert_eq!(hit["payload"]["target"], "m_3");
+    let hp = c
+        .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
+        .await;
+    assert_eq!(hp["payload"]["hp"]["cur"], 7, "18 − 11: {hp}");
+
+    // 3) Повтор в кулдауне → E_COOLDOWN + retry_after_s (§7).
+    let seq = c
+        .send(
+            "cmd/skill.use",
+            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_COOLDOWN",
+        "второй удар в кулдауне: {ack}"
+    );
+    assert!(
+        ack["error"]["retry_after_s"].as_u64().unwrap_or(0) >= 1,
+        "retry_after_s: {ack}"
+    );
+
+    // 4) Цель не указана / нет такой цели → E_TARGET_GONE (гейт и кулдаун
+    //    проверяются после цели — запрос валидируется целиком).
+    let seq = c
+        .send("cmd/skill.use", json!({ "skill_id": "power_strike" }))
+        .await;
+    assert_eq!(c.ack(seq).await["error"]["code"], "E_TARGET_GONE");
+    let seq = c
+        .send(
+            "cmd/skill.use",
+            json!({ "skill_id": "power_strike", "target_id": "no_such_mob" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["error"]["code"], "E_TARGET_GONE");
+}
+
+/// Добивание активной способностью: XP убийства как у обычной атаки (§2.3).
+#[tokio::test]
+async fn skill_use_power_strike_kills_and_grants_xp() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    // Короткий кулдаун — второй удар идёт сразу после ожидания перезарядки.
+    let addr = common::start_server_with(&db_url, |cfg| {
+        cfg.skills
+            .active
+            .get_mut("power_strike")
+            .expect("power_strike в конфиге")
+            .cooldown_s = 0.5;
+    })
+    .await;
+    let ws = format!("ws://{addr}/ws");
+    let (mut c, _login, char_id) = in_world(&ws).await;
+    set_skill_rank(&db_url, &char_id, "sword", 5).await;
+
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+
+    // Первый удар: 18 − 11 = 7.
+    let seq = c
+        .send(
+            "cmd/skill.use",
+            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "первый удар");
+    c.wait_event("evt/combat/cooldown").await;
+    let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
+    assert_eq!(hit["payload"]["amount"], 11, "урон: {hit}");
+
+    // Кулдаун 0.5 с → до 1 с в гранулярности epoch-секунд; ждём с запасом.
+    tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
+
+    // Второй удар добивает (11 ≥ 7) → труп + XP убийства (26 = 8 + 3×6).
+    let seq = c
+        .send(
+            "cmd/skill.use",
+            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "второй удар");
+    c.wait_event("evt/combat/cooldown").await;
+    let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
+    assert_eq!(hit["payload"]["amount"], 11, "урон добивающего: {hit}");
+    let corpse = c.wait_event("evt/corpse/created").await;
+    assert_eq!(corpse["payload"]["entity"]["kind"], "corpse");
+    let xp = c.wait_event("evt/char/xp").await;
+    assert_eq!(xp["payload"]["amount"], 26, "XP убийства: {xp}");
+    assert_eq!(
+        xp["payload"]["skill_id"], "unarmed",
+        "оружие не экипировано"
+    );
+}

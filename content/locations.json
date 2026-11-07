@@ -20,7 +20,58 @@
         {
           "id": "npc_elder",
           "kind": "npc",
-          "name": "Староста"
+          "name": "Староста",
+          "trainer": {
+            "professions": [
+              "blacksmith",
+              "alchemist",
+              "scribe",
+              "woodcarver",
+              "tailor",
+              "cook",
+              "herbalist",
+              "hunter"
+            ],
+            "skills": [
+              "sword",
+              "axe",
+              "polearm",
+              "bow",
+              "dagger",
+              "twohand",
+              "unarmed",
+              "armor_heavy",
+              "armor_light",
+              "block",
+              "shield_block",
+              "evasion",
+              "parring",
+              "m_evasion",
+              "m_armor",
+              "m_dispel",
+              "fire",
+              "frost",
+              "storm",
+              "healing",
+              "arcana",
+              "stealth",
+              "lockpicking",
+              "pickpocket",
+              "disarm",
+              "mining",
+              "woodcutting",
+              "survival",
+              "bestiary",
+              "haggle",
+              "lore",
+              "leadership"
+            ],
+            "price": {
+              "gold_base": 100,
+              "gold_per_rank": 50,
+              "items": []
+            }
+          }
         },
         {
           "id": "st_alchemy",

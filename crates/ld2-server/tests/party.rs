@@ -255,3 +255,56 @@ async fn party_decline_removes_invite() {
     let snap = b.wait_event("evt/state/snapshot").await;
     assert!(snap["payload"]["party"].is_null(), "B без группы");
 }
+
+/// M14: у приглашающего ещё нет группы — она создаётся автоматически
+/// (окно группы скрыто, пока участников < 2).
+#[tokio::test]
+async fn party_invite_autocreates_party_for_inviter() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, _, char_a) = in_world(&ws).await;
+    let (mut b, _, char_b) = second_player(&ws).await;
+
+    // A группу НЕ создавал — приглашение порождает её само.
+    let seq = a
+        .send("cmd/party.invite", json!({ "player_id": char_b }))
+        .await;
+    assert_eq!(
+        a.ack(seq).await["result"],
+        "ok",
+        "инвайт без предварительного create"
+    );
+    let invite = b.wait_event("evt/party/updated").await;
+    assert!(
+        invite["payload"]["party"].is_null(),
+        "состав B ещё не обновлён: {invite}"
+    );
+    let invite_id = invite["payload"]["invite"]["invite_id"]
+        .as_str()
+        .expect("invite_id")
+        .to_string();
+    assert_eq!(invite["payload"]["invite"]["from"], char_a);
+
+    // B принимает → группа из двух, лидер — пригласивший A.
+    let seq = b
+        .send("cmd/party.accept", json!({ "invite_id": invite_id }))
+        .await;
+    let ack = b.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "принятие: {ack}");
+    assert_eq!(ack["payload"]["party"]["leader"], char_a, "лидер — A");
+    let members = ack["payload"]["party"]["members"]
+        .as_array()
+        .expect("members");
+    assert_eq!(members.len(), 2, "автогруппа из двух: {members:?}");
+
+    // A видит состав (evt/party/updated после принятия).
+    let upd = a.wait_event("evt/party/updated").await;
+    assert_eq!(
+        upd["payload"]["party"]["members"].as_array().unwrap().len(),
+        2,
+        "A видит двоих"
+    );
+}

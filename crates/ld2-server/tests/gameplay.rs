@@ -14,6 +14,17 @@ fn xp_to_next(rank: i32) -> i64 {
     (120.0 * 1.32f64.powi(rank)).round() as i64
 }
 
+/// Начислить золото dev-сценарием (M14: обучение у тренера платное).
+async fn give_gold(c: &mut WsClient, amount: i64) {
+    let seq = c
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "global", "text": format!("/scenario gold {amount}") }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "gold {amount}");
+}
+
 async fn move_exit(c: &mut WsClient, exit_id: &str) -> serde_json::Value {
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": exit_id }))
@@ -54,6 +65,9 @@ async fn skills_invest_gate_and_cap() {
         )
         .await;
     assert_eq!(c.ack(seq).await["error"]["code"], "E_XP_POOL");
+
+    // M14: вложение платное (цена тренера, ранг 0 → базовая) — даём золото.
+    give_gold(&mut c, 1000).await;
 
     // Вложение: ack несёт pool_left, evt/char/xp несёт прогресс (§7/§8).
     let seq = c
@@ -332,7 +346,23 @@ async fn death_loses_lut_but_keeps_progress() {
     let cfg = common::test_config(&db_url, |_| {});
     let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
 
-    // «Фарм»: лут + немного прогресса.
+    // «Прогресс»: вложение XP — у тренера в деревне (M14: E_NO_TRAINER вне
+    // деревни), вложение платное (цена по рангу).
+    sqlx::query("UPDATE characters SET xp_pool = 1000 WHERE id = $1")
+        .bind(&char_id)
+        .execute(&pool)
+        .await
+        .expect("пул");
+    give_gold(&mut c, 1000).await;
+    let seq = c
+        .send(
+            "cmd/char.xp_invest",
+            json!({ "skill_id": "sword", "points": 10 }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+
+    // «Фарм»: лут в лесу.
     let ack = move_exit(&mut c, "e_north").await;
     assert_eq!(ack["result"], "ok");
     let seq = c
@@ -344,18 +374,6 @@ async fn death_loses_lut_but_keeps_progress() {
         .as_str()
         .expect("uid")
         .to_string();
-    sqlx::query("UPDATE characters SET xp_pool = 1000 WHERE id = $1")
-        .bind(&char_id)
-        .execute(&pool)
-        .await
-        .expect("пул");
-    let seq = c
-        .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
-        )
-        .await;
-    assert_eq!(c.ack(seq).await["result"], "ok");
 
     // Смерть (dev-сценарий): теряется только лут (skills.md §2.2).
     let seq = c
@@ -437,13 +455,8 @@ async fn progress_survives_restart() {
         .execute(&pool)
         .await
         .expect("пул");
-    let ack = move_exit(&mut c, "e_north").await;
-    assert_eq!(ack["result"], "ok");
-    let seq = c
-        .send("cmd/item.use", json!({ "item_uid": "loot:cor_9:0" }))
-        .await;
-    assert_eq!(c.ack(seq).await["result"], "ok");
-    c.wait_event("evt/item/added").await;
+    // Вложение — у тренера в деревне (M14), платно (цена по рангу).
+    give_gold(&mut c, 1000).await;
     let seq = c
         .send(
             "cmd/char.xp_invest",
@@ -451,6 +464,14 @@ async fn progress_survives_restart() {
         )
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
+    // Фарм в лесу — позиция должна пережить рестарт (D27).
+    let ack = move_exit(&mut c, "e_north").await;
+    assert_eq!(ack["result"], "ok");
+    let seq = c
+        .send("cmd/item.use", json!({ "item_uid": "loot:cor_9:0" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    c.wait_event("evt/item/added").await;
     drop(c);
 
     // Второй «сервер» (рестарт): состояние переживает (D27).

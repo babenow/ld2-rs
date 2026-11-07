@@ -120,6 +120,7 @@ mod tests {
             ],
             kill_xp_base: 8,
             kill_xp_per_difficulty: 6,
+            active: Default::default(),
         }
     }
 
