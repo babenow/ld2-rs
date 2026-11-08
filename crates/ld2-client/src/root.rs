@@ -23,11 +23,13 @@ mod sheet;
 mod social;
 
 use crate::palette::{palette, Palette};
+use ely::buttons::IconButton;
 use ely::feedback::{Toast, ToastViewport, Toaster};
 use ely::forms::{Choice, HotkeyInput, Input, InputEvent, PasswordInput, Slider, TextInput};
 use ely::layout::ScrollArea;
-use ely::menus::{DropdownMenu, Menu, MenuItem};
+use ely::menus::{Menu, MenuItem, OverflowMenu};
 use ely::navigation::Tabs;
+use ely::primitives::IconName;
 use ely::theme::{Mode, Theme};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
@@ -941,13 +943,20 @@ impl Root {
                     }))
                     .child(status_badge(pal, lang, &status, rtt))
                     // M14/F8: выбор языка переехал в настройки.
-                    .child(btn(
-                        cx,
-                        t(lang, Key::SettingsBtn).to_string(),
-                        if settings_open { pal.accent } else { pal.panel },
-                        pal.text,
-                        Click::ToggleSettings,
-                    ))
+                    // M14/F10: иконка вместо надписи; подложка accent
+                    // помечает открытые настройки (как прежняя кнопка).
+                    .child(
+                        div()
+                            .when(settings_open, |d| d.rounded_md().bg(rgb(pal.accent)))
+                            .child(
+                                IconButton::new("ld2-header-settings", IconName::Settings)
+                                    .tooltip(t(lang, Key::SettingsBtn))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.on_click(Click::ToggleSettings, cx);
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
                     .child(header_menu(cx, lang, in_world, before_login)),
             )
     }
@@ -1738,7 +1747,7 @@ fn header_menu(
     lang: Lang,
     in_world: bool,
     before_login: bool,
-) -> DropdownMenu {
+) -> OverflowMenu {
     let this = cx.entity();
     let mk = |label: &'static str, click: Click, enabled: bool| {
         let this = this.clone();
@@ -1755,7 +1764,11 @@ fn header_menu(
         .item(mk(t(lang, Key::BtnSwitchChar), Click::SwitchChar, in_world))
         .item(mk(t(lang, Key::BtnLogout), Click::Logout, !before_login))
         .item(mk(t(lang, Key::Exit), Click::Exit, true));
-    DropdownMenu::new("ld2-header-menu", t(lang, Key::HeaderMenu), menu)
+    // M14/F10: иконка-кнопка (⋯-механика Ely) с иконкой-меню вместо
+    // надписи; тултип локализуется существующим ключом.
+    OverflowMenu::new("ld2-header-menu", menu)
+        .icon(IconName::Menu)
+        .tooltip(t(lang, Key::HeaderMenu))
 }
 
 impl Root {
