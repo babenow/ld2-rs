@@ -52,6 +52,10 @@ pub struct Entity {
     pub was_player: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggro: Option<bool>,
+    /// Незнакомые поля (например, ссылки на лут контента) сохраняются и
+    /// не ломают десериализацию (§2.3, §11.2).
+    #[serde(flatten, default)]
+    pub extra: JsonMap,
 }
 
 /// Выход из локации; `dir` — опционное каноническое направление для хоткеев.
@@ -276,6 +280,10 @@ pub struct CharacterState {
 pub struct CharacterSummary {
     pub id: String,
     pub name: String,
+    /// Класс из `char.create` (ADR-005, аддитивно): `warrior`/`rogue`/`mage`.
+    /// Опционально: серверы без поля → UI рисует нейтральный цвет.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     pub location: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,

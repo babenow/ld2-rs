@@ -24,10 +24,22 @@ pub enum ProtocolError {
 pub enum ErrorCode {
     AuthExpired,
     BadCredentials,
+    /// Логин занят (`auth.register`, ADR-006).
+    LoginTaken,
+    /// Логин/пароль короче лимитов сервера (`auth.register`, ADR-006).
+    WeakPassword,
+    /// Регистрация выключена настройкой сервера (ADR-006).
+    RegisterDisabled,
+    /// Email пуст/невалиден по синтаксису (ADR-007, D33).
+    BadEmail,
+    /// Email уже занят другим аккаунтом (ADR-007, D33).
+    EmailTaken,
     CharLimit,
     NameTaken,
     BadProfile,
     NotInLocation,
+    /// В локации нет тренера для профессии/навыка (M14).
+    NoTrainer,
     ExitBlocked,
     TargetGone,
     NotInCombat,
@@ -67,10 +79,16 @@ impl ErrorCode {
         match self {
             Self::AuthExpired => "E_AUTH_EXPIRED",
             Self::BadCredentials => "E_BAD_CREDENTIALS",
+            Self::LoginTaken => "E_LOGIN_TAKEN",
+            Self::WeakPassword => "E_WEAK_PASSWORD",
+            Self::RegisterDisabled => "E_REGISTER_DISABLED",
+            Self::BadEmail => "E_BAD_EMAIL",
+            Self::EmailTaken => "E_EMAIL_TAKEN",
             Self::CharLimit => "E_CHAR_LIMIT",
             Self::NameTaken => "E_NAME_TAKEN",
             Self::BadProfile => "E_BAD_PROFILE",
             Self::NotInLocation => "E_NOT_IN_LOCATION",
+            Self::NoTrainer => "E_NO_TRAINER",
             Self::ExitBlocked => "E_EXIT_BLOCKED",
             Self::TargetGone => "E_TARGET_GONE",
             Self::NotInCombat => "E_NOT_IN_COMBAT",
@@ -112,10 +130,16 @@ impl FromStr for ErrorCode {
         Ok(match s {
             "E_AUTH_EXPIRED" => Self::AuthExpired,
             "E_BAD_CREDENTIALS" => Self::BadCredentials,
+            "E_LOGIN_TAKEN" => Self::LoginTaken,
+            "E_WEAK_PASSWORD" => Self::WeakPassword,
+            "E_REGISTER_DISABLED" => Self::RegisterDisabled,
+            "E_BAD_EMAIL" => Self::BadEmail,
+            "E_EMAIL_TAKEN" => Self::EmailTaken,
             "E_CHAR_LIMIT" => Self::CharLimit,
             "E_NAME_TAKEN" => Self::NameTaken,
             "E_BAD_PROFILE" => Self::BadProfile,
             "E_NOT_IN_LOCATION" => Self::NotInLocation,
+            "E_NO_TRAINER" => Self::NoTrainer,
             "E_EXIT_BLOCKED" => Self::ExitBlocked,
             "E_TARGET_GONE" => Self::TargetGone,
             "E_NOT_IN_COMBAT" => Self::NotInCombat,
@@ -158,10 +182,16 @@ mod tests {
     const DOC_CODES: &[&str] = &[
         "E_AUTH_EXPIRED",
         "E_BAD_CREDENTIALS",
+        "E_LOGIN_TAKEN",
+        "E_WEAK_PASSWORD",
+        "E_REGISTER_DISABLED",
+        "E_BAD_EMAIL",
+        "E_EMAIL_TAKEN",
         "E_CHAR_LIMIT",
         "E_NAME_TAKEN",
         "E_BAD_PROFILE",
         "E_NOT_IN_LOCATION",
+        "E_NO_TRAINER",
         "E_EXIT_BLOCKED",
         "E_TARGET_GONE",
         "E_NOT_IN_COMBAT",

@@ -124,6 +124,8 @@
 
 ```
 connect
+  → cmd/auth.register { login, password, email }    → ack {payload: access_token, expires_in_s}
+                                                  ← evt/session.start (регистрация = немедленный вход)
   → cmd/auth.login { login, password }            → ack {payload: access_token, expires_in_s}
   ← evt/session.start { config, characters[], refresh_token {token, expires_in_s} }
   → cmd/char.select { char_id }                   → ack
@@ -133,6 +135,7 @@ connect
 
 | Команда/событие | Назначение |
 |---|---|
+| `cmd/auth.register` `{login, password, email}` | регистрация и **немедленный вход** (ack + `session.start`, как `login`); **email обязателен, нормализуется (`trim` + lowercase) и уникален** (D33, ADR-007); лимиты длины — настройки сервера; пароль только по TLS/WSS |
 | `cmd/auth.login` `{login, password}` | первый вход; пароль уходит только по TLS/WSS |
 | `cmd/auth.resume` `{refresh_token}` | восстановление сессии при reconnect (вместо login) |
 | `cmd/session.refresh` | → ack с новым `access_token` (клиент трекает `expires_in_s − 60 с`) |
@@ -177,11 +180,15 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "characters": [
-    { "id": "c1", "name": "Ким", "location": "Черный лес",
+    { "id": "c1", "name": "Ким", "profile": "warrior", "location": "Черный лес",
       "summary": "Навыки: меч 3, аркана 1", "crime": ["murderer"], "online": true }
   ]
 }
 ```
+
+`profile` в `characters[]` — опционально (аддитивно, ADR-005): класс из
+`char.create` (`warrior`/`rogue`/`mage`) для цвета ника на экране выбора;
+сервер без поля валиден — клиент рисует нейтрально.
 
 - `kinds` — расширяемый список видов статусов; клиент рендерит любые `kind` через title/severity, незнакомые — generic.
 - `min_client` (string|null) — если не `null` и версия приложения меньше → экран «Требуется обновление», вход блокируется.
@@ -208,7 +215,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "hp": { "cur": 30, "max": 55 },           // у npc/corpse может отсутствовать
   "tags": ["marauder"],                     // любые игровые теги-статусы
   "was_player": true,                       // только для corpse — труп игрока (!!)
-  "aggro": false }
+  "aggro": false,
+  "…": "…" }                                // расширимые поля (extra) сохраняются, §11.2
 
 // Exit
 { "id": "e_north", "label": "тропа на север", "dir": "north" }   // dir — опционально
@@ -248,6 +256,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | Команда | Payload | Ack payload | Идемп. | Назначение |
 |---|---|---|---|---|
 | `auth.login` | `{login, password}` | `{access_token, expires_in_s}` | + | вход |
+| `auth.register` | `{login, password, email}` | `{access_token, expires_in_s}` | + | регистрация и немедленный вход (→ `evt/session.start`); лимиты — настройки сервера; `email` обязателен и уникален (`E_BAD_EMAIL`/`E_EMAIL_TAKEN`) |
 | `auth.resume` | `{refresh_token}` | `{access_token, expires_in_s}` | + | reconnect |
 | `auth.logout` | `{}` | `{}` | + | выход |
 | `session.refresh` | `{}` | `{access_token, expires_in_s}` | + | ротация токена |
@@ -378,10 +387,16 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 |---|---|
 | `E_AUTH_EXPIRED` | access/refresh истёк → экран входа |
 | `E_BAD_CREDENTIALS` | неверный логин/пароль |
+| `E_LOGIN_TAKEN` | логин уже занят (`auth.register`) |
+| `E_WEAK_PASSWORD` | логин/пароль короче лимитов сервера (`auth.register`) |
+| `E_REGISTER_DISABLED` | регистрация выключена настройкой сервера |
+| `E_BAD_EMAIL` | email пуст/невалиден по синтаксису (`auth.register`, D33) |
+| `E_EMAIL_TAKEN` | email уже занят другим аккаунтом (`auth.register`, D33) |
 | `E_CHAR_LIMIT` | слотов персонажей больше нет (`char_slot_limit`) |
 | `E_NAME_TAKEN` | имя занято/невалидно |
 | `E_BAD_PROFILE` | неизвестный/недоступный `profile` в `char.create` |
 | `E_NOT_IN_LOCATION` | команда вне контекста локации |
+| `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `char.xp_invest`, M14) |
 | `E_EXIT_BLOCKED` | выход закрыт (завал, требование, правило) |
 | `E_TARGET_GONE` | цели нет (умерла/ушла) |
 | `E_NOT_IN_COMBAT` / `E_IN_COMBAT` | бой разрешён/запрещён здесь |
@@ -525,6 +540,11 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 - [ ] `ts` = ISO-8601, игровая истина времени — epoch-секунды; `time.sync` отвечает.
 - [ ] Всё содержимое лимитов/фич — в `evt/session.start` (§5), без «сюрпризов» в коде клиента.
 - [ ] Коды ошибок §9; локализуемый `message` по-русски; `retry_after_s` там, где есть троттлинг.
+- [ ] `cmd/auth.register`: лимиты длины из конфига (`E_WEAK_PASSWORD`), уникальность
+      (`E_LOGIN_TAKEN`), выключенный флаг (`E_REGISTER_DISABLED`), rate-limit → `E_RATE_LIMITED`;
+      email: синтаксис/нормализация (`E_BAD_EMAIL`), уникальность (`E_EMAIL_TAKEN`, D33).
+- [ ] `craft.learn`/`char.xp_invest`: тренер в локации (`E_NO_TRAINER`), оплата золотом/предметами
+      по цене тренера (`E_INGREDIENTS`, M14); кулдаун/гейт `skill.use` (`E_COOLDOWN`/`E_REQUIREMENT_ATTR`).
 - [ ] Модель преступности §10 через конфиг `crime.*`; статусы включаются присутствием `kind` в `crime.kinds` (в моке: murderer, marauder, **thief**).
 - [ ] Мана (D4): сервер проверяет `mp` перед кастом руны (`E_NOT_ENOUGH_MP`), свитки — без маны; реген по `magic.mana` из §5.
 - [ ] Неизвестные `cmd` от клиента (старее/новее по версии) — `E_INTERNAL`/игнор по §11, без падений.

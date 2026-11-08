@@ -1,0 +1,14 @@
+{
+  "quests": [
+    {
+      "id": "q_wolf_hunt",
+      "title": "Волчья беда",
+      "giver": "npc_elder",
+      "goals": [
+        { "type": "kill", "target": "m_3", "need": 1, "text": "Убить волка в Чёрном лесу" }
+      ],
+      "reward": { "xp": 100, "items": [ { "type": "potion_heal", "qty": 1 } ] },
+      "reward_label": "100 XP в пул + Зелье лечения"
+    }
+  ]
+}

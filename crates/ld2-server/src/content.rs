@@ -1,0 +1,494 @@
+//! Контент-сид (D26, M12.3/M12.4): статический мир из `world.content_dir`
+//! (JSON, версионируется в git) → PostgreSQL **идемпотентно**.
+//!
+//! Файлы каталога: `locations.json`, `skills.json`, `items.json` — все
+//! обязательны. Сверка `meta.content_version` = sha256 по каноническому
+//! дереву **всего** контента: версия не изменилась → БД не трогается
+//! вообще (ручные правки переживают перезапуск — критерий M12.3);
+//! изменилась → upsert локаций/навыков/предметов и обновление версии.
+//! Удалённые из контента сущности из БД **не** дропаются (на них могут
+//! ссылаться персонажи).
+
+use std::path::{Path, PathBuf};
+
+use ld2_protocol::types::{Entity, Exit, Requires};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use sqlx::PgPool;
+
+/// Строка content-файла: выход хранит целевую локацию (`to`) — на проводе
+/// её быть не должно (§6 [`Exit`] без `to`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentExit {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub dir: Option<String>,
+    /// Целевая локация (только БД/контент, в снапшот не попадает).
+    pub to: String,
+}
+
+impl ContentExit {
+    /// Проводной вид выхода (§6): без `to`.
+    pub fn to_wire(&self) -> Exit {
+        Exit {
+            id: self.id.clone(),
+            label: self.label.clone(),
+            dir: self.dir.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentLocation {
+    pub id: String,
+    pub name: String,
+    /// Единственная спавн-точка новых персонажей (→ `meta.spawn_location`).
+    #[serde(default)]
+    pub spawn: bool,
+    #[serde(default)]
+    pub flags: Vec<String>,
+    pub text: String,
+    #[serde(default)]
+    pub exits: Vec<ContentExit>,
+    #[serde(default)]
+    pub entities: Vec<Entity>,
+}
+
+/// Навык из `skills.json` (skills.md §3: id + имя; группа — для UI).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentSkill {
+    pub id: String,
+    pub name: String,
+    pub group: String,
+}
+
+/// Определение предмета из `items.json` (§6 `ItemSnapshot`-ядро).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentItemDef {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub name: String,
+    pub rarity: String,
+    #[serde(default)]
+    pub upgrade: i32,
+    #[serde(default)]
+    pub stats: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub requires: Option<Requires>,
+    #[serde(default)]
+    pub gold_value: i64,
+    /// Стартовое количество стака при взятии/выдаче.
+    #[serde(default)]
+    pub qty: Option<i64>,
+    /// Навык, который качается убийством этим оружием (skills.md §2.3);
+    /// `None` → `unarmed`.
+    #[serde(default)]
+    pub skill: Option<String>,
+    /// Количество сокетов (посохи, ADR-002) — создаются при вставке.
+    #[serde(default)]
+    pub sockets: u32,
+}
+
+/// Профессия из `professions.json` (skills.md §5.1: первичная/вторичная).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentProfession {
+    pub id: String,
+    pub name: String,
+    /// `primary` — занимает слот `profession_limit`; `secondary` — нет.
+    #[serde(rename = "type", default = "default_primary")]
+    pub prof_type: String,
+}
+
+fn default_primary() -> String {
+    "primary".into()
+}
+
+/// Инструмент рецепта: предмет с этим `item_type` в инвентаре (skills.md §5.4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentTool {
+    #[serde(rename = "type")]
+    pub item_type: String,
+}
+
+/// Требования рецепта (открытый объект §6: attr/skill — сервер читает).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ContentRequires {
+    #[serde(default)]
+    pub attr: std::collections::BTreeMap<String, i64>,
+    #[serde(default)]
+    pub skill: std::collections::BTreeMap<String, i64>,
+}
+
+/// Рецепт из `recipes.json` (skills.md §5.4 — payload `cmd/craft.recipes`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentRecipe {
+    pub id: String,
+    pub name: String,
+    pub profession: String,
+    #[serde(default = "one")]
+    pub rank: i32,
+    /// Станок, который должен быть в локации; `None` — без станка.
+    #[serde(default)]
+    pub station: Option<String>,
+    #[serde(default)]
+    pub tool: Option<ContentTool>,
+    #[serde(default)]
+    pub requires: ContentRequires,
+    #[serde(default)]
+    pub inputs: Vec<ContentInput>,
+    #[serde(default = "one")]
+    pub time_s: i32,
+    #[serde(default)]
+    pub xp: ContentRecipeXp,
+    pub output: ContentOutput,
+    #[serde(default)]
+    pub station_label: Option<String>,
+}
+
+fn one() -> i32 {
+    1
+}
+
+/// Ингредиент: `qty` штук с `item_type` в инвентаре.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentInput {
+    #[serde(rename = "type")]
+    pub item_type: String,
+    #[serde(default = "one_i64")]
+    pub qty: i64,
+}
+
+fn one_i64() -> i64 {
+    1
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ContentRecipeXp {
+    #[serde(default)]
+    pub profession: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentOutput {
+    #[serde(rename = "type")]
+    pub item_type: String,
+    #[serde(default = "one_i64")]
+    pub qty: i64,
+}
+
+/// Квест из `quests.json` (ФР-12).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentQuest {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub giver: Option<String>,
+    #[serde(default)]
+    pub goals: Vec<ContentGoal>,
+    #[serde(default)]
+    pub reward: ContentReward,
+    #[serde(default)]
+    pub reward_label: Option<String>,
+}
+
+/// Цель квеста: `kill <target>` — убийства сущности с данным id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentGoal {
+    #[serde(rename = "type")]
+    pub goal_type: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default = "one_i64")]
+    pub need: i64,
+    #[serde(default)]
+    pub text: String,
+}
+
+/// Награда квеста: XP в пул + предметы.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ContentReward {
+    #[serde(default)]
+    pub xp: i64,
+    #[serde(default)]
+    pub items: Vec<ContentInput>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocationsRoot {
+    locations: Vec<ContentLocation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillsRoot {
+    skills: Vec<ContentSkill>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ItemsRoot {
+    items: Vec<ContentItemDef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfessionsRoot {
+    professions: Vec<ContentProfession>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecipesRoot {
+    recipes: Vec<ContentRecipe>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuestsRoot {
+    quests: Vec<ContentQuest>,
+}
+
+/// Весь контент каталога (для версии и сида).
+#[derive(Debug, Serialize)]
+pub struct GameContent {
+    locations: Vec<ContentLocation>,
+    skills: Vec<ContentSkill>,
+    items: Vec<ContentItemDef>,
+    professions: Vec<ContentProfession>,
+    recipes: Vec<ContentRecipe>,
+    quests: Vec<ContentQuest>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ContentError {
+    #[error("контент: не удалось прочитать {0}: {1}")]
+    Io(PathBuf, std::io::Error),
+    #[error("контент: некорректный JSON {0}: {1}")]
+    Json(PathBuf, serde_json::Error),
+    #[error("контент: {0}")]
+    Db(#[from] sqlx::Error),
+    #[error("контент: в {0} нет ни одной локации")]
+    Empty(PathBuf),
+}
+
+/// Результат сида: что показать в логе старта.
+#[derive(Debug)]
+pub struct SeedReport {
+    /// sha256-версия содержимого каталога.
+    pub version: String,
+    /// `false` — версия не изменилась, БД не трогалась.
+    pub applied: bool,
+}
+
+/// Сид контента в PostgreSQL (D26). Вызывается при старте сервера.
+pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, ContentError> {
+    let content = load(dir.as_ref())?;
+    let version = content_version(&content)?;
+
+    let current: Option<String> =
+        sqlx::query_scalar("SELECT value FROM meta WHERE key = 'content_version'")
+            .fetch_optional(pool)
+            .await?;
+    if current.as_deref() == Some(version.as_str()) {
+        return Ok(SeedReport {
+            version,
+            applied: false,
+        });
+    }
+
+    let spawn = content
+        .locations
+        .iter()
+        .find(|l| l.spawn)
+        .map(|l| l.id.clone());
+
+    let mut tx = pool.begin().await?;
+    for loc in &content.locations {
+        let exits = serde_json::to_value(&loc.exits).unwrap_or_default();
+        let entities = serde_json::to_value(&loc.entities).unwrap_or_default();
+        sqlx::query(
+            "INSERT INTO locations (id, name, flags, text, exits, entities) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (id) DO UPDATE SET \
+               name = EXCLUDED.name, flags = EXCLUDED.flags, text = EXCLUDED.text, \
+               exits = EXCLUDED.exits, entities = EXCLUDED.entities",
+        )
+        .bind(&loc.id)
+        .bind(&loc.name)
+        .bind(&loc.flags)
+        .bind(&loc.text)
+        .bind(exits)
+        .bind(entities)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for skill in &content.skills {
+        sqlx::query(
+            "INSERT INTO skills (id, name, skill_group) VALUES ($1, $2, $3) \
+             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, \
+               skill_group = EXCLUDED.skill_group",
+        )
+        .bind(&skill.id)
+        .bind(&skill.name)
+        .bind(&skill.group)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for item in &content.items {
+        let stats = serde_json::Value::Object(item.stats.clone());
+        let requires = serde_json::to_value(&item.requires).unwrap_or(serde_json::Value::Null);
+        sqlx::query(
+            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             ON CONFLICT (id) DO UPDATE SET \
+               item_type = EXCLUDED.item_type, name = EXCLUDED.name, rarity = EXCLUDED.rarity, \
+               upgrade = EXCLUDED.upgrade, stats = EXCLUDED.stats, requires = EXCLUDED.requires, \
+               gold_value = EXCLUDED.gold_value, qty = EXCLUDED.qty, skill = EXCLUDED.skill, \
+               sockets = EXCLUDED.sockets",
+        )
+        .bind(&item.id)
+        .bind(&item.item_type)
+        .bind(&item.name)
+        .bind(&item.rarity)
+        .bind(item.upgrade)
+        .bind(stats)
+        .bind(requires)
+        .bind(item.gold_value)
+        .bind(item.qty.unwrap_or(1))
+        .bind(&item.skill)
+        .bind(i64::from(item.sockets))
+        .execute(&mut *tx)
+        .await?;
+    }
+    for prof in &content.professions {
+        sqlx::query(
+            "INSERT INTO professions (id, name, prof_type) VALUES ($1, $2, $3) \
+             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, \
+               prof_type = EXCLUDED.prof_type",
+        )
+        .bind(&prof.id)
+        .bind(&prof.name)
+        .bind(&prof.prof_type)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for recipe in &content.recipes {
+        let requires = serde_json::to_value(&recipe.requires).unwrap_or_default();
+        let inputs = serde_json::to_value(&recipe.inputs).unwrap_or_default();
+        sqlx::query(
+            "INSERT INTO recipes (id, name, profession, rank, station, tool_type, requires, \
+               inputs, time_s, xp_profession, output_type, output_qty, station_label) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+             ON CONFLICT (id) DO UPDATE SET \
+               name = EXCLUDED.name, profession = EXCLUDED.profession, rank = EXCLUDED.rank, \
+               station = EXCLUDED.station, tool_type = EXCLUDED.tool_type, \
+               requires = EXCLUDED.requires, inputs = EXCLUDED.inputs, \
+               time_s = EXCLUDED.time_s, xp_profession = EXCLUDED.xp_profession, \
+               output_type = EXCLUDED.output_type, output_qty = EXCLUDED.output_qty, \
+               station_label = EXCLUDED.station_label",
+        )
+        .bind(&recipe.id)
+        .bind(&recipe.name)
+        .bind(&recipe.profession)
+        .bind(recipe.rank)
+        .bind(&recipe.station)
+        .bind(recipe.tool.as_ref().map(|t| t.item_type.as_str()))
+        .bind(requires)
+        .bind(inputs)
+        .bind(recipe.time_s)
+        .bind(recipe.xp.profession)
+        .bind(&recipe.output.item_type)
+        .bind(recipe.output.qty)
+        .bind(&recipe.station_label)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for quest in &content.quests {
+        let goals = serde_json::to_value(&quest.goals).unwrap_or_default();
+        let reward = serde_json::to_value(&quest.reward).unwrap_or_default();
+        sqlx::query(
+            "INSERT INTO quests (id, title, giver, goals, reward, reward_label) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, giver = EXCLUDED.giver, \
+               goals = EXCLUDED.goals, reward = EXCLUDED.reward, \
+               reward_label = EXCLUDED.reward_label",
+        )
+        .bind(&quest.id)
+        .bind(&quest.title)
+        .bind(&quest.giver)
+        .bind(goals)
+        .bind(reward)
+        .bind(&quest.reward_label)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if let Some(spawn) = &spawn {
+        sqlx::query(
+            "INSERT INTO meta (key, value) VALUES ('spawn_location', $1) \
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(spawn)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO meta (key, value) VALUES ('content_version', $1) \
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+    )
+    .bind(&version)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    if spawn.is_none() {
+        tracing::warn!("в контенте нет локации со spawn: true — новые персонажи без спавна");
+    }
+    Ok(SeedReport {
+        version,
+        applied: true,
+    })
+}
+
+/// Загрузка трёх обязательных файлов каталога.
+fn load(dir: &Path) -> Result<GameContent, ContentError> {
+    let read = |name: &str| -> Result<String, ContentError> {
+        let path = dir.join(name);
+        std::fs::read_to_string(&path).map_err(|e| ContentError::Io(path, e))
+    };
+
+    let locations: LocationsRoot = serde_json::from_str(&read("locations.json")?)
+        .map_err(|e| ContentError::Json(dir.join("locations.json"), e))?;
+    let skills: SkillsRoot = serde_json::from_str(&read("skills.json")?)
+        .map_err(|e| ContentError::Json(dir.join("skills.json"), e))?;
+    let items: ItemsRoot = serde_json::from_str(&read("items.json")?)
+        .map_err(|e| ContentError::Json(dir.join("items.json"), e))?;
+    let professions: ProfessionsRoot = serde_json::from_str(&read("professions.json")?)
+        .map_err(|e| ContentError::Json(dir.join("professions.json"), e))?;
+    let recipes: RecipesRoot = serde_json::from_str(&read("recipes.json")?)
+        .map_err(|e| ContentError::Json(dir.join("recipes.json"), e))?;
+    let quests: QuestsRoot = serde_json::from_str(&read("quests.json")?)
+        .map_err(|e| ContentError::Json(dir.join("quests.json"), e))?;
+
+    if locations.locations.is_empty() {
+        return Err(ContentError::Empty(dir.to_path_buf()));
+    }
+    Ok(GameContent {
+        locations: locations.locations,
+        skills: skills.skills,
+        items: items.items,
+        professions: professions.professions,
+        recipes: recipes.recipes,
+        quests: quests.quests,
+    })
+}
+
+/// Версия контента: sha256 от канонического дерева **всего** контента
+/// (неизменное содержимое → неизменная версия независимо от имён файлов).
+fn content_version(content: &GameContent) -> Result<String, ContentError> {
+    let canonical = serde_json::to_string(content)
+        .map_err(|e| ContentError::Json(PathBuf::from("<canonical>"), e))?;
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}

@@ -1,0 +1,63 @@
+{
+  "recipes": [
+    {
+      "id": "rec_potion_heal",
+      "name": "Зелье лечения",
+      "profession": "alchemist",
+      "rank": 1,
+      "station": "alchemy_table",
+      "tool": { "type": "flask" },
+      "requires": {},
+      "inputs": [ { "type": "herb", "qty": 2 } ],
+      "time_s": 3,
+      "xp": { "profession": 65 },
+      "output": { "type": "potion_heal", "qty": 1 },
+      "station_label": "Алхимический стол (деревня)"
+    },
+    {
+      "id": "rec_staff_oak",
+      "name": "Дубовый посох",
+      "profession": "woodcarver",
+      "rank": 1,
+      "station": "workbench",
+      "tool": { "type": "chisel" },
+      "requires": {},
+      "inputs": [ { "type": "wood_oak", "qty": 3 } ],
+      "time_s": 5,
+      "xp": { "profession": 65 },
+      "output": { "type": "staff_apprentice", "qty": 1 },
+      "station_label": "Верстак (деревня)"
+    },
+    {
+      "id": "rec_scroll_frost",
+      "name": "Свиток мороза",
+      "profession": "scribe",
+      "rank": 1,
+      "station": "scribe_table",
+      "tool": { "type": "quill" },
+      "requires": {},
+      "inputs": [
+        { "type": "parchment", "qty": 1 },
+        { "type": "ink", "qty": 1 }
+      ],
+      "time_s": 4,
+      "xp": { "profession": 65 },
+      "output": { "type": "scroll_frost", "qty": 1 },
+      "station_label": "Стол начертателя (деревня)"
+    },
+    {
+      "id": "rec_herb_bundle",
+      "name": "Травяной сбор",
+      "profession": "herbalist",
+      "rank": 1,
+      "station": null,
+      "tool": null,
+      "requires": {},
+      "inputs": [],
+      "time_s": 2,
+      "xp": { "profession": 40 },
+      "output": { "type": "herb", "qty": 2 },
+      "station_label": "Сбор в поле"
+    }
+  ]
+}

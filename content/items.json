@@ -1,0 +1,139 @@
+{
+  "items": [
+    {
+      "id": "dagger_knife",
+      "type": "weapon",
+      "name": "Кинжал",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "dmg": "2..4"
+      },
+      "gold_value": 35,
+      "skill": "dagger"
+    },
+    {
+      "id": "potion_heal",
+      "type": "potion",
+      "name": "Зелье лечения",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "heal": 30
+      },
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "staff_apprentice",
+      "type": "staff",
+      "name": "Посох подмастерья",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "magic": 2
+      },
+      "gold_value": 60,
+      "sockets": 2
+    },
+    {
+      "id": "rune_fire",
+      "type": "rune",
+      "name": "Руна огня",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "spell": "fire_dart",
+        "damage": 12,
+        "school": "fire",
+        "charges": 7,
+        "max": 10
+      },
+      "gold_value": 40
+    },
+    {
+      "id": "scroll_frost",
+      "type": "scroll",
+      "name": "Свиток мороза",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "spell": "frost_bolt",
+        "damage": 9,
+        "school": "frost"
+      },
+      "gold_value": 30,
+      "qty": 1
+    },
+    {
+      "id": "herb",
+      "type": "herb",
+      "name": "Трава",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 2,
+      "qty": 1
+    },
+    {
+      "id": "wood_oak",
+      "type": "wood_oak",
+      "name": "Дубовое бревно",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 4,
+      "qty": 1
+    },
+    {
+      "id": "parchment",
+      "type": "parchment",
+      "name": "Пергамент",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
+      "id": "ink",
+      "type": "ink",
+      "name": "Чернила",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
+      "id": "tool_flask",
+      "type": "flask",
+      "name": "Колба",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "tool_chisel",
+      "type": "chisel",
+      "name": "Резец",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "tool_quill",
+      "type": "quill",
+      "name": "Перо",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    }
+  ]
+}
