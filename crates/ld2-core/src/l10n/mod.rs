@@ -283,6 +283,8 @@ pub enum Key {
     HotbarCdShort,
     // M14 F3: инвентарь/скроллы
     InventoryEmpty,
+    // M14 F7: свободная прокрутка лога
+    LogNewLines,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -594,6 +596,7 @@ mod tests {
         Key::HotbarCooldown,
         Key::HotbarCdShort,
         Key::InventoryEmpty,
+        Key::LogNewLines,
     ];
 
     #[test]
