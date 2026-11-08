@@ -6,8 +6,8 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, rgba, AnyElement, App, Context, Div, DragMoveEvent, EmptyView,
-    Entity, Focusable, Hsla, KeyDownEvent, MouseButton, Render, ScrollHandle, SharedString, Window,
+    div, prelude::*, px, rgb, AnyElement, App, Context, Div, EmptyView, Entity, Focusable, Hsla,
+    MouseButton, Render, ScrollHandle, SharedString, Window,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -32,6 +32,7 @@ use ely::forms::{
 use ely::layout::ScrollArea;
 use ely::menus::{Menu, MenuItem, OverflowMenu};
 use ely::navigation::Tabs;
+use ely::overlays::Dialog;
 use ely::primitives::IconName;
 use ely::theme::{Mode, Theme};
 
@@ -47,9 +48,9 @@ pub(crate) enum LogTab {
     Chat,
 }
 
-/// M14/F14: перетаскивание диалога настроек за заголовок (payload drag).
+/// M14/F15: перетаскивание окна за TitleBar (payload drag gpui).
 #[derive(Debug)]
-struct SettingsDrag;
+struct TitlebarDrag;
 
 /// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +77,6 @@ pub(crate) enum Click {
     /// M14/F8: выбор языка в настройках («ru»/«en»).
     Lang(&'static str),
     ToggleSettings,
-    CloseSettings,
     Theme(&'static str),
     ChatLimit(i64),
     /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
@@ -183,10 +183,6 @@ pub struct Root {
     host_editing: bool,
     /// M14/F14: какой ColorPicker раскрыт под свотчем (id строки).
     color_picker_open: Option<&'static str>,
-    /// Смещение диалога настроек от центра (px) — drag.
-    settings_delta: (f32, f32),
-    /// Смещение указателя внутри заголовка в момент захвата (px).
-    settings_drag_offset: Option<(f32, f32)>,
     /// Длина лога на прошлой отрисовке — чтобы приклеивать вниз только
     /// при изменении (M14/F13: лог всегда промотан вниз).
     journal_seen: usize,
@@ -246,8 +242,6 @@ impl Root {
             settings_scroll: ScrollHandle::new(),
             host_editing: false,
             color_picker_open: None,
-            settings_delta: (0.0, 0.0),
-            settings_drag_offset: None,
             journal_seen: 0,
             last_chat_len: 0,
             party_collapsed,
@@ -750,7 +744,6 @@ impl Root {
                     input.update(cx, |i, cx| i.set_text(host.clone(), cx));
                 }
             }
-            Click::CloseSettings => self.close_settings(),
             Click::Theme(theme) => {
                 self.config.theme = theme.to_string();
                 // M11.5: тема Ely переключается вместе с config (ФР-19).
@@ -925,10 +918,64 @@ impl Root {
 
     // ── элементы ───────────────────────────────────────────────────────────
 
+    /// M14/F15: **TitleBar** — своя верхняя строка окна (системный
+    /// скрыт): слева название приложения внутри drag-региона (тянем
+    /// окно через `Window::start_window_move`), справа — настройки и
+    /// WindowControl ✕. На macOS слева резерв под «светофор».
+    fn titlebar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let settings_open = self.settings_open;
+        let left_pad = if matches!(host_os(), gpui::OperatingSystem::Mac) {
+            76.0
+        } else {
+            12.0
+        };
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .px_3()
+            .py_1()
+            .pl(px(left_pad))
+            .bg(rgb(pal.panel))
+            .border_b_1()
+            .border_color(rgb(pal.border))
+            .child(
+                div()
+                    .id("ld2-titlebar-drag")
+                    .flex()
+                    .flex_grow_1()
+                    .items_center()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(t(lang, Key::AppTitle)),
+                    )
+                    // Drag-регион: кнопки лежат вне его и не мешают.
+                    .on_drag(TitlebarDrag, |_value, _offset, window, acx| {
+                        window.start_window_move();
+                        acx.new(|_| EmptyView)
+                    }),
+            )
+            // Настройки (перенесены из шапки).
+            .child(
+                div()
+                    .when(settings_open, |d| d.rounded_md().bg(rgb(pal.accent)))
+                    .child(
+                        IconButton::new("ld2-titlebar-settings", IconName::Settings)
+                            .tooltip(t(lang, Key::SettingsBtn))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.on_click(Click::ToggleSettings, cx);
+                                cx.notify();
+                            })),
+                    ),
+            )
+    }
+
     fn header(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let update = self.update_available.clone();
         let lang = self.lang;
-        let settings_open = self.settings_open;
         // M14/F1: статус сервера и текущая локация — прямо в шапке.
         let status = self.store.transport.clone();
         let rtt = self.store.rtt_ms;
@@ -951,22 +998,22 @@ impl Root {
             .border_b_1()
             .border_color(rgb(pal.border))
             .child(
-                // Левая группа: название игры + (в мире) локация и бейджи.
+                // Левая группа: (в мире) локация и бейджи — название
+                // приложения уехало в TitleBar (M14/F15).
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(t(lang, Key::AppTitle)),
-                    )
                     .children(location.map(|(name, flags)| {
+                        // M14/F15: название локации — зелёное, если
+                        // безопасная, красное, если небезопасная (pvp).
+                        let pvp = flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
+                        let name_color = if pvp { pal.danger } else { pal.success };
                         let mut row = div().flex().flex_row().items_center().gap_1().child(
                             div()
                                 .text_size(px(12.0))
-                                .text_color(rgb(pal.muted))
+                                .text_color(rgb(name_color))
                                 .child(format!("· {name}")),
                         );
                         for (tone, token) in location_badges(&flags) {
@@ -998,21 +1045,7 @@ impl Root {
                         )
                     }))
                     .child(status_badge(pal, lang, &status, rtt))
-                    // M14/F8: выбор языка переехал в настройки.
-                    // M14/F10: иконка вместо надписи; подложка accent
-                    // помечает открытые настройки (как прежняя кнопка).
-                    .child(
-                        div()
-                            .when(settings_open, |d| d.rounded_md().bg(rgb(pal.accent)))
-                            .child(
-                                IconButton::new("ld2-header-settings", IconName::Settings)
-                                    .tooltip(t(lang, Key::SettingsBtn))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.on_click(Click::ToggleSettings, cx);
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
+                    // M14/F15: ⚙ уехал в TitleBar (выше).
                     .child(header_menu(cx, lang, in_world, before_login)),
             )
     }
@@ -2023,127 +2056,29 @@ impl Root {
         }
     }
 
-    /// M14/F14: закрыть настройки (общий путь для Esc/scrim/✕/шапки).
+    /// M14/F15: закрыть настройки (общий путь для Esc/скрима/✕ Ely).
     fn close_settings(&mut self) {
         self.settings_open = false;
         self.color_picker_open = None;
-        self.settings_delta = (0.0, 0.0);
-        self.settings_drag_offset = None;
     }
 
-    /// M14/F14: настройки — **собственный** диалог поверх экрана:
-    /// scrim (клик/Esc/✕ закрывают) и карточка **760×560** с
-    /// перетаскиванием за заголовок (`SettingsDrag`).
-    ///
-    /// Ely `Dialog` не подошёл: его карточка жёстко
-    /// `theme.dialog_width()` = 440 px — контент обрезался, и он не
-    /// двигается.
-    pub(crate) fn settings_layer(
+    /// M14/F15: настройки — снова Ely `Dialog` (решение пользователя):
+    /// Esc/скрим/крестик закрывают, карточка центрируется с анимацией;
+    /// тело карточки скроллится самим Dialog'ом (440 px — контент
+    /// адаптируется, фикс-размер больше не нужен).
+    pub(crate) fn settings_dialog(
         &mut self,
-        window: &mut Window,
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
         if !self.settings_open {
             return None;
         }
-        let lang = self.lang;
-        // Центр окна + накопленное смещение перетаскивания.
-        let (w, h) = (760.0, 560.0);
-        let viewport = window.viewport_size();
-        let base_x = ((f32::from(viewport.width) - w) / 2.0).max(0.0);
-        let base_y = ((f32::from(viewport.height) - h) / 2.0).max(0.0);
-        let left = base_x + self.settings_delta.0;
-        let top = base_y + self.settings_delta.1;
-
-        let title = t(lang, Key::SettingsTitle).to_string();
-        let content = self.settings_content(cx, pal);
-        let titlebar = {
-            let drag_this = cx.entity();
-            div()
-                .id("ld2-settings-titlebar")
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .cursor_pointer()
-                .child(
-                    div()
-                        .flex_grow_1()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_size(px(16.0))
-                        .child(title),
-                )
-                .child(btn(cx, "✕", pal.panel, pal.text, Click::CloseSettings))
-                // Захват: запоминаем смещение указателя внутри заголовка
-                // (конструктор on_drag получает offset от gpui).
-                .on_drag(SettingsDrag, move |_value, offset, _window, acx| {
-                    drag_this.update(acx, |root, cx| {
-                        root.settings_drag_offset =
-                            Some((f32::from(offset.x), f32::from(offset.y)));
-                        cx.notify();
-                    });
-                    acx.new(|_| EmptyView)
-                })
-                .on_drag_move(cx.listener(
-                    move |root, event: &DragMoveEvent<SettingsDrag>, window, cx| {
-                        let Some(offset) = root.settings_drag_offset else {
-                            return;
-                        };
-                        let position = event.event.position;
-                        let viewport = window.viewport_size();
-                        let base_x = ((f32::from(viewport.width) - w) / 2.0).max(0.0);
-                        let base_y = ((f32::from(viewport.height) - h) / 2.0).max(0.0);
-                        root.settings_delta.0 = f32::from(position.x) - offset.0 - base_x;
-                        root.settings_delta.1 = f32::from(position.y) - offset.1 - base_y;
-                        cx.notify();
-                    },
-                ))
-        };
-        let card = div()
-            .id("ld2-settings-card")
-            .absolute()
-            .left(px(left))
-            .top(px(top))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .w(px(w))
-            .h(px(h))
-            .p(px(16.0))
-            .rounded(px(12.0))
-            .bg(rgb(pal.panel))
-            .border_1()
-            .border_color(rgb(pal.border))
-            .child(titlebar)
-            .child(content);
-
+        let title = t(self.lang, Key::SettingsTitle).to_string();
+        let close = self.dismiss(cx, |root| root.close_settings());
         Some(
-            div()
-                .id("ld2-settings-layer")
-                .size_full()
-                .relative()
-                .on_key_down(cx.listener(|root, event: &KeyDownEvent, _window, cx| {
-                    if event.keystroke.key == "escape" {
-                        cx.stop_propagation();
-                        root.close_settings();
-                        cx.notify();
-                    }
-                }))
-                .child(
-                    div()
-                        .id("ld2-settings-scrim")
-                        .size_full()
-                        .bg(rgba(0x99000000))
-                        .on_mouse_up(
-                            MouseButton::Left,
-                            cx.listener(|root, _, _, cx| {
-                                root.close_settings();
-                                cx.notify();
-                            }),
-                        ),
-                )
-                .child(card)
+            Dialog::new("ld2-settings", title, close)
+                .child(self.settings_content(cx, pal))
                 .into_any_element(),
         )
     }
@@ -2207,6 +2142,7 @@ impl Render for Root {
             .flex_col()
             .bg(rgb(pal.bg))
             .text_color(rgb(pal.text))
+            .child(self.titlebar(cx, &pal))
             .child(self.header(cx, &pal))
             .child(
                 // Экран — на остаток высоты между шапкой и статус-баром:
@@ -2225,9 +2161,7 @@ impl Render for Root {
             // M11.2: всплывающий диалог поверх контента (скрим + панель).
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
-            .when_some(self.settings_layer(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
+            .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
             // M11.4: всплывающие тосты (notice → Ely Toast).
             .child(ToastViewport::new("ld2-toasts", &self.toaster))
     }

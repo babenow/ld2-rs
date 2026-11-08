@@ -123,8 +123,14 @@ fn main() -> anyhow::Result<()> {
                 WindowOptions {
                     titlebar: Some(gpui::TitlebarOptions {
                         title: Some("Likedimion".into()),
+                        // M14/F15: системный тайтлбар скрыт — рисуем
+                        // свой (название + ⚙ + WindowControl ✕).
+                        appears_transparent: true,
                         ..Default::default()
                     }),
+                    // M14/F15: приложение само перетаскивает окно
+                    // (Window::start_window_move из drag-региона).
+                    app_owns_titlebar_drag: true,
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     // M14/F2: минимум окна — 960×640 (ТЗ: компоновка
                     // трёх колонок не должна схлопываться).

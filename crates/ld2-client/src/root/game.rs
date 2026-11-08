@@ -337,10 +337,15 @@ impl Root {
     // ── центр: локация, выходы, сущности ──────────────────────────────────
 
     fn location_block(&mut self, pal: &Palette, loc: &LocationSnapshot) -> Div {
+        // M14/F15: название локации — зелёное, если безопасная,
+        // красное, если небезопасная (pvp) — как в шапке.
+        let pvp = loc.flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
+        let name_color = if pvp { pal.danger } else { pal.success };
         let mut head = div().flex().flex_row().gap_2().items_center().child(
             div()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_size(px(16.0))
+                .text_color(rgb(name_color))
                 .child(loc.name.clone()),
         );
         for flag in &loc.flags {
@@ -760,8 +765,12 @@ impl Root {
         // M14/F13: лог **всегда промотан вниз** (замена свободной
         // прокрутки F7): новая строка возвращает вниз; вручную
         // поднять можно до прихода следующей строки.
+        // Фикс: весь контент — ОДИН ребёнок ScrollArea, поэтому
+        // scroll_to_item(len-1) бил в несуществующий индекс
+        // (child_bounds.get() = None → no-op). У gpui есть
+        // прямой scroll_to_bottom().
         if len != self.journal_seen && len > 0 {
-            self.journal_scroll.scroll_to_item(len - 1);
+            self.journal_scroll.scroll_to_bottom();
         }
         self.journal_seen = len;
 

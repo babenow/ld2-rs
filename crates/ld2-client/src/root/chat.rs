@@ -26,7 +26,10 @@ impl Root {
         let filter = self.ti(&self.chat_filter).read(cx).text().to_lowercase();
         let reply_to = self.store.last_whisper_from.clone();
 
-        let mut panel = div().flex().flex_col().gap_1();
+        // M14/fix: панель тянется на остаток блока журнала — история
+        // забирает свободное место, строка ввода прижата к низу чата
+        // (без flex_grow_1 панель жила по контенту и ввод «висел»).
+        let mut panel = div().flex().flex_col().gap_1().flex_grow_1().min_h_0();
 
         // ── вкладки каналов (ФР-13): Tabs Ely + фильтр ──
         let choices: Vec<Choice> = CHAT_CHANNELS
@@ -79,10 +82,12 @@ impl Root {
         let color = channel_color(&active, dark);
         // M11.4: stick-to-bottom — новая строка доскроливается вниз
         // (ScrollHandle + ScrollArea; egui-паритет ФР-13).
+        // Фикс M14: история — один ребёнок ScrollArea, поэтому
+        // прямой scroll_to_bottom (по индексу был бы no-op).
         if messages.len() != self.last_chat_len {
             self.last_chat_len = messages.len();
             if !messages.is_empty() {
-                self.chat_scroll.scroll_to_item(messages.len() - 1);
+                self.chat_scroll.scroll_to_bottom();
             }
         }
         // M14/F8: размер шрифта чата из настроек (10…20 px).
