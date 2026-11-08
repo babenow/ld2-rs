@@ -138,6 +138,9 @@ impl Root {
                     .flex_col()
                     .gap_2()
                     .flex_grow_1()
+                    // Не выше остатка экрана: журнальный блок сжимается
+                    // до своего min_h, а не выдавливает колонку наружу.
+                    .min_h_0()
                     // M14/F2: описание локации — всегда первая строка.
                     .child(self.location_block(pal, &snap.location))
                     // Таргет — под описанием (перенос из левой колонки).
@@ -823,12 +826,19 @@ impl Root {
         }
 
         // Тело активной вкладки.
+        // Тело: flex-колонка, где сам ScrollArea — flex-элемент
+        // (flex_grow_1 + min_h_0): его высота тогда определяется
+        // layout'ом, а не процентом от auto-родителя — иначе
+        // `size_full()` у Ely превращается в auto, контейнер растёт
+        // по контенту и сообщения выходят за границы без прокрутки.
         let body =
             match self.log_tab {
-                LogTab::Log => div().flex_grow_1().min_h_0().child(
+                LogTab::Log => div().flex().flex_col().flex_grow_1().min_h_0().child(
                     ScrollArea::new("ld2-log-scroll")
                         .vertical()
                         .track_scroll(&self.journal_scroll)
+                        .flex_grow_1()
+                        .min_h_0()
                         .child(div().flex().flex_col().gap_1().children(
                             self.store.log.iter().map(|entry| {
                                 div()

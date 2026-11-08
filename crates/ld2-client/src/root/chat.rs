@@ -98,14 +98,23 @@ impl Root {
             history = history.child(div().text_size(px(12.0)).text_color(rgb(color)).child(line));
         }
         // M14/F7: история занимает остаток блока журнала (но не меньше
-        // прежних 120 px), чтобы ввод всегда оставался внизу.
+        // прежних 120 px), чтобы ввод всегда оставался внизу. ScrollArea
+        // — flex-элемент (а не дитя auto-высоты): иначе у Ely
+        // `size_full()` схлопывается в auto и история льётся наружу.
         panel = panel.child(
-            div().flex_grow_1().min_h(px(120.0)).child(
-                ScrollArea::new("ld2-chat-history")
-                    .vertical()
-                    .track_scroll(&self.chat_scroll)
-                    .child(history),
-            ),
+            div()
+                .flex()
+                .flex_col()
+                .flex_grow_1()
+                .min_h(px(120.0))
+                .child(
+                    ScrollArea::new("ld2-chat-history")
+                        .vertical()
+                        .track_scroll(&self.chat_scroll)
+                        .flex_grow_1()
+                        .min_h_0()
+                        .child(history),
+                ),
         );
 
         // ── ввод: Enter/кнопка, слэш-команды (ФР-13) ──
