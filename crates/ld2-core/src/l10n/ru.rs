@@ -249,5 +249,7 @@ pub(super) fn t(key: Key) -> &'static str {
         HotbarCdShort => "{s} с",
         // M14 F3: инвентарь
         InventoryEmpty => "Нет ни одного предмета",
+        // M14 F7: индикатор непросмотренных строк лога
+        LogNewLines => "▼ {n} новых",
     }
 }

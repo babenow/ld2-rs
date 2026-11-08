@@ -31,6 +31,15 @@ use ely::theme::{Mode, Theme};
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
 const RELEASE: bool = !cfg!(debug_assertions);
 
+/// M14/F7: какая вкладка активна в блоке журнала (внизу центра).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LogTab {
+    /// Мир (лог событий) — свободная прокрутка.
+    Log,
+    /// Чат: каналы + фильтр + ввод (stick-to-bottom остаётся).
+    Chat,
+}
+
 /// Что делать по клику (замыкания в listener должны быть `Fn` — действуем
 /// по копируемому перечислению).
 #[derive(Clone)]
@@ -126,13 +135,19 @@ pub struct Root {
     /// M11.4: тосты Ely (notice → всплывающее уведомление).
     toaster: Entity<Toaster>,
     last_notice: Option<String>,
-    /// M11.4: stick-to-bottom журнала и чата.
+    /// M11.4: прокрутка журнала (M14/F7 — свободная, см. `journal_*`)
+    /// и stick-to-bottom чата.
     journal_scroll: ScrollHandle,
     chat_scroll: ScrollHandle,
     /// M14/F3: обычная прокрутка вкладок листа «Навыки»/«Профессии».
     skills_scroll: ScrollHandle,
     professions_scroll: ScrollHandle,
-    last_journal_len: usize,
+    /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
+    log_tab: LogTab,
+    /// Сколько строк лога пользователь уже видел (для счётчика «новых»).
+    journal_seen: usize,
+    /// Строк лога, появившихся после ухода из нижней позиции.
+    journal_unseen: usize,
     last_chat_len: usize,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
     party_collapsed: bool,
@@ -184,7 +199,9 @@ impl Root {
             chat_scroll: ScrollHandle::new(),
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
-            last_journal_len: 0,
+            log_tab: LogTab::Log,
+            journal_seen: 0,
+            journal_unseen: 0,
             last_chat_len: 0,
             party_collapsed,
             create_name: None,

@@ -249,5 +249,7 @@ pub(super) fn t(key: Key) -> &'static str {
         HotbarCdShort => "{s}s",
         // M14 F3: inventory
         InventoryEmpty => "No items yet",
+        // M14 F7: unseen world-log lines indicator
+        LogNewLines => "▼ {n} new",
     }
 }

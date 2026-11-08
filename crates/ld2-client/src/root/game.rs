@@ -14,12 +14,14 @@ use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
 
 use crate::palette::Palette;
+use ely::forms::Choice;
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
+use ely::navigation::Tabs;
 use ely::primitives::Tooltip;
 
 use super::social::show_party;
-use super::{btn, Click, Root};
+use super::{act_btn, btn, Click, LogTab, Root};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -150,8 +152,8 @@ impl Root {
                             .text_color(rgb(pal.muted))
                             .child(t(self.lang, Key::AltNavHint))
                     }))
-                    // Лог — последним (M14/F2); чат теперь слева внизу.
-                    .child(self.log_block(pal)),
+                    // Журнал/чат — последним (M14/F2/F7).
+                    .child(self.journal_block(cx, pal)),
             )
     }
 
@@ -260,9 +262,8 @@ impl Root {
                 .child(visited_list),
         );
 
-        // M14/F2: чат — внизу левой колонки (остаток высоты под него).
-        col = col.child(div().flex_grow_1());
-        col = col.child(self.chat_panel(cx, pal));
+        // M14/F7: чат переехал в блок журнала (вкладка «Чат»); место
+        // под него занимает история посещений (flex_grow_1 выше).
         col
     }
 
@@ -744,38 +745,87 @@ impl Root {
 
     // ── журнал мира (ФР-17) ───────────────────────────────────────────────
 
-    fn log_block(&mut self, pal: &Palette) -> Div {
+    /// M14/F7: блок журнала внизу центра — две вкладки **Лог | Чат**.
+    /// Лог прокручивается свободно: приклеивание вниз только когда
+    /// пользователь и так внизу ([`scroll_at_bottom`]); иначе новые
+    /// строки копятся и показываются кнопкой «▼ N новых» в шапке.
+    fn journal_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let dark = pal.bg == crate::palette::palette("dark").bg;
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(pal.panel))
-            .border_1()
-            .border_color(rgb(pal.border))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(13.0))
-                    .child(format!(
-                        "{} · {}",
-                        t(lang, Key::LogLabel),
-                        self.store.log.len()
-                    )),
-            )
-            .child({
-                // M11.4: stick-to-bottom — новая строка доскроливается вниз.
-                if self.store.log.len() != self.last_journal_len {
-                    self.last_journal_len = self.store.log.len();
-                    if !self.store.log.is_empty() {
-                        self.journal_scroll.scroll_to_item(self.store.log.len() - 1);
+        let len = self.store.log.len();
+
+        // Состояние прокрутки (вычисляется каждый тик рендера).
+        let at_bottom = scroll_at_bottom(
+            f32::from(self.journal_scroll.offset().y),
+            f32::from(self.journal_scroll.max_offset().y),
+        );
+        if at_bottom {
+            // Приклеиваемся только при новых строках — и только если
+            // мы и так внизу (иначе позицию пользователя не дёргаем).
+            if self.journal_seen != len && len > 0 {
+                self.journal_scroll.scroll_to_item(len - 1);
+            }
+            self.journal_seen = len;
+            self.journal_unseen = 0;
+        } else {
+            self.journal_unseen = len.saturating_sub(self.journal_seen);
+        }
+        let unseen = self.journal_unseen;
+
+        // Шапка: вкладки «Журнал»/«Чат» + счётчик строк + индикатор.
+        let active = match self.log_tab {
+            LogTab::Log => "log",
+            LogTab::Chat => "chat",
+        };
+        let choices = vec![
+            Choice::new("log", t(lang, Key::LogLabel)),
+            Choice::new("chat", t(lang, Key::ChLabel)),
+        ];
+        let this = cx.entity();
+        let mut head = div().flex().flex_row().items_center().gap_2();
+        head = head.child(Tabs::new("ld2-journal-tabs", choices, active).on_change(
+            move |value, _window, acx| {
+                let value = value.to_string();
+                this.update(acx, |root, cx| {
+                    root.log_tab = if value == "chat" {
+                        LogTab::Chat
+                    } else {
+                        LogTab::Log
+                    };
+                    cx.notify();
+                });
+            },
+        ));
+        head = head.child(div().flex_grow_1());
+        head = head.child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(len.to_string()),
+        );
+        if unseen > 0 {
+            let label = tf(lang, Key::LogNewLines, &[("{n}", &unseen.to_string())]);
+            head = head.child(act_btn(
+                cx,
+                label,
+                pal.accent,
+                pal.accent_text,
+                |this, cx| {
+                    let len = this.store.log.len();
+                    if len > 0 {
+                        this.journal_scroll.scroll_to_item(len - 1);
                     }
-                }
-                div().h(px(150.0)).child(
+                    this.journal_seen = len;
+                    this.journal_unseen = 0;
+                    cx.notify();
+                },
+            ));
+        }
+
+        // Тело активной вкладки.
+        let body =
+            match self.log_tab {
+                LogTab::Log => div().flex_grow_1().min_h_0().child(
                     ScrollArea::new("ld2-log-scroll")
                         .vertical()
                         .track_scroll(&self.journal_scroll)
@@ -787,8 +837,25 @@ impl Root {
                                     .child(entry.text.clone())
                             }),
                         )),
-                )
-            })
+                ),
+                LogTab::Chat => self.chat_body(cx, pal),
+            };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .border_1()
+            .border_color(rgb(pal.border))
+            // Блок занимает остаток высоты центра (M14/F7).
+            .flex_grow_1()
+            .min_h(px(180.0))
+            .child(head)
+            .child(body)
     }
 
     // ── модалки (паритет egui-окон) ───────────────────────────────────────
@@ -983,6 +1050,14 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
         )
 }
 
+/// M14/F7: лог «прибит» к нижней позиции — offset достиг максимума
+/// (допуск 1 px на антиалиасинг/дребезг layout). Только при `true`
+/// разрешено stick-to-bottom; иначе позицию пользователя не трогаем.
+/// Чистая функция — юнит-тест в конце файла.
+fn scroll_at_bottom(offset_y: f32, max_offset_y: f32) -> bool {
+    offset_y + 1.0 >= max_offset_y
+}
+
 /// M14/F4: почему кнопка панели недоступна: требование (цель/мана/
 /// заряды — текст в тултипе) или кулдаун (таймер на кнопке + тултип).
 enum OffReason {
@@ -1086,5 +1161,24 @@ fn entity_tooltip(entity: &Entity) -> String {
         format!("{}{hp}", entity.name)
     } else {
         format!("{}{hp} · {tags}", entity.name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M14/F7: stick-to-bottom разрешён только в нижней позиции.
+    #[test]
+    fn log_pins_to_bottom_only_when_scrolled_to_end() {
+        // Пустой лог: 0 == 0 — считаем «внизу».
+        assert!(scroll_at_bottom(0.0, 0.0));
+        // Контент влезает без прокрутки — тоже «внизу».
+        assert!(scroll_at_bottom(40.0, 40.0));
+        // Погрешность layout в 1 px не считается уходом вверх.
+        assert!(scroll_at_bottom(99.5, 100.0));
+        // Пользователь прокрутил вверх — приклеивать нельзя.
+        assert!(!scroll_at_bottom(10.0, 100.0));
+        assert!(!scroll_at_bottom(0.0, 40.0));
     }
 }

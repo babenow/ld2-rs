@@ -1,4 +1,5 @@
-//! Панель чата gpui (M10.5) — порт `ui/chat_panel.rs` egui-клиента:
+//! Тело чата gpui (M10.5, M14/F7 — вкладка «Чат» блока журнала) — порт
+//! `ui/chat_panel.rs` egui-клиента:
 //! вкладки шести каналов (§5), история с фильтром, ввод со слэш-командами
 //! (ФР-13), «ответить» последнему адресату whisper.
 
@@ -15,23 +16,17 @@ use ely::navigation::Tabs;
 use super::{act_btn, Root};
 
 impl Root {
-    pub(crate) fn chat_panel(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    /// M14/F7: тело чата **внутри блока журнала** (вкладка «Чат»):
+    /// рамку и шапку даёт журнал-блок, здесь — каналы, фильтр,
+    /// история и ввод.
+    pub(crate) fn chat_body(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let dark = pal.bg == palette("dark").bg;
         let active = self.chat_channel.clone();
         let filter = self.ti(&self.chat_filter).read(cx).text().to_lowercase();
         let reply_to = self.store.last_whisper_from.clone();
 
-        let mut panel = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(pal.panel))
-            .border_1()
-            .border_color(rgb(pal.border));
+        let mut panel = div().flex().flex_col().gap_1();
 
         // ── вкладки каналов (ФР-13): Tabs Ely + фильтр ──
         let choices: Vec<Choice> = CHAT_CHANNELS
@@ -102,8 +97,10 @@ impl Root {
         for line in messages {
             history = history.child(div().text_size(px(12.0)).text_color(rgb(color)).child(line));
         }
+        // M14/F7: история занимает остаток блока журнала (но не меньше
+        // прежних 120 px), чтобы ввод всегда оставался внизу.
         panel = panel.child(
-            div().h(px(120.0)).flex_shrink_0().child(
+            div().flex_grow_1().min_h(px(120.0)).child(
                 ScrollArea::new("ld2-chat-history")
                     .vertical()
                     .track_scroll(&self.chat_scroll)
