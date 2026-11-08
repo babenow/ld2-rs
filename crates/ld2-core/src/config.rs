@@ -81,6 +81,26 @@ pub struct Hotkeys {
     /// Цикл целей (Tab, ФР-05).
     #[serde(default = "hk_tab")]
     pub cycle_target: String,
+    // ── M14/F4: боевые действия панели (цифры 1–6; Esc занят
+    // диалогами, поэтому «Побег» — не Esc, а 4) ──
+    /// Обычная атака (всегда первая кнопка панели).
+    #[serde(default = "hk_digit1")]
+    pub action_attack: String,
+    /// Мощный удар (открывается владением мечом 5).
+    #[serde(default = "hk_digit2")]
+    pub action_power_strike: String,
+    /// Раскол (зарезервирован под cleave — кнопка скрыта).
+    #[serde(default = "hk_digit3")]
+    pub action_cleave: String,
+    /// Побег из боя.
+    #[serde(default = "hk_digit4")]
+    pub action_flee: String,
+    /// Руна посоха.
+    #[serde(default = "hk_digit5")]
+    pub action_rune: String,
+    /// Свиток/зелье (расходник).
+    #[serde(default = "hk_digit6")]
+    pub action_consumable: String,
 }
 
 fn hk_alt_up() -> String {
@@ -98,6 +118,24 @@ fn hk_alt_right() -> String {
 fn hk_tab() -> String {
     "tab".into()
 }
+fn hk_digit1() -> String {
+    "1".into()
+}
+fn hk_digit2() -> String {
+    "2".into()
+}
+fn hk_digit3() -> String {
+    "3".into()
+}
+fn hk_digit4() -> String {
+    "4".into()
+}
+fn hk_digit5() -> String {
+    "5".into()
+}
+fn hk_digit6() -> String {
+    "6".into()
+}
 
 impl Default for Hotkeys {
     fn default() -> Self {
@@ -107,6 +145,12 @@ impl Default for Hotkeys {
             nav_left: hk_alt_left(),
             nav_right: hk_alt_right(),
             cycle_target: hk_tab(),
+            action_attack: hk_digit1(),
+            action_power_strike: hk_digit2(),
+            action_cleave: hk_digit3(),
+            action_flee: hk_digit4(),
+            action_rune: hk_digit5(),
+            action_consumable: hk_digit6(),
         }
     }
 }
@@ -120,6 +164,12 @@ impl Hotkeys {
             ("nav_left", &mut self.nav_left),
             ("nav_right", &mut self.nav_right),
             ("cycle_target", &mut self.cycle_target),
+            ("action_attack", &mut self.action_attack),
+            ("action_power_strike", &mut self.action_power_strike),
+            ("action_cleave", &mut self.action_cleave),
+            ("action_flee", &mut self.action_flee),
+            ("action_rune", &mut self.action_rune),
+            ("action_consumable", &mut self.action_consumable),
         ]
     }
 }
@@ -239,6 +289,13 @@ mod tests {
         assert_eq!(cfg.sheet_tab, "skills");
         assert!(!cfg.party_collapsed);
         assert_eq!(cfg.hotkeys.cycle_target, "tab");
+        // M14/F4: боевые хоткеи в старом конфиге берут дефолты 1–6.
+        assert_eq!(cfg.hotkeys.action_attack, "1");
+        assert_eq!(cfg.hotkeys.action_power_strike, "2");
+        assert_eq!(cfg.hotkeys.action_cleave, "3");
+        assert_eq!(cfg.hotkeys.action_flee, "4");
+        assert_eq!(cfg.hotkeys.action_rune, "5");
+        assert_eq!(cfg.hotkeys.action_consumable, "6");
     }
 
     /// M9: sanitize чинит выходящие за пределы значения.

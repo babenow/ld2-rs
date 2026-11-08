@@ -240,5 +240,12 @@ pub(super) fn t(key: Key) -> &'static str {
         BadgePvp => "PvP",
         BadgeSafe => "Safe",
         HeaderMenu => "Menu",
+        // M14 F4: action panel and hotkeys
+        HkCleave => "Cleave",
+        HkRune => "Rune",
+        HkConsumable => "Scroll/potion",
+        HotbarNoTarget => "Select a target",
+        HotbarCooldown => "Cooldown {s}s",
+        HotbarCdShort => "{s}s",
     }
 }

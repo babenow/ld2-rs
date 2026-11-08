@@ -274,6 +274,13 @@ pub enum Key {
     BadgePvp,
     BadgeSafe,
     HeaderMenu,
+    // M14 F4: панель действий и хоткеи
+    HkCleave,
+    HkRune,
+    HkConsumable,
+    HotbarNoTarget,
+    HotbarCooldown,
+    HotbarCdShort,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -578,6 +585,12 @@ mod tests {
         Key::BadgePvp,
         Key::BadgeSafe,
         Key::HeaderMenu,
+        Key::HkCleave,
+        Key::HkRune,
+        Key::HkConsumable,
+        Key::HotbarNoTarget,
+        Key::HotbarCooldown,
+        Key::HotbarCdShort,
     ];
 
     #[test]

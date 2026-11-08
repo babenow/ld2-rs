@@ -9,9 +9,9 @@ use gpui::{
     div, prelude::*, px, rgb, AnyElement, App, Context, Div, Entity, Focusable, MouseButton,
     Render, ScrollHandle, SharedString, Window,
 };
-use ld2_core::config::{host_allowed, Config, ConfigStore};
+use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
-use ld2_core::store::{local_epoch, Act, AppStore, Effect, Screen};
+use ld2_core::store::{local_epoch, local_epoch_ms, Act, AppStore, Effect, Screen};
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
 use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove};
 
@@ -248,11 +248,21 @@ impl Root {
             self.last_notice = None;
         }
 
-        if had_events {
+        // M14/F4: пока есть активный кулдаун (глобальный или любой
+        // собственный) — тик 50 мс, чтобы отсчёт на кнопках шёл плавно.
+        let now_ms = self.now_ms();
+        let cd_active = self.store.global_cooldown_left(now_ms) > 0
+            || self
+                .store
+                .combat_cooldowns
+                .values()
+                .any(|until_s| until_s.saturating_mul(1000) > now_ms);
+
+        if had_events || cd_active {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
-        Duration::from_millis(if had_events { 50 } else { 200 })
+        Duration::from_millis(if had_events || cd_active { 50 } else { 200 })
     }
 
     fn exec_effects(&mut self, effects: Vec<Effect>) {
@@ -514,7 +524,85 @@ impl Root {
         if keystroke_matches(&self.config.hotkeys.cycle_target, ks) {
             self.cycle_target();
             cx.notify();
+            return;
         }
+        // M14/F4: боевые действия панели — те же действия, что кнопки
+        // (цифры 1–6; Esc занят диалогами → «Побег» = 4).
+        if self.action_hotkey(ks, cx) {
+            cx.notify();
+        }
+    }
+
+    /// M14/F4: боевой хоткей → то же действие, что кнопка панели.
+    /// Во время кулдауна действие не отправляется (молча — как
+    /// disabled-кнопка с тултипом). Возвращает true, если спецификация
+    /// совпала с одним из боевых действий.
+    fn action_hotkey(&mut self, ks: &gpui::Keystroke, cx: &mut Context<'_, Self>) -> bool {
+        #[derive(Clone, Copy)]
+        enum Action {
+            Attack,
+            PowerStrike,
+            Cleave,
+            Flee,
+            Rune,
+            Consumable,
+        }
+        let hk = self.config.hotkeys.clone();
+        let action = if keystroke_matches(&hk.action_attack, ks) {
+            Action::Attack
+        } else if keystroke_matches(&hk.action_power_strike, ks) {
+            Action::PowerStrike
+        } else if keystroke_matches(&hk.action_cleave, ks) {
+            Action::Cleave
+        } else if keystroke_matches(&hk.action_flee, ks) {
+            Action::Flee
+        } else if keystroke_matches(&hk.action_rune, ks) {
+            Action::Rune
+        } else if keystroke_matches(&hk.action_consumable, ks) {
+            Action::Consumable
+        } else {
+            return false;
+        };
+
+        // Глобальный кулдаун (1 с) блокирует любое боевое действие.
+        let now = self.now_ms();
+        if self.store.global_cooldown_left(now) > 0 {
+            return true;
+        }
+
+        match action {
+            Action::Attack => {
+                if let Some(id) = self.store.target.clone() {
+                    self.on_click(Click::Attack(id), cx);
+                }
+            }
+            Action::PowerStrike => {
+                // Собственный кулдаун активки + гейт навыка (§4).
+                let own = self.own_cd_left_ms("power_strike", now);
+                let open = self
+                    .store
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| game::power_strike_open(&s.char.skills));
+                if AppStore::action_ready(own, 0).0 && open {
+                    self.on_click(Click::PowerStrike, cx);
+                }
+            }
+            // Cleave не реализован: кнопка скрыта, хоткей молчит.
+            Action::Cleave => {}
+            Action::Flee => self.on_click(Click::Flee, cx),
+            Action::Rune => {
+                if let Some(click) = self.first_rune_click() {
+                    self.on_click(click, cx);
+                }
+            }
+            Action::Consumable => {
+                if let Some(uid) = self.first_consumable_uid() {
+                    self.on_click(Click::UseItem(uid), cx);
+                }
+            }
+        }
+        true
     }
 
     /// Навигация по направлению (ФР-03; хоткеи из config — ФР-19).
@@ -538,6 +626,20 @@ impl Root {
     /// Цикл целей по Tab (ФР-05).
     pub(crate) fn cycle_target(&mut self) {
         self.store.cycle_target();
+    }
+
+    /// Текущее время (epoch, **мс**) с поправкой на часы сервера —
+    /// база для отсчёта кулдаунов (M14/F4).
+    pub(crate) fn now_ms(&self) -> i64 {
+        local_epoch_ms() + self.store.time_offset * 1000
+    }
+
+    /// M14/F4: остаток собственного кулдауна действия, мс. Сервер
+    /// шлёт `until` в секундах → граница секунды в мс, чтобы отсчёт
+    /// на кнопке шёл плавно (тик 50 мс), а не дёргался раз в секунду.
+    pub(crate) fn own_cd_left_ms(&self, skill: &str, now_ms: i64) -> i64 {
+        let until_s = self.store.combat_cooldowns.get(skill).copied().unwrap_or(0);
+        until_s.saturating_mul(1000) - now_ms
     }
 
     fn save_config(&mut self) {
@@ -618,14 +720,21 @@ impl Root {
             Click::Attack(id) => {
                 let cmd = ld2_protocol::cmd::CombatAttack { target_id: id };
                 match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::Attack),
+                    Ok(_) => {
+                        self.store.on_world_sent(Act::Attack);
+                        // M14/F4: любое боевое действие → глобальный кулдаун.
+                        self.store.begin_global_cooldown(self.now_ms());
+                    }
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
             Click::Flee => {
                 let cmd = ld2_protocol::cmd::CombatFlee {};
                 match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::Attack),
+                    Ok(_) => {
+                        self.store.on_world_sent(Act::Attack);
+                        self.store.begin_global_cooldown(self.now_ms());
+                    }
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
@@ -660,11 +769,21 @@ impl Root {
                     target_id: self.store.target.clone(),
                 };
                 match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::Cast),
+                    Ok(_) => {
+                        self.store.on_world_sent(Act::Cast);
+                        self.store.begin_global_cooldown(self.now_ms());
+                    }
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
             Click::UseItem(uid) => {
+                // M14/F4: расходник боя (свиток/зелье) запускает
+                // глобальный кулдаун; лут и прочие предметы — нет.
+                let combat_item = self.store.snapshot.as_ref().is_some_and(|s| {
+                    s.char.inventory.iter().any(|i| {
+                        i.uid == uid && matches!(i.item_type.as_str(), "scroll" | "potion")
+                    })
+                });
                 let cmd = ld2_protocol::cmd::ItemUse {
                     item_uid: uid,
                     target_id: None,
@@ -672,6 +791,9 @@ impl Root {
                 match self.transport.send(&cmd) {
                     Ok(_) => {
                         self.store.on_world_sent(Act::Drop);
+                        if combat_item {
+                            self.store.begin_global_cooldown(self.now_ms());
+                        }
                         self.store.entity_detail = None;
                         self.store.clear_loot_confirm();
                     }
@@ -684,7 +806,10 @@ impl Root {
                     target_id: self.store.target.clone(),
                 };
                 match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::Cast),
+                    Ok(_) => {
+                        self.store.on_world_sent(Act::Cast);
+                        self.store.begin_global_cooldown(self.now_ms());
+                    }
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
@@ -995,41 +1120,13 @@ impl Root {
                         .font_weight(gpui::FontWeight::BOLD)
                         .child(t(lang, Key::SettingsHotkeys)),
                 )
-                .child(hotkey_row(
-                    cx,
-                    lang,
-                    Key::HkNavUp,
-                    &self.config.hotkeys.nav_up,
-                    0,
-                ))
-                .child(hotkey_row(
-                    cx,
-                    lang,
-                    Key::HkNavDown,
-                    &self.config.hotkeys.nav_down,
-                    1,
-                ))
-                .child(hotkey_row(
-                    cx,
-                    lang,
-                    Key::HkNavLeft,
-                    &self.config.hotkeys.nav_left,
-                    2,
-                ))
-                .child(hotkey_row(
-                    cx,
-                    lang,
-                    Key::HkNavRight,
-                    &self.config.hotkeys.nav_right,
-                    3,
-                ))
-                .child(hotkey_row(
-                    cx,
-                    lang,
-                    Key::HkCycleTarget,
-                    &self.config.hotkeys.cycle_target,
-                    4,
-                )),
+                // M14/F4: все ремаппингуемые действия — из одного
+                // вектора (навигация/цикл + боевые 1–6), без match
+                // по индексу.
+                .children(HOTKEY_ROWS.iter().map(|row| {
+                    let value = (row.get)(&self.config.hotkeys).to_string();
+                    hotkey_row(cx, lang, row, &value)
+                })),
         );
 
         // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
@@ -1139,16 +1236,90 @@ fn row(pal: &Palette, label: String, controls: Vec<Div>) -> Div {
 /// (ФР-19). Приоритет над навигацией даёт сам виджет (фокус-режим),
 /// ручная capture-машинка M10 упразднена; значение хранится в config.toml
 /// форматом `alt+up` (round-trip через Keystroke::parse_with_os).
-fn hotkey_row(cx: &mut Context<'_, Root>, lang: Lang, label: Key, spec: &str, idx: usize) -> Div {
-    const IDS: [&str; 5] = [
-        "ld2-hk-nav-up",
-        "ld2-hk-nav-down",
-        "ld2-hk-nav-left",
-        "ld2-hk-nav-right",
-        "ld2-hk-cycle",
-    ];
+/// M14/F4: строка настройки хоткея — id виджета, ключ l10n и доступ к
+/// спецификации в конфиге (геттер/сеттер вместо match по индексу).
+struct HotkeyRowSpec {
+    id: &'static str,
+    label: Key,
+    get: fn(&Hotkeys) -> &str,
+    set: fn(&mut Hotkeys, String),
+}
+
+/// Все ремаппингуемые действия: навигация/цикл (ФР-19) + боевые
+/// панели (M14/F4, цифры 1–6 — Esc занят диалогами).
+const HOTKEY_ROWS: [HotkeyRowSpec; 11] = [
+    HotkeyRowSpec {
+        id: "ld2-hk-nav-up",
+        label: Key::HkNavUp,
+        get: |hk| hk.nav_up.as_str(),
+        set: |hk, v| hk.nav_up = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-nav-down",
+        label: Key::HkNavDown,
+        get: |hk| hk.nav_down.as_str(),
+        set: |hk, v| hk.nav_down = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-nav-left",
+        label: Key::HkNavLeft,
+        get: |hk| hk.nav_left.as_str(),
+        set: |hk, v| hk.nav_left = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-nav-right",
+        label: Key::HkNavRight,
+        get: |hk| hk.nav_right.as_str(),
+        set: |hk, v| hk.nav_right = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-cycle",
+        label: Key::HkCycleTarget,
+        get: |hk| hk.cycle_target.as_str(),
+        set: |hk, v| hk.cycle_target = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-attack",
+        label: Key::Attack,
+        get: |hk| hk.action_attack.as_str(),
+        set: |hk, v| hk.action_attack = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-power-strike",
+        label: Key::PowerStrike,
+        get: |hk| hk.action_power_strike.as_str(),
+        set: |hk, v| hk.action_power_strike = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-cleave",
+        label: Key::HkCleave,
+        get: |hk| hk.action_cleave.as_str(),
+        set: |hk, v| hk.action_cleave = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-flee",
+        label: Key::BtnFlee,
+        get: |hk| hk.action_flee.as_str(),
+        set: |hk, v| hk.action_flee = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-rune",
+        label: Key::HkRune,
+        get: |hk| hk.action_rune.as_str(),
+        set: |hk, v| hk.action_rune = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-consumable",
+        label: Key::HkConsumable,
+        get: |hk| hk.action_consumable.as_str(),
+        set: |hk, v| hk.action_consumable = v,
+    },
+];
+
+fn hotkey_row(cx: &mut Context<'_, Root>, lang: Lang, row: &HotkeyRowSpec, spec: &str) -> Div {
     let want = gpui::Keystroke::parse_with_os(&spec.replace('+', "-"), host_os()).ok();
     let this = cx.entity();
+    let set = row.set;
     div()
         .flex()
         .flex_row()
@@ -1159,23 +1330,16 @@ fn hotkey_row(cx: &mut Context<'_, Root>, lang: Lang, label: Key, spec: &str, id
             div()
                 .flex_grow_1()
                 .text_color(rgb(0x7f848e))
-                .child(t(lang, label)),
+                .child(t(lang, row.label)),
         )
         .child(
-            HotkeyInput::new(IDS[idx], want).on_change(move |ks, _window, acx| {
+            HotkeyInput::new(row.id, want).on_change(move |ks, _window, acx| {
+                let spec = ks
+                    .as_ref()
+                    .and_then(spec_from_keystroke)
+                    .unwrap_or_default();
                 this.update(acx, |root, cx| {
-                    let spec = ks
-                        .as_ref()
-                        .and_then(spec_from_keystroke)
-                        .unwrap_or_default();
-                    let hk = &mut root.config.hotkeys;
-                    match idx {
-                        0 => hk.nav_up = spec,
-                        1 => hk.nav_down = spec,
-                        2 => hk.nav_left = spec,
-                        3 => hk.nav_right = spec,
-                        _ => hk.cycle_target = spec,
-                    }
+                    set(&mut root.config.hotkeys, spec);
                     root.save_config();
                     cx.notify();
                 });
@@ -1491,6 +1655,76 @@ impl Render for Root {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M14/F4: боевые хоткеи — дефолтные цифры 1–6 парсятся и
+    /// распознаются так же, как навигационные спецификации.
+    #[test]
+    fn hotkey_spec_round_trip_covers_action_digits() {
+        for spec in ["1", "2", "3", "4", "5", "6"] {
+            let ks =
+                gpui::Keystroke::parse_with_os(&spec.replace('+', "-"), host_os()).expect(spec);
+            assert_eq!(
+                spec_from_keystroke(&ks).as_deref(),
+                Some(spec),
+                "round-trip {spec}"
+            );
+            assert!(keystroke_matches(spec, &ks), "матч {spec}");
+            // Цифра не должна ловиться чужим спецификациям.
+            assert!(!keystroke_matches("alt+up", &ks), "не путаем с {spec}");
+        }
+    }
+
+    /// M14/F4: панель действий настраивается на 11 строк — у каждой
+    /// свой id и дефолт из конфига; сеттер пишет только своё поле.
+    #[test]
+    fn hotkey_rows_cover_nav_and_six_actions() {
+        assert_eq!(HOTKEY_ROWS.len(), 11, "навигация/цикл + 6 действий");
+        let ids: std::collections::HashSet<_> = HOTKEY_ROWS.iter().map(|r| r.id).collect();
+        assert_eq!(ids.len(), HOTKEY_ROWS.len(), "id строк уникальны");
+
+        let hk = Hotkeys::default();
+        assert_eq!((HOTKEY_ROWS[0].get)(&hk), "alt+up", "навигация");
+        assert_eq!((HOTKEY_ROWS[4].get)(&hk), "tab", "цикл целей");
+        assert_eq!((HOTKEY_ROWS[5].get)(&hk), "1", "атака");
+        assert_eq!((HOTKEY_ROWS[6].get)(&hk), "2", "мощный удар");
+        assert_eq!((HOTKEY_ROWS[7].get)(&hk), "3", "раскол (зарезервирован)");
+        assert_eq!((HOTKEY_ROWS[8].get)(&hk), "4", "побег (не Esc: диалоги)");
+        assert_eq!((HOTKEY_ROWS[9].get)(&hk), "5", "руна");
+        assert_eq!((HOTKEY_ROWS[10].get)(&hk), "6", "расходник");
+
+        // Сеттер переписывает только своё поле.
+        let mut hk = Hotkeys::default();
+        (HOTKEY_ROWS[5].set)(&mut hk, "f5".into());
+        assert_eq!(hk.action_attack, "f5");
+        assert_eq!(hk.action_flee, "4", "остальные не тронуты");
+        assert_eq!((HOTKEY_ROWS[5].get)(&hk), "f5");
+    }
+
+    /// M14/F4: гейт «Мощного удара» — владение мечом 5 (skills.md §4).
+    #[test]
+    fn power_strike_needs_sword_rank_five() {
+        use ld2_protocol::types::SkillSnapshot;
+        let skill = |id: &str, rank: u32| SkillSnapshot {
+            id: id.to_string(),
+            name: None,
+            rank,
+            xp: 0,
+            xp_to_next: 120,
+        };
+        assert!(!game::power_strike_open(&[]), "навыков нет");
+        assert!(
+            !game::power_strike_open(&[skill("sword", 4)]),
+            "ранг 4 — закрыто"
+        );
+        assert!(
+            game::power_strike_open(&[skill("sword", 5)]),
+            "ранг 5 — открыто"
+        );
+        assert!(
+            !game::power_strike_open(&[skill("axe", 10)]),
+            "чужой навык не открывает"
+        );
+    }
 
     /// M14/F1: цвет и ключ статуса — по роли соединения (3 тона).
     #[test]
