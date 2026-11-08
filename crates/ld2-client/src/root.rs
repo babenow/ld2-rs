@@ -1080,7 +1080,7 @@ impl Root {
                         .text_color(rgb(pal.muted))
                         .child(t(lang, Key::SettingsFont)),
                 )
-                .child({
+                .child(slider_cell({
                     let this = cx.entity();
                     let value = self.config.font_scale as f64;
                     Slider::new("ld2-font-scale", value)
@@ -1091,10 +1091,12 @@ impl Root {
                                 root.config.font_scale = v as f32;
                                 cx.global_mut::<Theme>().font_scale = v as f32;
                                 cx.refresh_windows();
+                                cx.notify();
                                 root.save_config();
                             });
                         })
-                }),
+                }))
+                .child(value_readout(pal, format!("{:.2}", self.config.font_scale))),
         );
 
         // M14/F8: шрифт сообщений чата и строк лога — отдельные px.
@@ -1437,7 +1439,7 @@ fn font_px_row(
                 .text_color(rgb(pal.muted))
                 .child(t(lang, label)),
         )
-        .child(
+        .child(slider_cell(
             Slider::new(id, f64::from(value))
                 .range(10.0, 20.0)
                 .step(1.0)
@@ -1445,10 +1447,31 @@ fn font_px_row(
                     this.update(acx, |root, cx| {
                         set(root, v as f32);
                         cx.refresh_windows();
+                        cx.notify();
                         root.save_config();
                     });
                 }),
-        )
+        ))
+        .child(value_readout(pal, format!("{} px", value.round() as i32)))
+}
+
+/// M14/F8 (фикс смоука): слайдер Ely сам ширины не имеет — `Track`
+/// рендерится `flex_none` с одним padding, а все его дети абсолютно
+/// позиционированы (внешняя ширина ≈ thumb, ≈0 полезной площади: не
+/// виден и не кликается). Обёртка — flex-**колонка**: поперечная ось
+/// растягивает слайдер на всю ширину ячейки, а `size_full()` у Ely
+/// получает реально определённую область.
+fn slider_cell(slider: Slider) -> Div {
+    div().flex().flex_col().flex_grow_1().child(slider)
+}
+
+/// M14/F8: показ текущего значения настройки справа от ползунка.
+fn value_readout(pal: &Palette, text: String) -> Div {
+    div()
+        .w(px(56.0))
+        .text_size(px(13.0))
+        .text_color(rgb(pal.text))
+        .child(text)
 }
 
 /// Кнопка: статичные цвета + hover, действие — [`Click`].
