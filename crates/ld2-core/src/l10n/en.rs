@@ -254,5 +254,7 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F8: settings
         SettingsChatFont => "Chat font",
         SettingsLogFont => "Log font",
+        // M14 F9: settings tab
+        SettingsGeneral => "General",
     }
 }
