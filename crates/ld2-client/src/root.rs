@@ -24,8 +24,10 @@ mod social;
 
 use crate::palette::{palette, Palette};
 use ely::feedback::{Toast, ToastViewport, Toaster};
-use ely::forms::{HotkeyInput, Input, InputEvent, PasswordInput, Slider, TextInput};
+use ely::forms::{Choice, HotkeyInput, Input, InputEvent, PasswordInput, Slider, TextInput};
+use ely::layout::ScrollArea;
 use ely::menus::{DropdownMenu, Menu, MenuItem};
+use ely::navigation::Tabs;
 use ely::theme::{Mode, Theme};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
@@ -38,6 +40,15 @@ pub(crate) enum LogTab {
     Log,
     /// Чат: каналы + фильтр + ввод (stick-to-bottom остаётся).
     Chat,
+}
+
+/// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsTab {
+    /// Тема, язык, шрифты, история чата, уведомления, сервер, путь конфига.
+    General,
+    /// Ремаппинг 11 действий (навигация/цикл + боевые 1–6).
+    Hotkeys,
 }
 
 /// Что делать по клику (замыкания в listener должны быть `Fn` — действуем
@@ -145,6 +156,9 @@ pub struct Root {
     professions_scroll: ScrollHandle,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
     log_tab: LogTab,
+    /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
+    settings_tab: SettingsTab,
+    settings_scroll: ScrollHandle,
     /// Сколько строк лога пользователь уже видел (для счётчика «новых»).
     journal_seen: usize,
     /// Строк лога, появившихся после ухода из нижней позиции.
@@ -201,6 +215,8 @@ impl Root {
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
             log_tab: LogTab::Log,
+            settings_tab: SettingsTab::General,
+            settings_scroll: ScrollHandle::new(),
             journal_seen: 0,
             journal_unseen: 0,
             last_chat_len: 0,
@@ -1005,208 +1021,255 @@ impl Root {
                     .child(t(lang, Key::SettingsTitle)),
             );
 
-        // Тема.
-        root = root.child(row(
-            pal,
-            t(lang, Key::SettingsTheme).to_string(),
-            vec![
-                btn(
-                    cx,
-                    t(lang, Key::ThemeDark).to_string(),
-                    if theme == "dark" {
-                        pal.accent
+        // M14/F9: вкладки настроек — «Основные» и «Горячие клавиши»
+        // (11 строк ремаппинга растут на своей вкладке и скроллятся).
+        let active = match self.settings_tab {
+            SettingsTab::General => "general",
+            SettingsTab::Hotkeys => "hotkeys",
+        };
+        let choices = vec![
+            Choice::new("general", t(lang, Key::SettingsGeneral)),
+            Choice::new("hotkeys", t(lang, Key::SettingsHotkeys)),
+        ];
+        let settings_this = cx.entity();
+        root = root.child(Tabs::new("ld2-settings-tabs", choices, active).on_change(
+            move |value, _window, acx| {
+                let value = value.to_string();
+                settings_this.update(acx, |root, cx| {
+                    root.settings_tab = if value == "hotkeys" {
+                        SettingsTab::Hotkeys
                     } else {
-                        pal.panel
-                    },
-                    pal.text,
-                    Click::Theme("dark"),
-                ),
-                btn(
+                        SettingsTab::General
+                    };
+                    // Прокрутка новой вкладки — с начала.
+                    root.settings_scroll.scroll_to_item(0);
+                    cx.notify();
+                });
+            },
+        ));
+        // M14/F9: тело — только содержимое активной вкладки.
+        let body = match self.settings_tab {
+            SettingsTab::General => {
+                let mut body = div().flex().flex_col().gap_3();
+
+                // Тема.
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsTheme).to_string(),
+                    vec![
+                        btn(
+                            cx,
+                            t(lang, Key::ThemeDark).to_string(),
+                            if theme == "dark" {
+                                pal.accent
+                            } else {
+                                pal.panel
+                            },
+                            pal.text,
+                            Click::Theme("dark"),
+                        ),
+                        btn(
+                            cx,
+                            t(lang, Key::ThemeLight).to_string(),
+                            if theme == "light" {
+                                pal.accent
+                            } else {
+                                pal.panel
+                            },
+                            pal.text,
+                            Click::Theme("light"),
+                        ),
+                    ],
+                ));
+
+                // M14/F8: язык (перенесён из шапки) — зеркало строки «Тема».
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::Language).to_string(),
+                    vec![
+                        btn(
+                            cx,
+                            "RU",
+                            if lang.code() == "ru" {
+                                pal.accent
+                            } else {
+                                pal.panel
+                            },
+                            pal.text,
+                            Click::Lang("ru"),
+                        ),
+                        btn(
+                            cx,
+                            "EN",
+                            if lang.code() == "en" {
+                                pal.accent
+                            } else {
+                                pal.panel
+                            },
+                            pal.text,
+                            Click::Lang("en"),
+                        ),
+                    ],
+                ));
+
+                // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
+                // пишет Theme.font_scale (отклонение M10 «font_scale не
+                // применяется» снято).
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .w(px(130.0))
+                                .text_color(rgb(pal.muted))
+                                .child(t(lang, Key::SettingsFont)),
+                        )
+                        .child(slider_cell({
+                            let this = cx.entity();
+                            let value = self.config.font_scale as f64;
+                            Slider::new("ld2-font-scale", value)
+                                .range(1.0, 1.4)
+                                .step(0.05)
+                                .on_change(move |v, _window, acx| {
+                                    this.update(acx, |root, cx| {
+                                        root.config.font_scale = v as f32;
+                                        cx.global_mut::<Theme>().font_scale = v as f32;
+                                        cx.refresh_windows();
+                                        cx.notify();
+                                        root.save_config();
+                                    });
+                                })
+                        }))
+                        .child(value_readout(pal, format!("{:.2}", self.config.font_scale))),
+                );
+
+                // M14/F8: шрифт сообщений чата и строк лога — отдельные px.
+                body = body.child(font_px_row(
                     cx,
-                    t(lang, Key::ThemeLight).to_string(),
-                    if theme == "light" {
-                        pal.accent
-                    } else {
-                        pal.panel
-                    },
-                    pal.text,
-                    Click::Theme("light"),
-                ),
-            ],
-        ));
-
-        // M14/F8: язык (перенесён из шапки) — зеркало строки «Тема».
-        root = root.child(row(
-            pal,
-            t(lang, Key::Language).to_string(),
-            vec![
-                btn(
+                    pal,
+                    lang,
+                    Key::SettingsChatFont,
+                    "ld2-chat-font-px",
+                    self.config.chat_font_px,
+                    |root, v| root.config.chat_font_px = v,
+                ));
+                body = body.child(font_px_row(
                     cx,
-                    "RU",
-                    if lang.code() == "ru" {
-                        pal.accent
-                    } else {
-                        pal.panel
-                    },
-                    pal.text,
-                    Click::Lang("ru"),
-                ),
-                btn(
-                    cx,
-                    "EN",
-                    if lang.code() == "en" {
-                        pal.accent
-                    } else {
-                        pal.panel
-                    },
-                    pal.text,
-                    Click::Lang("en"),
-                ),
-            ],
-        ));
+                    pal,
+                    lang,
+                    Key::SettingsLogFont,
+                    "ld2-log-font-px",
+                    self.config.log_font_px,
+                    |root, v| root.config.log_font_px = v,
+                ));
 
-        // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
-        // пишет Theme.font_scale (отклонение M10 «font_scale не
-        // применяется» снято).
-        root = root.child(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .items_center()
-                .child(
+                // Лимит истории чата.
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsChatLimit).to_string(),
+                    vec![
+                        btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
+                        div().px_2().child(format!("{limit}")),
+                        btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
+                    ],
+                ));
+
+                // Уведомления (D7).
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsNotify).to_string(),
+                    vec![btn(
+                        cx,
+                        if notify {
+                            t(lang, Key::On).to_string()
+                        } else {
+                            t(lang, Key::Off).to_string()
+                        },
+                        if notify { pal.success } else { pal.panel },
+                        pal.text,
+                        Click::ToggleNotify,
+                    )],
+                ));
+
+                // Сервер (хост) с guard.
+                body = body.child(
                     div()
-                        .w(px(130.0))
-                        .text_color(rgb(pal.muted))
-                        .child(t(lang, Key::SettingsFont)),
-                )
-                .child(slider_cell({
-                    let this = cx.entity();
-                    let value = self.config.font_scale as f64;
-                    Slider::new("ld2-font-scale", value)
-                        .range(1.0, 1.4)
-                        .step(0.05)
-                        .on_change(move |v, _window, acx| {
-                            this.update(acx, |root, cx| {
-                                root.config.font_scale = v as f32;
-                                cx.global_mut::<Theme>().font_scale = v as f32;
-                                cx.refresh_windows();
-                                cx.notify();
-                                root.save_config();
-                            });
-                        })
-                }))
-                .child(value_readout(pal, format!("{:.2}", self.config.font_scale))),
-        );
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_color(rgb(pal.muted))
+                                .child(t(lang, Key::SettingsHost)),
+                        )
+                        .child(
+                            div()
+                                .w(px(320.0))
+                                .child(Input::new(self.ti(&self.host_input))),
+                        )
+                        .children((!host_ok).then(|| {
+                            div()
+                                .text_color(rgb(pal.danger))
+                                .child(t(lang, Key::SettingsWsDenied))
+                        }))
+                        .child(btn(
+                            cx,
+                            t(lang, Key::SettingsApply).to_string(),
+                            pal.accent,
+                            pal.accent_text,
+                            Click::ApplyHost,
+                        )),
+                );
 
-        // M14/F8: шрифт сообщений чата и строк лога — отдельные px.
-        root = root.child(font_px_row(
-            cx,
-            pal,
-            lang,
-            Key::SettingsChatFont,
-            "ld2-chat-font-px",
-            self.config.chat_font_px,
-            |root, v| root.config.chat_font_px = v,
-        ));
-        root = root.child(font_px_row(
-            cx,
-            pal,
-            lang,
-            Key::SettingsLogFont,
-            "ld2-log-font-px",
-            self.config.log_font_px,
-            |root, v| root.config.log_font_px = v,
-        ));
+                // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
+                if let Ok(dirs) = ld2_core::config::project_dirs() {
+                    body = body.child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.muted))
+                            .child(dirs.config_dir().display().to_string()),
+                    );
+                }
 
-        // Лимит истории чата.
-        root = root.child(row(
-            pal,
-            t(lang, Key::SettingsChatLimit).to_string(),
-            vec![
-                btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
-                div().px_2().child(format!("{limit}")),
-                btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
-            ],
-        ));
-
-        // Уведомления (D7).
-        root = root.child(row(
-            pal,
-            t(lang, Key::SettingsNotify).to_string(),
-            vec![btn(
-                cx,
-                if notify {
-                    t(lang, Key::On).to_string()
-                } else {
-                    t(lang, Key::Off).to_string()
-                },
-                if notify { pal.success } else { pal.panel },
-                pal.text,
-                Click::ToggleNotify,
-            )],
-        ));
-
-        // Сервер (хост) с guard.
-        root = root.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
+                body
+            }
+            SettingsTab::Hotkeys => {
+                let mut body = div().flex().flex_col().gap_3();
+                // Горячие клавиши: только отображение (редактирование/применение
+                // навигации — M10.4 вместе с game-навигацией).
+                body = body.child(
                     div()
-                        .text_color(rgb(pal.muted))
-                        .child(t(lang, Key::SettingsHost)),
-                )
-                .child(
-                    div()
-                        .w(px(320.0))
-                        .child(Input::new(self.ti(&self.host_input))),
-                )
-                .children((!host_ok).then(|| {
-                    div()
-                        .text_color(rgb(pal.danger))
-                        .child(t(lang, Key::SettingsWsDenied))
-                }))
-                .child(btn(
-                    cx,
-                    t(lang, Key::SettingsApply).to_string(),
-                    pal.accent,
-                    pal.accent_text,
-                    Click::ApplyHost,
-                )),
-        );
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child(t(lang, Key::SettingsHotkeys)),
+                        )
+                        // M14/F4: все ремаппингуемые действия — из одного
+                        // вектора (навигация/цикл + боевые 1–6), без match
+                        // по индексу.
+                        .children(HOTKEY_ROWS.iter().map(|row| {
+                            let value = (row.get)(&self.config.hotkeys).to_string();
+                            hotkey_row(cx, lang, row, &value)
+                        })),
+                );
 
-        // Горячие клавиши: только отображение (редактирование/применение
-        // навигации — M10.4 вместе с game-навигацией).
-        root = root.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(t(lang, Key::SettingsHotkeys)),
-                )
-                // M14/F4: все ремаппингуемые действия — из одного
-                // вектора (навигация/цикл + боевые 1–6), без match
-                // по индексу.
-                .children(HOTKEY_ROWS.iter().map(|row| {
-                    let value = (row.get)(&self.config.hotkeys).to_string();
-                    hotkey_row(cx, lang, row, &value)
-                })),
-        );
+                body
+            }
+        };
 
-        // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
-        if let Ok(dirs) = ld2_core::config::project_dirs() {
-            root = root.child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(rgb(pal.muted))
-                    .child(dirs.config_dir().display().to_string()),
-            );
-        }
+        // M14/F9: тело активной вкладки — в скролле; заголовок,
+        // вкладки и кнопка «Закрыть» остаются вне прокрутки.
+        root = root.child(scrollable_tab(
+            "ld2-settings-scroll",
+            &self.settings_scroll,
+            body,
+        ));
 
         root.child(btn(
             cx,
@@ -1414,6 +1477,21 @@ fn hotkey_row(cx: &mut Context<'_, Root>, lang: Lang, row: &HotkeyRowSpec, spec:
                 });
             }),
         )
+}
+
+/// M14/F3/F9: содержимое с обычной прокруткой — паттерн `log_block`
+/// (ScrollHandle в полях Root, без stick-to-bottom): контейнер занимает
+/// остаток высоты, список прокручивается внутри. Используется вкладками
+/// листа («Навыки»/«Профессии») и телом настроек.
+fn scrollable_tab(id: &'static str, handle: &ScrollHandle, body: Div) -> Div {
+    div().flex().flex_col().flex_grow_1().min_h_0().child(
+        ScrollArea::new(id)
+            .vertical()
+            .track_scroll(handle)
+            .flex_grow_1()
+            .min_h_0()
+            .child(body),
+    )
 }
 
 /// M14/F8: строка настройки «размер шрифта, px» — Slider 10…20 с шагом 1;

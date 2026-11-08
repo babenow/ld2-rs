@@ -254,5 +254,7 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F8: настройки
         SettingsChatFont => "Шрифт чата",
         SettingsLogFont => "Шрифт лога",
+        // M14 F9: вкладка настроек
+        SettingsGeneral => "Основные",
     }
 }

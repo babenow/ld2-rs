@@ -8,9 +8,7 @@
 //! `Root::sheet_tab` (персистентно в config, ФР-19).
 
 use ely::overlays::Dialog;
-use gpui::{
-    div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, ScrollHandle, SharedString,
-};
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, SharedString};
 use ld2_core::l10n::{format_duration, t, Key, Lang};
 use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, Act, UpgradeView};
 use ld2_protocol::cmd::{
@@ -22,12 +20,11 @@ use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
 
 use crate::palette::Palette;
 use ely::forms::{Choice, Input, Select};
-use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::Tooltip;
 
-use super::{act_btn, Root};
+use super::{act_btn, scrollable_tab, Root};
 
 /// Вкладки листа (паритет egui `SheetTab`; персистентно строкой в config).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,19 +86,6 @@ const LEARN_CATALOG: [(&str, Key); 7] = [
     ("herbalist", Key::ProfHerbalist),
     ("hunter", Key::ProfHunter),
 ];
-
-/// M14/F3: содержимое вкладки с обычной прокруткой — паттерн
-/// `log_block` (ScrollHandle в полях Root, без stick-to-bottom):
-/// контейнер занимает остаток высоты колонки листа, список
-/// прокручивается внутри него.
-fn scrollable_tab(id: &'static str, handle: &ScrollHandle, body: Div) -> Div {
-    div().flex().flex_col().flex_grow_1().min_h_0().child(
-        ScrollArea::new(id)
-            .vertical()
-            .track_scroll(handle)
-            .child(body),
-    )
-}
 
 impl Root {
     /// M11.2: диалоги листа (ФР-07/09/10): предмет/улучшение/инкрустация.

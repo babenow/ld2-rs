@@ -288,6 +288,8 @@ pub enum Key {
     // M14 F8: настройки шрифтов чата/лога
     SettingsChatFont,
     SettingsLogFont,
+    // M14 F9: вкладка настроек
+    SettingsGeneral,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -602,6 +604,7 @@ mod tests {
         Key::LogNewLines,
         Key::SettingsChatFont,
         Key::SettingsLogFont,
+        Key::SettingsGeneral,
     ];
 
     #[test]
