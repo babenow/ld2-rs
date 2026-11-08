@@ -130,14 +130,25 @@ impl Root {
             .gap_3()
             .size_full()
             .p(px(12.0))
-            .child(self.left_column(cx, pal, &snap))
-            .child(self.sheet(cx, pal))
+            // M14/F18: резиновая вёрстка — min_w_0 позволяет колонкам
+            // сжиматься ниже min-content (иначе правая колонка
+            // вылезала за рамки окна); min_w(360) у листа остаётся
+            // жёстким полом на минимуме окна (960×640).
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(self.left_column(cx, pal, &snap)),
+            )
+            .child(div().flex().flex_col().min_w_0().child(self.sheet(cx, pal)))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
                     .flex_grow_1()
+                    .min_w_0()
                     // Не выше остатка экрана: журнальный блок сжимается
                     // до своего min_h, а не выдавливает колонку наружу.
                     .min_h_0()

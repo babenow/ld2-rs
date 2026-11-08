@@ -112,6 +112,7 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
         },
         char_slot_limit,
         profession_limit: PROFESSION_LIMIT,
+        role: "player".into(),
         features,
         crime: CrimeConfig {
             t_max_s: 604_800,

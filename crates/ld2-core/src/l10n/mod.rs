@@ -279,6 +279,12 @@ pub enum Key {
     CancelBtn,
     // M14 F17: карточка навыка (иконка ⓘ)
     SkillInfoBtn,
+    // M14 F19: роли и модерация чата
+    RolePlayer,
+    RoleAdmin,
+    RoleModerator,
+    SystemChatLocked,
+    ChDelete,
     // M14 F4: панель действий и хоткеи
     HkCleave,
     HkRune,
@@ -613,6 +619,11 @@ mod tests {
         Key::ExitNowBtn,
         Key::CancelBtn,
         Key::SkillInfoBtn,
+        Key::RolePlayer,
+        Key::RoleAdmin,
+        Key::RoleModerator,
+        Key::SystemChatLocked,
+        Key::ChDelete,
         Key::HkCleave,
         Key::HkRune,
         Key::HkConsumable,

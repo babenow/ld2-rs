@@ -159,6 +159,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
                "refresh": { "token": "…", "expires_in_s": 2592000 } },
   "char_slot_limit": 8,
   "profession_limit": 2,
+  "role": "player",                       // player|admin|moderator (M14/F19)
   "features": {
     "loot.roll": false, "respawn.inn": true, "guild.bank": false,
     "upgrade.rules": "break_on_fail", "trade.value_hint": true, "chat.slash": true
@@ -290,7 +291,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `quest.list` | `{}` | `{quests[]}` | + | журнал квестов |
 | `quest.accept` / `quest.turn_in` / `quest.abandon` | `{quest_id}` | `{quest}` | − | взаимодействие |
 | `crime.log` | `{limit?}` | `{entries[]}` | + | журнал нарушений |
-| `chat.send` | `{channel, text, to?}` | `{}` (→ `evt/chat.message`) | − | сообщение |
+| `chat.send` | `{channel, text, to?}` | `{}` (→ `evt/chat.message`) | − | сообщение (`system` — только admin/moderator) |
+| `chat.delete` | `{id}` | `{}` (→ `evt/chat.deleted`) | − | удаление сообщения (admin/moderator, M14/F19) |
 | `party.create` | `{}` | `{party}` | − | создать группу |
 | `party.invite` | `{player_id}` | `{}` (→ `evt/party/updated`) | − | пригласить |
 | `party.accept` / `party.decline` | `{invite_id}` | `{party}` | − | ответить |
@@ -370,7 +372,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ### Социальное
 | Событие | Payload | Назначение |
 |---|---|---|
-| `evt/chat/message` | `{ channel, from, name, text, tags[]?, sent_at (ISO-8601) }` | сообщение чата |
+| `evt/chat/message` | `{ id?, channel, from, name, text, tags[]?, sent_at (ISO-8601) }` | сообщение чата (`id` — для удаления, M14/F19) |
+| `evt/chat/deleted` | `{ id }` | сообщение удалено из истории (M14/F19) |
 | `evt/party/updated` | `{ party: PartyState \| null }` | полное состояние группы (список, лидер, HP) |
 | `evt/trade/state` | `{ offer_id, version, you: ItemSnapshot[], them: ItemSnapshot[], you_gold, them_gold, you_locked, them_locked, value_hint? }` | каждое изменение = новый `version` |
 | `evt/trade/closed` | `{ offer_id, reason: "done"\|"cancelled"\|"failed", result? }` | завершение сделки |
@@ -415,6 +418,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_TRADE_PARTNER_GONE` | партнёр ушёл |
 | `E_PARTY_FULL` / `E_GUILD_LIMIT` | лимиты группы/гильдии |
 | `E_GUILD_PERMISSION` | нет прав (ранг) |
+| `E_PERMISSION` | нет прав роли аккаунта (модерация чата, M14/F19) |
 | `E_XP_POOL` | не хватает очков опыта (`char.xp_invest`) |
 | `E_RANK_CAP` | достигнут потолок ранга навыка/профессии |
 | `E_PROFESSION_LIMIT` | превышен `profession_limit` первичных профессий |

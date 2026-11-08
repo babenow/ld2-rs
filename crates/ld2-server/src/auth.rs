@@ -144,6 +144,8 @@ pub fn session_config(
     access_token: String,
     refresh_token: String,
     characters: Vec<CharacterSummary>,
+    // M14/F19: роль аккаунта из БД (модерация чата).
+    role: String,
 ) -> SessionConfig {
     let auth = &cfg.auth;
     let g = &cfg.gameplay;
@@ -163,6 +165,7 @@ pub fn session_config(
         },
         char_slot_limit: g.char_slot_limit,
         profession_limit: g.profession_limit,
+        role,
         features: g
             .features
             .iter()

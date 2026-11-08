@@ -244,6 +244,11 @@ pub(super) fn t(key: Key) -> &'static str {
         ExitNowBtn => "Выйти сейчас",
         CancelBtn => "Отмена",
         SkillInfoBtn => "О навыке",
+        RolePlayer => "Игрок",
+        RoleAdmin => "Админ",
+        RoleModerator => "Модератор",
+        SystemChatLocked => "В системный канал пишут только админ и модератор",
+        ChDelete => "Удалить сообщение",
         // M14 F4: панель действий и хоткеи
         HkCleave => "Раскол",
         HkRune => "Руна",

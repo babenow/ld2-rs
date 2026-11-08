@@ -16,6 +16,10 @@ pub struct SessionConfig {
     pub char_slot_limit: u32,
     #[serde(default)]
     pub profession_limit: u32,
+    /// M14/F19: роль аккаунта — `player` | `admin` | `moderator`
+    /// (модерация чата); старый сервер без поля → `player`.
+    #[serde(default = "default_account_role")]
+    pub role: String,
     /// Capability-фичи с точечными ключами (`loot.roll`, `upgrade.rules`, …).
     #[serde(default)]
     pub features: JsonMap,
@@ -29,6 +33,11 @@ pub struct SessionConfig {
     /// Незнакомые поля — сохраняем и игнорируем (§2.3, §11).
     #[serde(flatten, default)]
     pub extra: JsonMap,
+}
+
+/// Роль по умолчанию для серверов без поля (§11 обратная совместимость).
+fn default_account_role() -> String {
+    "player".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

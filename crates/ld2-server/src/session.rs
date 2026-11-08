@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
-    ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
+    ChatDelete, ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
     GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip,
     ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, PartyAccept, PartyInvite,
     PartyKick, SkillUse, SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel,
@@ -50,6 +50,8 @@ pub struct Session {
     seq_order: VecDeque<u32>,
     /// Аккаунт соединения (ADR-006): `Some` после login/register/resume.
     account_id: Option<i64>,
+    /// M14/F19: роль аккаунта — права на system-чат/удаление (§9 E_PERMISSION).
+    role: String,
     #[allow(dead_code)] // журнал/логика персонажей — M12.2 (фаза «персонажи»)
     login: Option<String>,
     authenticated: bool,
@@ -88,6 +90,7 @@ impl Session {
             ack_cache: HashMap::new(),
             seq_order: VecDeque::new(),
             account_id: None,
+            role: "player".to_string(),
             login: None,
             authenticated: false,
             selected_char_id: None,
@@ -211,6 +214,7 @@ impl Session {
             "cmd/item.drop" => self.item_drop(env, seq).await,
             // dev-сценарии (`/scenario …`); чат — ФР-13 в фазе M12.7
             "cmd/chat.send" => self.chat_send(env, seq).await,
+            "cmd/chat.delete" => self.chat_delete(env, seq).await,
             // Сервисный ping (§7): ack + echo; RTT клиент считает по своему
             // `ts` — сервер отвечает 0, как и мок.
             "cmd/ping" => {
@@ -433,6 +437,7 @@ impl Session {
         self.location_id = None;
         self.authenticated = false;
         self.account_id = None;
+        self.role = "player".to_string();
         self.login = None;
         vec![out_ack(Ack::ok(seq, None))]
     }
@@ -488,7 +493,16 @@ impl Session {
             }
             Err(e) => warn!("список персонажей при входе: {e}"),
         }
-        let config = auth::session_config(&cfg, access.clone(), refresh, chars);
+        // M14/F19: роль аккаунта — в session.start (права модерации);
+        // ошибка БД маскируется под `player` (не блокирует вход).
+        let role = db::accounts::role(&self.state.pool, account_id)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("роль аккаунта: {e}");
+                "player".to_string()
+            });
+        self.role = role.clone();
+        let config = auth::session_config(&cfg, access.clone(), refresh, chars, role);
         vec![
             Self::ack_payload(
                 seq,
@@ -2182,6 +2196,47 @@ impl Session {
 
     /// `cmd/chat.send` (§7): dev-сценарии `/scenario …` (ФР-06/тесты);
     /// полноценный чат (ФР-13) — фаза M12.7.
+    /// M14/F19: `cmd/chat.delete` — удаление сообщения из истории
+    /// (только admin/moderator, §9 E_PERMISSION) + `evt/chat/deleted`
+    /// всем онлайн (история общая — как system/global).
+    async fn chat_delete(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ChatDelete>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if !self.is_moderator() {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Permission,
+                "удалять сообщения могут только админ и модератор",
+            )];
+        }
+        match db::chat::delete(&self.state.pool, cmd.id as i64).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::TargetGone,
+                    "сообщение не найдено",
+                )];
+            }
+            Err(e) => {
+                warn!("chat (удаление): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let payload = ld2_protocol::evt::ChatDeleted { id: cmd.id };
+        if let Some(text) = event_payload_text("evt/chat/deleted", &payload) {
+            let world = self.state.world.lock().expect("мир");
+            for addr in world.online_chars() {
+                world.send_to_char(&addr, text.clone());
+            }
+        }
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
     async fn chat_send(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
@@ -2213,6 +2268,14 @@ impl Session {
                 seq,
                 ErrorCode::Internal,
                 format!("нет канала: {}", cmd.channel),
+            )];
+        }
+        // M14/F19: системный чат — только admin/moderator (§9 E_PERMISSION).
+        if cmd.channel == "system" && !self.is_moderator() {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Permission,
+                "недостаточно прав для system-канала",
             )];
         }
         // Длина текста (§12.2: chat.max_len → E_RATE_LIMITED).
@@ -2323,7 +2386,7 @@ impl Session {
         recipients: &[String],
         history_limit: u32,
     ) -> Vec<Out> {
-        let sent_at = match db::chat::push(
+        let (msg_id, sent_at) = match db::chat::push(
             &self.state.pool,
             &cmd.channel,
             char_id,
@@ -2333,7 +2396,7 @@ impl Session {
         )
         .await
         {
-            Ok(ts) => ts,
+            Ok(v) => v,
             Err(e) => {
                 warn!("chat (история): {e}");
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
@@ -2342,6 +2405,8 @@ impl Session {
         self.last_chat_at = Some(std::time::Instant::now());
 
         let payload = ld2_protocol::evt::ChatMessage {
+            // M14/F19: id строки — для cmd/chat.delete (модерация).
+            id: Some(msg_id.max(0) as u64),
             channel: cmd.channel.clone(),
             from: char_id.to_string(),
             name: name.to_string(),
@@ -2375,8 +2440,10 @@ impl Session {
             }
         };
         rows.into_iter()
-            .filter_map(|(channel, from, name, text, sent_at)| {
+            .filter_map(|(id, channel, from, name, text, sent_at)| {
                 let payload = ld2_protocol::evt::ChatMessage {
+                    // M14/F19: id переживает рестарт — реплей тоже удаляем.
+                    id: Some(id.max(0) as u64),
                     channel,
                     from,
                     name,
@@ -5496,6 +5563,11 @@ impl Session {
     /// Окно rate-limit auth-команд по IP (D30); `Some(retry_after_s)` — отклон.
     fn rate_limit(&self) -> Option<u64> {
         self.state.rate.check(self.peer.ip())
+    }
+
+    /// M14/F19: может ли аккаунт писать в system-чат и удалять сообщения.
+    fn is_moderator(&self) -> bool {
+        matches!(self.role.as_str(), "admin" | "moderator")
     }
 
     fn require_auth(&self, seq: u32) -> Option<Out> {

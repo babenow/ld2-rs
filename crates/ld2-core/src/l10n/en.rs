@@ -244,6 +244,11 @@ pub(super) fn t(key: Key) -> &'static str {
         ExitNowBtn => "Exit now",
         CancelBtn => "Cancel",
         SkillInfoBtn => "About the skill",
+        RolePlayer => "Player",
+        RoleAdmin => "Admin",
+        RoleModerator => "Moderator",
+        SystemChatLocked => "Only admins and moderators can post to system",
+        ChDelete => "Delete message",
         // M14 F4: action panel and hotkeys
         HkCleave => "Cleave",
         HkRune => "Rune",

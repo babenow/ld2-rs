@@ -6,12 +6,14 @@
 use gpui::{div, prelude::*, px, rgb, Context, Div};
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::{parse_chat_input, Act, ChatDraft, CHAT_CHANNELS};
-use ld2_protocol::cmd::ChatSend;
+use ld2_protocol::cmd::{ChatDelete, ChatSend};
 
 use crate::palette::{palette, Palette};
+use ely::buttons::IconButton;
 use ely::forms::{Choice, Input, SearchInput};
 use ely::layout::ScrollArea;
 use ely::navigation::Tabs;
+use ely::primitives::IconName;
 
 use super::{act_btn, Root};
 
@@ -58,13 +60,17 @@ impl Root {
         panel = panel.child(tabs);
         // M14/F2: фильтр — отдельной строкой: в узкой колонке (чат
         // теперь внизу слева) одна строка под вкладки и поиск не влезает.
-        panel = panel.child(div().flex_grow_1().child(SearchInput::new(
+        // M14/F18: строка фильтра БЕЗ flex_grow_1 — в flex-колонке она
+        // забирала вертикаль и толкала историю вниз (сообщения
+        // «висели по центру»); теперь история занимает остаток сверху.
+        panel = panel.child(SearchInput::new(
             "ld2-chat-filter",
             self.ti(&self.chat_filter),
-        )));
+        ));
 
         // ── история активного канала с фильтром ──
-        let messages: Vec<String> = self
+        // M14/F19: (id, строка) — id нужен для cmd/chat.delete.
+        let messages: Vec<(Option<u64>, String)> = self
             .store
             .chat
             .get(&active)
@@ -75,7 +81,7 @@ impl Root {
                             || m.text.to_lowercase().contains(&filter)
                             || m.name.to_lowercase().contains(&filter)
                     })
-                    .map(|m| format!("{}: {}", m.name, m.text))
+                    .map(|m| (m.id, format!("{}: {}", m.name, m.text)))
                     .collect()
             })
             .unwrap_or_default();
@@ -92,7 +98,8 @@ impl Root {
         }
         // M14/F8: размер шрифта чата из настроек (10…20 px).
         let font = self.config.chat_font_px;
-        let mut history = div().flex().flex_col().gap_1();
+        // M14/F18: строки прижаты слева поверху (justify_start явно).
+        let mut history = div().flex().flex_col().gap_1().justify_start();
         if messages.is_empty() {
             history = history.child(
                 div()
@@ -101,8 +108,29 @@ impl Root {
                     .child(t(lang, Key::ChEmpty)),
             );
         }
-        for line in messages {
-            history = history.child(div().text_size(px(font)).text_color(rgb(color)).child(line));
+        // M14/F19: строка = текст (+ ✕ удаления для админ/модераторов).
+        let moderator = self.store.can_moderate();
+        for (id, line) in messages {
+            let text = div().text_size(px(font)).text_color(rgb(color)).child(line);
+            let can_delete = moderator && id.is_some();
+            history = history.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .child(div().flex_grow_1().min_w_0().child(text))
+                    .when(can_delete, |row| {
+                        let id = id.unwrap_or_default();
+                        row.child(
+                            IconButton::new(format!("ld2-chat-del-{id}"), IconName::X)
+                                .tooltip(t(lang, Key::ChDelete))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.delete_chat_msg(id);
+                                    cx.notify();
+                                })),
+                        )
+                    }),
+            );
         }
         // M14/F7: история занимает остаток блока журнала (но не меньше
         // прежних 120 px), чтобы ввод всегда оставался внизу. ScrollArea
@@ -123,6 +151,18 @@ impl Root {
                         .child(history),
                 ),
         );
+
+        // M14/F19: system-канал — ввод только для админ/модераторов
+        // (сервер и так режет E_PERMISSION, здесь — UX без обмана).
+        if active == "system" && !self.store.can_moderate() {
+            panel = panel.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::SystemChatLocked)),
+            );
+            return panel;
+        }
 
         // ── ввод: Enter/кнопка, слэш-команды (ФР-13) ──
         let mut input_row = div().flex().flex_row().gap_1().items_center();
@@ -156,6 +196,16 @@ impl Root {
         ));
         panel = panel.child(input_row);
         panel
+    }
+
+    /// M14/F19: удаление сообщения из истории (`cmd/chat.delete`);
+    /// права проверяет сервер → ошибки тостом (Act::ChatDelete).
+    pub(crate) fn delete_chat_msg(&mut self, id: u64) {
+        let cmd = ChatDelete { id };
+        match self.transport.send(&cmd) {
+            Ok(_) => self.store.on_sheet_sent(Act::ChatDelete),
+            Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+        }
     }
 
     /// Отправка ввода чата: слэш-команды парсятся, неизвестная — тост

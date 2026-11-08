@@ -1094,7 +1094,16 @@ impl Root {
                             Click::OpenReleases,
                         )
                     }))
-                    .child(status_badge(pal, lang, &status, rtt)),
+                    .child(status_badge(pal, lang, &status, rtt))
+                    // M14/F19: отметка роли аккаунта (модерация чата).
+                    .children(self.store.session.as_ref().map(|sess| {
+                        let (text, color) = match sess.role.as_str() {
+                            "admin" => (t(lang, Key::RoleAdmin), pal.danger),
+                            "moderator" => (t(lang, Key::RoleModerator), pal.warn),
+                            _ => (t(lang, Key::RolePlayer), pal.muted),
+                        };
+                        badge(text.to_string(), color, pal)
+                    })),
             )
     }
 
