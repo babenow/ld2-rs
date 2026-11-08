@@ -18,6 +18,7 @@ use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::primitives::Tooltip;
 
+use super::social::show_party;
 use super::{btn, Click, Root};
 
 impl Root {
@@ -86,8 +87,13 @@ impl Root {
                     .flex_col()
                     .gap_2()
                     .flex_grow_1()
+                    // M14/F2: описание локации — всегда первая строка.
                     .child(self.location_block(pal, &snap.location))
+                    // Таргет — под описанием (перенос из левой колонки).
+                    .child(self.target_block(cx, pal, &snap))
                     .children(self.notice_line(pal))
+                    .child(self.entities_block(cx, pal, &snap.location))
+                    .child(self.hotbar(cx, pal, &snap))
                     .child(self.exits_row(cx, pal, &snap.location))
                     .children((self.store.target.is_some()).then(|| {
                         div()
@@ -95,9 +101,7 @@ impl Root {
                             .text_color(rgb(pal.muted))
                             .child(t(self.lang, Key::AltNavHint))
                     }))
-                    .child(self.entities_block(cx, pal, &snap.location))
-                    .child(self.hotbar(cx, pal, &snap))
-                    .child(self.chat_panel(cx, pal))
+                    // Лог — последним (M14/F2); чат теперь слева внизу.
                     .child(self.log_block(pal)),
             )
     }
@@ -112,62 +116,6 @@ impl Root {
     ) -> Div {
         let lang = self.lang;
         let mut col = div().flex().flex_col().gap_2().w(px(210.0));
-
-        // Виджет группы (ФР-14) — сверху слева, как в egui.
-        col = col.child(self.party_widget(cx, pal));
-
-        // ´.
-        if let Some(target_id) = self.store.target.clone() {
-            if let Some(entity) = snap.location.entities.iter().find(|e| e.id == target_id) {
-                let name = entity.name.clone();
-                let id = entity.id.clone();
-                let hp = entity.hp;
-                let mut block = div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(pal.panel))
-                    .border_1()
-                    .border_color(rgb(pal.border))
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(format!("{}: {name}", t(lang, Key::TargetLabel))),
-                    );
-                if let Some(hp) = hp {
-                    block = block.child(bar(
-                        hp.cur as f32 / hp.max.max(1) as f32,
-                        format!("{}/{}", hp.cur, hp.max),
-                        pal.danger,
-                        pal,
-                    ));
-                }
-                block = block.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(btn(
-                            cx,
-                            t(lang, Key::Attack).to_string(),
-                            pal.danger,
-                            0xffffff,
-                            Click::Attack(id.clone()),
-                        ))
-                        .child(btn(
-                            cx,
-                            t(lang, Key::BtnFlee).to_string(),
-                            pal.panel,
-                            pal.text,
-                            Click::Flee,
-                        )),
-                );
-                col = col.child(block);
-            }
-        }
 
         // Имя + бейджи статусов (ФР-11): серверные сроки, now = лок + offset.
         let mut name_row = div().flex().flex_row().items_center().gap_2().child(
@@ -225,22 +173,112 @@ impl Root {
 
         // M14/F1: «Сменить персонажа»/«Выйти» переехали в меню шапки.
 
-        // История посещений (ФР-03).
+        // M14/F2: окно группы — только при участниках ≥2 (инвайт сам
+        // создаёт группу — F5, но до принятия она пустая).
+        if self
+            .store
+            .party
+            .as_ref()
+            .is_some_and(|p| show_party(&p.members))
+        {
+            col = col.child(self.party_widget(cx, pal));
+        }
+
+        // История посещений (ФР-03). Растягивается на остаток высоты и
+        // срезается по ней (overflow_hidden): при группе ≥2 и 10 пунктах
+        // на минимуме окна (960×640) список не должен выталкивать чат
+        // за нижнюю границу окна.
         col = col.child(
             div()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_size(px(13.0))
                 .child(t(lang, Key::HistoryLabel)),
         );
+        let mut visited_list = div().flex().flex_col().gap_1();
         for visited in self.store.visited.iter().rev().take(10) {
-            col = col.child(
+            visited_list = visited_list.child(
                 div()
                     .text_size(px(12.0))
                     .text_color(rgb(pal.muted))
                     .child(visited.name.clone()),
             );
         }
+        col = col.child(
+            div()
+                .flex_grow_1()
+                .min_h(px(32.0))
+                .overflow_hidden()
+                .child(visited_list),
+        );
+
+        // M14/F2: чат — внизу левой колонки (остаток высоты под него).
+        col = col.child(div().flex_grow_1());
+        col = col.child(self.chat_panel(cx, pal));
         col
+    }
+
+    /// Блок таргета (M14/F2: перенесён из левой колонки — под описание
+    /// локации): имя, HP и кнопки «Атака»/«Побег».
+    fn target_block(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        snap: &StateSnapshot,
+    ) -> Div {
+        let lang = self.lang;
+        let Some(target_id) = self.store.target.clone() else {
+            return div();
+        };
+        let Some(entity) = snap.location.entities.iter().find(|e| e.id == target_id) else {
+            return div();
+        };
+        let name = entity.name.clone();
+        let id = entity.id.clone();
+        let hp = entity.hp;
+        let mut block = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .border_1()
+            .border_color(rgb(pal.border))
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(format!("{}: {name}", t(lang, Key::TargetLabel))),
+            );
+        if let Some(hp) = hp {
+            block = block.child(bar(
+                hp.cur as f32 / hp.max.max(1) as f32,
+                format!("{}/{}", hp.cur, hp.max),
+                pal.danger,
+                pal,
+            ));
+        }
+        block = block.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(btn(
+                    cx,
+                    t(lang, Key::Attack).to_string(),
+                    pal.danger,
+                    0xffffff,
+                    Click::Attack(id.clone()),
+                ))
+                .child(btn(
+                    cx,
+                    t(lang, Key::BtnFlee).to_string(),
+                    pal.panel,
+                    pal.text,
+                    Click::Flee,
+                )),
+        );
+        block
     }
 
     // ── центр: локация, выходы, сущности ──────────────────────────────────

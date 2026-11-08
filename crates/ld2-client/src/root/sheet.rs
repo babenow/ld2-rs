@@ -148,7 +148,14 @@ impl Root {
 
         let lang = self.lang;
         let tab = self.sheet_tab;
-        let mut col = div().flex().flex_col().gap_1().w(px(300.0)).flex_none();
+        // M14/F2: правая колонка — 1:1 с центром (flex_grow) и не уже
+        // 360 px, чтобы на минимуме окна (960×640) лист не схлопывался.
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .flex_grow_1()
+            .min_w(px(360.0));
 
         col = col.children(self.tracker_block(pal));
 

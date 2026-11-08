@@ -57,11 +57,13 @@ impl Root {
                 },
             ),
         );
-        tabs = tabs.child(div().flex_grow_1().w(px(140.0)).child(SearchInput::new(
+        panel = panel.child(tabs);
+        // M14/F2: фильтр — отдельной строкой: в узкой колонке (чат
+        // теперь внизу слева) одна строка под вкладки и поиск не влезает.
+        panel = panel.child(div().flex_grow_1().child(SearchInput::new(
             "ld2-chat-filter",
             self.ti(&self.chat_filter),
         )));
-        panel = panel.child(tabs);
 
         // ── история активного канала с фильтром ──
         let messages: Vec<String> = self

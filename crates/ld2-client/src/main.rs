@@ -126,6 +126,9 @@ fn main() -> anyhow::Result<()> {
                         ..Default::default()
                     }),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    // M14/F2: минимум окна — 960×640 (ТЗ: компоновка
+                    // трёх колонок не должна схлопываться).
+                    window_min_size: Some(size(px(960.0), px(640.0))),
                     ..Default::default()
                 },
                 move |_, _| root.clone(),

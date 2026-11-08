@@ -16,7 +16,16 @@ use ld2_protocol::cmd::{
 use crate::palette::Palette;
 use ely::forms::{Choice, NumberInput, Select};
 
+use ld2_protocol::types::PartyMember;
+
 use super::{act_btn, Root};
+
+/// M14/F2: окно группы показывается только когда участников ≥2 —
+/// инвайт сам создаёт группу (сервер, F5), но до принятия приглашения
+/// в ней один человек, и окно не должно занимать место.
+pub(crate) fn show_party(members: &[PartyMember]) -> bool {
+    members.len() >= 2
+}
 
 impl Root {
     /// M11.2: соц-диалоги (ФР-14/15/16): приглашения и сделка.
@@ -598,5 +607,34 @@ impl Root {
         }
         col = col.child(ops);
         col
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn member(name: &str) -> PartyMember {
+        PartyMember {
+            id: format!("id_{name}"),
+            name: name.to_string(),
+            hp: None,
+            location_id: None,
+            ready: None,
+            extra: Default::default(),
+        }
+    }
+
+    /// M14/F2: пустая группа и «один в группе» — окно скрыто; с двумя
+    /// и более — показано.
+    #[test]
+    fn party_widget_shown_only_from_two_members() {
+        assert!(!show_party(&[]), "нет группы");
+        assert!(!show_party(&[member("alice")]), "группа из одного");
+        assert!(show_party(&[member("alice"), member("bob")]), "двое");
+        assert!(
+            show_party(&[member("a"), member("b"), member("c")]),
+            "трое и больше"
+        );
     }
 }
