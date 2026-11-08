@@ -236,5 +236,9 @@ pub(super) fn t(key: Key) -> &'static str {
         NotifyTradeOpen => "Trade opened",
         NotifyWhisper => "New whisper",
         NotifyUpgrade => "Upgrade finished",
+        // M14 F1: header
+        BadgePvp => "PvP",
+        BadgeSafe => "Safe",
+        HeaderMenu => "Menu",
     }
 }

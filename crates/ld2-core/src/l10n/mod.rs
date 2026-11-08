@@ -37,7 +37,7 @@ impl Lang {
 }
 
 /// Строковые ключи UI (M0-шелл + M2: аккаунт/персонажи).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     AppTitle,
     Subtitle,
@@ -270,6 +270,10 @@ pub enum Key {
     NotifyTradeOpen,
     NotifyWhisper,
     NotifyUpgrade,
+    // M14 F1: шапка окна (бейджи локации, заголовок меню)
+    BadgePvp,
+    BadgeSafe,
+    HeaderMenu,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -571,6 +575,9 @@ mod tests {
         Key::NotifyTradeOpen,
         Key::NotifyWhisper,
         Key::NotifyUpgrade,
+        Key::BadgePvp,
+        Key::BadgeSafe,
+        Key::HeaderMenu,
     ];
 
     #[test]

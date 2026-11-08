@@ -25,6 +25,7 @@ mod social;
 use crate::palette::{palette, Palette};
 use ely::feedback::{Toast, ToastViewport, Toaster};
 use ely::forms::{HotkeyInput, Input, InputEvent, PasswordInput, Slider, TextInput};
+use ely::menus::{DropdownMenu, Menu, MenuItem};
 use ely::theme::{Mode, Theme};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
@@ -706,6 +707,17 @@ impl Root {
         let update = self.update_available.clone();
         let lang = self.lang;
         let settings_open = self.settings_open;
+        // M14/F1: статус сервера и текущая локация — прямо в шапке.
+        let status = self.store.transport.clone();
+        let rtt = self.store.rtt_ms;
+        let in_world = self.store.screen == Screen::Game;
+        let before_login = self.store.screen == Screen::Login;
+        let location = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| (s.location.name.clone(), s.location.flags.clone()));
+
         div()
             .flex()
             .flex_row()
@@ -717,13 +729,38 @@ impl Root {
             .border_b_1()
             .border_color(rgb(pal.border))
             .child(
-                div().flex().flex_row().items_center().gap_2().child(
-                    div()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(t(lang, Key::AppTitle)),
-                ),
+                // Левая группа: название игры + (в мире) локация и бейджи.
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(t(lang, Key::AppTitle)),
+                    )
+                    .children(location.map(|(name, flags)| {
+                        let mut row = div().flex().flex_row().items_center().gap_1().child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(rgb(pal.muted))
+                                .child(format!("· {name}")),
+                        );
+                        for (tone, token) in location_badges(&flags) {
+                            let color = match tone {
+                                BadgeTone::Warn => pal.warn,
+                                BadgeTone::Success => pal.success,
+                                BadgeTone::Muted => pal.muted,
+                            };
+                            row = row.child(badge(badge_label(lang, &token), color, pal));
+                        }
+                        row
+                    })),
             )
             .child(
+                // Правая группа: обновление, статус сервера, язык,
+                // настройки и меню шапки (M14/F1).
                 div()
                     .flex()
                     .flex_row()
@@ -738,6 +775,7 @@ impl Root {
                             Click::OpenReleases,
                         )
                     }))
+                    .child(status_badge(pal, lang, &status, rtt))
                     .child(btn(
                         cx,
                         format!("{}: {}", t(lang, Key::Language), lang.code().to_uppercase()),
@@ -752,13 +790,7 @@ impl Root {
                         pal.text,
                         Click::ToggleSettings,
                     ))
-                    .child(btn(
-                        cx,
-                        t(lang, Key::Exit).to_string(),
-                        pal.danger,
-                        0xffffff,
-                        Click::Exit,
-                    )),
+                    .child(header_menu(cx, lang, in_world, before_login)),
             )
     }
 
@@ -1219,22 +1251,142 @@ fn btn_hover(
         )
 }
 
-/// Статус соединения (паритет `ui::screens::status_text` egui-клиента).
-fn status_text(lang: Lang, status: &TransportStatus) -> String {
-    let key = match status {
+/// Ключ текста статуса соединения (паритет `ui::screens::status_text`).
+fn status_key(status: &TransportStatus) -> Key {
+    match status {
         TransportStatus::Connecting => Key::StatusConnecting,
         TransportStatus::Online => Key::StatusOnline,
         TransportStatus::Reconnecting { .. } => Key::StatusReconnecting,
         TransportStatus::AuthExpired => Key::StatusAuthExpired,
         TransportStatus::Stopped => Key::StatusStopped,
+    }
+}
+
+/// Цвет и ключ статуса сервера для бейджа в шапке (M14/F1): Online →
+/// success, Connecting/Reconnecting → warn, AuthExpired/Stopped → danger.
+/// Чистая функция (без состояния) — юнит-тест в конце файла.
+fn status_color(pal: &Palette, status: &TransportStatus) -> (u32, Key) {
+    let color = match status {
+        TransportStatus::Online => pal.success,
+        TransportStatus::Connecting | TransportStatus::Reconnecting { .. } => pal.warn,
+        TransportStatus::AuthExpired | TransportStatus::Stopped => pal.danger,
     };
-    let base = t(lang, key);
+    (color, status_key(status))
+}
+
+/// Текст статуса соединения (с деталью переподключения).
+fn status_text(lang: Lang, status: &TransportStatus) -> String {
+    let base = t(lang, status_key(status));
     match status {
         TransportStatus::Reconnecting { attempt, delay } => {
             format!("{base} (попытка {attempt}, {delay:?})")
         }
         _ => base.to_string(),
     }
+}
+
+/// Тон бейджа (M14/F1): предупреждение/успех/нейтральный.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BadgeTone {
+    Warn,
+    Success,
+    Muted,
+}
+
+/// Бейджи у названия локации в шапке: всегда либо `pvp` (warn), либо
+/// `safe` (success) — по флагу локации; прочие флаги — muted-бейджи с их
+/// сырым текстом. Токены локализует рендер ([`badge_label`]).
+/// Чистая функция — юнит-тест в конце файла.
+fn location_badges(flags: &[String]) -> Vec<(BadgeTone, String)> {
+    let pvp = flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
+    let mut out = vec![if pvp {
+        (BadgeTone::Warn, "pvp".to_string())
+    } else {
+        (BadgeTone::Success, "safe".to_string())
+    }];
+    for flag in flags {
+        let known = flag.eq_ignore_ascii_case("pvp") || flag.eq_ignore_ascii_case("safe");
+        if !known {
+            out.push((BadgeTone::Muted, flag.clone()));
+        }
+    }
+    out
+}
+
+/// Подпись бейджа: известные токены → ключи l10n, прочее — как есть.
+fn badge_label(lang: Lang, token: &str) -> String {
+    match token {
+        "pvp" => t(lang, Key::BadgePvp).to_string(),
+        "safe" => t(lang, Key::BadgeSafe).to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Плашка в шапке: рамка и текст в тоне, фон — цвет фона окна.
+fn badge(label: String, color: u32, pal: &Palette) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(color))
+        .bg(rgb(pal.bg))
+        .text_size(px(11.0))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(rgb(color))
+        .child(label)
+}
+
+/// Бейдж статуса сервера в шапке (M14/F1): цветная точка + текст + RTT
+/// (раньше жил в нижнем status_bar, из render убран).
+fn status_badge(pal: &Palette, lang: Lang, status: &TransportStatus, rtt: Option<u64>) -> Div {
+    let (color, _) = status_color(pal, status);
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .child(div().w(px(8.0)).h(px(8.0)).rounded_full().bg(rgb(color)))
+        .child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.text))
+                .child(status_text(lang, status)),
+        )
+        .children(rtt.map(|ms| {
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(format!("{ms} мс"))
+        }))
+}
+
+/// Меню шапки (M14/F1, Ely `Menu`): сменить персонажа, выйти из
+/// аккаунта, закрыть приложение. Пункты вне контекста отключены:
+/// «сменить персонажа» — только в мире, «выйти» — только после входа.
+fn header_menu(
+    cx: &mut Context<'_, Root>,
+    lang: Lang,
+    in_world: bool,
+    before_login: bool,
+) -> DropdownMenu {
+    let this = cx.entity();
+    let mk = |label: &'static str, click: Click, enabled: bool| {
+        let this = this.clone();
+        let item = MenuItem::new(label).on_click(move |_window, acx| {
+            this.update(acx, |root, cx| root.on_click(click.clone(), cx));
+        });
+        if enabled {
+            item
+        } else {
+            item.disabled(true)
+        }
+    };
+    let menu = Menu::new()
+        .item(mk(t(lang, Key::BtnSwitchChar), Click::SwitchChar, in_world))
+        .item(mk(t(lang, Key::BtnLogout), Click::Logout, !before_login))
+        .item(mk(t(lang, Key::Exit), Click::Exit, true));
+    DropdownMenu::new("ld2-header-menu", t(lang, Key::HeaderMenu), menu)
 }
 
 impl Root {
@@ -1289,35 +1441,6 @@ impl Root {
             }
         }
     }
-
-    /// Нижний статус-бар: статус сервера и RTT (перенесено из шапки).
-    fn status_bar(&self, pal: &Palette) -> Div {
-        let status = status_text(self.lang, &self.store.transport);
-        let rtt = self.store.rtt_ms;
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_1()
-            .flex_shrink_0()
-            .bg(rgb(pal.panel))
-            .border_t_1()
-            .border_color(rgb(pal.border))
-            .child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(rgb(pal.muted))
-                    .child(status),
-            )
-            .children(rtt.map(|ms| {
-                div()
-                    .text_size(px(12.0))
-                    .text_color(rgb(pal.muted))
-                    .child(format!("{ms} мс"))
-            }))
-    }
 }
 
 impl Render for Root {
@@ -1357,8 +1480,7 @@ impl Render for Root {
                     }
                 }),
             )
-            // Статус сервера — внизу окна (запрос).
-            .child(self.status_bar(&pal))
+            // M14/F1: статус сервера живёт в шапке (status_badge).
             // M11.2: всплывающий диалог поверх контента (скрим + панель).
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M11.4: всплывающие тосты (notice → Ely Toast).
@@ -1369,6 +1491,88 @@ impl Render for Root {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M14/F1: цвет и ключ статуса — по роли соединения (3 тона).
+    #[test]
+    fn status_color_follows_transport_status() {
+        let pal = palette("dark");
+        let reconnect = TransportStatus::Reconnecting {
+            attempt: 2,
+            delay: Duration::from_secs(3),
+        };
+        assert_eq!(
+            status_color(&pal, &TransportStatus::Online),
+            (pal.success, Key::StatusOnline)
+        );
+        assert_eq!(
+            status_color(&pal, &TransportStatus::Connecting),
+            (pal.warn, Key::StatusConnecting)
+        );
+        assert_eq!(
+            status_color(&pal, &reconnect),
+            (pal.warn, Key::StatusReconnecting)
+        );
+        assert_eq!(
+            status_color(&pal, &TransportStatus::AuthExpired),
+            (pal.danger, Key::StatusAuthExpired)
+        );
+        assert_eq!(
+            status_color(&pal, &TransportStatus::Stopped),
+            (pal.danger, Key::StatusStopped)
+        );
+        // Светлая тема — те же роли цветов.
+        let light = palette("light");
+        assert_eq!(
+            status_color(&light, &TransportStatus::Online).0,
+            light.success
+        );
+        assert_ne!(
+            status_color(&light, &TransportStatus::Stopped).0,
+            light.success
+        );
+    }
+
+    /// M14/F1: бейджи локации — PvP по флагу, иначе Safe; прочие — muted.
+    #[test]
+    fn location_badges_classify_flags() {
+        assert_eq!(
+            location_badges(&[]),
+            vec![(BadgeTone::Success, "safe".to_string())]
+        );
+        assert_eq!(
+            location_badges(&["safe".into()]),
+            vec![(BadgeTone::Success, "safe".to_string())]
+        );
+        assert_eq!(
+            location_badges(&["pvp".into()]),
+            vec![(BadgeTone::Warn, "pvp".to_string())]
+        );
+        // Прочие флаги — muted-бейджи после основного, без дублей pvp/safe.
+        assert_eq!(
+            location_badges(&["pvp".into(), "dark".into()]),
+            vec![
+                (BadgeTone::Warn, "pvp".to_string()),
+                (BadgeTone::Muted, "dark".to_string())
+            ]
+        );
+        assert_eq!(
+            location_badges(&["safe".into(), "no_teleport".into()]),
+            vec![
+                (BadgeTone::Success, "safe".to_string()),
+                (BadgeTone::Muted, "no_teleport".to_string())
+            ]
+        );
+    }
+
+    /// M14/F1: подписи бейджей локализуются, неизвестные — как есть.
+    #[test]
+    fn badge_label_maps_known_tokens() {
+        assert_eq!(badge_label(Lang::Ru, "pvp"), "PvP");
+        assert_eq!(badge_label(Lang::En, "pvp"), "PvP");
+        assert_eq!(badge_label(Lang::Ru, "safe"), "Безопасно");
+        assert_eq!(badge_label(Lang::En, "safe"), "Safe");
+        assert_eq!(badge_label(Lang::Ru, "dark"), "dark");
+    }
 
     /// Запись хоткея обязана давать спецификацию, парсящуюся обратно
     /// (config.toml ↔ gpui Keystroke, ФР-19).

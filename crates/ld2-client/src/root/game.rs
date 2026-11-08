@@ -223,20 +223,7 @@ impl Root {
                 )),
         );
 
-        col = col.child(btn(
-            cx,
-            t(lang, Key::BtnSwitchChar).to_string(),
-            pal.panel,
-            pal.text,
-            Click::SwitchChar,
-        ));
-        col = col.child(btn(
-            cx,
-            t(lang, Key::BtnLogout).to_string(),
-            pal.panel,
-            pal.danger,
-            Click::Logout,
-        ));
+        // M14/F1: «Сменить персонажа»/«Выйти» переехали в меню шапки.
 
         // История посещений (ФР-03).
         col = col.child(
