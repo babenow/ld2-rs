@@ -261,5 +261,7 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsLogDamageColor => "Цвет урона",
         SettingsLogAttackColor => "Цвет атак",
         SettingsDamageBold => "Жирным",
+        // M14 F14: вкладка
+        SettingsFonts => "Шрифты",
     }
 }

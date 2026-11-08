@@ -261,5 +261,7 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsLogDamageColor => "Damage color",
         SettingsLogAttackColor => "Attack color",
         SettingsDamageBold => "Bold",
+        // M14 F14: tab
+        SettingsFonts => "Fonts",
     }
 }

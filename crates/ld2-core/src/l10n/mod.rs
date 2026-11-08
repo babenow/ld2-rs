@@ -295,6 +295,8 @@ pub enum Key {
     SettingsLogDamageColor,
     SettingsLogAttackColor,
     SettingsDamageBold,
+    // M14 F14: вкладка «Шрифты»
+    SettingsFonts,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -614,6 +616,7 @@ mod tests {
         Key::SettingsLogDamageColor,
         Key::SettingsLogAttackColor,
         Key::SettingsDamageBold,
+        Key::SettingsFonts,
     ];
 
     #[test]

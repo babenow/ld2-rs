@@ -6,8 +6,8 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, App, Context, Div, Entity, Focusable, Hsla, MouseButton,
-    Render, ScrollHandle, SharedString, Window,
+    div, prelude::*, px, rgb, rgba, AnyElement, App, Context, Div, DragMoveEvent, EmptyView,
+    Entity, Focusable, Hsla, KeyDownEvent, MouseButton, Render, ScrollHandle, SharedString, Window,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -27,7 +27,7 @@ use ely::buttons::IconButton;
 use ely::feedback::{Toast, ToastViewport, Toaster};
 use ely::forms::{
     hex, parse_hex, Choice, ColorPicker, HotkeyInput, Input, InputEvent, PasswordInput, Slider,
-    TextInput,
+    Switch, TextInput,
 };
 use ely::layout::ScrollArea;
 use ely::menus::{Menu, MenuItem, OverflowMenu};
@@ -47,11 +47,17 @@ pub(crate) enum LogTab {
     Chat,
 }
 
+/// M14/F14: перетаскивание диалога настроек за заголовок (payload drag).
+#[derive(Debug)]
+struct SettingsDrag;
+
 /// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
     /// Тема, язык, шрифты, история чата, уведомления, путь конфига.
     General,
+    /// Шрифты: глобальный масштаб, шрифт чата и лога (M14/F14).
+    Fonts,
     /// Адрес сервера: read-only + «подключиться к другому» (M14/F11).
     Connection,
     /// Ремаппинг 11 действий (навигация/цикл + боевые 1–6).
@@ -73,12 +79,15 @@ pub(crate) enum Click {
     CloseSettings,
     Theme(&'static str),
     ChatLimit(i64),
-    ToggleNotify,
+    /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
+    SetNotify(bool),
     ApplyHost,
     /// M14/F11: раскрыть ввод нового адреса сервера.
     EditHost,
     /// M14/F13: жирный шрифт строк урона в журнале.
     LogDamageBold(bool),
+    /// M14/F14: открыть/закрыть ColorPicker строки (id свотча).
+    TogglePicker(&'static str),
     MoveExit(String),
     OpenReleases,
     // M10.4: игровой экран
@@ -172,6 +181,12 @@ pub struct Root {
     settings_scroll: ScrollHandle,
     /// M14/F11: раскрыт ли ввод нового адреса сервера (сессия).
     host_editing: bool,
+    /// M14/F14: какой ColorPicker раскрыт под свотчем (id строки).
+    color_picker_open: Option<&'static str>,
+    /// Смещение диалога настроек от центра (px) — drag.
+    settings_delta: (f32, f32),
+    /// Смещение указателя внутри заголовка в момент захвата (px).
+    settings_drag_offset: Option<(f32, f32)>,
     /// Длина лога на прошлой отрисовке — чтобы приклеивать вниз только
     /// при изменении (M14/F13: лог всегда промотан вниз).
     journal_seen: usize,
@@ -230,6 +245,9 @@ impl Root {
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
             host_editing: false,
+            color_picker_open: None,
+            settings_delta: (0.0, 0.0),
+            settings_drag_offset: None,
             journal_seen: 0,
             last_chat_len: 0,
             party_collapsed,
@@ -674,6 +692,14 @@ impl Root {
         }
     }
 
+    /// M14/F14: свотч открывает/закрывает пикер этого цвета (один разом).
+    fn toggle_color_picker(&mut self, key: &'static str) {
+        self.color_picker_open = match self.color_picker_open {
+            Some(open) if open == key => None,
+            _ => Some(key),
+        };
+    }
+
     /// Цикл целей по Tab (ФР-05).
     pub(crate) fn cycle_target(&mut self) {
         self.store.cycle_target();
@@ -716,12 +742,15 @@ impl Root {
             }
             Click::ToggleSettings => {
                 self.settings_open = !self.settings_open;
+                if !self.settings_open {
+                    self.color_picker_open = None;
+                }
                 let host = self.config.host.clone();
                 if let Some(input) = self.host_input.clone() {
                     input.update(cx, |i, cx| i.set_text(host.clone(), cx));
                 }
             }
-            Click::CloseSettings => self.settings_open = false,
+            Click::CloseSettings => self.close_settings(),
             Click::Theme(theme) => {
                 self.config.theme = theme.to_string();
                 // M11.5: тема Ely переключается вместе с config (ФР-19).
@@ -741,8 +770,8 @@ impl Root {
                 self.store.chat_limit = limit;
                 self.save_config();
             }
-            Click::ToggleNotify => {
-                self.config.notify = !self.config.notify;
+            Click::SetNotify(notify) => {
+                self.config.notify = notify;
                 self.save_config();
             }
             Click::EditHost => {
@@ -753,6 +782,9 @@ impl Root {
                     input.update(cx, |i, cx| i.set_text(host, cx));
                 }
                 self.host_editing = true;
+            }
+            Click::TogglePicker(key) => {
+                self.toggle_color_picker(key);
             }
             Click::LogDamageBold(bold) => {
                 self.config.log_damage_bold = bold;
@@ -1035,35 +1067,32 @@ impl Root {
     }
 
     /// Окно настроек (ФР-19) — как отдельный экран с кнопкой закрытия.
-    fn settings_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    /// M14/F14: тело настроек для диалога `settings_dialog` — без
+    /// заголовка и кнопки «Закрыть» (их даёт Dialog: крестик/Esc/скрим).
+    /// Фиксированный размер даёт определённую высоту для скролла тела
+    /// и влезает в минимум окна 960×640.
+    fn settings_content(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let theme = self.config.theme.clone();
         let limit = self.config.chat_limit;
         let notify = self.config.notify;
         let host_ok = host_allowed(&self.config.host, RELEASE);
-        let mut root = div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .size_full()
-            .p(px(16.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(18.0))
-                    .child(t(lang, Key::SettingsTitle)),
-            );
+        // Размер задаёт карточка settings_layer (760×560); здесь —
+        // растяжение на остаток, чтобы тело скроллилось внутри.
+        let mut root = div().flex().flex_col().gap_3().flex_grow_1().min_h_0();
 
         // M14/F9: вкладки настроек — «Основные» и «Горячие клавиши»
         // (11 строк ремаппинга растут на своей вкладке и скроллятся).
         let active = match self.settings_tab {
             SettingsTab::General => "general",
+            SettingsTab::Fonts => "fonts",
             SettingsTab::Connection => "connection",
             SettingsTab::Hotkeys => "hotkeys",
         };
         // M14/F12: иконки вкладок (метки без изменений).
         let choices = vec![
             Choice::new("general", t(lang, Key::SettingsGeneral)).icon(IconName::SlidersHorizontal),
+            Choice::new("fonts", t(lang, Key::SettingsFonts)).icon(IconName::Type),
             Choice::new("connection", t(lang, Key::SettingsConnection)).icon(IconName::Server),
             Choice::new("hotkeys", t(lang, Key::SettingsHotkeys)).icon(IconName::Keyboard),
         ];
@@ -1073,6 +1102,7 @@ impl Root {
                 let value = value.to_string();
                 settings_this.update(acx, |root, cx| {
                     root.settings_tab = match value.as_str() {
+                        "fonts" => SettingsTab::Fonts,
                         "connection" => SettingsTab::Connection,
                         "hotkeys" => SettingsTab::Hotkeys,
                         _ => SettingsTab::General,
@@ -1148,6 +1178,92 @@ impl Root {
                     ],
                 ));
 
+                // M14/F13: стиль строк боя в журнале: цвета — ColorPicker,
+                // жирность урона — Вкл/Выкл (зеркало «Уведомлений»).
+                body = body.child(color_picker_row(
+                    cx,
+                    pal,
+                    lang,
+                    ColorRow {
+                        label: Key::SettingsLogDamageColor,
+                        id: "ld2-log-damage-color",
+                        value: &self.config.log_damage_color,
+                        open: self.color_picker_open == Some("ld2-log-damage-color"),
+                        set: |root, v| root.config.log_damage_color = v,
+                    },
+                ));
+                body = body.child(color_picker_row(
+                    cx,
+                    pal,
+                    lang,
+                    ColorRow {
+                        label: Key::SettingsLogAttackColor,
+                        id: "ld2-log-attack-color",
+                        value: &self.config.log_attack_color,
+                        open: self.color_picker_open == Some("ld2-log-attack-color"),
+                        set: |root, v| root.config.log_attack_color = v,
+                    },
+                ));
+                // M14/F14: флаг — слайдер-переключатель (Ely Switch).
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsDamageBold).to_string(),
+                    vec![div().child({
+                        let this = cx.entity();
+                        Switch::new("ld2-log-damage-bold", self.config.log_damage_bold).on_change(
+                            move |on, _window, acx| {
+                                this.update(acx, |root, cx| {
+                                    root.on_click(Click::LogDamageBold(on), cx);
+                                    cx.notify();
+                                });
+                            },
+                        )
+                    })],
+                ));
+
+                // Лимит истории чата.
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsChatLimit).to_string(),
+                    vec![
+                        btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
+                        div().px_2().child(format!("{limit}")),
+                        btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
+                    ],
+                ));
+
+                // Уведомления (D7).
+                // M14/F14: флаг — слайдер-переключатель (Ely Switch).
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsNotify).to_string(),
+                    vec![div().child({
+                        let this = cx.entity();
+                        Switch::new("ld2-notify", notify).on_change(move |on, _window, acx| {
+                            this.update(acx, |root, cx| {
+                                root.on_click(Click::SetNotify(on), cx);
+                                cx.notify();
+                            });
+                        })
+                    })],
+                ));
+
+                // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
+                if let Ok(dirs) = ld2_core::config::project_dirs() {
+                    body = body.child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.muted))
+                            .child(dirs.config_dir().display().to_string()),
+                    );
+                }
+
+                body
+            }
+            // M14/F14: шрифты — отдельная вкладка (глобальный масштаб,
+            // шрифт чата и шрифта лога).
+            SettingsTab::Fonts => {
+                let mut body = div().flex().flex_col().gap_3();
                 // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
                 // пишет Theme.font_scale (отклонение M10 «font_scale не
                 // применяется» снято).
@@ -1201,94 +1317,6 @@ impl Root {
                     self.config.log_font_px,
                     |root, v| root.config.log_font_px = v,
                 ));
-
-                // M14/F13: стиль строк боя в журнале: цвета — ColorPicker,
-                // жирность урона — Вкл/Выкл (зеркало «Уведомлений»).
-                body = body.child(color_picker_row(
-                    cx,
-                    pal,
-                    lang,
-                    Key::SettingsLogDamageColor,
-                    "ld2-log-damage-color",
-                    &self.config.log_damage_color,
-                    |root, v| root.config.log_damage_color = v,
-                ));
-                body = body.child(color_picker_row(
-                    cx,
-                    pal,
-                    lang,
-                    Key::SettingsLogAttackColor,
-                    "ld2-log-attack-color",
-                    &self.config.log_attack_color,
-                    |root, v| root.config.log_attack_color = v,
-                ));
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsDamageBold).to_string(),
-                    vec![
-                        btn(
-                            cx,
-                            t(lang, Key::On).to_string(),
-                            if self.config.log_damage_bold {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::LogDamageBold(true),
-                        ),
-                        btn(
-                            cx,
-                            t(lang, Key::Off).to_string(),
-                            if self.config.log_damage_bold {
-                                pal.panel
-                            } else {
-                                pal.accent
-                            },
-                            pal.text,
-                            Click::LogDamageBold(false),
-                        ),
-                    ],
-                ));
-
-                // Лимит истории чата.
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsChatLimit).to_string(),
-                    vec![
-                        btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
-                        div().px_2().child(format!("{limit}")),
-                        btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
-                    ],
-                ));
-
-                // Уведомления (D7).
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsNotify).to_string(),
-                    vec![btn(
-                        cx,
-                        if notify {
-                            t(lang, Key::On).to_string()
-                        } else {
-                            t(lang, Key::Off).to_string()
-                        },
-                        if notify { pal.success } else { pal.panel },
-                        pal.text,
-                        Click::ToggleNotify,
-                    )],
-                ));
-
-                // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
-                if let Ok(dirs) = ld2_core::config::project_dirs() {
-                    body = body.child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(pal.muted))
-                            .child(dirs.config_dir().display().to_string()),
-                    );
-                }
-
                 body
             }
             // M14/F11: адрес сервера — read-only; поле ввода
@@ -1377,13 +1405,7 @@ impl Root {
             body,
         ));
 
-        root.child(btn(
-            cx,
-            t(lang, Key::BtnClose).to_string(),
-            pal.accent,
-            pal.accent_text,
-            Click::CloseSettings,
-        ))
+        root
     }
 }
 
@@ -1639,24 +1661,50 @@ fn font_px_row(
         .child(value_readout(pal, format!("{} px", value.round() as i32)))
 }
 
-/// M14/F13: строка настройки цвета — подпись сверху, Ely ColorPicker
+/// M14/F13: hex из настроек → RGB (парсер Ely — те же формы, что
+/// принимает `is_hex_color` в sanitize конфига); битый → `None`
+/// (вызывающий берёт дефолт). В F14 перенесено сюда из `game.rs` —
+/// нужно и для свотча в настройках.
+fn hex_to_u32(text: &str) -> Option<u32> {
+    let rgba = parse_hex(text).ok()?;
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    Some((byte(rgba.r) << 16) | (byte(rgba.g) << 8) | byte(rgba.b))
+}
+
+/// M14/F14: строка настройки цвета — подпись, **свотч-кнопка** (по
+/// нажатию открывается/закрывается ColorPicker под строкой) и hex.
 /// во всю ширину (он инлайн-блок: превью + плоскость + рейки + hex-поля;
 /// тело настроек скроллится — F9). Значение в конфиге — hex; запись —
 /// `hex(Hsla::to_rgb)`, чтение — `parse_hex` (те же формы, что
 /// принимает `is_hex_color` в sanitize).
+/// M14/F14: параметры строки цвета (пакет — иначе clippy
+/// `too_many_arguments` при 8 аргументах).
+struct ColorRow<'a> {
+    label: Key,
+    id: &'static str,
+    value: &'a str,
+    open: bool,
+    set: fn(&mut Root, String),
+}
+
 fn color_picker_row(
     cx: &mut Context<'_, Root>,
     pal: &Palette,
     lang: Lang,
-    label: Key,
-    id: &'static str,
-    value: &str,
-    set: fn(&mut Root, String),
+    spec: ColorRow<'_>,
 ) -> Div {
+    let ColorRow {
+        label,
+        id,
+        value,
+        open,
+        set,
+    } = spec;
     let this = cx.entity();
     // sanitize гарантирует валидный hex; запасной — серый, без паники.
     let rgba = parse_hex(value).unwrap_or_else(|_| parse_hex("#808080").expect("запасной цвет"));
     let hsla = Hsla::from(rgba);
+    let swatch = hex_to_u32(value).unwrap_or(0x80_80_80);
     div()
         .flex()
         .flex_col()
@@ -1668,18 +1716,65 @@ fn color_picker_row(
                 .child(t(lang, label)),
         )
         .child(
-            ColorPicker::new(id, hsla)
-                .opaque()
-                .on_change(move |c, _window, acx| {
-                    let hex = hex(c.to_rgb());
-                    this.update(acx, |root, cx| {
-                        set(root, hex);
-                        root.save_config();
-                        cx.refresh_windows();
-                        cx.notify();
-                    });
+            // M14/F14: свотч-кнопка — пикер открывается по нажатию.
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .id(format!("ld2-swatch-{id}"))
+                        .cursor_pointer()
+                        .w(px(44.0))
+                        .h(px(24.0))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(rgb(pal.border))
+                        .bg(rgb(swatch))
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener({
+                                let key = id;
+                                move |root, _, _, cx| {
+                                    root.toggle_color_picker(key);
+                                    cx.notify();
+                                }
+                            }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_grow_1()
+                        .text_size(px(13.0))
+                        .text_color(rgb(pal.muted))
+                        .child(value.to_string()),
+                )
+                .when(open, |row| {
+                    row.child(btn(
+                        cx,
+                        t(lang, Key::BtnClose).to_string(),
+                        pal.panel,
+                        pal.text,
+                        Click::TogglePicker(id),
+                    ))
                 }),
         )
+        .when(open, |row| {
+            row.child(
+                ColorPicker::new(id, hsla)
+                    .opaque()
+                    .on_change(move |c, _window, acx| {
+                        let hex = hex(c.to_rgb());
+                        this.update(acx, |root, cx| {
+                            set(root, hex);
+                            root.save_config();
+                            cx.refresh_windows();
+                            cx.notify();
+                        });
+                    }),
+            )
+        })
 }
 
 /// M14/F8 (фикс смоука): слайдер Ely сам ширины не имеет — `Track`
@@ -1928,6 +2023,131 @@ impl Root {
         }
     }
 
+    /// M14/F14: закрыть настройки (общий путь для Esc/scrim/✕/шапки).
+    fn close_settings(&mut self) {
+        self.settings_open = false;
+        self.color_picker_open = None;
+        self.settings_delta = (0.0, 0.0);
+        self.settings_drag_offset = None;
+    }
+
+    /// M14/F14: настройки — **собственный** диалог поверх экрана:
+    /// scrim (клик/Esc/✕ закрывают) и карточка **760×560** с
+    /// перетаскиванием за заголовок (`SettingsDrag`).
+    ///
+    /// Ely `Dialog` не подошёл: его карточка жёстко
+    /// `theme.dialog_width()` = 440 px — контент обрезался, и он не
+    /// двигается.
+    pub(crate) fn settings_layer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        if !self.settings_open {
+            return None;
+        }
+        let lang = self.lang;
+        // Центр окна + накопленное смещение перетаскивания.
+        let (w, h) = (760.0, 560.0);
+        let viewport = window.viewport_size();
+        let base_x = ((f32::from(viewport.width) - w) / 2.0).max(0.0);
+        let base_y = ((f32::from(viewport.height) - h) / 2.0).max(0.0);
+        let left = base_x + self.settings_delta.0;
+        let top = base_y + self.settings_delta.1;
+
+        let title = t(lang, Key::SettingsTitle).to_string();
+        let content = self.settings_content(cx, pal);
+        let titlebar = {
+            let drag_this = cx.entity();
+            div()
+                .id("ld2-settings-titlebar")
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .child(
+                    div()
+                        .flex_grow_1()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_size(px(16.0))
+                        .child(title),
+                )
+                .child(btn(cx, "✕", pal.panel, pal.text, Click::CloseSettings))
+                // Захват: запоминаем смещение указателя внутри заголовка
+                // (конструктор on_drag получает offset от gpui).
+                .on_drag(SettingsDrag, move |_value, offset, _window, acx| {
+                    drag_this.update(acx, |root, cx| {
+                        root.settings_drag_offset =
+                            Some((f32::from(offset.x), f32::from(offset.y)));
+                        cx.notify();
+                    });
+                    acx.new(|_| EmptyView)
+                })
+                .on_drag_move(cx.listener(
+                    move |root, event: &DragMoveEvent<SettingsDrag>, window, cx| {
+                        let Some(offset) = root.settings_drag_offset else {
+                            return;
+                        };
+                        let position = event.event.position;
+                        let viewport = window.viewport_size();
+                        let base_x = ((f32::from(viewport.width) - w) / 2.0).max(0.0);
+                        let base_y = ((f32::from(viewport.height) - h) / 2.0).max(0.0);
+                        root.settings_delta.0 = f32::from(position.x) - offset.0 - base_x;
+                        root.settings_delta.1 = f32::from(position.y) - offset.1 - base_y;
+                        cx.notify();
+                    },
+                ))
+        };
+        let card = div()
+            .id("ld2-settings-card")
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .w(px(w))
+            .h(px(h))
+            .p(px(16.0))
+            .rounded(px(12.0))
+            .bg(rgb(pal.panel))
+            .border_1()
+            .border_color(rgb(pal.border))
+            .child(titlebar)
+            .child(content);
+
+        Some(
+            div()
+                .id("ld2-settings-layer")
+                .size_full()
+                .relative()
+                .on_key_down(cx.listener(|root, event: &KeyDownEvent, _window, cx| {
+                    if event.keystroke.key == "escape" {
+                        cx.stop_propagation();
+                        root.close_settings();
+                        cx.notify();
+                    }
+                }))
+                .child(
+                    div()
+                        .id("ld2-settings-scrim")
+                        .size_full()
+                        .bg(rgba(0x99000000))
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|root, _, _, cx| {
+                                root.close_settings();
+                                cx.notify();
+                            }),
+                        ),
+                )
+                .child(card)
+                .into_any_element(),
+        )
+    }
+
     /// M11.2: диспетчер всплывающих диалогов (Ely `Dialog` поверх контента,
     /// ADR-004): экран → приоритеты game > social > sheet.
     pub(crate) fn dialog_layer(
@@ -1992,19 +2212,22 @@ impl Render for Root {
                 // Экран — на остаток высоты между шапкой и статус-баром:
                 // size_full внутри даёт 100 % этого контейнера, а не окна
                 // (иначе низ уходил за границу, баг M11).
-                div().flex_grow_1().min_h_0().child(if self.settings_open {
-                    self.settings_screen(cx, &pal)
-                } else {
-                    match self.store.screen {
+                div()
+                    .flex_grow_1()
+                    .min_h_0()
+                    .child(match self.store.screen {
                         Screen::Login => self.login_screen(cx, &pal),
                         Screen::Characters => self.characters_screen(cx, &pal),
                         Screen::Game => self.game_screen(cx, &pal),
-                    }
-                }),
+                    }),
             )
             // M14/F1: статус сервера живёт в шапке (status_badge).
             // M11.2: всплывающий диалог поверх контента (скрим + панель).
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
+            // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
+            .when_some(self.settings_layer(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
             // M11.4: всплывающие тосты (notice → Ely Toast).
             .child(ToastViewport::new("ld2-toasts", &self.toaster))
     }

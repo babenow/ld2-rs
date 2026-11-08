@@ -14,14 +14,14 @@ use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
 
 use crate::palette::Palette;
-use ely::forms::{parse_hex, Choice};
+use ely::forms::Choice;
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
 use super::social::show_party;
-use super::{btn, Click, LogTab, Root};
+use super::{btn, hex_to_u32, Click, LogTab, Root};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -1050,15 +1050,6 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
                 .text_color(rgb(pal.muted))
                 .child(label),
         )
-}
-
-/// M14/F13: hex из настроек → RGB (парсер Ely — те же формы, что
-/// принимает `is_hex_color` в sanitize конфига); битый → `None`
-/// (вызывающий берёт дефолт).
-fn hex_to_u32(text: &str) -> Option<u32> {
-    let rgba = parse_hex(text).ok()?;
-    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
-    Some((byte(rgba.r) << 16) | (byte(rgba.g) << 8) | byte(rgba.b))
 }
 
 /// M14/F4: почему кнопка панели недоступна: требование (цель/мана/
