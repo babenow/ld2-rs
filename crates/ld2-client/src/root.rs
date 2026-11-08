@@ -1054,10 +1054,11 @@ impl Root {
             SettingsTab::Connection => "connection",
             SettingsTab::Hotkeys => "hotkeys",
         };
+        // M14/F12: иконки вкладок (метки без изменений).
         let choices = vec![
-            Choice::new("general", t(lang, Key::SettingsGeneral)),
-            Choice::new("connection", t(lang, Key::SettingsConnection)),
-            Choice::new("hotkeys", t(lang, Key::SettingsHotkeys)),
+            Choice::new("general", t(lang, Key::SettingsGeneral)).icon(IconName::SlidersHorizontal),
+            Choice::new("connection", t(lang, Key::SettingsConnection)).icon(IconName::Server),
+            Choice::new("hotkeys", t(lang, Key::SettingsHotkeys)).icon(IconName::Keyboard),
         ];
         let settings_this = cx.entity();
         root = root.child(Tabs::new("ld2-settings-tabs", choices, active).on_change(

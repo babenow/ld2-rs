@@ -18,7 +18,7 @@ use ely::forms::Choice;
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
-use ely::primitives::Tooltip;
+use ely::primitives::{IconName, Tooltip};
 
 use super::social::show_party;
 use super::{act_btn, btn, Click, LogTab, Root};
@@ -780,9 +780,10 @@ impl Root {
             LogTab::Log => "log",
             LogTab::Chat => "chat",
         };
+        // M14/F12: иконки вкладок (метки без изменений).
         let choices = vec![
-            Choice::new("log", t(lang, Key::LogLabel)),
-            Choice::new("chat", t(lang, Key::ChLabel)),
+            Choice::new("log", t(lang, Key::LogLabel)).icon(IconName::BookOpen),
+            Choice::new("chat", t(lang, Key::ChLabel)).icon(IconName::MessageSquare),
         ];
         let this = cx.entity();
         let mut head = div().flex().flex_row().items_center().gap_2();

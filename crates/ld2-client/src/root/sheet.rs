@@ -22,7 +22,7 @@ use crate::palette::Palette;
 use ely::forms::{Choice, Input, Select};
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
-use ely::primitives::Tooltip;
+use ely::primitives::{IconName, Tooltip};
 
 use super::{act_btn, scrollable_tab, Root};
 
@@ -49,6 +49,19 @@ impl SheetTab {
             (SheetTab::Professions, Key::ProfessionsTab),
             (SheetTab::Guild, Key::GuildTab),
         ]
+    }
+
+    /// M14/F12: иконка вкладки (Lucide-бандл Ely) — метка не меняется.
+    pub(crate) fn icon(self) -> IconName {
+        match self {
+            SheetTab::Skills => IconName::Zap,
+            SheetTab::Attrs => IconName::Gauge,
+            SheetTab::Inventory => IconName::Package,
+            SheetTab::Statuses => IconName::Shield,
+            SheetTab::Quests => IconName::ListChecks,
+            SheetTab::Professions => IconName::Wrench,
+            SheetTab::Guild => IconName::Flag,
+        }
     }
 
     pub(crate) fn as_str(self) -> &'static str {
@@ -162,7 +175,9 @@ impl Root {
         // M11.4: вкладки листа — Tabs Ely (выбор + клавиатурная навигация).
         let choices: Vec<Choice> = SheetTab::all()
             .iter()
-            .map(|(candidate, key)| Choice::new(candidate.as_str(), t(lang, *key)))
+            .map(|(candidate, key)| {
+                Choice::new(candidate.as_str(), t(lang, *key)).icon(candidate.icon())
+            })
             .collect();
         let this = cx.entity();
         col = col.child(
