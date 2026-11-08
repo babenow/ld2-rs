@@ -290,6 +290,9 @@ pub enum Key {
     SettingsLogFont,
     // M14 F9: вкладка настроек
     SettingsGeneral,
+    // M14 F11: вкладка «Подключение»
+    SettingsConnection,
+    SettingsChangeHost,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -605,6 +608,8 @@ mod tests {
         Key::SettingsChatFont,
         Key::SettingsLogFont,
         Key::SettingsGeneral,
+        Key::SettingsConnection,
+        Key::SettingsChangeHost,
     ];
 
     #[test]

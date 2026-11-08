@@ -256,5 +256,8 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsLogFont => "Шрифт лога",
         // M14 F9: вкладка настроек
         SettingsGeneral => "Основные",
+        // M14 F11: вкладка «Подключение»
+        SettingsConnection => "Подключение",
+        SettingsChangeHost => "Подключиться к другому",
     }
 }
