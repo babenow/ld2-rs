@@ -240,5 +240,12 @@ pub(super) fn t(key: Key) -> &'static str {
         BadgePvp => "PvP",
         BadgeSafe => "Безопасно",
         HeaderMenu => "Меню",
+        // M14 F4: панель действий и хоткеи
+        HkCleave => "Раскол",
+        HkRune => "Руна",
+        HkConsumable => "Свиток/зелье",
+        HotbarNoTarget => "Выберите цель",
+        HotbarCooldown => "Кулдаун {s} с",
+        HotbarCdShort => "{s} с",
     }
 }

@@ -186,6 +186,10 @@ pub struct AppStore {
     pub target: Option<String>,
     /// Кулдауны активных навыков: skill_id → until epoch (ФР-05).
     pub combat_cooldowns: BTreeMap<String, i64>,
+    /// Глобальный кулдаун боевых действий (M14/F4): epoch **мс**, до
+    /// которого заблокированы кнопки панели — клиентская блокировка
+    /// 1 с (сервер не меняется; приоритет — max(основной, глобальный)).
+    pub global_cooldown_until: i64,
     /// Журнал нарушений из `cmd/crime.log` (ФР-11).
     pub crime_log: Vec<CrimeLogEntry>,
     /// Журнал уже загружен (вкладка «Статусы» запрашивает один раз).
@@ -369,6 +373,7 @@ impl AppStore {
             time_offset: 0,
             target: None,
             combat_cooldowns: BTreeMap::new(),
+            global_cooldown_until: 0,
             crime_log: Vec::new(),
             crime_log_loaded: false,
             loot_confirm: None,
@@ -1446,6 +1451,32 @@ impl AppStore {
     }
 
     /// Цикл целей по Tab: первый монстр → следующий → (wrap) (ФР-05).
+    /// M14/F4: длительность глобального кулдауна, мс (клиентская
+    /// блокировка всех боевых действий: панель, руны, свитки/зелья).
+    pub const GLOBAL_COOLDOWN_MS: i64 = 1000;
+
+    /// Начать глобальный кулдаун с `now_ms` (epoch, мс). Уже
+    /// действующее окно не укорачивается — берётся максимум.
+    pub fn begin_global_cooldown(&mut self, now_ms: i64) {
+        self.global_cooldown_until = self
+            .global_cooldown_until
+            .max(now_ms + Self::GLOBAL_COOLDOWN_MS);
+    }
+
+    /// Остаток глобального кулдауна, мс (≥0).
+    pub fn global_cooldown_left(&self, now_ms: i64) -> i64 {
+        (self.global_cooldown_until - now_ms).max(0)
+    }
+
+    /// M14/F4: готовность боевого действия и показываемый остаток.
+    /// Приоритет кулдаунов: **max(основной, глобальный)** — если
+    /// основной длиннее, показываем его, иначе глобальный.
+    /// Чистая функция — юнит-тест ниже.
+    pub fn action_ready(own_cd_left_ms: i64, global_left_ms: i64) -> (bool, i64) {
+        let left = own_cd_left_ms.max(global_left_ms);
+        (left <= 0, left.max(0))
+    }
+
     pub fn cycle_target(&mut self) {
         let Some(snap) = self.snapshot.as_ref() else {
             self.target = None;
@@ -1628,6 +1659,15 @@ pub fn local_epoch() -> i64 {
         .unwrap_or(0)
 }
 
+/// Локальное время в миллисекундах epoch (M14/F4: плавный отсчёт
+/// кулдаунов на кнопках панели — тик 50 мс).
+pub fn local_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// Активные статусы на момент `now` (epoch): истёвшие скрываются локально —
 /// fallback без событий (ФР-11). Клиент НЕ пересчитывает сроки (§4.10).
 pub fn filter_active_statuses(statuses: &[CrimeStatus], now: i64) -> Vec<CrimeStatus> {
@@ -1804,6 +1844,59 @@ pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M14/F4: глобальный кулдаун — 1 с; повтор не укорачивает окно.
+    #[test]
+    fn global_cooldown_blocks_one_second_and_never_shrinks() {
+        let mut store = AppStore::new();
+        assert_eq!(store.global_cooldown_left(1_000), 0, "не начат");
+
+        store.begin_global_cooldown(1_000);
+        assert_eq!(
+            store.global_cooldown_left(1_000),
+            AppStore::GLOBAL_COOLDOWN_MS
+        );
+        assert_eq!(store.global_cooldown_left(1_500), 500, "спадает");
+        assert_eq!(store.global_cooldown_left(2_000), 0, "истёк");
+
+        // Повтор через 500 мс продлевает, но не откатывает окно.
+        store.begin_global_cooldown(1_500);
+        assert_eq!(store.global_cooldown_until, 2_500);
+        // Старое время (гонка тиков) не укорачивает уже действующее.
+        store.begin_global_cooldown(1_100);
+        assert_eq!(store.global_cooldown_until, 2_500);
+    }
+
+    /// M14/F4: показываемый остаток = max(основной, глобальный).
+    #[test]
+    fn action_ready_takes_longest_cooldown() {
+        assert_eq!(AppStore::action_ready(0, 0), (true, 0), "оба свободны");
+        assert_eq!(
+            AppStore::action_ready(500, 0),
+            (false, 500),
+            "только основной"
+        );
+        assert_eq!(
+            AppStore::action_ready(0, 700),
+            (false, 700),
+            "только глобальный"
+        );
+        assert_eq!(
+            AppStore::action_ready(900, 300),
+            (false, 900),
+            "основной длиннее"
+        );
+        assert_eq!(
+            AppStore::action_ready(300, 900),
+            (false, 900),
+            "глобальный длиннее"
+        );
+        assert_eq!(
+            AppStore::action_ready(-1, -5),
+            (true, 0),
+            "истёкшие — готово"
+        );
+    }
     use ld2_test_kit::fixtures;
 
     // ─── M11.6: E2E-тест вехи — диспетчер всплывающих диалогов ─────────────

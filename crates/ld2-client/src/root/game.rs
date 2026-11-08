@@ -7,9 +7,9 @@
 //! меню — инлайн под строкой (вместо попапа по курсору), тултипы не используются.
 
 use ely::overlays::Dialog;
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton};
-use ld2_core::l10n::{format_duration, t, Key};
-use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, LogKind};
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stateful};
+use ld2_core::l10n::{format_duration, t, tf, Key};
+use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, AppStore, LogKind};
 use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
 
@@ -21,7 +21,56 @@ use ely::primitives::Tooltip;
 use super::social::show_party;
 use super::{btn, Click, Root};
 
+/// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
+/// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
+/// Клиентское зеркало гейта: кнопка и хоткей показываются/срабатывают
+/// только когда навык открыт.
+pub(crate) fn power_strike_open(skills: &[ld2_protocol::types::SkillSnapshot]) -> bool {
+    skills
+        .iter()
+        .find(|s| s.id == "sword")
+        .is_some_and(|s| s.rank >= 5)
+}
+
 impl Root {
+    /// M14/F4: первая доступная руна посоха (хоткей «руна») — заряды и
+    /// мана в порядке, как у первой включённой кнопки рун на панели.
+    pub(crate) fn first_rune_click(&self) -> Option<Click> {
+        let snap = self.store.snapshot.as_ref()?;
+        let rune_cost = self
+            .store
+            .session
+            .as_ref()
+            .map(|s| s.magic.mana.rune_cost)
+            .unwrap_or(0);
+        let staff_uid = snap.char.equip.get("staff").cloned().flatten()?;
+        let staff = snap.char.inventory.iter().find(|i| i.uid == staff_uid)?;
+        staff
+            .sockets
+            .iter()
+            .flatten()
+            .find(|socket| {
+                socket.rune.as_ref().is_some_and(|r| r.charges > 0)
+                    && (rune_cost <= 0 || snap.char.mp.cur >= rune_cost)
+            })
+            .map(|socket| Click::RuneCast {
+                staff_uid: staff_uid.clone(),
+                socket_index: socket.index,
+            })
+    }
+
+    /// M14/F4: первый расходник боя (свиток/зелье) — хоткей «6».
+    pub(crate) fn first_consumable_uid(&self) -> Option<String> {
+        self.store
+            .snapshot
+            .as_ref()?
+            .char
+            .inventory
+            .iter()
+            .find(|i| matches!(i.item_type.as_str(), "scroll" | "potion"))
+            .map(|i| i.uid.clone())
+    }
+
     /// M11.2: игровые всплывающие диалоги (ФР-03/05/06): death/examine/loot.
     /// Приоритет — прежний диспетчер замены контента (смерть главнее).
     pub(crate) fn game_dialog(
@@ -517,6 +566,10 @@ impl Root {
 
     // ── hotbar (ФР-05/09) ─────────────────────────────────────────────────
 
+    /// M14/F4: панель действий (бывший hotbar): атака → активки →
+    /// побег → руны → свитки/зелья. Каждая кнопка учитывает собственный
+    /// кулдаун и глобальный (приоритет — max) и показывает причину
+    /// недоступности в тултипе.
     fn hotbar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette, snap: &StateSnapshot) -> Div {
         let lang = self.lang;
         let rune_cost = self
@@ -525,6 +578,10 @@ impl Root {
             .as_ref()
             .map(|s| s.magic.mana.rune_cost)
             .unwrap_or(0);
+        let now_ms = self.now_ms();
+        let global_left = self.store.global_cooldown_left(now_ms);
+        // Готовность действия: max(собственный кулдаун, глобальный).
+        let ready = |own_left: i64| AppStore::action_ready(own_left, global_left);
 
         let mut row = div()
             .flex()
@@ -544,58 +601,116 @@ impl Root {
                     .child(t(lang, Key::HotbarLabel)),
             );
 
-        // Руны экипированного посоха: ×N зарядов (ФР-09).
+        // ── 1) Обычная атака — всегда первая; без цели — disabled ──
+        let attack_label = t(lang, Key::Attack).to_string();
+        match self.store.target.clone() {
+            None => {
+                row = row.child(action_disabled(
+                    "ld2-act-attack",
+                    attack_label,
+                    t(lang, Key::HotbarNoTarget).to_string(),
+                    pal,
+                ))
+            }
+            Some(id) => {
+                let (ok, left) = ready(0);
+                if ok {
+                    row = row.child(btn(
+                        cx,
+                        attack_label,
+                        pal.danger,
+                        0xffffff,
+                        Click::Attack(id),
+                    ));
+                } else {
+                    row = row.child(cd_disabled("ld2-act-attack", attack_label, left, lang, pal));
+                }
+            }
+        }
+
+        // ── 2) Активки: «Мощный удар» (гейт §4); Раскол скрыт ──
+        if power_strike_open(&snap.char.skills) {
+            let label = t(lang, Key::PowerStrike).to_string();
+            let (ok, left) = ready(self.own_cd_left_ms("power_strike", now_ms));
+            if ok {
+                row = row.child(btn(cx, label, pal.warn, 0xffffff, Click::PowerStrike));
+            } else {
+                row = row.child(cd_disabled("ld2-act-power-strike", label, left, lang, pal));
+            }
+        }
+
+        // ── 3) Побег ──
+        let flee_label = t(lang, Key::BtnFlee).to_string();
+        let (ok, left) = ready(0);
+        if ok {
+            row = row.child(btn(cx, flee_label, pal.panel, pal.text, Click::Flee));
+        } else {
+            row = row.child(cd_disabled("ld2-act-flee", flee_label, left, lang, pal));
+        }
+
+        // ── 4) Руны экипированного посоха: ×N зарядов (ФР-09) ──
         if let Some(staff_uid) = snap.char.equip.get("staff").cloned().flatten() {
             if let Some(staff) = snap.char.inventory.iter().find(|i| i.uid == staff_uid) {
                 for socket in staff.sockets.iter().flatten() {
                     let Some(rune) = &socket.rune else { continue };
                     let charges_ok = rune.charges > 0;
                     let mp_ok = rune_cost <= 0 || snap.char.mp.cur >= rune_cost;
-                    let enabled = charges_ok && mp_ok;
                     let label = format!("{} ×{}", rune.name, rune.charges);
-                    if enabled {
-                        let slot = btn(
-                            cx,
-                            label,
-                            pal.accent,
-                            pal.accent_text,
-                            Click::RuneCast {
-                                staff_uid: staff_uid.clone(),
-                                socket_index: socket.index,
-                            },
-                        );
-                        // M11.4: стоимость каста — тултип (egui-паритет).
-                        row = row.child(if rune_cost > 0 {
-                            slot.id(format!("ld2-rune-{}", socket.index))
-                                .tooltip(Tooltip::text(format!("{rune_cost} MP")))
-                                .into_any_element()
-                        } else {
-                            slot.into_any_element()
-                        });
+                    // Причина недоступности: сначала требования
+                    // (заряды/мана), потом кулдаун (у кулдауна — таймер
+                    // и в label, как у остальных кнопок панели).
+                    let off: Option<OffReason> = if !charges_ok {
+                        Some(OffReason::Req(t(lang, Key::NoCharge).to_string()))
+                    } else if !mp_ok {
+                        Some(OffReason::Req(t(lang, Key::NotEnoughMp).to_string()))
                     } else {
-                        // M11.4: причина недоступности — тултип (egui-паритет).
-                        let reason = if !charges_ok {
-                            t(lang, Key::NoCharge)
-                        } else {
-                            t(lang, Key::NotEnoughMp)
-                        };
-                        row = row.child(
-                            div()
-                                .id(format!("ld2-rune-off-{}", socket.index))
-                                .tooltip(Tooltip::text(reason.to_string()))
-                                .px_3()
-                                .py_1()
-                                .rounded_md()
-                                .bg(rgb(pal.border))
-                                .text_color(rgb(pal.muted))
-                                .child(label),
-                        );
+                        let (ok, left) = ready(0);
+                        (!ok).then_some(OffReason::Cd(left))
+                    };
+                    match off {
+                        None => {
+                            let slot = btn(
+                                cx,
+                                label,
+                                pal.accent,
+                                pal.accent_text,
+                                Click::RuneCast {
+                                    staff_uid: staff_uid.clone(),
+                                    socket_index: socket.index,
+                                },
+                            );
+                            // M11.4: стоимость каста — тултип (egui-паритет).
+                            row = row.child(if rune_cost > 0 {
+                                slot.id(format!("ld2-rune-{}", socket.index))
+                                    .tooltip(Tooltip::text(format!("{rune_cost} MP")))
+                                    .into_any_element()
+                            } else {
+                                slot.into_any_element()
+                            });
+                        }
+                        Some(OffReason::Req(reason)) => {
+                            row = row.child(action_disabled(
+                                &format!("ld2-rune-off-{}", socket.index),
+                                label,
+                                reason,
+                                pal,
+                            ));
+                        }
+                        Some(OffReason::Cd(left)) => {
+                            row = row.child(cd_disabled(
+                                &format!("ld2-rune-off-{}", socket.index),
+                                label,
+                                left,
+                                lang,
+                                pal,
+                            ));
+                        }
                     }
                 }
             }
         }
 
-        // Свитки и зелья (свиток — без маны, D4).
+        // ── 5) Свитки и зелья (свиток — без маны, D4) ──
         let consumables: Vec<_> = snap
             .char
             .inventory
@@ -605,42 +720,24 @@ impl Root {
             .collect();
         for item in consumables {
             let label = format!("{} ×{}", item.name, item.qty.unwrap_or(1));
-            row = row.child(btn(
-                cx,
-                label,
-                pal.panel,
-                pal.text,
-                Click::UseItem(item.uid.clone()),
-            ));
-        }
-
-        // «Мощный удар» (ФР-05): только кулдаун (D4).
-        let now = local_epoch() + self.store.time_offset;
-        let cd_left = self
-            .store
-            .combat_cooldowns
-            .get("power_strike")
-            .copied()
-            .unwrap_or(0)
-            - now;
-        let ready = cd_left <= 0;
-        let label = if ready {
-            t(lang, Key::PowerStrike).to_string()
-        } else {
-            format!("{} ({cd_left}с)", t(lang, Key::PowerStrike))
-        };
-        if ready {
-            row = row.child(btn(cx, label, pal.warn, 0xffffff, Click::PowerStrike));
-        } else {
-            row = row.child(
-                div()
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(pal.border))
-                    .text_color(rgb(pal.muted))
-                    .child(label),
-            );
+            let (ok, left) = ready(0);
+            if ok {
+                row = row.child(btn(
+                    cx,
+                    label,
+                    pal.panel,
+                    pal.text,
+                    Click::UseItem(item.uid.clone()),
+                ));
+            } else {
+                row = row.child(cd_disabled(
+                    &format!("ld2-act-item-{}", item.uid),
+                    label,
+                    left,
+                    lang,
+                    pal,
+                ));
+            }
         }
         row
     }
@@ -884,6 +981,53 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
                 .text_color(rgb(pal.muted))
                 .child(label),
         )
+}
+
+/// M14/F4: почему кнопка панели недоступна: требование (цель/мана/
+/// заряды — текст в тултипе) или кулдаун (таймер на кнопке + тултип).
+enum OffReason {
+    Req(String),
+    Cd(i64),
+}
+
+/// M14/F4: недоступная кнопка панели — причина в тултипе (тултипы
+/// используются и для включённых кнопок — egui-паритет M11.4).
+fn action_disabled(id: &str, label: String, reason: String, pal: &Palette) -> Stateful<Div> {
+    div()
+        .id(id.to_string())
+        .tooltip(Tooltip::text(reason))
+        .px_3()
+        .py_1()
+        .rounded_md()
+        .bg(rgb(pal.border))
+        .text_color(rgb(pal.muted))
+        .child(label)
+}
+
+/// M14/F4: текст причины «кулдаун» — остаток округляется вверх
+/// (100 мс до конца → «1 с»), чтобы значение не мигало в 0.
+fn cooldown_reason(lang: ld2_core::l10n::Lang, left_ms: i64) -> String {
+    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    tf(lang, Key::HotbarCooldown, &[("{s}", &secs.to_string())])
+}
+
+/// M14/F4: кнопка на кулдауне (собственный/глобальный): таймер остатка
+/// прямо на кнопке (перерисовка тиком 50 мс) + причина в тултипе.
+fn cd_disabled(
+    id: &str,
+    label: String,
+    left_ms: i64,
+    lang: ld2_core::l10n::Lang,
+    pal: &Palette,
+) -> Stateful<Div> {
+    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    let short = tf(lang, Key::HotbarCdShort, &[("{s}", &secs.to_string())]);
+    action_disabled(
+        id,
+        format!("{label} · {short}"),
+        cooldown_reason(lang, left_ms),
+        pal,
+    )
 }
 
 /// Цвет severity (палитра §7.4, локальная копия — egui-версия возвращает Color32).
