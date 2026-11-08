@@ -281,6 +281,8 @@ pub enum Key {
     HotbarNoTarget,
     HotbarCooldown,
     HotbarCdShort,
+    // M14 F3: инвентарь/скроллы
+    InventoryEmpty,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -591,6 +593,7 @@ mod tests {
         Key::HotbarNoTarget,
         Key::HotbarCooldown,
         Key::HotbarCdShort,
+        Key::InventoryEmpty,
     ];
 
     #[test]

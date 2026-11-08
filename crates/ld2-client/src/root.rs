@@ -129,6 +129,9 @@ pub struct Root {
     /// M11.4: stick-to-bottom журнала и чата.
     journal_scroll: ScrollHandle,
     chat_scroll: ScrollHandle,
+    /// M14/F3: обычная прокрутка вкладок листа «Навыки»/«Профессии».
+    skills_scroll: ScrollHandle,
+    professions_scroll: ScrollHandle,
     last_journal_len: usize,
     last_chat_len: usize,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
@@ -179,6 +182,8 @@ impl Root {
             last_notice: None,
             journal_scroll: ScrollHandle::new(),
             chat_scroll: ScrollHandle::new(),
+            skills_scroll: ScrollHandle::new(),
+            professions_scroll: ScrollHandle::new(),
             last_journal_len: 0,
             last_chat_len: 0,
             party_collapsed,
