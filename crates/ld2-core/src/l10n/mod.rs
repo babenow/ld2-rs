@@ -270,10 +270,13 @@ pub enum Key {
     NotifyTradeOpen,
     NotifyWhisper,
     NotifyUpgrade,
-    // M14 F1: шапка окна (бейджи локации, заголовок меню)
+    // M14 F1: шапка окна (бейджи локации)
     BadgePvp,
     BadgeSafe,
-    HeaderMenu,
+    // M14 F16: диалог таймера выхода
+    ExitCountdown,
+    ExitNowBtn,
+    CancelBtn,
     // M14 F4: панель действий и хоткеи
     HkCleave,
     HkRune,
@@ -600,7 +603,9 @@ mod tests {
         Key::NotifyUpgrade,
         Key::BadgePvp,
         Key::BadgeSafe,
-        Key::HeaderMenu,
+        Key::ExitCountdown,
+        Key::ExitNowBtn,
+        Key::CancelBtn,
         Key::HkCleave,
         Key::HkRune,
         Key::HkConsumable,

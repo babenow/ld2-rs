@@ -239,7 +239,10 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F1: header
         BadgePvp => "PvP",
         BadgeSafe => "Safe",
-        HeaderMenu => "Menu",
+        // M14 F16: exit timer dialog
+        ExitCountdown => "Exit in {s}s",
+        ExitNowBtn => "Exit now",
+        CancelBtn => "Cancel",
         // M14 F4: action panel and hotkeys
         HkCleave => "Cleave",
         HkRune => "Rune",

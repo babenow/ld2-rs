@@ -30,7 +30,6 @@ use ely::forms::{
     Switch, TextInput,
 };
 use ely::layout::ScrollArea;
-use ely::menus::{Menu, MenuItem, OverflowMenu};
 use ely::navigation::Tabs;
 use ely::overlays::Dialog;
 use ely::primitives::IconName;
@@ -73,7 +72,6 @@ pub(crate) enum Click {
     /// M13.3: открыть диалог регистрации (ФР-01).
     OpenRegister,
     Logout,
-    Exit,
     /// M14/F8: выбор языка в настройках («ru»/«en»).
     Lang(&'static str),
     ToggleSettings,
@@ -111,6 +109,18 @@ pub(crate) enum Click {
     SwitchChar,
 }
 
+/// M14/F16: какое действие выполнит таймер выхода.
+#[derive(Clone, Copy)]
+enum ExitKind {
+    /// Из мира — на экран персонажей.
+    SwitchChar,
+    /// На логин-экран (дисконнект).
+    Logout,
+}
+
+/// M14/F16: длина таймера выхода, мс.
+const EXIT_DELAY_MS: i64 = 20_000;
+
 /// Инициализация корневого view (всё, что создаётся вне gpui-контекста).
 pub struct Shell {
     pub store: AppStore,
@@ -145,6 +155,8 @@ pub struct Root {
     reg_password2: Option<Entity<TextInput>>,
     host_input: Option<Entity<TextInput>>,
     settings_open: bool,
+    /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
+    exit_timer: Option<(ExitKind, i64)>,
     first_frame: bool,
 
     /// Поле имени новой гильдии (ФР-16).
@@ -220,6 +232,7 @@ impl Root {
             reg_password2: None,
             host_input: None,
             settings_open: false,
+            exit_timer: None,
             first_frame: true,
             guild_input: None,
             sheet_tab,
@@ -297,6 +310,15 @@ impl Root {
             cx.notify();
         }
 
+        // M14/F16: таймер выхода — полоса анимируется (тик 50 мс),
+        // по истечении 20 с действие выполняется автоматически.
+        let exit_active = self.exit_timer.is_some();
+        if let Some((kind, deadline)) = self.exit_timer {
+            if self.now_ms() >= deadline {
+                self.perform_exit(kind);
+            }
+        }
+
         // M11.4: новый notice → всплывающий тост Ely (текст в экране
         // остаётся до замены — на время жизни тоста возможен дубль).
         if let Some(notice) = self.store.notice.clone() {
@@ -321,11 +343,15 @@ impl Root {
                 .values()
                 .any(|until_s| until_s.saturating_mul(1000) > now_ms);
 
-        if had_events || cd_active {
+        if had_events || cd_active || exit_active {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
-        Duration::from_millis(if had_events || cd_active { 50 } else { 200 })
+        Duration::from_millis(if had_events || cd_active || exit_active {
+            50
+        } else {
+            200
+        })
     }
 
     fn exec_effects(&mut self, effects: Vec<Effect>) {
@@ -727,8 +753,7 @@ impl Root {
                 self.register_submitted = false;
                 self.store.register_error = None;
             }
-            Click::Logout => self.logout(),
-            Click::Exit => cx.quit(),
+            Click::Logout => self.open_exit(ExitKind::Logout, cx),
             Click::Lang(code) => {
                 self.lang = Lang::from_code(code);
                 self.config.lang = self.lang.code().to_string();
@@ -912,7 +937,7 @@ impl Root {
             }
             Click::LootCancel => self.store.clear_loot_confirm(),
             Click::CloseDetail => self.store.entity_detail = None,
-            Click::SwitchChar => self.store.back_to_characters(),
+            Click::SwitchChar => self.open_exit(ExitKind::SwitchChar, cx),
         }
     }
 
@@ -925,6 +950,8 @@ impl Root {
     fn titlebar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let settings_open = self.settings_open;
+        let in_world = self.store.screen == Screen::Game;
+        let before_login = self.store.screen != Screen::Login;
         let left_pad = if matches!(host_os(), gpui::OperatingSystem::Mac) {
             76.0
         } else {
@@ -971,6 +998,28 @@ impl Root {
                             })),
                     ),
             )
+            // M14/F16: кнопки выхода вместо меню шапки — смена
+            // персонажа (в мире) и дисконнект (везде, кроме входа).
+            .when(in_world, |d| {
+                d.child(
+                    IconButton::new("ld2-titlebar-switch", IconName::Users)
+                        .tooltip(t(lang, Key::BtnSwitchChar))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.on_click(Click::SwitchChar, cx);
+                            cx.notify();
+                        })),
+                )
+            })
+            .when(!before_login, |d| {
+                d.child(
+                    IconButton::new("ld2-titlebar-logout", IconName::LogOut)
+                        .tooltip(t(lang, Key::BtnLogout))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.on_click(Click::Logout, cx);
+                            cx.notify();
+                        })),
+                )
+            })
     }
 
     fn header(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
@@ -979,8 +1028,6 @@ impl Root {
         // M14/F1: статус сервера и текущая локация — прямо в шапке.
         let status = self.store.transport.clone();
         let rtt = self.store.rtt_ms;
-        let in_world = self.store.screen == Screen::Game;
-        let before_login = self.store.screen == Screen::Login;
         let location = self
             .store
             .snapshot
@@ -1044,9 +1091,7 @@ impl Root {
                             Click::OpenReleases,
                         )
                     }))
-                    .child(status_badge(pal, lang, &status, rtt))
-                    // M14/F15: ⚙ уехал в TitleBar (выше).
-                    .child(header_menu(cx, lang, in_world, before_login)),
+                    .child(status_badge(pal, lang, &status, rtt)),
             )
     }
 
@@ -1959,6 +2004,12 @@ fn location_badges(flags: &[String]) -> Vec<(BadgeTone, String)> {
     out
 }
 
+/// M14/F16: охраняемая зона — нет PvP-флага (вне мира риска нет → true).
+/// Чистая функция — юнит-тест в конце файла.
+fn guarded_zone(flags: &[String]) -> bool {
+    !flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"))
+}
+
 /// Подпись бейджа: известные токены → ключи l10n, прочее — как есть.
 fn badge_label(lang: Lang, token: &str) -> String {
     match token {
@@ -2010,35 +2061,6 @@ fn status_badge(pal: &Palette, lang: Lang, status: &TransportStatus, rtt: Option
 /// Меню шапки (M14/F1, Ely `Menu`): сменить персонажа, выйти из
 /// аккаунта, закрыть приложение. Пункты вне контекста отключены:
 /// «сменить персонажа» — только в мире, «выйти» — только после входа.
-fn header_menu(
-    cx: &mut Context<'_, Root>,
-    lang: Lang,
-    in_world: bool,
-    before_login: bool,
-) -> OverflowMenu {
-    let this = cx.entity();
-    let mk = |label: &'static str, click: Click, enabled: bool| {
-        let this = this.clone();
-        let item = MenuItem::new(label).on_click(move |_window, acx| {
-            this.update(acx, |root, cx| root.on_click(click.clone(), cx));
-        });
-        if enabled {
-            item
-        } else {
-            item.disabled(true)
-        }
-    };
-    let menu = Menu::new()
-        .item(mk(t(lang, Key::BtnSwitchChar), Click::SwitchChar, in_world))
-        .item(mk(t(lang, Key::BtnLogout), Click::Logout, !before_login))
-        .item(mk(t(lang, Key::Exit), Click::Exit, true));
-    // M14/F10: иконка-кнопка (⋯-механика Ely) с иконкой-меню вместо
-    // надписи; тултип локализуется существующим ключом.
-    OverflowMenu::new("ld2-header-menu", menu)
-        .icon(IconName::Menu)
-        .tooltip(t(lang, Key::HeaderMenu))
-}
-
 impl Root {
     /// M11.2: on_close диалога — мутация состояния Root и перерисовка
     /// (диалог рендерится из состояния, поэтому «закрыть» = снять флаг).
@@ -2062,6 +2084,24 @@ impl Root {
         self.color_picker_open = None;
     }
 
+    /// M14/F16: открыть диалог выхода с таймером (20 с). Настройки
+    /// закрываются — диалог выхода всегда верхний.
+    fn open_exit(&mut self, kind: ExitKind, cx: &mut Context<'_, Self>) {
+        self.settings_open = false;
+        self.color_picker_open = None;
+        self.exit_timer = Some((kind, self.now_ms() + EXIT_DELAY_MS));
+        cx.notify();
+    }
+
+    /// M14/F16: выполнить выход — по истечении таймера или «Выйти сейчас».
+    fn perform_exit(&mut self, kind: ExitKind) {
+        self.exit_timer = None;
+        match kind {
+            ExitKind::SwitchChar => self.store.back_to_characters(),
+            ExitKind::Logout => self.logout(),
+        }
+    }
+
     /// M14/F15: настройки — снова Ely `Dialog` (решение пользователя):
     /// Esc/скрим/крестик закрывают, карточка центрируется с анимацией;
     /// тело карточки скроллится самим Dialog'ом (440 px — контент
@@ -2083,6 +2123,97 @@ impl Root {
         )
     }
 
+    /// M14/F16: диалог выхода с 20-секундным анимированным таймером
+    /// (полоса обновляется тиком 50 мс из tick). В охраняемой зоне
+    /// (нет PvP-флага) — кнопка «Выйти сейчас» с мгновенным выходом.
+    pub(crate) fn exit_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let (kind, deadline) = self.exit_timer?;
+        let now = self.now_ms();
+        let left_ms = (deadline - now).max(0);
+        let frac = (left_ms as f32 / EXIT_DELAY_MS as f32).clamp(0.0, 1.0);
+        let secs = (left_ms + 999) / 1000;
+        let guarded = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| guarded_zone(&s.location.flags))
+            .unwrap_or(true);
+        let lang = self.lang;
+        let title = match kind {
+            ExitKind::SwitchChar => t(lang, Key::BtnSwitchChar),
+            ExitKind::Logout => t(lang, Key::BtnLogout),
+        }
+        .to_string();
+        let close = self.dismiss(cx, |root| root.exit_timer = None);
+        let cancel = act_btn(
+            cx,
+            t(lang, Key::CancelBtn),
+            pal.panel,
+            pal.text,
+            |this, _cx| {
+                this.exit_timer = None;
+            },
+        );
+        let now_btn = guarded.then(|| {
+            act_btn(
+                cx,
+                t(lang, Key::ExitNowBtn),
+                pal.danger,
+                0xffffff,
+                |this, _cx| {
+                    if let Some((kind, _)) = this.exit_timer.take() {
+                        this.perform_exit(kind);
+                    }
+                },
+            )
+        });
+        // Полоса: success → warn → danger по мере убывания.
+        let bar_color = if frac > 0.5 {
+            pal.success
+        } else if frac > 0.25 {
+            pal.warn
+        } else {
+            pal.danger
+        };
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().child(tf(lang, Key::ExitCountdown, &[("{s}", &secs.to_string())])))
+            .child(
+                div()
+                    .w_full()
+                    .h(px(8.0))
+                    .rounded_md()
+                    .bg(rgb(pal.border))
+                    .child(
+                        div()
+                            .h_full()
+                            .w(gpui::relative(frac))
+                            .rounded_md()
+                            .bg(rgb(bar_color)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .justify_end()
+                    .child(cancel)
+                    .children(now_btn),
+            );
+        Some(
+            Dialog::new("ld2-exit", title, close)
+                .child(body)
+                .into_any_element(),
+        )
+    }
+
     /// M11.2: диспетчер всплывающих диалогов (Ely `Dialog` поверх контента,
     /// ADR-004): экран → приоритеты game > social > sheet.
     pub(crate) fn dialog_layer(
@@ -2090,7 +2221,7 @@ impl Root {
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
-        if self.settings_open {
+        if self.settings_open || self.exit_timer.is_some() {
             return None;
         }
         // M13.3: диалог регистрации живёт на экране входа (D35) — вне
@@ -2162,6 +2293,7 @@ impl Render for Root {
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
+            .when_some(self.exit_dialog(cx, &pal), |d, dialog| d.child(dialog))
             // M11.4: всплывающие тосты (notice → Ely Toast).
             .child(ToastViewport::new("ld2-toasts", &self.toaster))
     }
@@ -2282,8 +2414,17 @@ mod tests {
     }
 
     /// M14/F1: бейджи локации — PvP по флагу, иначе Safe; прочие — muted.
+    /// M14/F16: охраняемая зона — нет PvP-флага (вне мира — тоже).
     #[test]
-    fn location_badges_classify_flags() {
+    fn guarded_zone_classifies_flags() {
+        assert!(guarded_zone(&[]));
+        assert!(guarded_zone(&["safe".into()]));
+        assert!(!guarded_zone(&["pvp".into()]));
+        assert!(!guarded_zone(&["safe".into(), "pvp".into()]));
+    }
+
+    #[test]
+    fn location_badges_classifies_flags() {
         assert_eq!(
             location_badges(&[]),
             vec![(BadgeTone::Success, "safe".to_string())]
