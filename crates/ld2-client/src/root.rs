@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, App, Context, Div, Entity, Focusable, MouseButton,
+    div, prelude::*, px, rgb, AnyElement, App, Context, Div, Entity, Focusable, Hsla, MouseButton,
     Render, ScrollHandle, SharedString, Window,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
@@ -25,7 +25,10 @@ mod social;
 use crate::palette::{palette, Palette};
 use ely::buttons::IconButton;
 use ely::feedback::{Toast, ToastViewport, Toaster};
-use ely::forms::{Choice, HotkeyInput, Input, InputEvent, PasswordInput, Slider, TextInput};
+use ely::forms::{
+    hex, parse_hex, Choice, ColorPicker, HotkeyInput, Input, InputEvent, PasswordInput, Slider,
+    TextInput,
+};
 use ely::layout::ScrollArea;
 use ely::menus::{Menu, MenuItem, OverflowMenu};
 use ely::navigation::Tabs;
@@ -74,6 +77,8 @@ pub(crate) enum Click {
     ApplyHost,
     /// M14/F11: раскрыть ввод нового адреса сервера.
     EditHost,
+    /// M14/F13: жирный шрифт строк урона в журнале.
+    LogDamageBold(bool),
     MoveExit(String),
     OpenReleases,
     // M10.4: игровой экран
@@ -167,10 +172,9 @@ pub struct Root {
     settings_scroll: ScrollHandle,
     /// M14/F11: раскрыт ли ввод нового адреса сервера (сессия).
     host_editing: bool,
-    /// Сколько строк лога пользователь уже видел (для счётчика «новых»).
+    /// Длина лога на прошлой отрисовке — чтобы приклеивать вниз только
+    /// при изменении (M14/F13: лог всегда промотан вниз).
     journal_seen: usize,
-    /// Строк лога, появившихся после ухода из нижней позиции.
-    journal_unseen: usize,
     last_chat_len: usize,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
     party_collapsed: bool,
@@ -227,7 +231,6 @@ impl Root {
             settings_scroll: ScrollHandle::new(),
             host_editing: false,
             journal_seen: 0,
-            journal_unseen: 0,
             last_chat_len: 0,
             party_collapsed,
             create_name: None,
@@ -751,6 +754,10 @@ impl Root {
                 }
                 self.host_editing = true;
             }
+            Click::LogDamageBold(bold) => {
+                self.config.log_damage_bold = bold;
+                self.save_config();
+            }
             Click::ApplyHost => {
                 let host = self.ti(&self.host_input).read(cx).text().to_string();
                 let host = host.trim().to_string();
@@ -1195,6 +1202,55 @@ impl Root {
                     |root, v| root.config.log_font_px = v,
                 ));
 
+                // M14/F13: стиль строк боя в журнале: цвета — ColorPicker,
+                // жирность урона — Вкл/Выкл (зеркало «Уведомлений»).
+                body = body.child(color_picker_row(
+                    cx,
+                    pal,
+                    lang,
+                    Key::SettingsLogDamageColor,
+                    "ld2-log-damage-color",
+                    &self.config.log_damage_color,
+                    |root, v| root.config.log_damage_color = v,
+                ));
+                body = body.child(color_picker_row(
+                    cx,
+                    pal,
+                    lang,
+                    Key::SettingsLogAttackColor,
+                    "ld2-log-attack-color",
+                    &self.config.log_attack_color,
+                    |root, v| root.config.log_attack_color = v,
+                ));
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsDamageBold).to_string(),
+                    vec![
+                        btn(
+                            cx,
+                            t(lang, Key::On).to_string(),
+                            if self.config.log_damage_bold {
+                                pal.accent
+                            } else {
+                                pal.panel
+                            },
+                            pal.text,
+                            Click::LogDamageBold(true),
+                        ),
+                        btn(
+                            cx,
+                            t(lang, Key::Off).to_string(),
+                            if self.config.log_damage_bold {
+                                pal.panel
+                            } else {
+                                pal.accent
+                            },
+                            pal.text,
+                            Click::LogDamageBold(false),
+                        ),
+                    ],
+                ));
+
                 // Лимит истории чата.
                 body = body.child(row(
                     pal,
@@ -1581,6 +1637,49 @@ fn font_px_row(
                 }),
         ))
         .child(value_readout(pal, format!("{} px", value.round() as i32)))
+}
+
+/// M14/F13: строка настройки цвета — подпись сверху, Ely ColorPicker
+/// во всю ширину (он инлайн-блок: превью + плоскость + рейки + hex-поля;
+/// тело настроек скроллится — F9). Значение в конфиге — hex; запись —
+/// `hex(Hsla::to_rgb)`, чтение — `parse_hex` (те же формы, что
+/// принимает `is_hex_color` в sanitize).
+fn color_picker_row(
+    cx: &mut Context<'_, Root>,
+    pal: &Palette,
+    lang: Lang,
+    label: Key,
+    id: &'static str,
+    value: &str,
+    set: fn(&mut Root, String),
+) -> Div {
+    let this = cx.entity();
+    // sanitize гарантирует валидный hex; запасной — серый, без паники.
+    let rgba = parse_hex(value).unwrap_or_else(|_| parse_hex("#808080").expect("запасной цвет"));
+    let hsla = Hsla::from(rgba);
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_size(px(13.0))
+                .text_color(rgb(pal.muted))
+                .child(t(lang, label)),
+        )
+        .child(
+            ColorPicker::new(id, hsla)
+                .opaque()
+                .on_change(move |c, _window, acx| {
+                    let hex = hex(c.to_rgb());
+                    this.update(acx, |root, cx| {
+                        set(root, hex);
+                        root.save_config();
+                        cx.refresh_windows();
+                        cx.notify();
+                    });
+                }),
+        )
 }
 
 /// M14/F8 (фикс смоука): слайдер Ely сам ширины не имеет — `Track`
