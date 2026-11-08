@@ -256,5 +256,8 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsLogFont => "Log font",
         // M14 F9: settings tab
         SettingsGeneral => "General",
+        // M14 F11: connection tab
+        SettingsConnection => "Connection",
+        SettingsChangeHost => "Connect to another",
     }
 }

@@ -47,8 +47,10 @@ pub(crate) enum LogTab {
 /// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
-    /// Тема, язык, шрифты, история чата, уведомления, сервер, путь конфига.
+    /// Тема, язык, шрифты, история чата, уведомления, путь конфига.
     General,
+    /// Адрес сервера: read-only + «подключиться к другому» (M14/F11).
+    Connection,
     /// Ремаппинг 11 действий (навигация/цикл + боевые 1–6).
     Hotkeys,
 }
@@ -70,6 +72,8 @@ pub(crate) enum Click {
     ChatLimit(i64),
     ToggleNotify,
     ApplyHost,
+    /// M14/F11: раскрыть ввод нового адреса сервера.
+    EditHost,
     MoveExit(String),
     OpenReleases,
     // M10.4: игровой экран
@@ -161,6 +165,8 @@ pub struct Root {
     /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
     settings_tab: SettingsTab,
     settings_scroll: ScrollHandle,
+    /// M14/F11: раскрыт ли ввод нового адреса сервера (сессия).
+    host_editing: bool,
     /// Сколько строк лога пользователь уже видел (для счётчика «новых»).
     journal_seen: usize,
     /// Строк лога, появившихся после ухода из нижней позиции.
@@ -219,6 +225,7 @@ impl Root {
             log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
+            host_editing: false,
             journal_seen: 0,
             journal_unseen: 0,
             last_chat_len: 0,
@@ -735,6 +742,15 @@ impl Root {
                 self.config.notify = !self.config.notify;
                 self.save_config();
             }
+            Click::EditHost => {
+                // Предзаполнение текущим адресом (как при открытии
+                // настроек) и раскрытие ввода.
+                let host = self.config.host.clone();
+                if let Some(input) = self.host_input.clone() {
+                    input.update(cx, |i, cx| i.set_text(host, cx));
+                }
+                self.host_editing = true;
+            }
             Click::ApplyHost => {
                 let host = self.ti(&self.host_input).read(cx).text().to_string();
                 let host = host.trim().to_string();
@@ -747,6 +763,7 @@ impl Root {
                     self.save_config();
                     self.reconnect();
                 }
+                self.host_editing = false;
                 self.settings_open = false;
             }
             Click::MoveExit(exit_id) => {
@@ -1034,10 +1051,12 @@ impl Root {
         // (11 строк ремаппинга растут на своей вкладке и скроллятся).
         let active = match self.settings_tab {
             SettingsTab::General => "general",
+            SettingsTab::Connection => "connection",
             SettingsTab::Hotkeys => "hotkeys",
         };
         let choices = vec![
             Choice::new("general", t(lang, Key::SettingsGeneral)),
+            Choice::new("connection", t(lang, Key::SettingsConnection)),
             Choice::new("hotkeys", t(lang, Key::SettingsHotkeys)),
         ];
         let settings_this = cx.entity();
@@ -1045,10 +1064,10 @@ impl Root {
             move |value, _window, acx| {
                 let value = value.to_string();
                 settings_this.update(acx, |root, cx| {
-                    root.settings_tab = if value == "hotkeys" {
-                        SettingsTab::Hotkeys
-                    } else {
-                        SettingsTab::General
+                    root.settings_tab = match value.as_str() {
+                        "connection" => SettingsTab::Connection,
+                        "hotkeys" => SettingsTab::Hotkeys,
+                        _ => SettingsTab::General,
                     };
                     // Прокрутка новой вкладки — с начала.
                     root.settings_scroll.scroll_to_item(0);
@@ -1203,36 +1222,6 @@ impl Root {
                     )],
                 ));
 
-                // Сервер (хост) с guard.
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .text_color(rgb(pal.muted))
-                                .child(t(lang, Key::SettingsHost)),
-                        )
-                        .child(
-                            div()
-                                .w(px(320.0))
-                                .child(Input::new(self.ti(&self.host_input))),
-                        )
-                        .children((!host_ok).then(|| {
-                            div()
-                                .text_color(rgb(pal.danger))
-                                .child(t(lang, Key::SettingsWsDenied))
-                        }))
-                        .child(btn(
-                            cx,
-                            t(lang, Key::SettingsApply).to_string(),
-                            pal.accent,
-                            pal.accent_text,
-                            Click::ApplyHost,
-                        )),
-                );
-
                 // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
                 if let Ok(dirs) = ld2_core::config::project_dirs() {
                     body = body.child(
@@ -1243,6 +1232,57 @@ impl Root {
                     );
                 }
 
+                body
+            }
+            // M14/F11: адрес сервера — read-only; поле ввода
+            // раскрывается действием «Подключиться к другому».
+            SettingsTab::Connection => {
+                let mut body = div().flex().flex_col().gap_3();
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_color(rgb(pal.muted))
+                                .child(t(lang, Key::SettingsHost)),
+                        )
+                        .child(div().text_size(px(14.0)).child(self.config.host.clone()))
+                        .children((!host_ok).then(|| {
+                            div()
+                                .text_color(rgb(pal.danger))
+                                .child(t(lang, Key::SettingsWsDenied))
+                        })),
+                );
+                if self.host_editing {
+                    body = body.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .w(px(320.0))
+                                    .child(Input::new(self.ti(&self.host_input))),
+                            )
+                            .child(btn(
+                                cx,
+                                t(lang, Key::SettingsApply).to_string(),
+                                pal.accent,
+                                pal.accent_text,
+                                Click::ApplyHost,
+                            )),
+                    );
+                } else {
+                    body = body.child(btn(
+                        cx,
+                        t(lang, Key::SettingsChangeHost).to_string(),
+                        pal.panel,
+                        pal.text,
+                        Click::EditHost,
+                    ));
+                }
                 body
             }
             SettingsTab::Hotkeys => {
