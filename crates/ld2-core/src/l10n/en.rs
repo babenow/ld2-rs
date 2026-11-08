@@ -251,5 +251,8 @@ pub(super) fn t(key: Key) -> &'static str {
         InventoryEmpty => "No items yet",
         // M14 F7: unseen world-log lines indicator
         LogNewLines => "▼ {n} new",
+        // M14 F8: settings
+        SettingsChatFont => "Chat font",
+        SettingsLogFont => "Log font",
     }
 }

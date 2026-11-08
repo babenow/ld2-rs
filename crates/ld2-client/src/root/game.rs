@@ -831,6 +831,8 @@ impl Root {
         // layout'ом, а не процентом от auto-родителя — иначе
         // `size_full()` у Ely превращается в auto, контейнер растёт
         // по контенту и сообщения выходят за границы без прокрутки.
+        // M14/F8: размер шрифта лога из настроек (10…20 px).
+        let log_font = self.config.log_font_px;
         let body =
             match self.log_tab {
                 LogTab::Log => div().flex().flex_col().flex_grow_1().min_h_0().child(
@@ -842,7 +844,7 @@ impl Root {
                         .child(div().flex().flex_col().gap_1().children(
                             self.store.log.iter().map(|entry| {
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(px(log_font))
                                     .text_color(rgb(log_color(entry.kind, dark)))
                                     .child(entry.text.clone())
                             }),

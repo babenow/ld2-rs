@@ -32,6 +32,12 @@ pub struct Config {
     /// Масштаб шрифта 1.0…1.4 — min font scale 12px (НФР доступность).
     #[serde(default = "default_font_scale")]
     pub font_scale: f32,
+    /// Размер шрифта **сообщений чата**, px (M14/F8: 10…20, дефолт 12).
+    #[serde(default = "default_chat_font_px")]
+    pub chat_font_px: f32,
+    /// Размер шрифта **строк лога мира**, px (M14/F8: 10…20, дефолт 12).
+    #[serde(default = "default_log_font_px")]
+    pub log_font_px: f32,
     /// OS-уведомления (D7, feature-flag `desktop.notify`).
     #[serde(default = "default_true")]
     pub notify: bool,
@@ -52,6 +58,14 @@ pub struct Config {
 fn default_theme() -> String {
     "dark".into()
 }
+fn default_chat_font_px() -> f32 {
+    12.0
+}
+
+fn default_log_font_px() -> f32 {
+    12.0
+}
+
 fn default_font_scale() -> f32 {
     1.0
 }
@@ -196,6 +210,10 @@ impl Config {
         }
         // НФР: min font scale 12px ≈ 1.0 от базы; потолок — 1.4 (чтение).
         self.font_scale = self.font_scale.clamp(1.0, 1.4);
+        // M14/F8: шрифты чата и лога — 10…20 px (за пределами — дефолт
+        // диапазона, как у chat_limit).
+        self.chat_font_px = self.chat_font_px.clamp(10.0, 20.0);
+        self.log_font_px = self.log_font_px.clamp(10.0, 20.0);
         if !(100..=10_000).contains(&self.chat_limit) {
             self.chat_limit = default_chat_limit();
         }
@@ -214,6 +232,8 @@ impl Default for Config {
             last_login: None,
             theme: default_theme(),
             font_scale: default_font_scale(),
+            chat_font_px: default_chat_font_px(),
+            log_font_px: default_log_font_px(),
             notify: default_true(),
             chat_limit: default_chat_limit(),
             sheet_tab: default_sheet_tab(),
@@ -296,6 +316,35 @@ mod tests {
         assert_eq!(cfg.hotkeys.action_flee, "4");
         assert_eq!(cfg.hotkeys.action_rune, "5");
         assert_eq!(cfg.hotkeys.action_consumable, "6");
+        // M14/F8: шрифты чата/лога в старом конфиге — дефолт 12 px.
+        assert_eq!(cfg.chat_font_px, 12.0);
+        assert_eq!(cfg.log_font_px, 12.0);
+    }
+
+    /// M14/F8: sanitize клампит шрифты чата и лога в 10…20 px.
+    #[test]
+    fn sanitize_clamps_chat_and_log_font_px() {
+        let def = Config::default();
+        assert_eq!(def.chat_font_px, 12.0, "дефолт 12");
+        assert_eq!(def.log_font_px, 12.0, "дефолт 12");
+
+        let out_of_range = Config {
+            chat_font_px: 1.0,
+            log_font_px: 99.0,
+            ..Config::default()
+        }
+        .sanitize();
+        assert_eq!(out_of_range.chat_font_px, 10.0, "пол 10 px");
+        assert_eq!(out_of_range.log_font_px, 20.0, "потолок 20 px");
+
+        let in_range = Config {
+            chat_font_px: 15.0,
+            log_font_px: 17.0,
+            ..Config::default()
+        }
+        .sanitize();
+        assert_eq!(in_range.chat_font_px, 15.0, "в диапазоне не трогаем");
+        assert_eq!(in_range.log_font_px, 17.0, "в диапазоне не трогаем");
     }
 
     /// M9: sanitize чинит выходящие за пределы значения.

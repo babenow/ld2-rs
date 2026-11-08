@@ -251,5 +251,8 @@ pub(super) fn t(key: Key) -> &'static str {
         InventoryEmpty => "Нет ни одного предмета",
         // M14 F7: индикатор непросмотренных строк лога
         LogNewLines => "▼ {n} новых",
+        // M14 F8: настройки
+        SettingsChatFont => "Шрифт чата",
+        SettingsLogFont => "Шрифт лога",
     }
 }

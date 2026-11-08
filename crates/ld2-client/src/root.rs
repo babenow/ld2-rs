@@ -49,7 +49,8 @@ pub(crate) enum Click {
     OpenRegister,
     Logout,
     Exit,
-    ToggleLang,
+    /// M14/F8: выбор языка в настройках («ru»/«en»).
+    Lang(&'static str),
     ToggleSettings,
     CloseSettings,
     Theme(&'static str),
@@ -680,8 +681,8 @@ impl Root {
             }
             Click::Logout => self.logout(),
             Click::Exit => cx.quit(),
-            Click::ToggleLang => {
-                self.lang = self.lang.toggle();
+            Click::Lang(code) => {
+                self.lang = Lang::from_code(code);
                 self.config.lang = self.lang.code().to_string();
                 self.save_config();
             }
@@ -923,13 +924,7 @@ impl Root {
                         )
                     }))
                     .child(status_badge(pal, lang, &status, rtt))
-                    .child(btn(
-                        cx,
-                        format!("{}: {}", t(lang, Key::Language), lang.code().to_uppercase()),
-                        pal.panel,
-                        pal.text,
-                        Click::ToggleLang,
-                    ))
+                    // M14/F8: выбор языка переехал в настройки.
                     .child(btn(
                         cx,
                         t(lang, Key::SettingsBtn).to_string(),
@@ -1040,6 +1035,36 @@ impl Root {
             ],
         ));
 
+        // M14/F8: язык (перенесён из шапки) — зеркало строки «Тема».
+        root = root.child(row(
+            pal,
+            t(lang, Key::Language).to_string(),
+            vec![
+                btn(
+                    cx,
+                    "RU",
+                    if lang.code() == "ru" {
+                        pal.accent
+                    } else {
+                        pal.panel
+                    },
+                    pal.text,
+                    Click::Lang("ru"),
+                ),
+                btn(
+                    cx,
+                    "EN",
+                    if lang.code() == "en" {
+                        pal.accent
+                    } else {
+                        pal.panel
+                    },
+                    pal.text,
+                    Click::Lang("en"),
+                ),
+            ],
+        ));
+
         // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
         // пишет Theme.font_scale (отклонение M10 «font_scale не
         // применяется» снято).
@@ -1071,6 +1096,26 @@ impl Root {
                         })
                 }),
         );
+
+        // M14/F8: шрифт сообщений чата и строк лога — отдельные px.
+        root = root.child(font_px_row(
+            cx,
+            pal,
+            lang,
+            Key::SettingsChatFont,
+            "ld2-chat-font-px",
+            self.config.chat_font_px,
+            |root, v| root.config.chat_font_px = v,
+        ));
+        root = root.child(font_px_row(
+            cx,
+            pal,
+            lang,
+            Key::SettingsLogFont,
+            "ld2-log-font-px",
+            self.config.log_font_px,
+            |root, v| root.config.log_font_px = v,
+        ));
 
         // Лимит истории чата.
         root = root.child(row(
@@ -1366,6 +1411,43 @@ fn hotkey_row(cx: &mut Context<'_, Root>, lang: Lang, row: &HotkeyRowSpec, spec:
                     cx.notify();
                 });
             }),
+        )
+}
+
+/// M14/F8: строка настройки «размер шрифта, px» — Slider 10…20 с шагом 1;
+/// пишет поле конфига и перерисовывает окно (значение — абсолютные px).
+fn font_px_row(
+    cx: &mut Context<'_, Root>,
+    pal: &Palette,
+    lang: Lang,
+    label: Key,
+    id: &'static str,
+    value: f32,
+    set: fn(&mut Root, f32),
+) -> Div {
+    let this = cx.entity();
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .items_center()
+        .child(
+            div()
+                .w(px(130.0))
+                .text_color(rgb(pal.muted))
+                .child(t(lang, label)),
+        )
+        .child(
+            Slider::new(id, f64::from(value))
+                .range(10.0, 20.0)
+                .step(1.0)
+                .on_change(move |v, _window, acx| {
+                    this.update(acx, |root, cx| {
+                        set(root, v as f32);
+                        cx.refresh_windows();
+                        root.save_config();
+                    });
+                }),
         )
 }
 

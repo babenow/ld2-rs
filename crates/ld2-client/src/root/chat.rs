@@ -85,17 +85,19 @@ impl Root {
                 self.chat_scroll.scroll_to_item(messages.len() - 1);
             }
         }
+        // M14/F8: размер шрифта чата из настроек (10…20 px).
+        let font = self.config.chat_font_px;
         let mut history = div().flex().flex_col().gap_1();
         if messages.is_empty() {
             history = history.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(font))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::ChEmpty)),
             );
         }
         for line in messages {
-            history = history.child(div().text_size(px(12.0)).text_color(rgb(color)).child(line));
+            history = history.child(div().text_size(px(font)).text_color(rgb(color)).child(line));
         }
         // M14/F7: история занимает остаток блока журнала (но не меньше
         // прежних 120 px), чтобы ввод всегда оставался внизу. ScrollArea

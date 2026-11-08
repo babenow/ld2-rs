@@ -285,6 +285,9 @@ pub enum Key {
     InventoryEmpty,
     // M14 F7: свободная прокрутка лога
     LogNewLines,
+    // M14 F8: настройки шрифтов чата/лога
+    SettingsChatFont,
+    SettingsLogFont,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -597,6 +600,8 @@ mod tests {
         Key::HotbarCdShort,
         Key::InventoryEmpty,
         Key::LogNewLines,
+        Key::SettingsChatFont,
+        Key::SettingsLogFont,
     ];
 
     #[test]
