@@ -277,6 +277,8 @@ pub enum Key {
     ExitCountdown,
     ExitNowBtn,
     CancelBtn,
+    // M14 F17: карточка навыка (иконка ⓘ)
+    SkillInfoBtn,
     // M14 F4: панель действий и хоткеи
     HkCleave,
     HkRune,
@@ -371,6 +373,10 @@ pub fn notify_body(lang: Lang, kind: crate::store::NotifyKind) -> String {
 pub fn tf(lang: Lang, key: Key, subs: &[(&str, &str)]) -> String {
     let mut s = t(lang, key).to_string();
     for (name, value) in subs {
+        // M14/F17: имя принимается и как `s`, и как `{s}` — шаблон
+        // всегда хранит `{s}`. Раньше имя с фигурными скобками давал
+        // поиск `{{s}}` → подстановка не срабатывала (баг таймера).
+        let name = name.trim_matches(|c| c == '{' || c == '}');
         s = s.replace(&format!("{{{name}}}"), value);
     }
     s
@@ -606,6 +612,7 @@ mod tests {
         Key::ExitCountdown,
         Key::ExitNowBtn,
         Key::CancelBtn,
+        Key::SkillInfoBtn,
         Key::HkCleave,
         Key::HkRune,
         Key::HkConsumable,
@@ -630,6 +637,17 @@ mod tests {
             assert!(!t(Lang::Ru, key).is_empty(), "пустой RU: {key:?}");
             assert!(!t(Lang::En, key).is_empty(), "пустой EN: {key:?}");
         }
+    }
+
+    /// M14/F17: имя плейсхолдера допускается в скобках — вызовы
+    /// `("{s}", …)` и `("s", …)` дают один результат.
+    #[test]
+    fn tf_accepts_braced_names() {
+        let plain = tf(Lang::Ru, Key::ExitCountdown, &[("s", "7")]);
+        let braced = tf(Lang::Ru, Key::ExitCountdown, &[("{s}", "7")]);
+        assert_eq!(plain, braced, "обе формы имени эквивалентны");
+        assert_eq!(braced, "Выход через 7 с", "подстановка: {braced}");
+        assert!(!braced.contains('{'), "плейсхолдер заменён");
     }
 
     #[test]

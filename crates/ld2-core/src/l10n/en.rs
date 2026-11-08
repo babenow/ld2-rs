@@ -243,6 +243,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ExitCountdown => "Exit in {s}s",
         ExitNowBtn => "Exit now",
         CancelBtn => "Cancel",
+        SkillInfoBtn => "About the skill",
         // M14 F4: action panel and hotkeys
         HkCleave => "Cleave",
         HkRune => "Rune",

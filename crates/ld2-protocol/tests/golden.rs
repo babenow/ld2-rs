@@ -137,6 +137,10 @@ fn snapshot_matches_doc_example() {
     );
     assert_eq!(snap.char.xp_pool, 120, "пул опыта квестов");
     assert_eq!(
+        snap.char.skills[0].description, None,
+        "M14/F17: сервер без description → None (обратная совместимость)"
+    );
+    assert_eq!(
         snap.char.equip.get("staff"),
         Some(&None),
         "пустой слот = null"

@@ -401,6 +401,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
             SkillSnapshot {
                 id: "sword".into(),
                 name: Some("Владение мечом".into()),
+                description: Some("+2% физ. урона мечом".into()),
                 // rank 5 — открывает активку «Мощный удар» (skills.md §4);
                 // порог формулы §2.2: round(120 · 1.32^5) = 1471.
                 rank: 5,
@@ -410,6 +411,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
             SkillSnapshot {
                 id: "arcana".into(),
                 name: Some("Аркана".into()),
+                description: None,
                 rank: 1,
                 xp: 40,
                 xp_to_next: 480,

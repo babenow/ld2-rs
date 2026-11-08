@@ -236,7 +236,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "qty": 1, "gold_value": 120 }
 
 // SkillSnapshot
-{ "id": "sword", "name": "Владение мечом", "rank": 3, "xp": 612, "xp_to_next": 480 }
+{ "id": "sword", "name": "Владение мечом", "description": "+2% физ. урона мечом",
+  "rank": 3, "xp": 612, "xp_to_next": 480 }      // description опционально (M14/F17)
 
 // CrimeStatus
 { "kind": "murderer", "severity": "high", "expires_at": 1762150000 }

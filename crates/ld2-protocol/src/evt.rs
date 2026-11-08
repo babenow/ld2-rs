@@ -527,6 +527,7 @@ mod tests {
         let s = SkillSnapshot {
             id: "sword".into(),
             name: None,
+            description: None,
             rank: 3,
             xp: 612,
             xp_to_next: 480,

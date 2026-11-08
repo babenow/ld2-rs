@@ -243,6 +243,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ExitCountdown => "Выход через {s} с",
         ExitNowBtn => "Выйти сейчас",
         CancelBtn => "Отмена",
+        SkillInfoBtn => "О навыке",
         // M14 F4: панель действий и хоткеи
         HkCleave => "Раскол",
         HkRune => "Руна",

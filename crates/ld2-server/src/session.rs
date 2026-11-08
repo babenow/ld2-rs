@@ -1149,6 +1149,8 @@ impl Session {
             skills.push(SkillSnapshot {
                 id: skill.id,
                 name: Some(skill.name),
+                // M14/F17: пустое описание старого сида → None (без поля).
+                description: (!skill.description.is_empty()).then_some(skill.description),
                 rank: rank_u32,
                 xp,
                 xp_to_next: crate::systems::xp_to_next(rank_u32, &self.state.config.skills),

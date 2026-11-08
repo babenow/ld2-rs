@@ -157,6 +157,8 @@ pub struct Root {
     settings_open: bool,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
     exit_timer: Option<(ExitKind, i64)>,
+    /// M14/F17: открытая карточка навыка — id из снапшота.
+    skill_info: Option<String>,
     first_frame: bool,
 
     /// Поле имени новой гильдии (ФР-16).
@@ -233,6 +235,7 @@ impl Root {
             host_input: None,
             settings_open: false,
             exit_timer: None,
+            skill_info: None,
             first_frame: true,
             guild_input: None,
             sheet_tab,
@@ -2290,6 +2293,11 @@ impl Render for Root {
             )
             // M14/F1: статус сервера живёт в шапке (status_badge).
             // M11.2: всплывающий диалог поверх контента (скрим + панель).
+            // M14/F17: карточка навыка — под игровыми диалогами,
+            // но над контентом (настройки/выход рисуются позже).
+            .when_some(self.skill_info_dialog(cx, &pal), |d, dialog| {
+                d.child(dialog)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
@@ -2354,6 +2362,7 @@ mod tests {
         let skill = |id: &str, rank: u32| SkillSnapshot {
             id: id.to_string(),
             name: None,
+            description: None,
             rank,
             xp: 0,
             xp_to_next: 120,
