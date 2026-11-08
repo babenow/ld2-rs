@@ -247,5 +247,7 @@ pub(super) fn t(key: Key) -> &'static str {
         HotbarNoTarget => "Выберите цель",
         HotbarCooldown => "Кулдаун {s} с",
         HotbarCdShort => "{s} с",
+        // M14 F3: инвентарь
+        InventoryEmpty => "Нет ни одного предмета",
     }
 }

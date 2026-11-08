@@ -8,7 +8,9 @@
 //! `Root::sheet_tab` (персистентно в config, ФР-19).
 
 use ely::overlays::Dialog;
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, SharedString};
+use gpui::{
+    div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, ScrollHandle, SharedString,
+};
 use ld2_core::l10n::{format_duration, t, Key, Lang};
 use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, Act, UpgradeView};
 use ld2_protocol::cmd::{
@@ -20,6 +22,7 @@ use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
 
 use crate::palette::Palette;
 use ely::forms::{Choice, Input, Select};
+use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::Tooltip;
@@ -86,6 +89,19 @@ const LEARN_CATALOG: [(&str, Key); 7] = [
     ("herbalist", Key::ProfHerbalist),
     ("hunter", Key::ProfHunter),
 ];
+
+/// M14/F3: содержимое вкладки с обычной прокруткой — паттерн
+/// `log_block` (ScrollHandle в полях Root, без stick-to-bottom):
+/// контейнер занимает остаток высоты колонки листа, список
+/// прокручивается внутри него.
+fn scrollable_tab(id: &'static str, handle: &ScrollHandle, body: Div) -> Div {
+    div().flex().flex_col().flex_grow_1().min_h_0().child(
+        ScrollArea::new(id)
+            .vertical()
+            .track_scroll(handle)
+            .child(body),
+    )
+}
 
 impl Root {
     /// M11.2: диалоги листа (ФР-07/09/10): предмет/улучшение/инкрустация.
@@ -184,7 +200,7 @@ impl Root {
             col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
         }
 
-        col = col.child(match tab {
+        let body = match tab {
             SheetTab::Skills => self.tab_skills(cx, pal),
             SheetTab::Attrs => self.tab_attrs(pal),
             SheetTab::Inventory => self.tab_inventory(cx, pal),
@@ -192,6 +208,15 @@ impl Root {
             SheetTab::Quests => self.tab_quests(cx, pal),
             SheetTab::Professions => self.tab_professions(cx, pal),
             SheetTab::Guild => self.tab_guild(cx, pal),
+        };
+        // M14/F3: длинные списки (навыки/профессии с рецептами) —
+        // прокручиваются, остальные вкладки ведут себя как раньше.
+        col = col.child(match tab {
+            SheetTab::Skills => scrollable_tab("ld2-skills-scroll", &self.skills_scroll, body),
+            SheetTab::Professions => {
+                scrollable_tab("ld2-professions-scroll", &self.professions_scroll, body)
+            }
+            _ => body,
         });
         col
     }
@@ -454,7 +479,14 @@ impl Root {
                 .child(t(lang, Key::SheetInventory)),
         );
         if snap.char.inventory.is_empty() {
-            col = col.child(div().text_color(rgb(pal.muted)).child("…"));
+            // M14/F3: вместо многоточия — понятное пустое состояние.
+            col = col.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::InventoryEmpty)),
+            );
         }
         for item in &snap.char.inventory {
             let uid = item.uid.clone();

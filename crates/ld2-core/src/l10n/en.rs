@@ -247,5 +247,7 @@ pub(super) fn t(key: Key) -> &'static str {
         HotbarNoTarget => "Select a target",
         HotbarCooldown => "Cooldown {s}s",
         HotbarCdShort => "{s}s",
+        // M14 F3: inventory
+        InventoryEmpty => "No items yet",
     }
 }
