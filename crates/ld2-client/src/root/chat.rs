@@ -132,24 +132,23 @@ impl Root {
                     }),
             );
         }
-        // M14/F7: история занимает остаток блока журнала (но не меньше
-        // прежних 120 px), чтобы ввод всегда оставался внизу. ScrollArea
-        // — flex-элемент (а не дитя auto-высоты): иначе у Ely
-        // `size_full()` схлопывается в auto и история льётся наружу.
+        // M14/F7: история занимает остаток блока журнала — flex_grow_1
+        // и так прижимает ввод к низу. M14/F20: пол min_h(120) убран —
+        // сумма минимумов панели (216px) была больше того, что журнал
+        // даёт на своём поле min_h(180) (~140px), и ввод вылезал за
+        // рамку чата; теперь панель сжимается до ~96px и влезает всегда.
+        // ScrollArea остаётся flex-элементом (а не дитя auto-высоты):
+        // иначе у Ely `size_full()` схлопывается в auto и история
+        // льётся наружу.
         panel = panel.child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_grow_1()
-                .min_h(px(120.0))
-                .child(
-                    ScrollArea::new("ld2-chat-history")
-                        .vertical()
-                        .track_scroll(&self.chat_scroll)
-                        .flex_grow_1()
-                        .min_h_0()
-                        .child(history),
-                ),
+            div().flex().flex_col().flex_grow_1().min_h_0().child(
+                ScrollArea::new("ld2-chat-history")
+                    .vertical()
+                    .track_scroll(&self.chat_scroll)
+                    .flex_grow_1()
+                    .min_h_0()
+                    .child(history),
+            ),
         );
 
         // M14/F19: system-канал — ввод только для админ/модераторов
@@ -165,10 +164,13 @@ impl Root {
         }
 
         // ── ввод: Enter/кнопка, слэш-команды (ФР-13) ──
-        let mut input_row = div().flex().flex_row().gap_1().items_center();
+        // M14/F20: min_w_0 на строке и обёртке — поле сжимается вместе
+        // с колонкой и не вылезает за рамку (в т.ч. с кнопкой «Ответить»).
+        let mut input_row = div().flex().flex_row().gap_1().items_center().min_w_0();
         input_row = input_row.child(
             div()
                 .flex_grow_1()
+                .min_w_0()
                 .child(Input::new(self.ti(&self.chat_input))),
         );
         if reply_to.is_some() {
