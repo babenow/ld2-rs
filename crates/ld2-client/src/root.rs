@@ -52,6 +52,14 @@ pub(crate) enum LogTab {
 #[derive(Debug)]
 struct TitlebarDrag;
 
+/// M15/F25c: перетаскивание карточки окна персонажа за шапку.
+#[derive(Debug)]
+struct CharDialogDrag;
+
+/// M15/F25c: изменение размера карточки окна персонажа (уголок).
+#[derive(Debug)]
+struct CharDialogResize;
+
 /// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
@@ -197,6 +205,14 @@ pub struct Root {
     inventory_scroll: ScrollHandle,
     /// M15/F26: прокрутка вкладки «Параметры» (16 строк).
     params_scroll: ScrollHandle,
+    /// M15/F25c: карточка окна персонажа — смещение от центра (px).
+    char_dialog_delta: (f32, f32),
+    /// M15/F25c: размер карточки (px) — (ширина, высота), старт 760×560.
+    char_dialog_size: (f32, f32),
+    /// M15/F25c: смещение указателя в шапке в момент захвата (drag).
+    char_drag_offset: Option<(f32, f32)>,
+    /// M15/F25c: якорь resize — (курсор_x, курсор_y, w, h, delta_x, delta_y).
+    char_resize_anchor: Option<(f32, f32, f32, f32, f32, f32)>,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
     log_tab: LogTab,
     /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
@@ -265,6 +281,10 @@ impl Root {
             professions_scroll: ScrollHandle::new(),
             inventory_scroll: ScrollHandle::new(),
             params_scroll: ScrollHandle::new(),
+            char_dialog_delta: (0.0, 0.0),
+            char_dialog_size: (760.0, 560.0),
+            char_drag_offset: None,
+            char_resize_anchor: None,
             log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
@@ -1617,6 +1637,15 @@ fn host_os() -> gpui::OperatingSystem {
     }
 }
 
+/// M15/F25c: кламп размера карточки окна персонажа — min 560×400,
+/// max = вьюпорт − 40 px (но не уже min).
+pub(crate) fn clamp_char_size(w: f32, h: f32, vw: f32, vh: f32) -> (f32, f32) {
+    (
+        w.clamp(560.0, (vw - 40.0).max(560.0)),
+        h.clamp(400.0, (vh - 40.0).max(400.0)),
+    )
+}
+
 /// Нажатие → спецификация (`alt+up`) для записи в config (ФР-19).
 fn spec_from_keystroke(ks: &gpui::Keystroke) -> Option<String> {
     let name = ks.key.to_lowercase();
@@ -2483,6 +2512,31 @@ mod tests {
         assert_eq!(hk.action_attack, "f5");
         assert_eq!(hk.action_flee, "4", "остальные не тронуты");
         assert_eq!((HOTKEY_ROWS[5].get)(&hk), "f5");
+    }
+
+    /// M15/F25c: кламп размера карточки окна персонажа.
+    #[test]
+    fn char_size_clamps_to_min_and_viewport() {
+        assert_eq!(
+            clamp_char_size(100.0, 100.0, 1200.0, 800.0),
+            (560.0, 400.0),
+            "min"
+        );
+        assert_eq!(
+            clamp_char_size(760.0, 560.0, 1200.0, 800.0),
+            (760.0, 560.0),
+            "норма"
+        );
+        assert_eq!(
+            clamp_char_size(5000.0, 5000.0, 1200.0, 800.0),
+            (1160.0, 760.0),
+            "max = вьюпорт − 40"
+        );
+        assert_eq!(
+            clamp_char_size(900.0, 700.0, 500.0, 300.0),
+            (560.0, 400.0),
+            "вьюпорт меньше min → min"
+        );
     }
 
     /// M14/F4: гейт «Мощного удара» — владение мечом 5 (skills.md §4).

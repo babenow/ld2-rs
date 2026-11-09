@@ -12,7 +12,10 @@
 //! `Root::sheet_tab` (персистентно в config, ФР-19).
 
 use ely::overlays::Dialog;
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, SharedString};
+use gpui::{
+    div, prelude::*, px, rgb, AnyElement, Context, Div, DragMoveEvent, EmptyView, MouseButton,
+    SharedString,
+};
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{
     crime_kind_title, filter_active_statuses, local_epoch, Act, Screen, UpgradeView,
@@ -32,7 +35,7 @@ use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{Backdrop, IconName, Tooltip};
 
-use super::{act_btn, scrollable_tab, Root};
+use super::{act_btn, clamp_char_size, scrollable_tab, CharDialogDrag, CharDialogResize, Root};
 
 /// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
 /// Порядок — как в правой колонке окна (спека пользователя).
@@ -239,31 +242,131 @@ impl Root {
 
         let lang = self.lang;
         // Верх окна: заголовок + ✕ (дублирует Esc и кнопку в шапке).
-        let top = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(t(lang, Key::BtnCharacter)),
-            )
-            .child(
-                IconButton::new("ld2-char-close", IconName::X)
-                    .tooltip(t(lang, Key::BtnClose))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.character_open = false;
+        // M15/F25c: шапка — drag-регион (захват указателя gpui:
+        // события идут, даже когда курсор ушёл за карточку).
+        let top = {
+            let drag_this = cx.entity();
+            div()
+                .id("ld2-char-titlebar")
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .cursor_grab()
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(t(lang, Key::BtnCharacter)),
+                )
+                .child(
+                    IconButton::new("ld2-char-close", IconName::X)
+                        .tooltip(t(lang, Key::BtnClose))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.character_open = false;
+                            cx.notify();
+                        })),
+                )
+                // Захват: запоминаем смещение указателя внутри шапки
+                // (конструктор on_drag получает offset от gpui).
+                .on_drag(CharDialogDrag, move |_value, offset, _window, acx| {
+                    drag_this.update(acx, |root, cx| {
+                        root.char_drag_offset = Some((f32::from(offset.x), f32::from(offset.y)));
                         cx.notify();
-                    })),
-            );
+                    });
+                    acx.new(|_| EmptyView)
+                })
+                .on_drag_move(cx.listener(
+                    move |root, event: &DragMoveEvent<CharDialogDrag>, window, cx| {
+                        let Some(offset) = root.char_drag_offset else {
+                            return;
+                        };
+                        let position = event.event.position;
+                        let viewport = window.viewport_size();
+                        let (w, h) = root.char_dialog_size;
+                        let base_x = ((f32::from(viewport.width) - w) / 2.0).max(0.0);
+                        let base_y = ((f32::from(viewport.height) - h) / 2.0).max(0.0);
+                        // Шапка внутри padding-а карточки (12 px) — левый
+                        // верхний угол карточки = указатель − offset − 12.
+                        root.char_dialog_delta.0 = f32::from(position.x) - offset.0 - base_x - 12.0;
+                        root.char_dialog_delta.1 = f32::from(position.y) - offset.1 - base_y - 12.0;
+                        cx.notify();
+                    },
+                ))
+        };
 
+        // M15/F25c: уголок изменения размера (правый нижний).
+        let resize_grip = {
+            let grip_this = cx.entity();
+            div()
+                .id("ld2-char-resize")
+                .absolute()
+                .right_0()
+                .bottom_0()
+                .size(px(18.0))
+                .rounded_md()
+                .border_l_1()
+                .border_t_1()
+                .border_color(rgb(pal.border))
+                .bg(rgb(pal.panel))
+                .cursor_pointer()
+                .on_drag(CharDialogResize, move |_value, _offset, _window, acx| {
+                    grip_this.update(acx, |root, cx| {
+                        // Новый захват — новый якорь (иначе скачок по
+                        // остатку старого).
+                        root.char_resize_anchor = None;
+                        cx.notify();
+                    });
+                    acx.new(|_| EmptyView)
+                })
+                .on_drag_move(cx.listener(
+                    move |root, event: &DragMoveEvent<CharDialogResize>, window, cx| {
+                        let pos = (
+                            f32::from(event.event.position.x),
+                            f32::from(event.event.position.y),
+                        );
+                        let (cur_w, cur_h) = root.char_dialog_size;
+                        // Якорь — первый move (позицию захвата в конструктор
+                        // on_drag не передаёт); кадр движения теряем.
+                        let Some((ax, ay, w0, h0, dx0, dy0)) = root.char_resize_anchor else {
+                            root.char_resize_anchor = Some((
+                                pos.0,
+                                pos.1,
+                                cur_w,
+                                cur_h,
+                                root.char_dialog_delta.0,
+                                root.char_dialog_delta.1,
+                            ));
+                            return;
+                        };
+                        let viewport = window.viewport_size();
+                        let (nw, nh) = clamp_char_size(
+                            w0 + (pos.0 - ax),
+                            h0 + (pos.1 - ay),
+                            f32::from(viewport.width),
+                            f32::from(viewport.height),
+                        );
+                        // Якорим левый верхний угол: компенсируем
+                        // центрирование Backdrop (resize от центра
+                        // сдвигал бы оба края на Δ/2).
+                        root.char_dialog_delta.0 = dx0 + (nw - w0) / 2.0;
+                        root.char_dialog_delta.1 = dy0 + (nh - h0) / 2.0;
+                        root.char_dialog_size = (nw, nh);
+                        cx.notify();
+                    },
+                ))
+        };
+
+        let (w, h) = self.char_dialog_size;
         let card = div()
+            .relative()
             .flex()
             .flex_col()
             .gap_2()
-            .w(px(760.0))
-            .h(px(560.0))
+            // M15/F25c: смещение от центра (drag) и живой размер (resize).
+            .ml(px(self.char_dialog_delta.0))
+            .mt(px(self.char_dialog_delta.1))
+            .w(px(w))
+            .h(px(h))
             .p(px(12.0))
             .rounded_md()
             .border_1()
@@ -279,7 +382,8 @@ impl Root {
                     .min_h_0()
                     .child(self.character_left_column(cx, pal))
                     .child(self.character_tabs(cx, pal)),
-            );
+            )
+            .child(resize_grip);
 
         Some(
             Backdrop::new("ld2-char-backdrop")
