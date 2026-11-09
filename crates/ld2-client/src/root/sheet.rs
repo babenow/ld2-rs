@@ -19,6 +19,7 @@ use ld2_protocol::cmd::{
 use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
 
 use crate::palette::Palette;
+use ely::buttons::IconButton;
 use ely::forms::{Choice, Input, Select};
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
@@ -138,6 +139,56 @@ impl Root {
             );
         }
         None
+    }
+
+    /// M14/F17: карточка информации о навыке (иконка ⓘ во вкладке
+    /// «Навыки»): описание из контента, ранг и опыт. Навык исчез
+    /// (смена персонажа/экрана) → карточка закрывается.
+    pub(crate) fn skill_info_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let id = self.skill_info.clone()?;
+        let info = self.store.snapshot.as_ref().and_then(|snap| {
+            let skill = snap.char.skills.iter().find(|s| s.id == id)?;
+            Some((
+                skill.name.clone().unwrap_or_else(|| skill.id.clone()),
+                skill.description.clone().unwrap_or_default(),
+                skill.rank,
+                skill.xp,
+                skill.xp_to_next,
+            ))
+        });
+        let Some((name, desc, rank, xp, next)) = info else {
+            self.skill_info = None;
+            return None;
+        };
+        let lang = self.lang;
+        let close = self.dismiss(cx, |r| r.skill_info = None);
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().child(t(lang, Key::RankFmt).replace("{r}", &rank.to_string())))
+            .child(bar(
+                if next > 0 {
+                    xp as f32 / next as f32
+                } else {
+                    0.0
+                },
+                format!("{xp}/{next}"),
+                pal.accent,
+                pal,
+            ));
+        if !desc.is_empty() {
+            body = body.child(div().child(desc));
+        }
+        Some(
+            Dialog::new(format!("ld2-skill-info-{id}"), name, close)
+                .child(body)
+                .into_any_element(),
+        )
     }
 
     // ── каркас панели ─────────────────────────────────────────────────────
@@ -287,7 +338,15 @@ impl Root {
             let name = skill.name.clone().unwrap_or_else(|| skill.id.clone());
             let id = skill.id.clone();
             let rank = skill.rank;
-            let mut row = div()
+            // M14/F17: описание навыка — в тултипе строки; ⓘ открывает
+            // карточку с полной информацией.
+            let desc = skill.description.clone().unwrap_or_default();
+            let info_id = id.clone();
+            let mut row = div().id(format!("ld2-skill-{id}"));
+            if !desc.is_empty() {
+                row = row.tooltip(Tooltip::text(desc));
+            }
+            let mut row = row
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -300,8 +359,18 @@ impl Root {
                         .flex()
                         .flex_row()
                         .gap_2()
+                        .items_center()
                         .child(div().child(name))
-                        .child(div().text_color(rgb(pal.muted)).child(format!("·{rank}"))),
+                        .child(div().text_color(rgb(pal.muted)).child(format!("·{rank}")))
+                        .child(div().flex_grow_1())
+                        .child(
+                            IconButton::new(format!("ld2-skill-info-{id}"), IconName::Info)
+                                .tooltip(t(lang, Key::SkillInfoBtn))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.skill_info = Some(info_id.clone());
+                                    cx.notify();
+                                })),
+                        ),
                 )
                 .child(bar(
                     if skill.xp_to_next > 0 {

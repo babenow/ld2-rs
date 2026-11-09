@@ -369,6 +369,10 @@ pub struct CrimeRemoved {
 /// Сообщение чата (§8, ФР-13): `sent_at` — ISO-8601 UTC.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
+    /// M14/F19: id строки в истории (для удаления модератором);
+    /// у старых серверов отсутствует → `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     pub channel: String,
     pub from: String,
     pub name: String,
@@ -378,6 +382,12 @@ pub struct ChatMessage {
     pub sent_at: String,
     #[serde(flatten, default)]
     pub extra: JsonMap,
+}
+
+/// M14/F19: модератор удалил сообщение — клиент убирает строку по `id`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatDeleted {
+    pub id: u64,
 }
 
 /// Полное состояние группы; `party: null` — группы нет (§8).
@@ -481,6 +491,7 @@ impl_events!(
     (CrimeAdded, "evt/crime/added"),
     (CrimeRemoved, "evt/crime/removed"),
     (ChatMessage, "evt/chat/message"),
+    (ChatDeleted, "evt/chat/deleted"),
     (PartyUpdated, "evt/party/updated"),
     (TradeState, "evt/trade/state"),
     (TradeClosed, "evt/trade/closed"),
@@ -502,9 +513,11 @@ mod tests {
             CrimeStatusUpdate::TYPE,
             GuildLog::TYPE,
             SessionConfig::TYPE,
+            ChatDeleted::TYPE,
         ] {
             assert!(ty.starts_with("evt/"), "{ty}");
         }
+        assert_eq!(ChatDeleted::TYPE, "evt/chat/deleted");
     }
 
     #[test]
@@ -527,6 +540,7 @@ mod tests {
         let s = SkillSnapshot {
             id: "sword".into(),
             name: None,
+            description: None,
             rank: 3,
             xp: 612,
             xp_to_next: 480,

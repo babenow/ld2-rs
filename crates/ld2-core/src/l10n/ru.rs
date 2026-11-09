@@ -239,7 +239,18 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F1: шапка окна
         BadgePvp => "PvP",
         BadgeSafe => "Безопасно",
-        HeaderMenu => "Меню",
+        // M14 F16: диалог таймера выхода
+        ExitCountdown => "Выход через {s} с",
+        ExitNowBtn => "Выйти сейчас",
+        CancelBtn => "Отмена",
+        SkillInfoBtn => "О навыке",
+        WarnCaps => "Caps Lock включён — учётные данные вводятся с заглавными",
+        WarnRuLayout => "Раскладка клавиатуры — русская, переключите на английскую",
+        RolePlayer => "Игрок",
+        RoleAdmin => "Админ",
+        RoleModerator => "Модератор",
+        SystemChatLocked => "В системный канал пишут только админ и модератор",
+        ChDelete => "Удалить сообщение",
         // M14 F4: панель действий и хоткеи
         HkCleave => "Раскол",
         HkRune => "Руна",
@@ -249,8 +260,6 @@ pub(super) fn t(key: Key) -> &'static str {
         HotbarCdShort => "{s} с",
         // M14 F3: инвентарь
         InventoryEmpty => "Нет ни одного предмета",
-        // M14 F7: индикатор непросмотренных строк лога
-        LogNewLines => "▼ {n} новых",
         // M14 F8: настройки
         SettingsChatFont => "Шрифт чата",
         SettingsLogFont => "Шрифт лога",
@@ -259,5 +268,11 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F11: вкладка «Подключение»
         SettingsConnection => "Подключение",
         SettingsChangeHost => "Подключиться к другому",
+        // M14 F13: стиль строк боя в журнале
+        SettingsLogDamageColor => "Цвет урона",
+        SettingsLogAttackColor => "Цвет атак",
+        SettingsDamageBold => "Жирным",
+        // M14 F14: вкладка
+        SettingsFonts => "Шрифты",
     }
 }

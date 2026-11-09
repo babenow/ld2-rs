@@ -107,6 +107,14 @@ fn main() -> anyhow::Result<()> {
             })
             .detach();
 
+            // M14/F21: смена раскладки клавиатуры → перерисовка экрана
+            // входа (предупреждение читает раскладку в рендере).
+            let layout_watch = root.clone();
+            cx.on_keyboard_layout_change(move |acx| {
+                layout_watch.update(acx, |_root, cx| cx.notify());
+            })
+            .detach();
+
             // Фоновый цикл: опрос транспорта с idle-backoff (НФР §8).
             let poller = root.clone();
             cx.spawn(async move |cx: &mut gpui::AsyncApp| {
@@ -123,8 +131,14 @@ fn main() -> anyhow::Result<()> {
                 WindowOptions {
                     titlebar: Some(gpui::TitlebarOptions {
                         title: Some("Likedimion".into()),
+                        // M14/F15: системный тайтлбар скрыт — рисуем
+                        // свой (название + ⚙ + WindowControl ✕).
+                        appears_transparent: true,
                         ..Default::default()
                     }),
+                    // M14/F15: приложение само перетаскивает окно
+                    // (Window::start_window_move из drag-региона).
+                    app_owns_titlebar_drag: true,
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     // M14/F2: минимум окна — 960×640 (ТЗ: компоновка
                     // трёх колонок не должна схлопываться).

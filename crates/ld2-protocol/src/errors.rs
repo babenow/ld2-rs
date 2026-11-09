@@ -59,6 +59,8 @@ pub enum ErrorCode {
     PartyFull,
     GuildLimit,
     GuildPermission,
+    /// Недостаточно прав роли аккаунта (модерация чата, M14/F19).
+    Permission,
     XpPool,
     RankCap,
     ProfessionLimit,
@@ -108,6 +110,7 @@ impl ErrorCode {
             Self::PartyFull => "E_PARTY_FULL",
             Self::GuildLimit => "E_GUILD_LIMIT",
             Self::GuildPermission => "E_GUILD_PERMISSION",
+            Self::Permission => "E_PERMISSION",
             Self::XpPool => "E_XP_POOL",
             Self::RankCap => "E_RANK_CAP",
             Self::ProfessionLimit => "E_PROFESSION_LIMIT",
@@ -159,6 +162,7 @@ impl FromStr for ErrorCode {
             "E_PARTY_FULL" => Self::PartyFull,
             "E_GUILD_LIMIT" => Self::GuildLimit,
             "E_GUILD_PERMISSION" => Self::GuildPermission,
+            "E_PERMISSION" => Self::Permission,
             "E_XP_POOL" => Self::XpPool,
             "E_RANK_CAP" => Self::RankCap,
             "E_PROFESSION_LIMIT" => Self::ProfessionLimit,
@@ -219,6 +223,7 @@ mod tests {
         "E_INGREDIENTS",
         "E_RATE_LIMITED",
         "E_PVP_FORBIDDEN",
+        "E_PERMISSION",
         "E_TOO_LARGE",
         "E_INTERNAL",
     ];

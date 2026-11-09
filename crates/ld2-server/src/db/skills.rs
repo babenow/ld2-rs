@@ -7,6 +7,8 @@ use sqlx::PgPool;
 pub struct SkillContentRow {
     pub id: String,
     pub name: String,
+    /// M14/F17: описание из контента — уходит в SkillSnapshot.
+    pub description: String,
 }
 
 /// Вложенный навык персонажа.
@@ -19,7 +21,7 @@ pub struct SkillRow {
 
 /// Все навыки контента (снапшот §6 отдаёт их всех — у невложенных нули).
 pub async fn content_skills(pool: &PgPool) -> Result<Vec<SkillContentRow>, sqlx::Error> {
-    sqlx::query_as::<_, SkillContentRow>("SELECT id, name FROM skills ORDER BY id")
+    sqlx::query_as::<_, SkillContentRow>("SELECT id, name, description FROM skills ORDER BY id")
         .fetch_all(pool)
         .await
 }
@@ -29,7 +31,7 @@ pub async fn content_skill(
     pool: &PgPool,
     skill_id: &str,
 ) -> Result<Option<SkillContentRow>, sqlx::Error> {
-    sqlx::query_as::<_, SkillContentRow>("SELECT id, name FROM skills WHERE id = $1")
+    sqlx::query_as::<_, SkillContentRow>("SELECT id, name, description FROM skills WHERE id = $1")
         .bind(skill_id)
         .fetch_optional(pool)
         .await

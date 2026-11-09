@@ -61,6 +61,10 @@ pub struct ContentSkill {
     pub id: String,
     pub name: String,
     pub group: String,
+    /// M14/F17: описание эффекта для UI (тултип/карточка навыка).
+    /// `default` — старый skills.json без поля продолжает грузиться.
+    #[serde(default)]
+    pub description: String,
 }
 
 /// Определение предмета из `items.json` (§6 `ItemSnapshot`-ядро).
@@ -321,13 +325,14 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
     }
     for skill in &content.skills {
         sqlx::query(
-            "INSERT INTO skills (id, name, skill_group) VALUES ($1, $2, $3) \
+            "INSERT INTO skills (id, name, skill_group, description) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, \
-               skill_group = EXCLUDED.skill_group",
+               skill_group = EXCLUDED.skill_group, description = EXCLUDED.description",
         )
         .bind(&skill.id)
         .bind(&skill.name)
         .bind(&skill.group)
+        .bind(&skill.description)
         .execute(&mut *tx)
         .await?;
     }
@@ -491,4 +496,26 @@ fn content_version(content: &GameContent) -> Result<String, ContentError> {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    /// M14/F17: у каждого навыка контента есть описание для UI
+    /// (тултип/карточка) — пропуск сломает ожидание клиента.
+    #[test]
+    fn every_skill_has_description() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = load(&dir).expect("контент контента загружается");
+        assert!(!content.skills.is_empty(), "навыки есть");
+        for skill in &content.skills {
+            assert!(
+                !skill.description.trim().is_empty(),
+                "нет описания у навыка {}",
+                skill.id
+            );
+        }
+    }
 }

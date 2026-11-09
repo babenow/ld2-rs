@@ -66,6 +66,8 @@ pub enum Act {
     Learn,
     /// `chat.send` — ack несёт только ошибки (лимиты §5), события — отдельно.
     Chat,
+    /// `chat.delete` (M14/F19) — ошибки прав/лимиты → notice.
+    ChatDelete,
     /// `craft.start`/`craft.recipes` — результат крафта событиями (ФР-08).
     Craft,
     /// `quest.accept|turn_in|abandon` — результат событиями (ФР-12).
@@ -497,8 +499,9 @@ impl AppStore {
                 Act::CrimeLog | Act::Learn | Act::Craft | Act::Quest => {
                     self.sheet_error = Some(msg)
                 }
-                // Лимиты чата (E_RATE_LIMITED §9) — тостом (ФР-13).
-                Act::Chat => self.notice = Some(msg),
+                // Лимиты чата (E_RATE_LIMITED §9) и права (E_PERMISSION,
+                // M14/F19) — тостом.
+                Act::Chat | Act::ChatDelete => self.notice = Some(msg),
                 // Соцдомен: ошибки (E_TRADE_STALE, E_PARTY_FULL §9) — тостом.
                 Act::Party | Act::Trade | Act::GuildBrowse | Act::Guild => self.notice = Some(msg),
             }
@@ -561,6 +564,7 @@ impl AppStore {
             | Act::Cast
             | Act::Quest
             | Act::Chat
+            | Act::ChatDelete
             | Act::Trade => {
                 // результат событиями (§8)
             }
@@ -741,6 +745,10 @@ impl AppStore {
                     return vec![];
                 };
                 self.push_visited(&snap.location);
+                // M14/F18: лог мира персональный — очистка при входе в игру
+                // (старые строки сессии не переживают вход; строка «Вход в мир»
+                // остаётся первой).
+                self.log.clear();
                 self.push_log(
                     LogKind::Location,
                     format!("Вход в мир: {}", snap.location.name),
@@ -1354,6 +1362,12 @@ impl AppStore {
                 let Ok(msg) = serde_json::from_value::<ChatMessage>(payload) else {
                     return vec![];
                 };
+                // M14/F22: реплей истории (маркер replay) не показываем —
+                // журнал и чат входят в игру пустыми; кольцо D25 живёт
+                // на сервере, совместимость — через extra (§11).
+                if msg.extra.get("replay").and_then(|v| v.as_bool()) == Some(true) {
+                    return vec![];
+                }
                 // ФР-13: история per-channel (ring) + адресат для «ответить».
                 let my_id = self
                     .snapshot
@@ -1375,6 +1389,18 @@ impl AppStore {
                     format!("[{}] {}: {}", msg.channel, msg.name, msg.text),
                 );
                 effects
+            }
+            "evt/chat/deleted" => {
+                // M14/F19: модератор удалил сообщение — убираем из всех
+                // каналов (id один на историю сервера).
+                let Ok(del) = serde_json::from_value::<ld2_protocol::evt::ChatDeleted>(payload)
+                else {
+                    return vec![];
+                };
+                for ring in self.chat.values_mut() {
+                    ring.retain(|m| m.id != Some(del.id));
+                }
+                vec![]
             }
             _ => vec![], // неизвестные/ненужные события транспорт уже залогировал
         }
@@ -1547,6 +1573,8 @@ impl AppStore {
         self.quest_tracker.clear();
         self.session_login = None;
         self.chat.clear();
+        // M14/F18: лог мира персональный — очистка при выходе.
+        self.log.clear();
         self.last_whisper_from = None;
         self.party = None;
         self.party_invite = None;
@@ -1615,6 +1643,8 @@ impl AppStore {
         self.quest_tracker.clear();
         // ФР-13: переключение персонажа сбрасывает историю чата.
         self.chat.clear();
+        // M14/F18: лог мира персональный — очистка при выходе из игры.
+        self.log.clear();
         self.last_whisper_from = None;
         self.party = None;
         self.party_invite = None;
@@ -1634,6 +1664,15 @@ impl AppStore {
 
     pub fn logout(&mut self) -> Vec<Effect> {
         self.reset_to_login(None)
+    }
+
+    /// M14/F19: может ли аккаунт писать в system-чат и удалять сообщения.
+    /// Роль приходит в `session.start`; старый сервер → `player`.
+    pub fn can_moderate(&self) -> bool {
+        matches!(
+            self.session.as_ref().map(|s| s.role.as_str()),
+            Some("admin") | Some("moderator")
+        )
     }
 
     pub fn slot_usage(&self) -> (usize, u32) {
@@ -2078,6 +2117,95 @@ mod tests {
         );
     }
 
+    /// M14/F19: evt/chat/deleted убирает строку из истории канала;
+    /// can_moderate — по роли из session.start (старый сервер → player).
+    /// M14/F22: строки с маркером replay не попадают ни в чат, ни в
+    /// журнал — прошлая сессия не навязывается новому входу.
+    #[test]
+    fn replay_marked_messages_not_shown() {
+        let mut store = store_with_session();
+        let log_before = store.log.len();
+
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 7, "channel": "global", "from": "p", "name": "Старый",
+                "text": "вчерашнее", "sent_at": "2026-11-08T12:00:00Z",
+                "replay": true
+            })),
+        }));
+        assert!(
+            !store.chat.contains_key("global"),
+            "реплей не создаёт кольцо канала"
+        );
+        assert_eq!(store.log.len(), log_before, "реплей не пушится в журнал");
+
+        // Обычное сообщение (без маркера) — как раньше.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 8, "channel": "global", "from": "p", "name": "Живой",
+                "text": "сейчас", "sent_at": "2026-11-09T12:00:00Z"
+            })),
+        }));
+        assert_eq!(store.chat.get("global").expect("живое сообщение").len(), 1);
+        assert_eq!(store.log.len(), log_before + 1, "живое — в журнал идёт");
+    }
+
+    #[test]
+    fn chat_deleted_event_removes_message() {
+        let mut store = store_with_session();
+        assert!(!store.can_moderate(), "fixtures: роль player");
+        store.session.as_mut().expect("сессия").role = "moderator".into();
+        assert!(store.can_moderate(), "модератор может");
+
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 42, "channel": "system", "from": "p", "name": "Мод",
+                "text": "служебное", "sent_at": "2026-11-09T00:00:00Z"
+            })),
+        }));
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 43, "channel": "system", "from": "p", "name": "Мод",
+                "text": "остаётся", "sent_at": "2026-11-09T00:00:01Z"
+            })),
+        }));
+        let sys = store.chat.get("system").expect("канал system");
+        assert_eq!(sys.len(), 2);
+
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/deleted".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({ "id": 42 })),
+        }));
+        let sys = store.chat.get("system").expect("канал system");
+        assert_eq!(sys.len(), 1, "удалена только строка с id");
+        assert_eq!(sys[0].text, "остаётся");
+        assert_eq!(sys[0].id, Some(43), "id пережил удаление соседа");
+    }
+
     #[test]
     fn chat_history_is_ring_per_channel() {
         let mut store = store_with_session();
@@ -2486,6 +2614,32 @@ mod tests {
         assert!(store.session.is_some());
         store.apply(snapshot_event());
         assert_eq!(store.screen, Screen::Game);
+    }
+
+    /// M14/F18: лог мира персональный — не переживает вход и выход.
+    #[test]
+    fn log_cleared_on_enter_and_exit() {
+        let mut store = store_with_session();
+        // Вход в игру: лог содержит только строку «Вход в мир».
+        store.apply(snapshot_event());
+        assert_eq!(store.screen, Screen::Game);
+        assert_eq!(
+            store.log.len(),
+            1,
+            "при входе лог очищается — только «Вход в мир»"
+        );
+        // Накопили строк — выход из игры очищает.
+        store.back_to_characters();
+        assert!(
+            store.log.is_empty(),
+            "смена персонажа/выход из игры чистит лог"
+        );
+        // Повторный вход — снова чисто.
+        store.apply(snapshot_event());
+        assert_eq!(store.log.len(), 1, "повторный вход начинается заново");
+        // Логаут (экран входа) тоже чистит.
+        store.logout();
+        assert!(store.log.is_empty(), "логаут чистит лог");
     }
 
     #[test]

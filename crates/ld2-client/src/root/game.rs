@@ -21,7 +21,7 @@ use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
 use super::social::show_party;
-use super::{act_btn, btn, Click, LogTab, Root};
+use super::{btn, hex_to_u32, Click, LogTab, Root};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -130,14 +130,25 @@ impl Root {
             .gap_3()
             .size_full()
             .p(px(12.0))
-            .child(self.left_column(cx, pal, &snap))
-            .child(self.sheet(cx, pal))
+            // M14/F18: резиновая вёрстка — min_w_0 позволяет колонкам
+            // сжиматься ниже min-content (иначе правая колонка
+            // вылезала за рамки окна); min_w(360) у листа остаётся
+            // жёстким полом на минимуме окна (960×640).
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(self.left_column(cx, pal, &snap)),
+            )
+            .child(div().flex().flex_col().min_w_0().child(self.sheet(cx, pal)))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
                     .flex_grow_1()
+                    .min_w_0()
                     // Не выше остатка экрана: журнальный блок сжимается
                     // до своего min_h, а не выдавливает колонку наружу.
                     .min_h_0()
@@ -337,10 +348,15 @@ impl Root {
     // ── центр: локация, выходы, сущности ──────────────────────────────────
 
     fn location_block(&mut self, pal: &Palette, loc: &LocationSnapshot) -> Div {
+        // M14/F15: название локации — зелёное, если безопасная,
+        // красное, если небезопасная (pvp) — как в шапке.
+        let pvp = loc.flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
+        let name_color = if pvp { pal.danger } else { pal.success };
         let mut head = div().flex().flex_row().gap_2().items_center().child(
             div()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_size(px(16.0))
+                .text_color(rgb(name_color))
                 .child(loc.name.clone()),
         );
         for flag in &loc.flags {
@@ -757,25 +773,19 @@ impl Root {
         let dark = pal.bg == crate::palette::palette("dark").bg;
         let len = self.store.log.len();
 
-        // Состояние прокрутки (вычисляется каждый тик рендера).
-        let at_bottom = scroll_at_bottom(
-            f32::from(self.journal_scroll.offset().y),
-            f32::from(self.journal_scroll.max_offset().y),
-        );
-        if at_bottom {
-            // Приклеиваемся только при новых строках — и только если
-            // мы и так внизу (иначе позицию пользователя не дёргаем).
-            if self.journal_seen != len && len > 0 {
-                self.journal_scroll.scroll_to_item(len - 1);
-            }
-            self.journal_seen = len;
-            self.journal_unseen = 0;
-        } else {
-            self.journal_unseen = len.saturating_sub(self.journal_seen);
+        // M14/F13: лог **всегда промотан вниз** (замена свободной
+        // прокрутки F7): новая строка возвращает вниз; вручную
+        // поднять можно до прихода следующей строки.
+        // Фикс: весь контент — ОДИН ребёнок ScrollArea, поэтому
+        // scroll_to_item(len-1) бил в несуществующий индекс
+        // (child_bounds.get() = None → no-op). У gpui есть
+        // прямой scroll_to_bottom().
+        if len != self.journal_seen && len > 0 {
+            self.journal_scroll.scroll_to_bottom();
         }
-        let unseen = self.journal_unseen;
+        self.journal_seen = len;
 
-        // Шапка: вкладки «Журнал»/«Чат» + счётчик строк + индикатор.
+        // Шапка: вкладки «Журнал»/«Чат» + счётчик строк.
         let active = match self.log_tab {
             LogTab::Log => "log",
             LogTab::Chat => "chat",
@@ -807,25 +817,6 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(len.to_string()),
         );
-        if unseen > 0 {
-            let label = tf(lang, Key::LogNewLines, &[("{n}", &unseen.to_string())]);
-            head = head.child(act_btn(
-                cx,
-                label,
-                pal.accent,
-                pal.accent_text,
-                |this, cx| {
-                    let len = this.store.log.len();
-                    if len > 0 {
-                        this.journal_scroll.scroll_to_item(len - 1);
-                    }
-                    this.journal_seen = len;
-                    this.journal_unseen = 0;
-                    cx.notify();
-                },
-            ));
-        }
-
         // Тело активной вкладки.
         // Тело: flex-колонка, где сам ScrollArea — flex-элемент
         // (flex_grow_1 + min_h_0): его высота тогда определяется
@@ -834,6 +825,10 @@ impl Root {
         // по контенту и сообщения выходят за границы без прокрутки.
         // M14/F8: размер шрифта лога из настроек (10…20 px).
         let log_font = self.config.log_font_px;
+        // M14/F13: цвета/жирность строк боя — из настроек.
+        let damage_color = self.config.log_damage_color.clone();
+        let attack_color = self.config.log_attack_color.clone();
+        let damage_bold = self.config.log_damage_bold;
         let body =
             match self.log_tab {
                 LogTab::Log => div().flex().flex_col().flex_grow_1().min_h_0().child(
@@ -844,9 +839,23 @@ impl Root {
                         .min_h_0()
                         .child(div().flex().flex_col().gap_1().children(
                             self.store.log.iter().map(|entry| {
+                                // M14/F13: урон персонажу — цвет из
+                                // настроек (+жирный), его атаки — свой
+                                // цвет; прочие kinds — прежняя палитра.
+                                let (color, bold) = match entry.kind {
+                                    LogKind::CombatIn => (
+                                        hex_to_u32(&damage_color).unwrap_or(0xe0_6c_75),
+                                        damage_bold,
+                                    ),
+                                    LogKind::CombatOut => {
+                                        (hex_to_u32(&attack_color).unwrap_or(0x61_af_ef), false)
+                                    }
+                                    kind => (log_color(kind, dark), false),
+                                };
                                 div()
                                     .text_size(px(log_font))
-                                    .text_color(rgb(log_color(entry.kind, dark)))
+                                    .text_color(rgb(color))
+                                    .when(bold, |line| line.font_weight(gpui::FontWeight::BOLD))
                                     .child(entry.text.clone())
                             }),
                         )),
@@ -1063,14 +1072,6 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
         )
 }
 
-/// M14/F7: лог «прибит» к нижней позиции — offset достиг максимума
-/// (допуск 1 px на антиалиасинг/дребезг layout). Только при `true`
-/// разрешено stick-to-bottom; иначе позицию пользователя не трогаем.
-/// Чистая функция — юнит-тест в конце файла.
-fn scroll_at_bottom(offset_y: f32, max_offset_y: f32) -> bool {
-    offset_y + 1.0 >= max_offset_y
-}
-
 /// M14/F4: почему кнопка панели недоступна: требование (цель/мана/
 /// заряды — текст в тултипе) или кулдаун (таймер на кнопке + тултип).
 enum OffReason {
@@ -1174,24 +1175,5 @@ fn entity_tooltip(entity: &Entity) -> String {
         format!("{}{hp}", entity.name)
     } else {
         format!("{}{hp} · {tags}", entity.name)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// M14/F7: stick-to-bottom разрешён только в нижней позиции.
-    #[test]
-    fn log_pins_to_bottom_only_when_scrolled_to_end() {
-        // Пустой лог: 0 == 0 — считаем «внизу».
-        assert!(scroll_at_bottom(0.0, 0.0));
-        // Контент влезает без прокрутки — тоже «внизу».
-        assert!(scroll_at_bottom(40.0, 40.0));
-        // Погрешность layout в 1 px не считается уходом вверх.
-        assert!(scroll_at_bottom(99.5, 100.0));
-        // Пользователь прокрутил вверх — приклеивать нельзя.
-        assert!(!scroll_at_bottom(10.0, 100.0));
-        assert!(!scroll_at_bottom(0.0, 40.0));
     }
 }

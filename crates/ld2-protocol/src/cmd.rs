@@ -247,6 +247,14 @@ pub struct ChatSend {
     pub to: Option<String>,
 }
 
+/// M14/F19: удаление сообщения из истории модератором/админом (§7).
+/// Права роли проверяет сервер → `E_PERMISSION`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ChatDelete {
+    /// `id` строки в `chat_history` (BIGSERIAL).
+    pub id: u64,
+}
+
 // ─── группа (ФР-14) ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -407,6 +415,7 @@ impl_commands!(
     (QuestAbandon, "cmd/quest.abandon", false),
     (CrimeLog, "cmd/crime.log", true),
     (ChatSend, "cmd/chat.send", false),
+    (ChatDelete, "cmd/chat.delete", false),
     (PartyCreate, "cmd/party.create", false),
     (PartyInvite, "cmd/party.invite", false),
     (PartyAccept, "cmd/party.accept", false),
@@ -458,6 +467,10 @@ mod tests {
         const { assert!(AuthRegister::IDEMPOTENT) };
         const { assert!(!LocationMove::IDEMPOTENT) };
         const { assert!(!ChatSend::IDEMPOTENT) };
+        // M14/F19: повтор удаления — «не найдено», не кэшируем ack.
+        const { assert!(!ChatDelete::IDEMPOTENT) };
+        assert!(ChatDelete::TYPE.starts_with("cmd/"));
+        assert!(ChatDelete::TYPE.contains('.'));
     }
 
     #[test]

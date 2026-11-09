@@ -38,6 +38,15 @@ pub struct Config {
     /// Размер шрифта **строк лога мира**, px (M14/F8: 10…20, дефолт 12).
     #[serde(default = "default_log_font_px")]
     pub log_font_px: f32,
+    /// Цвет строк «урон по персонажу» в журнале, hex (M14/F13).
+    #[serde(default = "default_log_damage_color")]
+    pub log_damage_color: String,
+    /// Цвет строк «успешная атака персонажа», hex (M14/F13).
+    #[serde(default = "default_log_attack_color")]
+    pub log_attack_color: String,
+    /// Жирный шрифт строк урона (M14/F13).
+    #[serde(default = "default_true")]
+    pub log_damage_bold: bool,
     /// OS-уведомления (D7, feature-flag `desktop.notify`).
     #[serde(default = "default_true")]
     pub notify: bool,
@@ -64,6 +73,22 @@ fn default_chat_font_px() -> f32 {
 
 fn default_log_font_px() -> f32 {
     12.0
+}
+
+fn default_log_damage_color() -> String {
+    "#e06c75".into()
+}
+
+fn default_log_attack_color() -> String {
+    "#61afef".into()
+}
+
+/// Hex-цвет: `#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa`, `#` опционален.
+/// Зеркало `ely::forms::parse_hex` — клиент принимает те же формы,
+/// какие проходят sanitize (юнит-тест ниже).
+pub fn is_hex_color(text: &str) -> bool {
+    let digits = text.trim().trim_start_matches('#');
+    matches!(digits.len(), 3 | 4 | 6 | 8) && digits.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn default_font_scale() -> f32 {
@@ -214,6 +239,14 @@ impl Config {
         // диапазона, как у chat_limit).
         self.chat_font_px = self.chat_font_px.clamp(10.0, 20.0);
         self.log_font_px = self.log_font_px.clamp(10.0, 20.0);
+        // M14/F13: битый hex → дефолтный цвет (записан ColorPicker'ом
+        // или отредактирован руками в config.toml).
+        if !is_hex_color(&self.log_damage_color) {
+            self.log_damage_color = default_log_damage_color();
+        }
+        if !is_hex_color(&self.log_attack_color) {
+            self.log_attack_color = default_log_attack_color();
+        }
         if !(100..=10_000).contains(&self.chat_limit) {
             self.chat_limit = default_chat_limit();
         }
@@ -234,6 +267,9 @@ impl Default for Config {
             font_scale: default_font_scale(),
             chat_font_px: default_chat_font_px(),
             log_font_px: default_log_font_px(),
+            log_damage_color: default_log_damage_color(),
+            log_attack_color: default_log_attack_color(),
+            log_damage_bold: true,
             notify: default_true(),
             chat_limit: default_chat_limit(),
             sheet_tab: default_sheet_tab(),
@@ -319,6 +355,47 @@ mod tests {
         // M14/F8: шрифты чата/лога в старом конфиге — дефолт 12 px.
         assert_eq!(cfg.chat_font_px, 12.0);
         assert_eq!(cfg.log_font_px, 12.0);
+        // M14/F13: цвета/жирность строк боя в старом конфиге — дефолты.
+        assert_eq!(cfg.log_damage_color, "#e06c75");
+        assert_eq!(cfg.log_attack_color, "#61afef");
+        assert!(cfg.log_damage_bold);
+    }
+
+    /// M14/F13: hex-цвета принимаются в 4 формах, битые — нет.
+    #[test]
+    fn hex_color_forms() {
+        assert!(is_hex_color("#e06c75"));
+        assert!(is_hex_color("e06c75"), "без решётки");
+        assert!(is_hex_color("#f0c"), "короткая форма");
+        assert!(is_hex_color("#f0ca"));
+        assert!(is_hex_color("  #aabbcc  "), "пробелы по краям");
+        assert!(!is_hex_color("#e06c7"), "5 цифр");
+        assert!(!is_hex_color("#xyzxyz"), "не hex");
+        assert!(!is_hex_color(""), "пусто");
+        assert!(!is_hex_color("#e06c75zz"));
+    }
+
+    /// M14/F13: sanitize откатывает битые цвета на дефолт, валидные —
+    /// не трогает (запись ColorPicker'ом проходит без изменений).
+    #[test]
+    fn sanitize_repairs_log_colors() {
+        let bad = Config {
+            log_damage_color: "pink".into(),
+            log_attack_color: "12".into(),
+            ..Config::default()
+        }
+        .sanitize();
+        assert_eq!(bad.log_damage_color, "#e06c75");
+        assert_eq!(bad.log_attack_color, "#61afef");
+
+        let ok = Config {
+            log_damage_color: "#00ff00".into(),
+            log_attack_color: "abc".into(),
+            ..Config::default()
+        }
+        .sanitize();
+        assert_eq!(ok.log_damage_color, "#00ff00");
+        assert_eq!(ok.log_attack_color, "abc");
     }
 
     /// M14/F8: sanitize клампит шрифты чата и лога в 10…20 px.

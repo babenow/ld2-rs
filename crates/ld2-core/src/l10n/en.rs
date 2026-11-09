@@ -239,7 +239,18 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F1: header
         BadgePvp => "PvP",
         BadgeSafe => "Safe",
-        HeaderMenu => "Menu",
+        // M14 F16: exit timer dialog
+        ExitCountdown => "Exit in {s}s",
+        ExitNowBtn => "Exit now",
+        CancelBtn => "Cancel",
+        SkillInfoBtn => "About the skill",
+        WarnCaps => "Caps Lock is on — credentials will be typed in uppercase",
+        WarnRuLayout => "Keyboard layout is Russian — switch to English",
+        RolePlayer => "Player",
+        RoleAdmin => "Admin",
+        RoleModerator => "Moderator",
+        SystemChatLocked => "Only admins and moderators can post to system",
+        ChDelete => "Delete message",
         // M14 F4: action panel and hotkeys
         HkCleave => "Cleave",
         HkRune => "Rune",
@@ -249,8 +260,6 @@ pub(super) fn t(key: Key) -> &'static str {
         HotbarCdShort => "{s}s",
         // M14 F3: inventory
         InventoryEmpty => "No items yet",
-        // M14 F7: unseen world-log lines indicator
-        LogNewLines => "▼ {n} new",
         // M14 F8: settings
         SettingsChatFont => "Chat font",
         SettingsLogFont => "Log font",
@@ -259,5 +268,11 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F11: connection tab
         SettingsConnection => "Connection",
         SettingsChangeHost => "Connect to another",
+        // M14 F13: combat line styling in the log
+        SettingsLogDamageColor => "Damage color",
+        SettingsLogAttackColor => "Attack color",
+        SettingsDamageBold => "Bold",
+        // M14 F14: tab
+        SettingsFonts => "Fonts",
     }
 }

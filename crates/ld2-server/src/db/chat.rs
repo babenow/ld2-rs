@@ -3,11 +3,12 @@
 
 use sqlx::PgPool;
 
-/// Строка истории `(channel, from_char, name, text, sent_at_iso)`.
-pub type ChatRow = (String, String, String, String, String);
+/// Строка истории `(id, channel, from_char, name, text, sent_at_iso)`.
+pub type ChatRow = (i64, String, String, String, String, String);
 
 /// Добавить сообщение и обрезать историю до `limit` последних строк.
-/// Возвращает ISO-`ts` вставленной строки (`sent_at` из БД, единые часы).
+/// Возвращает `(id, ISO-ts)` вставленной строки (`sent_at` из БД —
+/// единые часы; `id` — для удаления модератором, M14/F19).
 pub async fn push(
     pool: &PgPool,
     channel: &str,
@@ -15,12 +16,12 @@ pub async fn push(
     name: &str,
     text: &str,
     limit: u32,
-) -> Result<String, sqlx::Error> {
+) -> Result<(i64, String), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let sent_at: String = sqlx::query_scalar(
+    let row: (i64, String) = sqlx::query_as(
         "INSERT INTO chat_history (channel, from_char, name, text) \
          VALUES ($1, $2, $3, $4) \
-         RETURNING to_char(sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
+         RETURNING id, to_char(sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
     )
     .bind(channel)
     .bind(from_char)
@@ -40,13 +41,22 @@ pub async fn push(
         .await?;
     }
     tx.commit().await?;
-    Ok(sent_at)
+    Ok(row)
+}
+
+/// M14/F19: удалить сообщение по id (модерация). `false` — не найдено.
+pub async fn delete(pool: &PgPool, id: i64) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("DELETE FROM chat_history WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
 }
 
 /// Последние `limit` строк истории (старые первые) — для реплея при входе.
 pub async fn recent(pool: &PgPool, limit: u32) -> Result<Vec<ChatRow>, sqlx::Error> {
     sqlx::query_as::<_, ChatRow>(
-        "SELECT channel, from_char, name, text, \
+        "SELECT id, channel, from_char, name, text, \
                 to_char(sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
          FROM chat_history ORDER BY id DESC LIMIT $1",
     )

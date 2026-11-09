@@ -144,6 +144,10 @@ pub struct SkillSnapshot {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// M14/F17: описание эффекта из контента (тултип/карточка в UI).
+    /// Опционально: серверы без контента обходят поле вовсе.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub rank: u32,
     pub xp: i64,
     pub xp_to_next: i64,
