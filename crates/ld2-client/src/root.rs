@@ -76,6 +76,8 @@ pub(crate) enum Click {
     /// M14/F8: выбор языка в настройках («ru»/«en»).
     Lang(&'static str),
     ToggleSettings,
+    /// M15/F25: открыть/закрыть окно персонажа (кнопка в шапке).
+    ToggleCharacter,
     Theme(&'static str),
     ChatLimit(i64),
     /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
@@ -156,6 +158,8 @@ pub struct Root {
     reg_password2: Option<Entity<TextInput>>,
     host_input: Option<Entity<TextInput>>,
     settings_open: bool,
+    /// M15/F25: окно персонажа — оверлей поверх игрового экрана.
+    character_open: bool,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
     exit_timer: Option<(ExitKind, i64)>,
     /// M14/F17: открытая карточка навыка — id из снапшота.
@@ -189,6 +193,8 @@ pub struct Root {
     /// M14/F3: обычная прокрутка вкладок листа «Навыки»/«Профессии».
     skills_scroll: ScrollHandle,
     professions_scroll: ScrollHandle,
+    /// M15/F25: прокрутка вкладки «Инвентарь» в окне персонажа.
+    inventory_scroll: ScrollHandle,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
     log_tab: LogTab,
     /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
@@ -235,6 +241,7 @@ impl Root {
             reg_password2: None,
             host_input: None,
             settings_open: false,
+            character_open: false,
             exit_timer: None,
             skill_info: None,
             first_frame: true,
@@ -254,6 +261,7 @@ impl Root {
             chat_scroll: ScrollHandle::new(),
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
+            inventory_scroll: ScrollHandle::new(),
             log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
@@ -619,6 +627,23 @@ impl Root {
             cx.notify();
             return;
         }
+        // M15/F25: Esc закрывает окно персонажа — но не поверх
+        // настроек/диалога выхода (они ловят Esc сами).
+        if self.character_open
+            && !self.settings_open
+            && self.exit_timer.is_none()
+            && ks.key == "escape"
+        {
+            self.character_open = false;
+            cx.notify();
+            return;
+        }
+        // M15/F25: хоткей окна персонажа (кнопка в шапке дублирует).
+        if keystroke_matches(&self.config.hotkeys.open_character, ks) {
+            self.character_open = !self.character_open;
+            cx.notify();
+            return;
+        }
         // M14/F4: боевые действия панели — те же действия, что кнопки
         // (цифры 1–6; Esc занят диалогами → «Побег» = 4).
         if self.action_hotkey(ks, cx) {
@@ -772,6 +797,10 @@ impl Root {
                 if let Some(input) = self.host_input.clone() {
                     input.update(cx, |i, cx| i.set_text(host.clone(), cx));
                 }
+            }
+            Click::ToggleCharacter => {
+                self.character_open = !self.character_open;
+                cx.notify();
             }
             Click::Theme(theme) => {
                 self.config.theme = theme.to_string();
@@ -1073,21 +1102,47 @@ impl Root {
                         // безопасная, красное, если небезопасная (pvp).
                         let pvp = flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
                         let name_color = if pvp { pal.danger } else { pal.success };
-                        let mut row = div().flex().flex_row().items_center().gap_1().child(
+                        // M15/F25: локация в 2 строки — 1) название,
+                        // 2) тип локации (бейджи Safe/PvP…).
+                        let name_row = div().flex().flex_row().items_center().gap_1().child(
                             div()
                                 .text_size(px(12.0))
                                 .text_color(rgb(name_color))
                                 .child(format!("· {name}")),
                         );
+                        let mut badges_row = div().flex().flex_row().items_center().gap_1();
                         for (tone, token) in location_badges(&flags) {
                             let color = match tone {
                                 BadgeTone::Warn => pal.warn,
                                 BadgeTone::Success => pal.success,
                                 BadgeTone::Muted => pal.muted,
                             };
-                            row = row.child(badge(badge_label(lang, &token), color, pal));
+                            badges_row =
+                                badges_row.child(badge(badge_label(lang, &token), color, pal));
                         }
-                        row
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(name_row)
+                            .child(badges_row)
+                    }))
+                    // M15/F25: разделитель и кнопка окна персонажа рядом
+                    // с локацией (только где есть снапшот — в мире).
+                    .children(
+                        self.store
+                            .snapshot
+                            .as_ref()
+                            .map(|_| div().w(px(1.0)).h(px(20.0)).bg(rgb(pal.border))),
+                    )
+                    .children(self.store.snapshot.as_ref().map(|_| {
+                        btn(
+                            cx,
+                            t(lang, Key::BtnCharacter),
+                            pal.panel,
+                            pal.text,
+                            Click::ToggleCharacter,
+                        )
                     })),
             )
             .child(
@@ -1646,7 +1701,7 @@ struct HotkeyRowSpec {
 
 /// Все ремаппингуемые действия: навигация/цикл (ФР-19) + боевые
 /// панели (M14/F4, цифры 1–6 — Esc занят диалогами).
-const HOTKEY_ROWS: [HotkeyRowSpec; 11] = [
+const HOTKEY_ROWS: [HotkeyRowSpec; 12] = [
     HotkeyRowSpec {
         id: "ld2-hk-nav-up",
         label: Key::HkNavUp,
@@ -1712,6 +1767,12 @@ const HOTKEY_ROWS: [HotkeyRowSpec; 11] = [
         label: Key::HkConsumable,
         get: |hk| hk.action_consumable.as_str(),
         set: |hk, v| hk.action_consumable = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-character",
+        label: Key::HkOpenCharacter,
+        get: |hk| hk.open_character.as_str(),
+        set: |hk, v| hk.open_character = v,
     },
 ];
 
@@ -2346,6 +2407,9 @@ impl Render for Root {
                     .child(match self.store.screen {
                         Screen::Login => self.login_screen(window, cx, &pal),
                         Screen::Characters => self.characters_screen(cx, &pal),
+                        // M15/F25: окно персонажа перекрывает игру
+                        // (заголовок/шапка/TitleBar остаются).
+                        Screen::Game if self.character_open => self.character_window(cx, &pal),
                         Screen::Game => self.game_screen(cx, &pal),
                     }),
             )
@@ -2391,7 +2455,11 @@ mod tests {
     /// свой id и дефолт из конфига; сеттер пишет только своё поле.
     #[test]
     fn hotkey_rows_cover_nav_and_six_actions() {
-        assert_eq!(HOTKEY_ROWS.len(), 11, "навигация/цикл + 6 действий");
+        assert_eq!(
+            HOTKEY_ROWS.len(),
+            12,
+            "навигация/цикл + 6 действий + окно персонажа"
+        );
         let ids: std::collections::HashSet<_> = HOTKEY_ROWS.iter().map(|r| r.id).collect();
         assert_eq!(ids.len(), HOTKEY_ROWS.len(), "id строк уникальны");
 
@@ -2404,6 +2472,7 @@ mod tests {
         assert_eq!((HOTKEY_ROWS[8].get)(&hk), "4", "побег (не Esc: диалоги)");
         assert_eq!((HOTKEY_ROWS[9].get)(&hk), "5", "руна");
         assert_eq!((HOTKEY_ROWS[10].get)(&hk), "6", "расходник");
+        assert_eq!((HOTKEY_ROWS[11].get)(&hk), "c", "окно персонажа (M15/F25)");
 
         // Сеттер переписывает только своё поле.
         let mut hk = Hotkeys::default();

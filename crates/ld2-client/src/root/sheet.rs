@@ -1,6 +1,10 @@
-//! Правая панель-лист gpui (M10.4) — порт `ui/sheet.rs` egui-клиента:
-//! трекер квестов, 7 вкладок (навыки/атрибуты/инвентарь/статусы/квесты/
-//! профессии/гильдия) и модалки предмета/улучшения/инкрустации.
+//! Окно персонажа gpui (M15/F25; порт листа M10.4): левая колонка —
+//! шкала опыта, экипировка, атрибуты, статусы со временем; правая —
+//! вкладки (параметры/навыки/профессии/репутация/квесты/гильдия/
+//! инвентарь). Модалки предмета/улучшения/инкрустации — прежние.
+//!
+//! Правило дубликатов: атрибуты/статусы живут только в левой колонке —
+//! одноимённых вкладок больше нет.
 //!
 //! Отличия от egui: инвентарь без drag&drop (действия в меню по ПКМ —
 //! те же, что в контекстном меню egui), тултипы заменены модалкой
@@ -9,7 +13,7 @@
 
 use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, SharedString};
-use ld2_core::l10n::{format_duration, t, Key, Lang};
+use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, Act, UpgradeView};
 use ld2_protocol::cmd::{
     CharXpInvest, CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave,
@@ -21,71 +25,78 @@ use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
 use crate::palette::Palette;
 use ely::buttons::IconButton;
 use ely::forms::{Choice, Input, Select};
+use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
 use super::{act_btn, scrollable_tab, Root};
 
-/// Вкладки листа (паритет egui `SheetTab`; персистентно строкой в config).
+/// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
+/// Порядок — как в правой колонке окна (спека пользователя).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SheetTab {
+    /// Производные характеристики — наполняется в F26.
+    Params,
     Skills,
-    Attrs,
-    Inventory,
-    Statuses,
-    Quests,
     Professions,
+    /// Репутация фракций — наполняется в F27.
+    Reputation,
+    Quests,
     Guild,
+    Inventory,
 }
 
 impl SheetTab {
     fn all() -> [(SheetTab, Key); 7] {
         [
+            (SheetTab::Params, Key::SheetParams),
             (SheetTab::Skills, Key::SheetSkills),
-            (SheetTab::Attrs, Key::SheetAttrs),
-            (SheetTab::Inventory, Key::SheetInventory),
-            (SheetTab::Statuses, Key::StatusesTab),
-            (SheetTab::Quests, Key::QuestsTab),
             (SheetTab::Professions, Key::ProfessionsTab),
+            (SheetTab::Reputation, Key::SheetReputation),
+            (SheetTab::Quests, Key::QuestsTab),
             (SheetTab::Guild, Key::GuildTab),
+            (SheetTab::Inventory, Key::SheetInventory),
         ]
     }
 
     /// M14/F12: иконка вкладки (Lucide-бандл Ely) — метка не меняется.
     pub(crate) fn icon(self) -> IconName {
         match self {
+            SheetTab::Params => IconName::Gauge,
             SheetTab::Skills => IconName::Zap,
-            SheetTab::Attrs => IconName::Gauge,
-            SheetTab::Inventory => IconName::Package,
-            SheetTab::Statuses => IconName::Shield,
-            SheetTab::Quests => IconName::ListChecks,
             SheetTab::Professions => IconName::Wrench,
+            SheetTab::Reputation => IconName::Shield,
+            SheetTab::Quests => IconName::ListChecks,
             SheetTab::Guild => IconName::Flag,
+            SheetTab::Inventory => IconName::Package,
         }
     }
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
+            SheetTab::Params => "params",
             SheetTab::Skills => "skills",
-            SheetTab::Attrs => "attrs",
-            SheetTab::Inventory => "inventory",
-            SheetTab::Statuses => "statuses",
-            SheetTab::Quests => "quests",
             SheetTab::Professions => "professions",
+            SheetTab::Reputation => "reputation",
+            SheetTab::Quests => "quests",
             SheetTab::Guild => "guild",
+            SheetTab::Inventory => "inventory",
         }
     }
 
     pub(crate) fn parse(s: &str) -> Self {
         match s {
-            "attrs" => SheetTab::Attrs,
-            "inventory" => SheetTab::Inventory,
-            "statuses" => SheetTab::Statuses,
-            "quests" => SheetTab::Quests,
+            "skills" => SheetTab::Skills,
             "professions" => SheetTab::Professions,
+            "reputation" => SheetTab::Reputation,
+            "quests" => SheetTab::Quests,
             "guild" => SheetTab::Guild,
-            _ => SheetTab::Skills,
+            "inventory" => SheetTab::Inventory,
+            // M15/F25: старые значения удалённых вкладок (attrs/statuses)
+            // из сохранённого конфига → «Параметры» (ближайшая инфо-вкладка).
+            "attrs" | "statuses" => SheetTab::Params,
+            _ => SheetTab::Params,
         }
     }
 }
@@ -191,12 +202,18 @@ impl Root {
         )
     }
 
-    // ── каркас панели ─────────────────────────────────────────────────────
+    // ── каркас окна ───────────────────────────────────────────────────────
 
-    pub(crate) fn sheet(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        // Автозагрузки вкладок один раз (ФР-11/08/16) — как в egui.
+    /// M15/F25: **окно персонажа** — оверлей поверх игрового экрана
+    /// (открывается кнопкой в шапке/хоткеем `c`; Esc/✕/кнопка закрывает).
+    /// Сверху заголовок, ниже две колонки: левая (опыт/экипировка/
+    /// атрибуты/статусы) и правая (вкладки).
+    pub(crate) fn character_window(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        // Автозагрузки один раз (ФР-08/16 + M15/F25 журнал статусов).
         if self.store.snapshot.is_some() {
-            if self.sheet_tab == SheetTab::Statuses && !self.store.crime_log_loaded {
+            // M15/F25: журнал нарушений нужен левой колонке окна —
+            // грузим при открытии (вкладки «Статусы» больше нет).
+            if self.character_open && !self.store.crime_log_loaded {
                 self.store.crime_log_loaded = true;
                 self.send_cmd(&CrimeLog { limit: Some(50) }, Act::CrimeLog);
             }
@@ -211,17 +228,133 @@ impl Root {
         }
 
         let lang = self.lang;
+        // Верх окна: заголовок + ✕ (дублирует Esc и кнопку в шапке).
+        let top = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(t(lang, Key::BtnCharacter)),
+            )
+            .child(
+                IconButton::new("ld2-char-close", IconName::X)
+                    .tooltip(t(lang, Key::BtnClose))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.character_open = false;
+                        cx.notify();
+                    })),
+            );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .size_full()
+            .child(top)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_3()
+                    .flex_grow_1()
+                    .min_h_0()
+                    .child(self.character_left_column(cx, pal))
+                    .child(self.character_tabs(cx, pal)),
+            )
+    }
+
+    /// M15/F25: левая колонка окна — шкала опыта, экипировка,
+    /// разделитель, атрибуты, разделитель, статусы со временем
+    /// (+ журнал нарушений) — по спеке пользователя; скроллится.
+    fn character_left_column(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let mut col = div().flex().flex_col().gap_2();
+        col = col.child(self.character_xp_block(pal));
+        col = col.child(self.equip_block(cx, pal));
+        col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
+        col = col.child(self.attrs_block(pal));
+        col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
+        col = col.child(self.statuses_block(cx, pal));
+        div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .w(px(300.0))
+            .min_h_0()
+            .child(
+                ScrollArea::new("ld2-char-left")
+                    .vertical()
+                    .flex_grow_1()
+                    .min_h_0()
+                    .child(col),
+            )
+    }
+
+    /// M15/F25: шкала опыта — уровень и прогресс (данные F24),
+    /// общий опыт и очки опыта; `level = None` (сервер без M15) —
+    /// показываем только очки.
+    fn character_xp_block(&self, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let mut panel = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .py_2()
+            .rounded_md()
+            .bg(rgb(pal.panel));
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return panel.child(
+                div()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::Loading)),
+            );
+        };
+        if let (Some(level), Some(xp), Some(next)) =
+            (snap.char.level, snap.char.xp_in_level, snap.char.xp_to_next)
+        {
+            panel = panel.child(div().font_weight(gpui::FontWeight::BOLD).child(tf(
+                lang,
+                Key::CharLevel,
+                &[("{n}", &level.to_string())],
+            )));
+            if next > 0 {
+                panel = panel.child(bar(
+                    xp as f32 / next as f32,
+                    format!("{xp} / {next}"),
+                    pal.accent,
+                    pal,
+                ));
+            }
+        }
+        if let Some(total) = snap.char.total_xp {
+            panel = panel.child(xp_kv_row(
+                pal,
+                t(lang, Key::CharXpTotal),
+                &total.to_string(),
+            ));
+        }
+        panel = panel.child(xp_kv_row(
+            pal,
+            t(lang, Key::CharXpPool),
+            &snap.char.xp_pool.to_string(),
+        ));
+        panel
+    }
+
+    /// M15/F25: правая колонка окна — вкладки с автозагрузками.
+    fn character_tabs(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
         let tab = self.sheet_tab;
-        // M14/F2: правая колонка — 1:1 с центром (flex_grow) и не уже
-        // 360 px, чтобы на минимуме окна (960×640) лист не схлопывался.
         let mut col = div()
             .flex()
             .flex_col()
             .gap_1()
             .flex_grow_1()
-            .min_w(px(360.0));
-
-        col = col.children(self.tracker_block(pal));
+            .min_h_0()
+            .min_w_0();
 
         // M11.4: вкладки листа — Tabs Ely (выбор + клавиатурная навигация).
         let choices: Vec<Choice> = SheetTab::all()
@@ -251,10 +384,14 @@ impl Root {
         }
 
         let body = match tab {
+            // M15/F25: заглушки до F26 («Параметры») и F27 («Репутация»).
+            SheetTab::Params | SheetTab::Reputation => div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::CharComingSoon)),
             SheetTab::Skills => self.tab_skills(cx, pal),
-            SheetTab::Attrs => self.tab_attrs(pal),
             SheetTab::Inventory => self.tab_inventory(cx, pal),
-            SheetTab::Statuses => self.tab_statuses(cx, pal),
             SheetTab::Quests => self.tab_quests(cx, pal),
             SheetTab::Professions => self.tab_professions(cx, pal),
             SheetTab::Guild => self.tab_guild(cx, pal),
@@ -265,6 +402,9 @@ impl Root {
             SheetTab::Skills => scrollable_tab("ld2-skills-scroll", &self.skills_scroll, body),
             SheetTab::Professions => {
                 scrollable_tab("ld2-professions-scroll", &self.professions_scroll, body)
+            }
+            SheetTab::Inventory => {
+                scrollable_tab("ld2-inventory-scroll", &self.inventory_scroll, body)
             }
             _ => body,
         });
@@ -281,7 +421,7 @@ impl Root {
 
     // ── трекер квестов (ФР-12) ────────────────────────────────────────────
 
-    fn tracker_block(&self, pal: &Palette) -> Option<Div> {
+    pub(crate) fn tracker_block(&self, pal: &Palette) -> Option<Div> {
         if self.store.quest_tracker.is_empty() {
             return None;
         }
@@ -422,14 +562,20 @@ impl Root {
 
     // ── вкладка «Атрибуты» ────────────────────────────────────────────────
 
-    fn tab_attrs(&self, pal: &Palette) -> Div {
+    /// M15/F25: атрибуты — середина левой колонки (перенос из вкладки
+    /// «Атрибуты» по правилу дубликатов) — с заголовком секции.
+    fn attrs_block(&self, pal: &Palette) -> Div {
         let lang = self.lang;
         let Some(snap) = self.store.snapshot.as_ref() else {
             return div()
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::Loading));
         };
-        let mut col = div().flex().flex_col().gap_1();
+        let mut col = div().flex().flex_col().gap_1().child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(t(lang, Key::SheetAttrs)),
+        );
         for (key, value) in &snap.char.attrs {
             col = col.child(
                 div()
@@ -452,7 +598,9 @@ impl Root {
 
     // ── вкладка «Инвентарь» (ФР-07) ───────────────────────────────────────
 
-    fn tab_inventory(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    /// M15/F25: экипировка — верх левой колонки (перенос из «Инвентаря»
+    /// по правилу дубликатов): слоты с действиями снятия/описания.
+    fn equip_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let Some(snap) = self.store.snapshot.clone() else {
             return div()
@@ -539,6 +687,18 @@ impl Root {
             }
             col = col.child(row);
         }
+
+        col
+    }
+
+    fn tab_inventory(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let Some(snap) = self.store.snapshot.clone() else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        let mut col = div().flex().flex_col().gap_2();
 
         // Сетка инвентаря (ФР-07): клик — описание, ПКМ — действия.
         col = col.child(
@@ -693,7 +853,9 @@ impl Root {
 
     // ── вкладка «Статусы» (ФР-11, M6) ────────────────────────────────────
 
-    fn tab_statuses(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    /// M15/F25: статусы со временем + журнал нарушений — низ левой
+    /// колонки (перенос из вкладки «Статусы» по правилу дубликатов).
+    fn statuses_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let Some(snap) = self.store.snapshot.clone() else {
             return div()
@@ -703,7 +865,11 @@ impl Root {
         // Отсчёт по серверным срокам: now = локальное + offset (§1.1).
         let now = local_epoch() + self.store.time_offset;
         let active = filter_active_statuses(&snap.char.crime.statuses, now);
-        let mut col = div().flex().flex_col().gap_1();
+        let mut col = div().flex().flex_col().gap_1().child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(t(lang, Key::StatusesTab)),
+        );
 
         if active.is_empty() {
             col = col.child(
@@ -1683,6 +1849,22 @@ fn prof_label(lang: Lang, id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+/// M15/F25: строка «подпись … значение» в панели опыта окна персонажа.
+fn xp_kv_row(pal: &Palette, label: &str, value: &str) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .text_size(px(12.0))
+        .child(div().text_color(rgb(pal.muted)).child(label.to_string()))
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(value.to_string()),
+        )
+}
+
 /// Бейджи плитки: +N, сокеты ◈○, количество ×N (паритет egui).
 fn badges(item: &ItemSnapshot) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -1776,4 +1958,36 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
                 .text_color(rgb(pal.muted))
                 .child(label),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M15/F25: состав и порядок вкладок окна — по спеке пользователя
+    /// (Параметры | Навыки | Профессии | Репутация + нетронутые).
+    #[test]
+    fn character_window_tabs_cover_spec() {
+        let tabs: Vec<&'static str> = SheetTab::all().iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(
+            tabs,
+            [
+                "params",
+                "skills",
+                "professions",
+                "reputation",
+                "quests",
+                "guild",
+                "inventory",
+            ],
+            "порядок вкладок правой колонки"
+        );
+        for (tab, _) in SheetTab::all() {
+            assert_eq!(SheetTab::parse(tab.as_str()), tab, "round-trip");
+        }
+        // Старые значения удалённых вкладок (правило дубликатов)
+        // из сохранённого конфига маппятся на «Параметры».
+        assert_eq!(SheetTab::parse("attrs"), SheetTab::Params);
+        assert_eq!(SheetTab::parse("statuses"), SheetTab::Params);
+    }
 }
