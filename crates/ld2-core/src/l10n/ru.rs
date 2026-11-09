@@ -249,8 +249,6 @@ pub(super) fn t(key: Key) -> &'static str {
         HotbarCdShort => "{s} с",
         // M14 F3: инвентарь
         InventoryEmpty => "Нет ни одного предмета",
-        // M14 F7: индикатор непросмотренных строк лога
-        LogNewLines => "▼ {n} новых",
         // M14 F8: настройки
         SettingsChatFont => "Шрифт чата",
         SettingsLogFont => "Шрифт лога",
@@ -259,5 +257,9 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F11: вкладка «Подключение»
         SettingsConnection => "Подключение",
         SettingsChangeHost => "Подключиться к другому",
+        // M14 F13: стиль строк боя в журнале
+        SettingsLogDamageColor => "Цвет урона",
+        SettingsLogAttackColor => "Цвет атак",
+        SettingsDamageBold => "Жирным",
     }
 }

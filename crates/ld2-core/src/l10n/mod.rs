@@ -283,8 +283,6 @@ pub enum Key {
     HotbarCdShort,
     // M14 F3: инвентарь/скроллы
     InventoryEmpty,
-    // M14 F7: свободная прокрутка лога
-    LogNewLines,
     // M14 F8: настройки шрифтов чата/лога
     SettingsChatFont,
     SettingsLogFont,
@@ -293,6 +291,10 @@ pub enum Key {
     // M14 F11: вкладка «Подключение»
     SettingsConnection,
     SettingsChangeHost,
+    // M14 F13: стиль строк боя в журнале
+    SettingsLogDamageColor,
+    SettingsLogAttackColor,
+    SettingsDamageBold,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -604,12 +606,14 @@ mod tests {
         Key::HotbarCooldown,
         Key::HotbarCdShort,
         Key::InventoryEmpty,
-        Key::LogNewLines,
         Key::SettingsChatFont,
         Key::SettingsLogFont,
         Key::SettingsGeneral,
         Key::SettingsConnection,
         Key::SettingsChangeHost,
+        Key::SettingsLogDamageColor,
+        Key::SettingsLogAttackColor,
+        Key::SettingsDamageBold,
     ];
 
     #[test]
