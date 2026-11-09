@@ -239,7 +239,18 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F1: header
         BadgePvp => "PvP",
         BadgeSafe => "Safe",
-        HeaderMenu => "Menu",
+        // M14 F16: exit timer dialog
+        ExitCountdown => "Exit in {s}s",
+        ExitNowBtn => "Exit now",
+        CancelBtn => "Cancel",
+        SkillInfoBtn => "About the skill",
+        WarnCaps => "Caps Lock is on — credentials will be typed in uppercase",
+        WarnRuLayout => "Keyboard layout is Russian — switch to English",
+        RolePlayer => "Player",
+        RoleAdmin => "Admin",
+        RoleModerator => "Moderator",
+        SystemChatLocked => "Only admins and moderators can post to system",
+        ChDelete => "Delete message",
         // M14 F4: action panel and hotkeys
         HkCleave => "Cleave",
         HkRune => "Rune",
@@ -261,5 +272,7 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsLogDamageColor => "Damage color",
         SettingsLogAttackColor => "Attack color",
         SettingsDamageBold => "Bold",
+        // M14 F14: tab
+        SettingsFonts => "Fonts",
     }
 }

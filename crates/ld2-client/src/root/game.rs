@@ -14,14 +14,14 @@ use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
 
 use crate::palette::Palette;
-use ely::forms::{parse_hex, Choice};
+use ely::forms::Choice;
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
 use super::social::show_party;
-use super::{btn, Click, LogTab, Root};
+use super::{btn, hex_to_u32, Click, LogTab, Root};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -130,14 +130,25 @@ impl Root {
             .gap_3()
             .size_full()
             .p(px(12.0))
-            .child(self.left_column(cx, pal, &snap))
-            .child(self.sheet(cx, pal))
+            // M14/F18: резиновая вёрстка — min_w_0 позволяет колонкам
+            // сжиматься ниже min-content (иначе правая колонка
+            // вылезала за рамки окна); min_w(360) у листа остаётся
+            // жёстким полом на минимуме окна (960×640).
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(self.left_column(cx, pal, &snap)),
+            )
+            .child(div().flex().flex_col().min_w_0().child(self.sheet(cx, pal)))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
                     .flex_grow_1()
+                    .min_w_0()
                     // Не выше остатка экрана: журнальный блок сжимается
                     // до своего min_h, а не выдавливает колонку наружу.
                     .min_h_0()
@@ -337,10 +348,15 @@ impl Root {
     // ── центр: локация, выходы, сущности ──────────────────────────────────
 
     fn location_block(&mut self, pal: &Palette, loc: &LocationSnapshot) -> Div {
+        // M14/F15: название локации — зелёное, если безопасная,
+        // красное, если небезопасная (pvp) — как в шапке.
+        let pvp = loc.flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
+        let name_color = if pvp { pal.danger } else { pal.success };
         let mut head = div().flex().flex_row().gap_2().items_center().child(
             div()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_size(px(16.0))
+                .text_color(rgb(name_color))
                 .child(loc.name.clone()),
         );
         for flag in &loc.flags {
@@ -760,8 +776,12 @@ impl Root {
         // M14/F13: лог **всегда промотан вниз** (замена свободной
         // прокрутки F7): новая строка возвращает вниз; вручную
         // поднять можно до прихода следующей строки.
+        // Фикс: весь контент — ОДИН ребёнок ScrollArea, поэтому
+        // scroll_to_item(len-1) бил в несуществующий индекс
+        // (child_bounds.get() = None → no-op). У gpui есть
+        // прямой scroll_to_bottom().
         if len != self.journal_seen && len > 0 {
-            self.journal_scroll.scroll_to_item(len - 1);
+            self.journal_scroll.scroll_to_bottom();
         }
         self.journal_seen = len;
 
@@ -1050,15 +1070,6 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
                 .text_color(rgb(pal.muted))
                 .child(label),
         )
-}
-
-/// M14/F13: hex из настроек → RGB (парсер Ely — те же формы, что
-/// принимает `is_hex_color` в sanitize конфига); битый → `None`
-/// (вызывающий берёт дефолт).
-fn hex_to_u32(text: &str) -> Option<u32> {
-    let rgba = parse_hex(text).ok()?;
-    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
-    Some((byte(rgba.r) << 16) | (byte(rgba.g) << 8) | byte(rgba.b))
 }
 
 /// M14/F4: почему кнопка панели недоступна: требование (цель/мана/

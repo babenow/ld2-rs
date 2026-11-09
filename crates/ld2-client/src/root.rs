@@ -6,8 +6,8 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, App, Context, Div, Entity, Focusable, Hsla, MouseButton,
-    Render, ScrollHandle, SharedString, Window,
+    div, prelude::*, px, rgb, AnyElement, App, Context, Div, EmptyView, Entity, Focusable, Hsla,
+    MouseButton, Render, ScrollHandle, SharedString, Window,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -27,11 +27,11 @@ use ely::buttons::IconButton;
 use ely::feedback::{Toast, ToastViewport, Toaster};
 use ely::forms::{
     hex, parse_hex, Choice, ColorPicker, HotkeyInput, Input, InputEvent, PasswordInput, Slider,
-    TextInput,
+    Switch, TextInput,
 };
 use ely::layout::ScrollArea;
-use ely::menus::{Menu, MenuItem, OverflowMenu};
 use ely::navigation::Tabs;
+use ely::overlays::Dialog;
 use ely::primitives::IconName;
 use ely::theme::{Mode, Theme};
 
@@ -47,11 +47,17 @@ pub(crate) enum LogTab {
     Chat,
 }
 
+/// M14/F15: перетаскивание окна за TitleBar (payload drag gpui).
+#[derive(Debug)]
+struct TitlebarDrag;
+
 /// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
     /// Тема, язык, шрифты, история чата, уведомления, путь конфига.
     General,
+    /// Шрифты: глобальный масштаб, шрифт чата и лога (M14/F14).
+    Fonts,
     /// Адрес сервера: read-only + «подключиться к другому» (M14/F11).
     Connection,
     /// Ремаппинг 11 действий (навигация/цикл + боевые 1–6).
@@ -66,19 +72,20 @@ pub(crate) enum Click {
     /// M13.3: открыть диалог регистрации (ФР-01).
     OpenRegister,
     Logout,
-    Exit,
     /// M14/F8: выбор языка в настройках («ru»/«en»).
     Lang(&'static str),
     ToggleSettings,
-    CloseSettings,
     Theme(&'static str),
     ChatLimit(i64),
-    ToggleNotify,
+    /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
+    SetNotify(bool),
     ApplyHost,
     /// M14/F11: раскрыть ввод нового адреса сервера.
     EditHost,
     /// M14/F13: жирный шрифт строк урона в журнале.
     LogDamageBold(bool),
+    /// M14/F14: открыть/закрыть ColorPicker строки (id свотча).
+    TogglePicker(&'static str),
     MoveExit(String),
     OpenReleases,
     // M10.4: игровой экран
@@ -101,6 +108,18 @@ pub(crate) enum Click {
     CloseDetail,
     SwitchChar,
 }
+
+/// M14/F16: какое действие выполнит таймер выхода.
+#[derive(Clone, Copy)]
+enum ExitKind {
+    /// Из мира — на экран персонажей.
+    SwitchChar,
+    /// На логин-экран (дисконнект).
+    Logout,
+}
+
+/// M14/F16: длина таймера выхода, мс.
+const EXIT_DELAY_MS: i64 = 20_000;
 
 /// Инициализация корневого view (всё, что создаётся вне gpui-контекста).
 pub struct Shell {
@@ -136,6 +155,10 @@ pub struct Root {
     reg_password2: Option<Entity<TextInput>>,
     host_input: Option<Entity<TextInput>>,
     settings_open: bool,
+    /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
+    exit_timer: Option<(ExitKind, i64)>,
+    /// M14/F17: открытая карточка навыка — id из снапшота.
+    skill_info: Option<String>,
     first_frame: bool,
 
     /// Поле имени новой гильдии (ФР-16).
@@ -172,6 +195,8 @@ pub struct Root {
     settings_scroll: ScrollHandle,
     /// M14/F11: раскрыт ли ввод нового адреса сервера (сессия).
     host_editing: bool,
+    /// M14/F14: какой ColorPicker раскрыт под свотчем (id строки).
+    color_picker_open: Option<&'static str>,
     /// Длина лога на прошлой отрисовке — чтобы приклеивать вниз только
     /// при изменении (M14/F13: лог всегда промотан вниз).
     journal_seen: usize,
@@ -209,6 +234,8 @@ impl Root {
             reg_password2: None,
             host_input: None,
             settings_open: false,
+            exit_timer: None,
+            skill_info: None,
             first_frame: true,
             guild_input: None,
             sheet_tab,
@@ -230,6 +257,7 @@ impl Root {
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
             host_editing: false,
+            color_picker_open: None,
             journal_seen: 0,
             last_chat_len: 0,
             party_collapsed,
@@ -285,6 +313,15 @@ impl Root {
             cx.notify();
         }
 
+        // M14/F16: таймер выхода — полоса анимируется (тик 50 мс),
+        // по истечении 20 с действие выполняется автоматически.
+        let exit_active = self.exit_timer.is_some();
+        if let Some((kind, deadline)) = self.exit_timer {
+            if self.now_ms() >= deadline {
+                self.perform_exit(kind);
+            }
+        }
+
         // M11.4: новый notice → всплывающий тост Ely (текст в экране
         // остаётся до замены — на время жизни тоста возможен дубль).
         if let Some(notice) = self.store.notice.clone() {
@@ -309,11 +346,15 @@ impl Root {
                 .values()
                 .any(|until_s| until_s.saturating_mul(1000) > now_ms);
 
-        if had_events || cd_active {
+        if had_events || cd_active || exit_active {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
-        Duration::from_millis(if had_events || cd_active { 50 } else { 200 })
+        Duration::from_millis(if had_events || cd_active || exit_active {
+            50
+        } else {
+            200
+        })
     }
 
     fn exec_effects(&mut self, effects: Vec<Effect>) {
@@ -674,6 +715,14 @@ impl Root {
         }
     }
 
+    /// M14/F14: свотч открывает/закрывает пикер этого цвета (один разом).
+    fn toggle_color_picker(&mut self, key: &'static str) {
+        self.color_picker_open = match self.color_picker_open {
+            Some(open) if open == key => None,
+            _ => Some(key),
+        };
+    }
+
     /// Цикл целей по Tab (ФР-05).
     pub(crate) fn cycle_target(&mut self) {
         self.store.cycle_target();
@@ -707,8 +756,7 @@ impl Root {
                 self.register_submitted = false;
                 self.store.register_error = None;
             }
-            Click::Logout => self.logout(),
-            Click::Exit => cx.quit(),
+            Click::Logout => self.open_exit(ExitKind::Logout, cx),
             Click::Lang(code) => {
                 self.lang = Lang::from_code(code);
                 self.config.lang = self.lang.code().to_string();
@@ -716,12 +764,14 @@ impl Root {
             }
             Click::ToggleSettings => {
                 self.settings_open = !self.settings_open;
+                if !self.settings_open {
+                    self.color_picker_open = None;
+                }
                 let host = self.config.host.clone();
                 if let Some(input) = self.host_input.clone() {
                     input.update(cx, |i, cx| i.set_text(host.clone(), cx));
                 }
             }
-            Click::CloseSettings => self.settings_open = false,
             Click::Theme(theme) => {
                 self.config.theme = theme.to_string();
                 // M11.5: тема Ely переключается вместе с config (ФР-19).
@@ -741,8 +791,8 @@ impl Root {
                 self.store.chat_limit = limit;
                 self.save_config();
             }
-            Click::ToggleNotify => {
-                self.config.notify = !self.config.notify;
+            Click::SetNotify(notify) => {
+                self.config.notify = notify;
                 self.save_config();
             }
             Click::EditHost => {
@@ -753,6 +803,9 @@ impl Root {
                     input.update(cx, |i, cx| i.set_text(host, cx));
                 }
                 self.host_editing = true;
+            }
+            Click::TogglePicker(key) => {
+                self.toggle_color_picker(key);
             }
             Click::LogDamageBold(bold) => {
                 self.config.log_damage_bold = bold;
@@ -887,21 +940,97 @@ impl Root {
             }
             Click::LootCancel => self.store.clear_loot_confirm(),
             Click::CloseDetail => self.store.entity_detail = None,
-            Click::SwitchChar => self.store.back_to_characters(),
+            Click::SwitchChar => self.open_exit(ExitKind::SwitchChar, cx),
         }
     }
 
     // ── элементы ───────────────────────────────────────────────────────────
 
+    /// M14/F15: **TitleBar** — своя верхняя строка окна (системный
+    /// скрыт): слева название приложения внутри drag-региона (тянем
+    /// окно через `Window::start_window_move`), справа — настройки и
+    /// WindowControl ✕. На macOS слева резерв под «светофор».
+    fn titlebar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let settings_open = self.settings_open;
+        let in_world = self.store.screen == Screen::Game;
+        let before_login = self.store.screen != Screen::Login;
+        let left_pad = if matches!(host_os(), gpui::OperatingSystem::Mac) {
+            76.0
+        } else {
+            12.0
+        };
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .px_3()
+            .py_1()
+            .pl(px(left_pad))
+            .bg(rgb(pal.panel))
+            .border_b_1()
+            .border_color(rgb(pal.border))
+            .child(
+                div()
+                    .id("ld2-titlebar-drag")
+                    .flex()
+                    .flex_grow_1()
+                    .items_center()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(t(lang, Key::AppTitle)),
+                    )
+                    // Drag-регион: кнопки лежат вне его и не мешают.
+                    .on_drag(TitlebarDrag, |_value, _offset, window, acx| {
+                        window.start_window_move();
+                        acx.new(|_| EmptyView)
+                    }),
+            )
+            // Настройки (перенесены из шапки).
+            .child(
+                div()
+                    .when(settings_open, |d| d.rounded_md().bg(rgb(pal.accent)))
+                    .child(
+                        IconButton::new("ld2-titlebar-settings", IconName::Settings)
+                            .tooltip(t(lang, Key::SettingsBtn))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.on_click(Click::ToggleSettings, cx);
+                                cx.notify();
+                            })),
+                    ),
+            )
+            // M14/F16: кнопки выхода вместо меню шапки — смена
+            // персонажа (в мире) и дисконнект (везде, кроме входа).
+            .when(in_world, |d| {
+                d.child(
+                    IconButton::new("ld2-titlebar-switch", IconName::Users)
+                        .tooltip(t(lang, Key::BtnSwitchChar))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.on_click(Click::SwitchChar, cx);
+                            cx.notify();
+                        })),
+                )
+            })
+            .when(!before_login, |d| {
+                d.child(
+                    IconButton::new("ld2-titlebar-logout", IconName::LogOut)
+                        .tooltip(t(lang, Key::BtnLogout))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.on_click(Click::Logout, cx);
+                            cx.notify();
+                        })),
+                )
+            })
+    }
+
     fn header(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let update = self.update_available.clone();
         let lang = self.lang;
-        let settings_open = self.settings_open;
         // M14/F1: статус сервера и текущая локация — прямо в шапке.
         let status = self.store.transport.clone();
         let rtt = self.store.rtt_ms;
-        let in_world = self.store.screen == Screen::Game;
-        let before_login = self.store.screen == Screen::Login;
         let location = self
             .store
             .snapshot
@@ -919,22 +1048,22 @@ impl Root {
             .border_b_1()
             .border_color(rgb(pal.border))
             .child(
-                // Левая группа: название игры + (в мире) локация и бейджи.
+                // Левая группа: (в мире) локация и бейджи — название
+                // приложения уехало в TitleBar (M14/F15).
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(t(lang, Key::AppTitle)),
-                    )
                     .children(location.map(|(name, flags)| {
+                        // M14/F15: название локации — зелёное, если
+                        // безопасная, красное, если небезопасная (pvp).
+                        let pvp = flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
+                        let name_color = if pvp { pal.danger } else { pal.success };
                         let mut row = div().flex().flex_row().items_center().gap_1().child(
                             div()
                                 .text_size(px(12.0))
-                                .text_color(rgb(pal.muted))
+                                .text_color(rgb(name_color))
                                 .child(format!("· {name}")),
                         );
                         for (tone, token) in location_badges(&flags) {
@@ -966,29 +1095,34 @@ impl Root {
                         )
                     }))
                     .child(status_badge(pal, lang, &status, rtt))
-                    // M14/F8: выбор языка переехал в настройки.
-                    // M14/F10: иконка вместо надписи; подложка accent
-                    // помечает открытые настройки (как прежняя кнопка).
-                    .child(
-                        div()
-                            .when(settings_open, |d| d.rounded_md().bg(rgb(pal.accent)))
-                            .child(
-                                IconButton::new("ld2-header-settings", IconName::Settings)
-                                    .tooltip(t(lang, Key::SettingsBtn))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.on_click(Click::ToggleSettings, cx);
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .child(header_menu(cx, lang, in_world, before_login)),
+                    // M14/F19: отметка роли аккаунта (модерация чата).
+                    .children(self.store.session.as_ref().map(|sess| {
+                        let (text, color) = match sess.role.as_str() {
+                            "admin" => (t(lang, Key::RoleAdmin), pal.danger),
+                            "moderator" => (t(lang, Key::RoleModerator), pal.warn),
+                            _ => (t(lang, Key::RolePlayer), pal.muted),
+                        };
+                        badge(text.to_string(), color, pal)
+                    })),
             )
     }
 
-    fn login_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    fn login_screen(&mut self, window: &Window, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let error = self.store.login_error.clone();
+        // M14/F21: живое чтение состояния на каждый рендер — Caps из
+        // поля окна (обновляется каждым ModifiersChanged), раскладка —
+        // из TIS-источника ввода.
+        let caps_on = window.capslock().on;
+        let (layout_id, layout_name) = {
+            let layout = cx.keyboard_layout();
+            (layout.id().to_string(), layout.name().to_string())
+        };
+        let ru_layout = is_cyrillic_layout(&layout_id, &layout_name);
         div()
+            // M14/F21: смена модификаторов (Caps/Shift/Ctrl) → перерисовка:
+            // предупреждения читаются в рендере из window/keyboard_layout.
+            .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .flex()
             .flex_col()
             .items_center()
@@ -1011,6 +1145,21 @@ impl Root {
                     .w(px(320.0))
                     .child(PasswordInput::new(self.ti(&self.password_input))),
             )
+            // M14/F21: предупреждения Caps/раскладка — под полями ввода.
+            .children(caps_on.then(|| {
+                div()
+                    .w(px(320.0))
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.warn))
+                    .child(t(lang, Key::WarnCaps))
+            }))
+            .children(ru_layout.then(|| {
+                div()
+                    .w(px(320.0))
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.warn))
+                    .child(t(lang, Key::WarnRuLayout))
+            }))
             .child(btn(
                 cx,
                 t(lang, Key::BtnLogin).to_string(),
@@ -1035,35 +1184,32 @@ impl Root {
     }
 
     /// Окно настроек (ФР-19) — как отдельный экран с кнопкой закрытия.
-    fn settings_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    /// M14/F14: тело настроек для диалога `settings_dialog` — без
+    /// заголовка и кнопки «Закрыть» (их даёт Dialog: крестик/Esc/скрим).
+    /// Фиксированный размер даёт определённую высоту для скролла тела
+    /// и влезает в минимум окна 960×640.
+    fn settings_content(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let theme = self.config.theme.clone();
         let limit = self.config.chat_limit;
         let notify = self.config.notify;
         let host_ok = host_allowed(&self.config.host, RELEASE);
-        let mut root = div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .size_full()
-            .p(px(16.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(18.0))
-                    .child(t(lang, Key::SettingsTitle)),
-            );
+        // Размер задаёт карточка settings_layer (760×560); здесь —
+        // растяжение на остаток, чтобы тело скроллилось внутри.
+        let mut root = div().flex().flex_col().gap_3().flex_grow_1().min_h_0();
 
         // M14/F9: вкладки настроек — «Основные» и «Горячие клавиши»
         // (11 строк ремаппинга растут на своей вкладке и скроллятся).
         let active = match self.settings_tab {
             SettingsTab::General => "general",
+            SettingsTab::Fonts => "fonts",
             SettingsTab::Connection => "connection",
             SettingsTab::Hotkeys => "hotkeys",
         };
         // M14/F12: иконки вкладок (метки без изменений).
         let choices = vec![
             Choice::new("general", t(lang, Key::SettingsGeneral)).icon(IconName::SlidersHorizontal),
+            Choice::new("fonts", t(lang, Key::SettingsFonts)).icon(IconName::Type),
             Choice::new("connection", t(lang, Key::SettingsConnection)).icon(IconName::Server),
             Choice::new("hotkeys", t(lang, Key::SettingsHotkeys)).icon(IconName::Keyboard),
         ];
@@ -1073,6 +1219,7 @@ impl Root {
                 let value = value.to_string();
                 settings_this.update(acx, |root, cx| {
                     root.settings_tab = match value.as_str() {
+                        "fonts" => SettingsTab::Fonts,
                         "connection" => SettingsTab::Connection,
                         "hotkeys" => SettingsTab::Hotkeys,
                         _ => SettingsTab::General,
@@ -1148,6 +1295,92 @@ impl Root {
                     ],
                 ));
 
+                // M14/F13: стиль строк боя в журнале: цвета — ColorPicker,
+                // жирность урона — Вкл/Выкл (зеркало «Уведомлений»).
+                body = body.child(color_picker_row(
+                    cx,
+                    pal,
+                    lang,
+                    ColorRow {
+                        label: Key::SettingsLogDamageColor,
+                        id: "ld2-log-damage-color",
+                        value: &self.config.log_damage_color,
+                        open: self.color_picker_open == Some("ld2-log-damage-color"),
+                        set: |root, v| root.config.log_damage_color = v,
+                    },
+                ));
+                body = body.child(color_picker_row(
+                    cx,
+                    pal,
+                    lang,
+                    ColorRow {
+                        label: Key::SettingsLogAttackColor,
+                        id: "ld2-log-attack-color",
+                        value: &self.config.log_attack_color,
+                        open: self.color_picker_open == Some("ld2-log-attack-color"),
+                        set: |root, v| root.config.log_attack_color = v,
+                    },
+                ));
+                // M14/F14: флаг — слайдер-переключатель (Ely Switch).
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsDamageBold).to_string(),
+                    vec![div().child({
+                        let this = cx.entity();
+                        Switch::new("ld2-log-damage-bold", self.config.log_damage_bold).on_change(
+                            move |on, _window, acx| {
+                                this.update(acx, |root, cx| {
+                                    root.on_click(Click::LogDamageBold(on), cx);
+                                    cx.notify();
+                                });
+                            },
+                        )
+                    })],
+                ));
+
+                // Лимит истории чата.
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsChatLimit).to_string(),
+                    vec![
+                        btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
+                        div().px_2().child(format!("{limit}")),
+                        btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
+                    ],
+                ));
+
+                // Уведомления (D7).
+                // M14/F14: флаг — слайдер-переключатель (Ely Switch).
+                body = body.child(row(
+                    pal,
+                    t(lang, Key::SettingsNotify).to_string(),
+                    vec![div().child({
+                        let this = cx.entity();
+                        Switch::new("ld2-notify", notify).on_change(move |on, _window, acx| {
+                            this.update(acx, |root, cx| {
+                                root.on_click(Click::SetNotify(on), cx);
+                                cx.notify();
+                            });
+                        })
+                    })],
+                ));
+
+                // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
+                if let Ok(dirs) = ld2_core::config::project_dirs() {
+                    body = body.child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.muted))
+                            .child(dirs.config_dir().display().to_string()),
+                    );
+                }
+
+                body
+            }
+            // M14/F14: шрифты — отдельная вкладка (глобальный масштаб,
+            // шрифт чата и шрифта лога).
+            SettingsTab::Fonts => {
+                let mut body = div().flex().flex_col().gap_3();
                 // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
                 // пишет Theme.font_scale (отклонение M10 «font_scale не
                 // применяется» снято).
@@ -1201,94 +1434,6 @@ impl Root {
                     self.config.log_font_px,
                     |root, v| root.config.log_font_px = v,
                 ));
-
-                // M14/F13: стиль строк боя в журнале: цвета — ColorPicker,
-                // жирность урона — Вкл/Выкл (зеркало «Уведомлений»).
-                body = body.child(color_picker_row(
-                    cx,
-                    pal,
-                    lang,
-                    Key::SettingsLogDamageColor,
-                    "ld2-log-damage-color",
-                    &self.config.log_damage_color,
-                    |root, v| root.config.log_damage_color = v,
-                ));
-                body = body.child(color_picker_row(
-                    cx,
-                    pal,
-                    lang,
-                    Key::SettingsLogAttackColor,
-                    "ld2-log-attack-color",
-                    &self.config.log_attack_color,
-                    |root, v| root.config.log_attack_color = v,
-                ));
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsDamageBold).to_string(),
-                    vec![
-                        btn(
-                            cx,
-                            t(lang, Key::On).to_string(),
-                            if self.config.log_damage_bold {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::LogDamageBold(true),
-                        ),
-                        btn(
-                            cx,
-                            t(lang, Key::Off).to_string(),
-                            if self.config.log_damage_bold {
-                                pal.panel
-                            } else {
-                                pal.accent
-                            },
-                            pal.text,
-                            Click::LogDamageBold(false),
-                        ),
-                    ],
-                ));
-
-                // Лимит истории чата.
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsChatLimit).to_string(),
-                    vec![
-                        btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
-                        div().px_2().child(format!("{limit}")),
-                        btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
-                    ],
-                ));
-
-                // Уведомления (D7).
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsNotify).to_string(),
-                    vec![btn(
-                        cx,
-                        if notify {
-                            t(lang, Key::On).to_string()
-                        } else {
-                            t(lang, Key::Off).to_string()
-                        },
-                        if notify { pal.success } else { pal.panel },
-                        pal.text,
-                        Click::ToggleNotify,
-                    )],
-                ));
-
-                // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
-                if let Ok(dirs) = ld2_core::config::project_dirs() {
-                    body = body.child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(pal.muted))
-                            .child(dirs.config_dir().display().to_string()),
-                    );
-                }
-
                 body
             }
             // M14/F11: адрес сервера — read-only; поле ввода
@@ -1377,17 +1522,20 @@ impl Root {
             body,
         ));
 
-        root.child(btn(
-            cx,
-            t(lang, Key::BtnClose).to_string(),
-            pal.accent,
-            pal.accent_text,
-            Click::CloseSettings,
-        ))
+        root
     }
 }
 
 /// Текущая ОС — для разрешения `secondary-` в Keystroke::parse_with_os.
+/// M14/F21: русская/кириллическая раскладка по TIS-id и локализованному
+/// имени (macOS: `com.apple.keylayout.Russian` + «Русская»/«Russian»;
+/// Linux: id `ru`). Чистая функция — юнит-тест.
+fn is_cyrillic_layout(id: &str, name: &str) -> bool {
+    let id = id.to_lowercase();
+    let name = name.to_lowercase();
+    id == "ru" || id.contains("russ") || name.contains("russ") || name.contains("русск")
+}
+
 fn host_os() -> gpui::OperatingSystem {
     if cfg!(target_os = "macos") {
         gpui::OperatingSystem::Mac
@@ -1639,24 +1787,50 @@ fn font_px_row(
         .child(value_readout(pal, format!("{} px", value.round() as i32)))
 }
 
-/// M14/F13: строка настройки цвета — подпись сверху, Ely ColorPicker
+/// M14/F13: hex из настроек → RGB (парсер Ely — те же формы, что
+/// принимает `is_hex_color` в sanitize конфига); битый → `None`
+/// (вызывающий берёт дефолт). В F14 перенесено сюда из `game.rs` —
+/// нужно и для свотча в настройках.
+fn hex_to_u32(text: &str) -> Option<u32> {
+    let rgba = parse_hex(text).ok()?;
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    Some((byte(rgba.r) << 16) | (byte(rgba.g) << 8) | byte(rgba.b))
+}
+
+/// M14/F14: строка настройки цвета — подпись, **свотч-кнопка** (по
+/// нажатию открывается/закрывается ColorPicker под строкой) и hex.
 /// во всю ширину (он инлайн-блок: превью + плоскость + рейки + hex-поля;
 /// тело настроек скроллится — F9). Значение в конфиге — hex; запись —
 /// `hex(Hsla::to_rgb)`, чтение — `parse_hex` (те же формы, что
 /// принимает `is_hex_color` в sanitize).
+/// M14/F14: параметры строки цвета (пакет — иначе clippy
+/// `too_many_arguments` при 8 аргументах).
+struct ColorRow<'a> {
+    label: Key,
+    id: &'static str,
+    value: &'a str,
+    open: bool,
+    set: fn(&mut Root, String),
+}
+
 fn color_picker_row(
     cx: &mut Context<'_, Root>,
     pal: &Palette,
     lang: Lang,
-    label: Key,
-    id: &'static str,
-    value: &str,
-    set: fn(&mut Root, String),
+    spec: ColorRow<'_>,
 ) -> Div {
+    let ColorRow {
+        label,
+        id,
+        value,
+        open,
+        set,
+    } = spec;
     let this = cx.entity();
     // sanitize гарантирует валидный hex; запасной — серый, без паники.
     let rgba = parse_hex(value).unwrap_or_else(|_| parse_hex("#808080").expect("запасной цвет"));
     let hsla = Hsla::from(rgba);
+    let swatch = hex_to_u32(value).unwrap_or(0x80_80_80);
     div()
         .flex()
         .flex_col()
@@ -1668,18 +1842,65 @@ fn color_picker_row(
                 .child(t(lang, label)),
         )
         .child(
-            ColorPicker::new(id, hsla)
-                .opaque()
-                .on_change(move |c, _window, acx| {
-                    let hex = hex(c.to_rgb());
-                    this.update(acx, |root, cx| {
-                        set(root, hex);
-                        root.save_config();
-                        cx.refresh_windows();
-                        cx.notify();
-                    });
+            // M14/F14: свотч-кнопка — пикер открывается по нажатию.
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .id(format!("ld2-swatch-{id}"))
+                        .cursor_pointer()
+                        .w(px(44.0))
+                        .h(px(24.0))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(rgb(pal.border))
+                        .bg(rgb(swatch))
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener({
+                                let key = id;
+                                move |root, _, _, cx| {
+                                    root.toggle_color_picker(key);
+                                    cx.notify();
+                                }
+                            }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_grow_1()
+                        .text_size(px(13.0))
+                        .text_color(rgb(pal.muted))
+                        .child(value.to_string()),
+                )
+                .when(open, |row| {
+                    row.child(btn(
+                        cx,
+                        t(lang, Key::BtnClose).to_string(),
+                        pal.panel,
+                        pal.text,
+                        Click::TogglePicker(id),
+                    ))
                 }),
         )
+        .when(open, |row| {
+            row.child(
+                ColorPicker::new(id, hsla)
+                    .opaque()
+                    .on_change(move |c, _window, acx| {
+                        let hex = hex(c.to_rgb());
+                        this.update(acx, |root, cx| {
+                            set(root, hex);
+                            root.save_config();
+                            cx.refresh_windows();
+                            cx.notify();
+                        });
+                    }),
+            )
+        })
 }
 
 /// M14/F8 (фикс смоука): слайдер Ely сам ширины не имеет — `Track`
@@ -1831,6 +2052,12 @@ fn location_badges(flags: &[String]) -> Vec<(BadgeTone, String)> {
     out
 }
 
+/// M14/F16: охраняемая зона — нет PvP-флага (вне мира риска нет → true).
+/// Чистая функция — юнит-тест в конце файла.
+fn guarded_zone(flags: &[String]) -> bool {
+    !flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"))
+}
+
 /// Подпись бейджа: известные токены → ключи l10n, прочее — как есть.
 fn badge_label(lang: Lang, token: &str) -> String {
     match token {
@@ -1882,35 +2109,6 @@ fn status_badge(pal: &Palette, lang: Lang, status: &TransportStatus, rtt: Option
 /// Меню шапки (M14/F1, Ely `Menu`): сменить персонажа, выйти из
 /// аккаунта, закрыть приложение. Пункты вне контекста отключены:
 /// «сменить персонажа» — только в мире, «выйти» — только после входа.
-fn header_menu(
-    cx: &mut Context<'_, Root>,
-    lang: Lang,
-    in_world: bool,
-    before_login: bool,
-) -> OverflowMenu {
-    let this = cx.entity();
-    let mk = |label: &'static str, click: Click, enabled: bool| {
-        let this = this.clone();
-        let item = MenuItem::new(label).on_click(move |_window, acx| {
-            this.update(acx, |root, cx| root.on_click(click.clone(), cx));
-        });
-        if enabled {
-            item
-        } else {
-            item.disabled(true)
-        }
-    };
-    let menu = Menu::new()
-        .item(mk(t(lang, Key::BtnSwitchChar), Click::SwitchChar, in_world))
-        .item(mk(t(lang, Key::BtnLogout), Click::Logout, !before_login))
-        .item(mk(t(lang, Key::Exit), Click::Exit, true));
-    // M14/F10: иконка-кнопка (⋯-механика Ely) с иконкой-меню вместо
-    // надписи; тултип локализуется существующим ключом.
-    OverflowMenu::new("ld2-header-menu", menu)
-        .icon(IconName::Menu)
-        .tooltip(t(lang, Key::HeaderMenu))
-}
-
 impl Root {
     /// M11.2: on_close диалога — мутация состояния Root и перерисовка
     /// (диалог рендерится из состояния, поэтому «закрыть» = снять флаг).
@@ -1928,6 +2126,142 @@ impl Root {
         }
     }
 
+    /// M14/F15: закрыть настройки (общий путь для Esc/скрима/✕ Ely).
+    fn close_settings(&mut self) {
+        self.settings_open = false;
+        self.color_picker_open = None;
+    }
+
+    /// M14/F16: открыть диалог выхода с таймером (20 с). Настройки
+    /// закрываются — диалог выхода всегда верхний.
+    fn open_exit(&mut self, kind: ExitKind, cx: &mut Context<'_, Self>) {
+        self.settings_open = false;
+        self.color_picker_open = None;
+        self.exit_timer = Some((kind, self.now_ms() + EXIT_DELAY_MS));
+        cx.notify();
+    }
+
+    /// M14/F16: выполнить выход — по истечении таймера или «Выйти сейчас».
+    fn perform_exit(&mut self, kind: ExitKind) {
+        self.exit_timer = None;
+        match kind {
+            ExitKind::SwitchChar => self.store.back_to_characters(),
+            ExitKind::Logout => self.logout(),
+        }
+    }
+
+    /// M14/F15: настройки — снова Ely `Dialog` (решение пользователя):
+    /// Esc/скрим/крестик закрывают, карточка центрируется с анимацией;
+    /// тело карточки скроллится самим Dialog'ом (440 px — контент
+    /// адаптируется, фикс-размер больше не нужен).
+    pub(crate) fn settings_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        if !self.settings_open {
+            return None;
+        }
+        let title = t(self.lang, Key::SettingsTitle).to_string();
+        let close = self.dismiss(cx, |root| root.close_settings());
+        Some(
+            Dialog::new("ld2-settings", title, close)
+                .child(self.settings_content(cx, pal))
+                .into_any_element(),
+        )
+    }
+
+    /// M14/F16: диалог выхода с 20-секундным анимированным таймером
+    /// (полоса обновляется тиком 50 мс из tick). В охраняемой зоне
+    /// (нет PvP-флага) — кнопка «Выйти сейчас» с мгновенным выходом.
+    pub(crate) fn exit_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let (kind, deadline) = self.exit_timer?;
+        let now = self.now_ms();
+        let left_ms = (deadline - now).max(0);
+        let frac = (left_ms as f32 / EXIT_DELAY_MS as f32).clamp(0.0, 1.0);
+        let secs = (left_ms + 999) / 1000;
+        let guarded = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| guarded_zone(&s.location.flags))
+            .unwrap_or(true);
+        let lang = self.lang;
+        let title = match kind {
+            ExitKind::SwitchChar => t(lang, Key::BtnSwitchChar),
+            ExitKind::Logout => t(lang, Key::BtnLogout),
+        }
+        .to_string();
+        let close = self.dismiss(cx, |root| root.exit_timer = None);
+        let cancel = act_btn(
+            cx,
+            t(lang, Key::CancelBtn),
+            pal.panel,
+            pal.text,
+            |this, _cx| {
+                this.exit_timer = None;
+            },
+        );
+        let now_btn = guarded.then(|| {
+            act_btn(
+                cx,
+                t(lang, Key::ExitNowBtn),
+                pal.danger,
+                0xffffff,
+                |this, _cx| {
+                    if let Some((kind, _)) = this.exit_timer.take() {
+                        this.perform_exit(kind);
+                    }
+                },
+            )
+        });
+        // Полоса: success → warn → danger по мере убывания.
+        let bar_color = if frac > 0.5 {
+            pal.success
+        } else if frac > 0.25 {
+            pal.warn
+        } else {
+            pal.danger
+        };
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().child(tf(lang, Key::ExitCountdown, &[("{s}", &secs.to_string())])))
+            .child(
+                div()
+                    .w_full()
+                    .h(px(8.0))
+                    .rounded_md()
+                    .bg(rgb(pal.border))
+                    .child(
+                        div()
+                            .h_full()
+                            .w(gpui::relative(frac))
+                            .rounded_md()
+                            .bg(rgb(bar_color)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .justify_end()
+                    .child(cancel)
+                    .children(now_btn),
+            );
+        Some(
+            Dialog::new("ld2-exit", title, close)
+                .child(body)
+                .into_any_element(),
+        )
+    }
+
     /// M11.2: диспетчер всплывающих диалогов (Ely `Dialog` поверх контента,
     /// ADR-004): экран → приоритеты game > social > sheet.
     pub(crate) fn dialog_layer(
@@ -1935,7 +2269,7 @@ impl Root {
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
-        if self.settings_open {
+        if self.settings_open || self.exit_timer.is_some() {
             return None;
         }
         // M13.3: диалог регистрации живёт на экране входа (D35) — вне
@@ -1987,24 +2321,32 @@ impl Render for Root {
             .flex_col()
             .bg(rgb(pal.bg))
             .text_color(rgb(pal.text))
+            .child(self.titlebar(cx, &pal))
             .child(self.header(cx, &pal))
             .child(
                 // Экран — на остаток высоты между шапкой и статус-баром:
                 // size_full внутри даёт 100 % этого контейнера, а не окна
                 // (иначе низ уходил за границу, баг M11).
-                div().flex_grow_1().min_h_0().child(if self.settings_open {
-                    self.settings_screen(cx, &pal)
-                } else {
-                    match self.store.screen {
-                        Screen::Login => self.login_screen(cx, &pal),
+                div()
+                    .flex_grow_1()
+                    .min_h_0()
+                    .child(match self.store.screen {
+                        Screen::Login => self.login_screen(window, cx, &pal),
                         Screen::Characters => self.characters_screen(cx, &pal),
                         Screen::Game => self.game_screen(cx, &pal),
-                    }
-                }),
+                    }),
             )
             // M14/F1: статус сервера живёт в шапке (status_badge).
             // M11.2: всплывающий диалог поверх контента (скрим + панель).
+            // M14/F17: карточка навыка — под игровыми диалогами,
+            // но над контентом (настройки/выход рисуются позже).
+            .when_some(self.skill_info_dialog(cx, &pal), |d, dialog| {
+                d.child(dialog)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
+            // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
+            .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
+            .when_some(self.exit_dialog(cx, &pal), |d, dialog| d.child(dialog))
             // M11.4: всплывающие тосты (notice → Ely Toast).
             .child(ToastViewport::new("ld2-toasts", &self.toaster))
     }
@@ -2065,6 +2407,7 @@ mod tests {
         let skill = |id: &str, rank: u32| SkillSnapshot {
             id: id.to_string(),
             name: None,
+            description: None,
             rank,
             xp: 0,
             xp_to_next: 120,
@@ -2124,9 +2467,32 @@ mod tests {
         );
     }
 
-    /// M14/F1: бейджи локации — PvP по флагу, иначе Safe; прочие — muted.
+    /// M14/F21: детект русской раскладки по id/имени источника ввода.
     #[test]
-    fn location_badges_classify_flags() {
+    fn cyrillic_layout_detected() {
+        assert!(is_cyrillic_layout("com.apple.keylayout.Russian", "Русская"));
+        assert!(is_cyrillic_layout(
+            "com.apple.keylayout.Russian-PC",
+            "Russian"
+        ));
+        assert!(is_cyrillic_layout("ru", "QWERTY"), "Linux/xkb: id ru");
+        assert!(is_cyrillic_layout("com.apple.keylayout.ABC", "русская"));
+        assert!(!is_cyrillic_layout("com.apple.keylayout.ABC", "ABC"));
+        assert!(!is_cyrillic_layout("", ""), "пустой источник — не русская");
+    }
+
+    /// M14/F1: бейджи локации — PvP по флагу, иначе Safe; прочие — muted.
+    /// M14/F16: охраняемая зона — нет PvP-флага (вне мира — тоже).
+    #[test]
+    fn guarded_zone_classifies_flags() {
+        assert!(guarded_zone(&[]));
+        assert!(guarded_zone(&["safe".into()]));
+        assert!(!guarded_zone(&["pvp".into()]));
+        assert!(!guarded_zone(&["safe".into(), "pvp".into()]));
+    }
+
+    #[test]
+    fn location_badges_classifies_flags() {
         assert_eq!(
             location_badges(&[]),
             vec![(BadgeTone::Success, "safe".to_string())]

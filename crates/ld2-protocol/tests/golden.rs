@@ -26,6 +26,7 @@ const SESSION_START_JSON: &str = r#"{
                "refresh": { "token": "…", "expires_in_s": 2592000 } },
   "char_slot_limit": 8,
   "profession_limit": 2,
+  "role": "player",
   "features": {
     "loot.roll": false, "respawn.inn": true, "guild.bank": false,
     "upgrade.rules": "break_on_fail", "trade.value_hint": true, "chat.slash": true
@@ -59,6 +60,11 @@ fn session_start_matches_doc_example() {
     assert_eq!(cfg.server.min_client, None);
     assert_eq!(cfg.char_slot_limit, 8, "D6: слоты — из конфига");
     assert_eq!(cfg.profession_limit, 2, "D10");
+    // M14/F19: роль аккаунта; отсутствие поля (старый сервер) → player.
+    assert_eq!(cfg.role, "player");
+    let legacy = SESSION_START_JSON.replace(r#""role": "player","#, "");
+    let old_cfg: SessionConfig = serde_json::from_str(&legacy).expect("legacy §5");
+    assert_eq!(old_cfg.role, "player", "serde(default) для старых серверов");
     assert_eq!(cfg.crime.t_max_s, 604800);
     assert!((cfg.crime.blend_k - 0.5).abs() < f64::EPSILON);
     assert_eq!(cfg.crime.kinds.len(), 3, "D5: Убийца + Мародёр + Вор");
@@ -136,6 +142,10 @@ fn snapshot_matches_doc_example() {
         "D4: mp — объект, не null"
     );
     assert_eq!(snap.char.xp_pool, 120, "пул опыта квестов");
+    assert_eq!(
+        snap.char.skills[0].description, None,
+        "M14/F17: сервер без description → None (обратная совместимость)"
+    );
     assert_eq!(
         snap.char.equip.get("staff"),
         Some(&None),
@@ -398,6 +408,7 @@ fn event_payloads_round_trip() {
 
     // Чат (ФР-13)
     let msg = ChatMessage {
+        id: Some(42),
         channel: "location".into(),
         from: "p_77".into(),
         name: "Марк".into(),

@@ -225,3 +225,101 @@ async fn chat_party_and_guild_channels() {
     assert_ne!(ack["result"], "ok", "без гильдии: {ack}");
     let _ = char_a;
 }
+
+/// M14/F19: системный канал и удаление сообщений — только роли
+/// admin/moderator (§9 E_PERMISSION); игрок пишет/удаляет → отказ.
+#[tokio::test]
+async fn system_channel_restricted_and_delete_by_moderator() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, login, _char_a) = in_world(&ws).await;
+    let (mut b, _, _char_b) = in_world(&ws).await;
+
+    // 1) Игрок не пишет в system → E_PERMISSION.
+    let seq = a
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "system", "text": "нарушитель" }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_PERMISSION",
+        "игрок в system: {ack}"
+    );
+
+    // 2) Игрок не удаляет → E_PERMISSION (команда без сообщения в БД —
+    //    права проверяются раньше поиска строки).
+    let seq = a.send("cmd/chat.delete", json!({ "id": 1 })).await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_PERMISSION", "игрок удаляет: {ack}");
+
+    // 3) Повышение роли SQL-ом (штатный путь, как бан) + ре-логин —
+    //    роль читается в finish_login.
+    let cfg = common::test_config(&db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    sqlx::query("UPDATE accounts SET role = 'moderator' WHERE login = $1")
+        .bind(&login)
+        .execute(&pool)
+        .await
+        .expect("роль назначена");
+
+    let seq = a
+        .send(
+            "cmd/auth.login",
+            json!({ "login": login, "password": "longenough1" }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "ре-логин: {ack}");
+    let start = a.wait_event("evt/session.start").await;
+    assert_eq!(
+        start["payload"]["role"], "moderator",
+        "session.start несёт роль (M14/F19)"
+    );
+
+    // 4) Модератор пишет в system → ok, событие несёт id.
+    tokio::time::sleep(std::time::Duration::from_millis(1600)).await; // кулдаун чата
+    let marker = format!(
+        "служебное {}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let seq = a
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "system", "text": &marker }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "модератор в system: {ack}");
+    let msg = a
+        .wait(|v| v["type"] == "evt/chat/message" && v["payload"]["text"] == marker)
+        .await;
+    assert_eq!(msg["payload"]["channel"], "system");
+    let msg_id = msg["payload"]["id"].as_u64().expect("id сообщения");
+
+    // 5) Игрок не может удалить чужое сообщение.
+    let seq = b.send("cmd/chat.delete", json!({ "id": msg_id })).await;
+    let ack = b.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_PERMISSION", "игрок удаляет: {ack}");
+
+    // 6) Модератор удаляет → ok + evt/chat/deleted обоим.
+    let seq = a.send("cmd/chat.delete", json!({ "id": msg_id })).await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "удаление: {ack}");
+    let del_a = a.wait(|v| v["type"] == "evt/chat/deleted").await;
+    assert_eq!(del_a["payload"]["id"], msg_id, "id удалённого");
+    let del_b = b.wait(|v| v["type"] == "evt/chat/deleted").await;
+    assert_eq!(del_b["payload"]["id"], msg_id, "B видит удаление");
+
+    // 7) Повторное удаление → строки уже нет (E_TARGET_GONE).
+    let seq = a.send("cmd/chat.delete", json!({ "id": msg_id })).await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_TARGET_GONE", "повтор: {ack}");
+}

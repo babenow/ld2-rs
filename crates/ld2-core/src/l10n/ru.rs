@@ -239,7 +239,18 @@ pub(super) fn t(key: Key) -> &'static str {
         // M14 F1: шапка окна
         BadgePvp => "PvP",
         BadgeSafe => "Безопасно",
-        HeaderMenu => "Меню",
+        // M14 F16: диалог таймера выхода
+        ExitCountdown => "Выход через {s} с",
+        ExitNowBtn => "Выйти сейчас",
+        CancelBtn => "Отмена",
+        SkillInfoBtn => "О навыке",
+        WarnCaps => "Caps Lock включён — учётные данные вводятся с заглавными",
+        WarnRuLayout => "Раскладка клавиатуры — русская, переключите на английскую",
+        RolePlayer => "Игрок",
+        RoleAdmin => "Админ",
+        RoleModerator => "Модератор",
+        SystemChatLocked => "В системный канал пишут только админ и модератор",
+        ChDelete => "Удалить сообщение",
         // M14 F4: панель действий и хоткеи
         HkCleave => "Раскол",
         HkRune => "Руна",
@@ -261,5 +272,7 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsLogDamageColor => "Цвет урона",
         SettingsLogAttackColor => "Цвет атак",
         SettingsDamageBold => "Жирным",
+        // M14 F14: вкладка
+        SettingsFonts => "Шрифты",
     }
 }
