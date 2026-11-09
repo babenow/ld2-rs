@@ -433,6 +433,8 @@ pub fn character(id: &str, name: &str) -> CharacterState {
         total_xp: Some(60),
         xp_in_level: Some(60),
         xp_to_next: Some(100),
+        // M15/F26: сервер без вкладки «Параметры» → None (заглушка).
+        derived: None,
         equip: BTreeMap::from([("staff".to_string(), Some("i_17".to_string()))]),
         inventory: vec![
             staff_item(),

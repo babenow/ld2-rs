@@ -1196,6 +1196,22 @@ impl Session {
         let (level, xp_in_level, xp_to_next) =
             crate::systems::level_for_total(row.total_xp, &self.state.config.gameplay.level);
 
+        // M15/F26: производные характеристики (вкладка «Параметры») —
+        // из атрибутов, навыков и именно снаряжённых предметов.
+        let equip_uids: std::collections::HashSet<&str> =
+            equip.values().flatten().map(String::as_str).collect();
+        let equipped: Vec<ld2_protocol::types::ItemSnapshot> = inventory
+            .iter()
+            .filter(|i| equip_uids.contains(i.uid.as_str()))
+            .cloned()
+            .collect();
+        let derived = crate::stats::derive(
+            &attrs,
+            &skills,
+            &equipped,
+            self.state.config.gameplay.combat.base_damage,
+        );
+
         Ok(CharacterState {
             id: row.id.clone(),
             name: row.name.clone(),
@@ -1225,6 +1241,7 @@ impl Session {
             total_xp: Some(row.total_xp),
             xp_in_level: Some(xp_in_level),
             xp_to_next: Some(xp_to_next),
+            derived: Some(derived),
             equip,
             inventory,
             crime: CrimeState {

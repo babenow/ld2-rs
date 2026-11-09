@@ -109,6 +109,13 @@ const SNAPSHOT_JSON: &str = r#"{
     "total_xp": 5734,
     "xp_in_level": 134,
     "xp_to_next": 2800,
+    "derived": { "accuracy": 80, "damage_min": 11, "damage_max": 11,
+                 "crit_chance": 8, "crit_damage": 52, "armor": 0,
+                 "dodge": 7, "parry_min": 5, "parry_max": 5,
+                 "parry_chance": 6, "block_min": 0, "block_max": 0,
+                 "block_chance": 0, "magic_defense": 10, "magic_dodge": 3,
+                 "magic_resist": 5, "magic_dispel": 5,
+                 "magic_crit_damage": 52, "magic_crit_chance": 8 },
     "equip": { "main_hand": "i_17", "staff": null },
     "inventory": [ { "uid": "i_17", "type": "staff", "name": "Ясеневый посох",
                      "rarity": "rare", "upgrade": 2, "stats": {},
@@ -150,6 +157,10 @@ fn snapshot_matches_doc_example() {
     assert_eq!(snap.char.total_xp, Some(5734), "M15/F24: общий опыт");
     assert_eq!(snap.char.xp_in_level, Some(134), "M15/F24: опыт в уровне");
     assert_eq!(snap.char.xp_to_next, Some(2800), "M15/F24: до уровня");
+    let der = snap.char.derived.as_ref().expect("M15/F26: derived");
+    assert_eq!(der.accuracy, 80, "M15/F26: точность стартового");
+    assert_eq!((der.damage_min, der.damage_max), (11, 11), "урон 6+10/2");
+    assert_eq!(der.crit_chance, 8, "крит-шанс стартового");
     assert_eq!(
         snap.char.skills[0].description, None,
         "M14/F17: сервер без description → None (обратная совместимость)"

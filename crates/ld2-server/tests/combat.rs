@@ -84,6 +84,12 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     assert_eq!(ch["level"], 1, "26 < 200 → уровень 1");
     assert_eq!(ch["xp_in_level"], 26, "прогресс в уровне");
     assert_eq!(ch["xp_to_next"], 100, "порог 1-го уровня: 50+50+0");
+
+    // M15/F26: производные параметры в том же снапшоте.
+    let der = ch["derived"].as_object().expect("derived в снапшоте");
+    assert_eq!(der["accuracy"], 80, "75 + dex(10)/2");
+    assert_eq!(der["damage_min"], 11, "база 6 + str/2");
+    assert_eq!(der["armor"], 0, "без брони в стартовой экипировке");
 }
 
 #[tokio::test]
