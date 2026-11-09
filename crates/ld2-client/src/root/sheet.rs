@@ -13,8 +13,8 @@
 
 use ely::overlays::Dialog;
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, Context, Div, DragMoveEvent, EmptyView, MouseButton,
-    SharedString,
+    div, prelude::*, px, rgb, rgba, AnyElement, Context, Div, DragMoveEvent, EmptyView,
+    MouseButton, SharedString, Window,
 };
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{
@@ -33,9 +33,12 @@ use ely::forms::{Choice, Input, Select};
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
-use ely::primitives::{Backdrop, IconName, Tooltip};
+use ely::primitives::{IconName, Tooltip};
 
-use super::{act_btn, clamp_char_size, scrollable_tab, CharDialogDrag, CharDialogResize, Root};
+use super::{
+    act_btn, char_card_origin, clamp_char_size, scrollable_tab, CharDialogDrag, CharDialogResize,
+    Root,
+};
 
 /// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
 /// Порядок — как в правой колонке окна (спека пользователя).
@@ -227,6 +230,7 @@ impl Root {
     /// позади (слой поверх `game_screen`, а не замена ему).
     pub(crate) fn character_dialog(
         &mut self,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
@@ -368,14 +372,24 @@ impl Root {
         };
 
         let (w, h) = self.char_dialog_size;
+        // M15/F25d: absolute-позиция от слоя (F14-подход): центр
+        // вьюпорта + смещение — марджины центрирования давали лишь
+        // половину сдвига («резиновый» drag).
+        let viewport = window.viewport_size();
+        let (left, top_xy) = char_card_origin(
+            f32::from(viewport.width),
+            f32::from(viewport.height),
+            w,
+            h,
+            self.char_dialog_delta,
+        );
         let card = div()
-            .relative()
+            .absolute()
+            .left(px(left))
+            .top(px(top_xy))
             .flex()
             .flex_col()
             .gap_2()
-            // M15/F25c: смещение от центра (drag) и живой размер (resize).
-            .ml(px(self.char_dialog_delta.0))
-            .mt(px(self.char_dialog_delta.1))
             .w(px(w))
             .h(px(h))
             .p(px(12.0))
@@ -396,9 +410,29 @@ impl Root {
             )
             .child(resize_grip);
 
+        // M15/F25d: свой слой по F14-шаблону: scrim закрывает по
+        // mouse-**up** — попытка перетаскивания (mousedown) физически
+        // не может закрыть окно; Esc — наш глобальный обработчик.
         Some(
-            Backdrop::new("ld2-char-backdrop")
-                .on_dismiss(self.dismiss(cx, |root| root.character_open = false))
+            div()
+                .id("ld2-char-dialog-layer")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(
+                    div()
+                        .id("ld2-char-scrim")
+                        .size_full()
+                        .bg(rgba(0x99000000))
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|root, _, _, cx| {
+                                root.character_open = false;
+                                cx.notify();
+                            }),
+                        ),
+                )
                 .child(card)
                 .into_any_element(),
         )

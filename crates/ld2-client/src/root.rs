@@ -1637,6 +1637,16 @@ fn host_os() -> gpui::OperatingSystem {
     }
 }
 
+/// M15/F25d: верхний левый угол карточки окна персонажа — центр
+/// вьюпорта + смещение drag (absolute-позиционирование как в F14:
+/// без марджинов, «половинных» сдвигов центрирования нет).
+pub(crate) fn char_card_origin(vw: f32, vh: f32, w: f32, h: f32, delta: (f32, f32)) -> (f32, f32) {
+    (
+        ((vw - w) / 2.0).max(0.0) + delta.0,
+        ((vh - h) / 2.0).max(0.0) + delta.1,
+    )
+}
+
 /// M15/F25c: кламп размера карточки окна персонажа — min 560×400,
 /// max = вьюпорт − 40 px (но не уже min).
 pub(crate) fn clamp_char_size(w: f32, h: f32, vw: f32, vh: f32) -> (f32, f32) {
@@ -2451,7 +2461,9 @@ impl Render for Root {
             })
             // M15/F25b: окно персонажа — всплывающий диалог (скрим);
             // игровые диалоги/настройки/выход рисуются позже — выше.
-            .when_some(self.character_dialog(cx, &pal), |d, layer| d.child(layer))
+            .when_some(self.character_dialog(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
@@ -2512,6 +2524,26 @@ mod tests {
         assert_eq!(hk.action_attack, "f5");
         assert_eq!(hk.action_flee, "4", "остальные не тронуты");
         assert_eq!((HOTKEY_ROWS[5].get)(&hk), "f5");
+    }
+
+    /// M15/F25d: позиция карточки — центр + смещение, без половинности.
+    #[test]
+    fn char_card_origin_centers_and_offsets() {
+        assert_eq!(
+            char_card_origin(1200.0, 800.0, 760.0, 560.0, (0.0, 0.0)),
+            (220.0, 120.0),
+            "по центру"
+        );
+        assert_eq!(
+            char_card_origin(1200.0, 800.0, 760.0, 560.0, (50.0, -30.0)),
+            (270.0, 90.0),
+            "смещение от центра"
+        );
+        assert_eq!(
+            char_card_origin(400.0, 300.0, 760.0, 560.0, (0.0, 0.0)),
+            (0.0, 0.0),
+            "карточка больше вьюпорта → в угол"
+        );
     }
 
     /// M15/F25c: кламп размера карточки окна персонажа.
