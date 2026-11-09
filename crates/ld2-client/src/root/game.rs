@@ -141,7 +141,6 @@ impl Root {
                     .min_w_0()
                     .child(self.left_column(cx, pal, &snap)),
             )
-            .child(div().flex().flex_col().min_w_0().child(self.sheet(cx, pal)))
             .child(
                 div()
                     .flex()
@@ -152,6 +151,9 @@ impl Root {
                     // Не выше остатка экрана: журнальный блок сжимается
                     // до своего min_h, а не выдавливает колонку наружу.
                     .min_h_0()
+                    // M15/F25: трекер квестов переехал из листа в центр —
+                    // остаётся видимым поверх игры (окно персонажа закрыто).
+                    .children(self.tracker_block(pal))
                     // M14/F2: описание локации — всегда первая строка.
                     .child(self.location_block(pal, &snap.location))
                     // Таргет — под описанием (перенос из левой колонки).

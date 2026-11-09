@@ -291,6 +291,23 @@ pub enum Key {
     // M14 F4: панель действий и хоткеи
     HkCleave,
     HkRune,
+    // ── M15/F25: окно персонажа ──
+    /// Заголовок кнопки/окна «Персонаж».
+    BtnCharacter,
+    /// Вкладка «Параметры» окна персонажа.
+    SheetParams,
+    /// Вкладка «Репутация» окна персонажа.
+    SheetReputation,
+    /// Строка хоткея «окно персонажа» в настройках.
+    HkOpenCharacter,
+    /// «Уровень {n}» — шкала опыта (tf).
+    CharLevel,
+    /// «Всего опыта» под шкалой.
+    CharXpTotal,
+    /// «Очки опыта» — свободный пул (D3/D4).
+    CharXpPool,
+    /// Заглушка вкладки, которую ещё не сделали (F26/F27).
+    CharComingSoon,
     HkConsumable,
     HotbarNoTarget,
     HotbarCooldown,
@@ -631,6 +648,14 @@ mod tests {
         Key::ChDelete,
         Key::HkCleave,
         Key::HkRune,
+        Key::BtnCharacter,
+        Key::SheetParams,
+        Key::SheetReputation,
+        Key::HkOpenCharacter,
+        Key::CharLevel,
+        Key::CharXpTotal,
+        Key::CharXpPool,
+        Key::CharComingSoon,
         Key::HkConsumable,
         Key::HotbarNoTarget,
         Key::HotbarCooldown,

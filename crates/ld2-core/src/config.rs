@@ -140,6 +140,10 @@ pub struct Hotkeys {
     /// Свиток/зелье (расходник).
     #[serde(default = "hk_digit6")]
     pub action_consumable: String,
+    // ── M15/F25: окно персонажа ──
+    /// Открыть/закрыть окно персонажа.
+    #[serde(default = "hk_char")]
+    pub open_character: String,
 }
 
 fn hk_alt_up() -> String {
@@ -175,6 +179,9 @@ fn hk_digit5() -> String {
 fn hk_digit6() -> String {
     "6".into()
 }
+fn hk_char() -> String {
+    "c".into()
+}
 
 impl Default for Hotkeys {
     fn default() -> Self {
@@ -190,6 +197,7 @@ impl Default for Hotkeys {
             action_flee: hk_digit4(),
             action_rune: hk_digit5(),
             action_consumable: hk_digit6(),
+            open_character: hk_char(),
         }
     }
 }
@@ -209,6 +217,7 @@ impl Hotkeys {
             ("action_flee", &mut self.action_flee),
             ("action_rune", &mut self.action_rune),
             ("action_consumable", &mut self.action_consumable),
+            ("open_character", &mut self.open_character),
         ]
     }
 }
@@ -352,6 +361,8 @@ mod tests {
         assert_eq!(cfg.hotkeys.action_flee, "4");
         assert_eq!(cfg.hotkeys.action_rune, "5");
         assert_eq!(cfg.hotkeys.action_consumable, "6");
+        // M15/F25: окно персонажа — дефолт в старом конфиге.
+        assert_eq!(cfg.hotkeys.open_character, "c");
         // M14/F8: шрифты чата/лога в старом конфиге — дефолт 12 px.
         assert_eq!(cfg.chat_font_px, 12.0);
         assert_eq!(cfg.log_font_px, 12.0);
