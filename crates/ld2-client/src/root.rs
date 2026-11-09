@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use gpui::{
     div, prelude::*, px, rgb, AnyElement, App, Context, Div, EmptyView, Entity, Focusable, Hsla,
-    MouseButton, Render, ScrollHandle, SharedString, Window,
+    MouseButton, Render, ScrollHandle, SharedString, Window, WindowControlArea,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -33,6 +33,7 @@ use ely::layout::ScrollArea;
 use ely::navigation::Tabs;
 use ely::overlays::Dialog;
 use ely::primitives::IconName;
+use ely::shell::WindowControls;
 use ely::theme::{Mode, Theme};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
@@ -977,6 +978,11 @@ impl Root {
                     .flex_grow_1()
                     .items_center()
                     .cursor_pointer()
+                    // M14/F23: нативный hit-test caption — на Windows
+                    // окно тянется через HTCAPTION (start_window_move
+                    // там — no-op трейта); на macOS этот метод —
+                    // заглушка, работает on_drag ниже.
+                    .window_control_area(WindowControlArea::Drag)
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
@@ -1022,6 +1028,13 @@ impl Root {
                             cx.notify();
                         })),
                 )
+            })
+            // M14/F23 (Windows): системные кнопки окна _ □ ✕ — ely
+            // рисует их в стиле платформы (caption-кнопки, hover даёт
+            // snap-макеты Win11). На macOS свои не нужны: системные
+            // «светофоры» видны сквозь прозрачный тайтлбар.
+            .when(!matches!(host_os(), gpui::OperatingSystem::Mac), |d| {
+                d.child(WindowControls::new("ld2-titlebar-controls"))
             })
     }
 
