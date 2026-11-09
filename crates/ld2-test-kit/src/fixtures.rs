@@ -406,6 +406,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
                 // rank 5 — открывает активку «Мощный удар» (skills.md §4);
                 // порог формулы §2.2: round(120 · 1.32^5) = 1471.
                 rank: 5,
+                group: Some("weapon".into()),
                 xp: 612,
                 xp_to_next: 1471,
             },
@@ -414,6 +415,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
                 name: Some("Аркана".into()),
                 description: None,
                 rank: 1,
+                group: Some("magic".into()),
                 xp: 40,
                 xp_to_next: 480,
             },
@@ -433,6 +435,8 @@ pub fn character(id: &str, name: &str) -> CharacterState {
         total_xp: Some(60),
         xp_in_level: Some(60),
         xp_to_next: Some(100),
+        // M15/F26: сервер без вкладки «Параметры» → None (заглушка).
+        derived: None,
         equip: BTreeMap::from([("staff".to_string(), Some("i_17".to_string()))]),
         inventory: vec![
             staff_item(),

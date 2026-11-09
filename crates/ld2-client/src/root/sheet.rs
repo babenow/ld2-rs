@@ -12,15 +12,20 @@
 //! `Root::sheet_tab` (персистентно в config, ФР-19).
 
 use ely::overlays::Dialog;
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, SharedString};
+use gpui::{
+    div, prelude::*, px, rgb, rgba, AnyElement, Context, Div, DragMoveEvent, EmptyView,
+    MouseButton, SharedString, Window,
+};
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
-use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, Act, UpgradeView};
+use ld2_core::store::{
+    crime_kind_title, filter_active_statuses, local_epoch, Act, Screen, UpgradeView,
+};
 use ld2_protocol::cmd::{
     CharXpInvest, CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave,
     GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse, QuestAbandon, QuestAccept,
     QuestTurnIn, SocketExtract, SocketInsert, UpgradePreview, UpgradeStart,
 };
-use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
+use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity, SkillSnapshot};
 
 use crate::palette::Palette;
 use ely::buttons::IconButton;
@@ -30,7 +35,10 @@ use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
-use super::{act_btn, scrollable_tab, Root};
+use super::{
+    act_btn, char_card_origin, clamp_char_size, scrollable_tab, CharDialogDrag, CharDialogResize,
+    Root,
+};
 
 /// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
 /// Порядок — как в правой колонке окна (спека пользователя).
@@ -100,6 +108,17 @@ impl SheetTab {
         }
     }
 }
+
+/// M15/F28: группы навыков в порядке GDD §3 (A–F); ид — значение
+/// `skills.skill_group` из контента, ключ — заголовок группы.
+const SKILL_GROUPS: [(&str, Key); 6] = [
+    ("weapon", Key::SkillGroupWeapon),
+    ("defense", Key::SkillGroupDefense),
+    ("magic", Key::SkillGroupMagic),
+    ("stealth", Key::SkillGroupStealth),
+    ("practice", Key::SkillGroupPractice),
+    ("social", Key::SkillGroupSocial),
+];
 
 /// Демо-каталог профессий для обучения (skills.md §5; сервер валидирует).
 const LEARN_CATALOG: [(&str, Key); 7] = [
@@ -204,16 +223,25 @@ impl Root {
 
     // ── каркас окна ───────────────────────────────────────────────────────
 
-    /// M15/F25: **окно персонажа** — оверлей поверх игрового экрана
-    /// (открывается кнопкой в шапке/хоткеем `c`; Esc/✕/кнопка закрывает).
-    /// Сверху заголовок, ниже две колонки: левая (опыт/экипировка/
-    /// атрибуты/статусы) и правая (вкладки).
-    pub(crate) fn character_window(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    /// M15/F25b: **окно персонажа** — всплывающий диалог поверх игры
+    /// (решение пользователя): скрим Ely `Backdrop` (клик мимо
+    /// закрывает), карточка 760×560 по центру; Esc и ✕ в шапке карточки
+    /// закрывают, кнопка в шапке/хоткей `c` — открывают. Игра видна
+    /// позади (слой поверх `game_screen`, а не замена ему).
+    pub(crate) fn character_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        if !self.character_open || self.store.screen != Screen::Game {
+            return None;
+        }
         // Автозагрузки один раз (ФР-08/16 + M15/F25 журнал статусов).
         if self.store.snapshot.is_some() {
             // M15/F25: журнал нарушений нужен левой колонке окна —
             // грузим при открытии (вкладки «Статусы» больше нет).
-            if self.character_open && !self.store.crime_log_loaded {
+            if !self.store.crime_log_loaded {
                 self.store.crime_log_loaded = true;
                 self.send_cmd(&CrimeLog { limit: Some(50) }, Act::CrimeLog);
             }
@@ -229,30 +257,146 @@ impl Root {
 
         let lang = self.lang;
         // Верх окна: заголовок + ✕ (дублирует Esc и кнопку в шапке).
-        let top = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(t(lang, Key::BtnCharacter)),
-            )
-            .child(
-                IconButton::new("ld2-char-close", IconName::X)
-                    .tooltip(t(lang, Key::BtnClose))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.character_open = false;
+        // M15/F25c: шапка — drag-регион (захват указателя gpui:
+        // события идут, даже когда курсор ушёл за карточку).
+        let top = {
+            let drag_this = cx.entity();
+            div()
+                .id("ld2-char-titlebar")
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .cursor_grab()
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(t(lang, Key::BtnCharacter)),
+                )
+                .child(
+                    IconButton::new("ld2-char-close", IconName::X)
+                        .tooltip(t(lang, Key::BtnClose))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.character_open = false;
+                            cx.notify();
+                        })),
+                )
+                // Захват: запоминаем смещение указателя внутри шапки
+                // (конструктор on_drag получает offset от gpui).
+                .on_drag(CharDialogDrag, move |_value, offset, _window, acx| {
+                    drag_this.update(acx, |root, cx| {
+                        root.char_drag_offset = Some((f32::from(offset.x), f32::from(offset.y)));
                         cx.notify();
-                    })),
-            );
+                    });
+                    acx.new(|_| EmptyView)
+                })
+                .on_drag_move(cx.listener(
+                    move |root, event: &DragMoveEvent<CharDialogDrag>, window, cx| {
+                        let Some(offset) = root.char_drag_offset else {
+                            return;
+                        };
+                        let position = event.event.position;
+                        let viewport = window.viewport_size();
+                        let (w, h) = root.char_dialog_size;
+                        let base_x = ((f32::from(viewport.width) - w) / 2.0).max(0.0);
+                        let base_y = ((f32::from(viewport.height) - h) / 2.0).max(0.0);
+                        // Шапка внутри padding-а карточки (12 px) — левый
+                        // верхний угол карточки = указатель − offset − 12.
+                        root.char_dialog_delta.0 = f32::from(position.x) - offset.0 - base_x - 12.0;
+                        root.char_dialog_delta.1 = f32::from(position.y) - offset.1 - base_y - 12.0;
+                        cx.notify();
+                    },
+                ))
+        };
 
-        div()
+        // M15/F25c: уголок изменения размера (правый нижний).
+        let resize_grip = {
+            let grip_this = cx.entity();
+            div()
+                .id("ld2-char-resize")
+                .absolute()
+                .right_0()
+                .bottom_0()
+                .size(px(18.0))
+                .rounded_md()
+                .border_l_1()
+                .border_t_1()
+                .border_color(rgb(pal.border))
+                .bg(rgb(pal.panel))
+                .cursor_pointer()
+                .on_drag(CharDialogResize, move |_value, _offset, _window, acx| {
+                    grip_this.update(acx, |root, cx| {
+                        // Новый захват — новый якорь (иначе скачок по
+                        // остатку старого).
+                        root.char_resize_anchor = None;
+                        cx.notify();
+                    });
+                    acx.new(|_| EmptyView)
+                })
+                .on_drag_move(cx.listener(
+                    move |root, event: &DragMoveEvent<CharDialogResize>, window, cx| {
+                        let pos = (
+                            f32::from(event.event.position.x),
+                            f32::from(event.event.position.y),
+                        );
+                        let (cur_w, cur_h) = root.char_dialog_size;
+                        // Якорь — первый move (позицию захвата в конструктор
+                        // on_drag не передаёт); кадр движения теряем.
+                        let Some((ax, ay, w0, h0, dx0, dy0)) = root.char_resize_anchor else {
+                            root.char_resize_anchor = Some((
+                                pos.0,
+                                pos.1,
+                                cur_w,
+                                cur_h,
+                                root.char_dialog_delta.0,
+                                root.char_dialog_delta.1,
+                            ));
+                            return;
+                        };
+                        let viewport = window.viewport_size();
+                        let (nw, nh) = clamp_char_size(
+                            w0 + (pos.0 - ax),
+                            h0 + (pos.1 - ay),
+                            f32::from(viewport.width),
+                            f32::from(viewport.height),
+                        );
+                        // Якорим левый верхний угол: компенсируем
+                        // центрирование Backdrop (resize от центра
+                        // сдвигал бы оба края на Δ/2).
+                        root.char_dialog_delta.0 = dx0 + (nw - w0) / 2.0;
+                        root.char_dialog_delta.1 = dy0 + (nh - h0) / 2.0;
+                        root.char_dialog_size = (nw, nh);
+                        cx.notify();
+                    },
+                ))
+        };
+
+        let (w, h) = self.char_dialog_size;
+        // M15/F25d: absolute-позиция от слоя (F14-подход): центр
+        // вьюпорта + смещение — марджины центрирования давали лишь
+        // половину сдвига («резиновый» drag).
+        let viewport = window.viewport_size();
+        let (left, top_xy) = char_card_origin(
+            f32::from(viewport.width),
+            f32::from(viewport.height),
+            w,
+            h,
+            self.char_dialog_delta,
+        );
+        let card = div()
+            .absolute()
+            .left(px(left))
+            .top(px(top_xy))
             .flex()
             .flex_col()
             .gap_2()
-            .size_full()
+            .w(px(w))
+            .h(px(h))
+            .p(px(12.0))
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(pal.border))
+            .bg(rgb(pal.panel))
             .child(top)
             .child(
                 div()
@@ -264,6 +408,34 @@ impl Root {
                     .child(self.character_left_column(cx, pal))
                     .child(self.character_tabs(cx, pal)),
             )
+            .child(resize_grip);
+
+        // M15/F25d: свой слой по F14-шаблону: scrim закрывает по
+        // mouse-**up** — попытка перетаскивания (mousedown) физически
+        // не может закрыть окно; Esc — наш глобальный обработчик.
+        Some(
+            div()
+                .id("ld2-char-dialog-layer")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(
+                    div()
+                        .id("ld2-char-scrim")
+                        .size_full()
+                        .bg(rgba(0x99000000))
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|root, _, _, cx| {
+                                root.character_open = false;
+                                cx.notify();
+                            }),
+                        ),
+                )
+                .child(card)
+                .into_any_element(),
+        )
     }
 
     /// M15/F25: левая колонка окна — шкала опыта, экипировка,
@@ -384,8 +556,9 @@ impl Root {
         }
 
         let body = match tab {
-            // M15/F25: заглушки до F26 («Параметры») и F27 («Репутация»).
-            SheetTab::Params | SheetTab::Reputation => div()
+            // M15/F26: производные характеристики; заглушка до F27 — «Репутация».
+            SheetTab::Params => self.tab_params(pal),
+            SheetTab::Reputation => div()
                 .px_2()
                 .py_1()
                 .text_color(rgb(pal.muted))
@@ -400,6 +573,7 @@ impl Root {
         // прокручиваются, остальные вкладки ведут себя как раньше.
         col = col.child(match tab {
             SheetTab::Skills => scrollable_tab("ld2-skills-scroll", &self.skills_scroll, body),
+            SheetTab::Params => scrollable_tab("ld2-params-scroll", &self.params_scroll, body),
             SheetTab::Professions => {
                 scrollable_tab("ld2-professions-scroll", &self.professions_scroll, body)
             }
@@ -408,6 +582,68 @@ impl Root {
             }
             _ => body,
         });
+        col
+    }
+
+    /// M15/F26: вкладка «Параметры» — 16 производных характеристик
+    /// (серверные `derived`; у сервера без M15 — заглушка).
+    fn tab_params(&self, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        let Some(d) = snap.char.derived.as_ref() else {
+            return div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::CharComingSoon));
+        };
+        // Порядок строк — спецификация пользователя (16 позиций).
+        let rows: [(&Key, String); 16] = [
+            (&Key::ParAccuracy, format!("{}%", d.accuracy)),
+            (
+                &Key::ParDamage,
+                format!("{}..{}", d.damage_min, d.damage_max),
+            ),
+            (&Key::ParCritChance, format!("{}%", d.crit_chance)),
+            (&Key::ParCritDamage, format!("{}%", d.crit_damage)),
+            (&Key::ParArmor, d.armor.to_string()),
+            (&Key::ParDodge, format!("{}%", d.dodge)),
+            (&Key::ParParry, format!("{}..{}", d.parry_min, d.parry_max)),
+            (&Key::ParParryChance, format!("{}%", d.parry_chance)),
+            (&Key::ParBlock, format!("{}..{}", d.block_min, d.block_max)),
+            (&Key::ParBlockChance, format!("{}%", d.block_chance)),
+            (&Key::ParMagicDefense, d.magic_defense.to_string()),
+            (&Key::ParMagicDodge, format!("{}%", d.magic_dodge)),
+            (&Key::ParMagicResist, format!("{}%", d.magic_resist)),
+            (&Key::ParMagicDispel, format!("{}%", d.magic_dispel)),
+            (
+                &Key::ParMagicCritDamage,
+                format!("{}%", d.magic_crit_damage),
+            ),
+            (
+                &Key::ParMagicCritChance,
+                format!("{}%", d.magic_crit_chance),
+            ),
+        ];
+        let mut col = div().flex().flex_col().gap_1();
+        for (label, value) in rows {
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .child(div().text_color(rgb(pal.muted)).child(t(lang, *label)))
+                    .child(div().font_weight(gpui::FontWeight::BOLD).child(value)),
+            );
+        }
         col
     }
 
@@ -464,92 +700,136 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::Loading));
         };
-        let mut col =
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().font_weight(gpui::FontWeight::BOLD).child(format!(
-                    "{}: {}",
-                    t(lang, Key::XpPoolLabel),
-                    snap.char.xp_pool
-                )));
-        for skill in &snap.char.skills {
-            let name = skill.name.clone().unwrap_or_else(|| skill.id.clone());
-            let id = skill.id.clone();
-            let rank = skill.rank;
-            // M14/F17: описание навыка — в тултипе строки; ⓘ открывает
-            // карточку с полной информацией.
-            let desc = skill.description.clone().unwrap_or_default();
-            let info_id = id.clone();
-            let mut row = div().id(format!("ld2-skill-{id}"));
-            if !desc.is_empty() {
-                row = row.tooltip(Tooltip::text(desc));
+        let pool = snap.char.xp_pool;
+        let mut col = div().flex().flex_col().gap_2().child(
+            div().font_weight(gpui::FontWeight::BOLD).child(format!(
+                "{}: {}",
+                t(lang, Key::XpPoolLabel),
+                pool
+            )),
+        );
+        // M15/F28: навыки по группам GDD §3 (A–F) — заголовок группы,
+        // если в снапшоте есть хоть один её навык.
+        for (gid, key) in SKILL_GROUPS {
+            let group: Vec<&SkillSnapshot> = snap
+                .char
+                .skills
+                .iter()
+                .filter(|s| s.group.as_deref() == Some(gid))
+                .collect();
+            if group.is_empty() {
+                continue;
             }
-            let mut row = row
-                .flex()
-                .flex_col()
-                .gap_1()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(div().child(name))
-                        .child(div().text_color(rgb(pal.muted)).child(format!("·{rank}")))
-                        .child(div().flex_grow_1())
-                        .child(
-                            IconButton::new(format!("ld2-skill-info-{id}"), IconName::Info)
-                                .tooltip(t(lang, Key::SkillInfoBtn))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.skill_info = Some(info_id.clone());
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .child(bar(
-                    if skill.xp_to_next > 0 {
-                        skill.xp as f32 / skill.xp_to_next as f32
-                    } else {
-                        0.0
-                    },
-                    format!("{}/{}", skill.xp, skill.xp_to_next),
-                    pal.accent,
-                    pal,
-                ));
-            // Вложение очков из пула (D3/D4, ФР-04).
-            if snap.char.xp_pool > 0 {
-                let pool = snap.char.xp_pool;
-                let mut buttons = div().flex().flex_row().gap_1();
-                for (label, points) in [("+1", 1_i64), ("+5", 5_i64)] {
-                    let sid = id.clone();
-                    buttons =
-                        buttons.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
-                            this.invest(&sid, points.min(pool));
-                            let _ = cx;
-                        }));
-                }
-                let sid = id.clone();
-                buttons = buttons.child(act_btn(
-                    cx,
-                    t(lang, Key::MaxLabel),
-                    pal.panel,
-                    pal.text,
-                    move |this, cx| {
-                        this.invest(&sid, pool);
-                        let _ = cx;
-                    },
-                ));
-                row = row.child(buttons);
+            col = col.child(
+                div()
+                    .mt(px(6.0))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(t(lang, key)),
+            );
+            for skill in group {
+                col = col.child(self.skill_row(cx, pal, skill, pool));
             }
-            col = col.child(row);
+        }
+        // Строки без известной группы — в конце: старый сервер (group =
+        // None) или новая группа контента без ключа l10n.
+        let rest: Vec<&SkillSnapshot> = snap
+            .char
+            .skills
+            .iter()
+            .filter(|s| {
+                s.group
+                    .as_deref()
+                    .is_none_or(|g| !SKILL_GROUPS.iter().any(|(id, _)| *id == g))
+            })
+            .collect();
+        for skill in rest {
+            col = col.child(self.skill_row(cx, pal, skill, pool));
         }
         col
+    }
+
+    /// M15/F28: строка навыка (перенос из таба) — название/ранг,
+    /// тултип описания, ⓘ-карточка, прогресс и вложение XP из пула.
+    fn skill_row(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        skill: &SkillSnapshot,
+        pool: i64,
+    ) -> impl gpui::IntoElement {
+        let lang = self.lang;
+        let name = skill.name.clone().unwrap_or_else(|| skill.id.clone());
+        let id = skill.id.clone();
+        let rank = skill.rank;
+        // M14/F17: описание навыка — в тултипе строки; ⓘ открывает
+        // карточку с полной информацией.
+        let desc = skill.description.clone().unwrap_or_default();
+        let info_id = id.clone();
+        let mut row = div().id(format!("ld2-skill-{id}"));
+        if !desc.is_empty() {
+            row = row.tooltip(Tooltip::text(desc));
+        }
+        let mut row = row
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .child(div().child(name))
+                    .child(div().text_color(rgb(pal.muted)).child(format!("·{rank}")))
+                    .child(div().flex_grow_1())
+                    .child(
+                        IconButton::new(format!("ld2-skill-info-{id}"), IconName::Info)
+                            .tooltip(t(lang, Key::SkillInfoBtn))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.skill_info = Some(info_id.clone());
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(bar(
+                if skill.xp_to_next > 0 {
+                    skill.xp as f32 / skill.xp_to_next as f32
+                } else {
+                    0.0
+                },
+                format!("{}/{}", skill.xp, skill.xp_to_next),
+                pal.accent,
+                pal,
+            ));
+        // Вложение очков из пула (D3/D4, ФР-04).
+        if pool > 0 {
+            let mut buttons = div().flex().flex_row().gap_1();
+            for (label, points) in [("+1", 1_i64), ("+5", 5_i64)] {
+                let sid = id.clone();
+                buttons =
+                    buttons.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
+                        this.invest(&sid, points.min(pool));
+                        let _ = cx;
+                    }));
+            }
+            let sid = id.clone();
+            buttons = buttons.child(act_btn(
+                cx,
+                t(lang, Key::MaxLabel),
+                pal.panel,
+                pal.text,
+                move |this, cx| {
+                    this.invest(&sid, pool);
+                    let _ = cx;
+                },
+            ));
+            row = row.child(buttons);
+        }
+        row
     }
 
     fn invest(&mut self, skill_id: &str, points: i64) {
@@ -1963,6 +2243,19 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M15/F28: группы — в порядке GDD §3, иды уникальны.
+    #[test]
+    fn skill_groups_match_gdd_order() {
+        let ids: Vec<&str> = SKILL_GROUPS.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            ids,
+            ["weapon", "defense", "magic", "stealth", "practice", "social"],
+            "порядок групп как в skills.md §3 (A–F)"
+        );
+        let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(ids.len(), unique.len(), "иды групп уникальны");
+    }
 
     /// M15/F25: состав и порядок вкладок окна — по спеке пользователя
     /// (Параметры | Навыки | Профессии | Репутация + нетронутые).

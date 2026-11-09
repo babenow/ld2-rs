@@ -541,6 +541,7 @@ mod tests {
             id: "sword".into(),
             name: None,
             description: None,
+            group: None,
             rank: 3,
             xp: 612,
             xp_to_next: 480,

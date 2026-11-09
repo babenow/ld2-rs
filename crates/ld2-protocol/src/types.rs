@@ -148,6 +148,10 @@ pub struct SkillSnapshot {
     /// Опционально: серверы без контента обходят поле вовсе.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// M15/F28: группа навыка (skills.md §3: weapon/defense/magic/
+    /// stealth/practice/social); None — сервер без групп.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     pub rank: u32,
     pub xp: i64,
     pub xp_to_next: i64,
@@ -249,6 +253,51 @@ pub struct CrimeLogEntry {
 /// Экипировка: слот → `item_uid` (или `null`, если пусто) — §4.8.2.
 pub type EquipMap = BTreeMap<String, Option<String>>;
 
+/// M15/F26: производные характеристики — вкладка «Параметры» окна
+/// персонажа. Чистое представление серверных формул (skills.md §1, §A/B);
+/// additive §11 — `None` у серверов без M15.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DerivedParams {
+    /// Точность, % (шанс попадания).
+    pub accuracy: i64,
+    /// Физ. урон, мин (оружие/база + модификатор силы).
+    pub damage_min: i64,
+    /// Физ. урон, макс.
+    pub damage_max: i64,
+    /// Шанс крит. удара, %.
+    pub crit_chance: i64,
+    /// Крит. удар — бонус урона, %.
+    pub crit_damage: i64,
+    /// Броня, единиц (сумма статов экипировки).
+    pub armor: i64,
+    /// Уклон, %.
+    pub dodge: i64,
+    /// Парирование — контрудар, мин урона.
+    pub parry_min: i64,
+    /// Парирование — контрудар, макс урона.
+    pub parry_max: i64,
+    /// Шанс парирования, %.
+    pub parry_chance: i64,
+    /// Блок щитом — снижение, мин урона.
+    pub block_min: i64,
+    /// Блок щитом — снижение, макс урона.
+    pub block_max: i64,
+    /// Шанс блока щитом, %.
+    pub block_chance: i64,
+    /// Магическая защита, единиц.
+    pub magic_defense: i64,
+    /// Магический уклон, %.
+    pub magic_dodge: i64,
+    /// Сопротивление магии, %.
+    pub magic_resist: i64,
+    /// Рассеивание магии, %.
+    pub magic_dispel: i64,
+    /// Маг. крит — бонус урона, %.
+    pub magic_crit_damage: i64,
+    /// Шанс маг. крита, %.
+    pub magic_crit_chance: i64,
+}
+
 /// Полное состояние персонажа в `evt/state/snapshot` (§3, §4.8.2 ТЗ).
 ///
 /// `xp_pool` — свободные очки опыта от квестов (D3/D4: вкладываются командой
@@ -280,6 +329,10 @@ pub struct CharacterState {
     /// M15/F24: опыт до следующего уровня (`0` — максимум).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub xp_to_next: Option<i64>,
+    /// M15/F26: производные характеристики окна «Параметры»
+    /// (`None` — сервер без M15, вкладка покажет заглушку).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived: Option<DerivedParams>,
     #[serde(default)]
     pub equip: EquipMap,
     #[serde(default)]

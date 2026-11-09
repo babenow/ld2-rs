@@ -52,6 +52,14 @@ pub(crate) enum LogTab {
 #[derive(Debug)]
 struct TitlebarDrag;
 
+/// M15/F25c: перетаскивание карточки окна персонажа за шапку.
+#[derive(Debug)]
+struct CharDialogDrag;
+
+/// M15/F25c: изменение размера карточки окна персонажа (уголок).
+#[derive(Debug)]
+struct CharDialogResize;
+
 /// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
@@ -195,6 +203,16 @@ pub struct Root {
     professions_scroll: ScrollHandle,
     /// M15/F25: прокрутка вкладки «Инвентарь» в окне персонажа.
     inventory_scroll: ScrollHandle,
+    /// M15/F26: прокрутка вкладки «Параметры» (16 строк).
+    params_scroll: ScrollHandle,
+    /// M15/F25c: карточка окна персонажа — смещение от центра (px).
+    char_dialog_delta: (f32, f32),
+    /// M15/F25c: размер карточки (px) — (ширина, высота), старт 760×560.
+    char_dialog_size: (f32, f32),
+    /// M15/F25c: смещение указателя в шапке в момент захвата (drag).
+    char_drag_offset: Option<(f32, f32)>,
+    /// M15/F25c: якорь resize — (курсор_x, курсор_y, w, h, delta_x, delta_y).
+    char_resize_anchor: Option<(f32, f32, f32, f32, f32, f32)>,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
     log_tab: LogTab,
     /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
@@ -262,6 +280,11 @@ impl Root {
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
             inventory_scroll: ScrollHandle::new(),
+            params_scroll: ScrollHandle::new(),
+            char_dialog_delta: (0.0, 0.0),
+            char_dialog_size: (760.0, 560.0),
+            char_drag_offset: None,
+            char_resize_anchor: None,
             log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
@@ -1614,6 +1637,25 @@ fn host_os() -> gpui::OperatingSystem {
     }
 }
 
+/// M15/F25d: верхний левый угол карточки окна персонажа — центр
+/// вьюпорта + смещение drag (absolute-позиционирование как в F14:
+/// без марджинов, «половинных» сдвигов центрирования нет).
+pub(crate) fn char_card_origin(vw: f32, vh: f32, w: f32, h: f32, delta: (f32, f32)) -> (f32, f32) {
+    (
+        ((vw - w) / 2.0).max(0.0) + delta.0,
+        ((vh - h) / 2.0).max(0.0) + delta.1,
+    )
+}
+
+/// M15/F25c: кламп размера карточки окна персонажа — min 560×400,
+/// max = вьюпорт − 40 px (но не уже min).
+pub(crate) fn clamp_char_size(w: f32, h: f32, vw: f32, vh: f32) -> (f32, f32) {
+    (
+        w.clamp(560.0, (vw - 40.0).max(560.0)),
+        h.clamp(400.0, (vh - 40.0).max(400.0)),
+    )
+}
+
 /// Нажатие → спецификация (`alt+up`) для записи в config (ФР-19).
 fn spec_from_keystroke(ks: &gpui::Keystroke) -> Option<String> {
     let name = ks.key.to_lowercase();
@@ -2407,9 +2449,6 @@ impl Render for Root {
                     .child(match self.store.screen {
                         Screen::Login => self.login_screen(window, cx, &pal),
                         Screen::Characters => self.characters_screen(cx, &pal),
-                        // M15/F25: окно персонажа перекрывает игру
-                        // (заголовок/шапка/TitleBar остаются).
-                        Screen::Game if self.character_open => self.character_window(cx, &pal),
                         Screen::Game => self.game_screen(cx, &pal),
                     }),
             )
@@ -2419,6 +2458,11 @@ impl Render for Root {
             // но над контентом (настройки/выход рисуются позже).
             .when_some(self.skill_info_dialog(cx, &pal), |d, dialog| {
                 d.child(dialog)
+            })
+            // M15/F25b: окно персонажа — всплывающий диалог (скрим);
+            // игровые диалоги/настройки/выход рисуются позже — выше.
+            .when_some(self.character_dialog(window, cx, &pal), |d, layer| {
+                d.child(layer)
             })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
@@ -2482,6 +2526,51 @@ mod tests {
         assert_eq!((HOTKEY_ROWS[5].get)(&hk), "f5");
     }
 
+    /// M15/F25d: позиция карточки — центр + смещение, без половинности.
+    #[test]
+    fn char_card_origin_centers_and_offsets() {
+        assert_eq!(
+            char_card_origin(1200.0, 800.0, 760.0, 560.0, (0.0, 0.0)),
+            (220.0, 120.0),
+            "по центру"
+        );
+        assert_eq!(
+            char_card_origin(1200.0, 800.0, 760.0, 560.0, (50.0, -30.0)),
+            (270.0, 90.0),
+            "смещение от центра"
+        );
+        assert_eq!(
+            char_card_origin(400.0, 300.0, 760.0, 560.0, (0.0, 0.0)),
+            (0.0, 0.0),
+            "карточка больше вьюпорта → в угол"
+        );
+    }
+
+    /// M15/F25c: кламп размера карточки окна персонажа.
+    #[test]
+    fn char_size_clamps_to_min_and_viewport() {
+        assert_eq!(
+            clamp_char_size(100.0, 100.0, 1200.0, 800.0),
+            (560.0, 400.0),
+            "min"
+        );
+        assert_eq!(
+            clamp_char_size(760.0, 560.0, 1200.0, 800.0),
+            (760.0, 560.0),
+            "норма"
+        );
+        assert_eq!(
+            clamp_char_size(5000.0, 5000.0, 1200.0, 800.0),
+            (1160.0, 760.0),
+            "max = вьюпорт − 40"
+        );
+        assert_eq!(
+            clamp_char_size(900.0, 700.0, 500.0, 300.0),
+            (560.0, 400.0),
+            "вьюпорт меньше min → min"
+        );
+    }
+
     /// M14/F4: гейт «Мощного удара» — владение мечом 5 (skills.md §4).
     #[test]
     fn power_strike_needs_sword_rank_five() {
@@ -2490,6 +2579,7 @@ mod tests {
             id: id.to_string(),
             name: None,
             description: None,
+            group: None,
             rank,
             xp: 0,
             xp_to_next: 120,
