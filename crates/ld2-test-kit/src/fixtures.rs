@@ -428,6 +428,11 @@ pub fn character(id: &str, name: &str) -> CharacterState {
         hp: Hp { cur: 42, max: 60 },
         mp: Mp { cur: 45, max: 60 },
         xp_pool: 120,
+        // M15/F24: уровень и шкала опыта (образец: 1 уровень, порог 100).
+        level: Some(1),
+        total_xp: Some(60),
+        xp_in_level: Some(60),
+        xp_to_next: Some(100),
         equip: BTreeMap::from([("staff".to_string(), Some("i_17".to_string()))]),
         inventory: vec![
             staff_item(),

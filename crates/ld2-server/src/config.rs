@@ -87,6 +87,8 @@ pub struct GameplaySection {
     pub magic: MagicSection,
     /// Профессии и крафт (skills.md §8, M12.6).
     pub professions: ProfessionsSection,
+    /// M15/F24: уровень персонажа (окно персонажа).
+    pub level: LevelSection,
     /// Максимум участников группы (ФР-14, M12.7b).
     pub party_max_members: u32,
 }
@@ -255,6 +257,23 @@ pub struct CombatSection {
     pub flee_chance: f64,
 }
 
+/// M15/F24: уровень персонажа — квадратичная кривая опыта за
+/// убийства: `XP = round(A×level² + B×level + C)` — опыт перехода
+/// `level → level+1`. Роли (уточнение пользователя 2026-11-09):
+/// A — рост на высоких уровнях, B — темп в начале, C — смещение.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LevelSection {
+    /// Коэффициент A квадрата (≥ 0; дефолт 50).
+    pub a: f64,
+    /// Коэффициент B линейной слагаемой (≥ 0; дефолт 50).
+    pub b: f64,
+    /// Коэффициент C — базовое смещение (≥ 0; дефолт 0).
+    pub c: f64,
+    /// Потолок: опыт копится без роста уровня (зерно навыков).
+    pub max_level: u32,
+}
+
 /// Ошибка загрузки/валидации конфига. Всегда указывает путь к файлу, а
 /// [`ConfigError::Invalid`] — имена ключей.
 #[derive(Debug, thiserror::Error)]
@@ -400,6 +419,24 @@ impl Config {
                 "gameplay.professions.fail_xp_ratio: должен быть в 0..=1 (получено: {})",
                 self.gameplay.professions.fail_xp_ratio
             ));
+        }
+
+        // M15/F24: квадратичная кривая XP = round(A×level²+B×level+C).
+        let lv = &self.gameplay.level;
+        if !lv.a.is_finite() || lv.a < 0.0 || !lv.b.is_finite() || lv.b < 0.0 {
+            out.push("gameplay.level.a/b: должны быть конечными и ≥ 0".into());
+        }
+        if !lv.c.is_finite() || lv.c < 0.0 {
+            out.push("gameplay.level.c: должен быть конечным и ≥ 0".into());
+        }
+        if lv.a + lv.b + lv.c < 1.0 {
+            out.push(format!(
+                "gameplay.level: XP(1) = a+b+c должен быть ≥ 1 (получено: {})",
+                lv.a + lv.b + lv.c
+            ));
+        }
+        if lv.max_level < 1 {
+            out.push("gameplay.level.max_level: должен быть ≥ 1".into());
         }
 
         if self.gameplay.magic.rune_recharge.trim().is_empty() {

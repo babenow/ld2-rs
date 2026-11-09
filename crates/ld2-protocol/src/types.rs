@@ -267,6 +267,19 @@ pub struct CharacterState {
     pub mp: Mp,
     #[serde(default)]
     pub xp_pool: i64,
+    /// M15/F24: уровень персонажа (`None` — сервер без уровня, шкалу
+    /// не показываем; аддитивно §11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+    /// M15/F24: весь опыт за убийства.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_xp: Option<i64>,
+    /// M15/F24: опыт в текущем уровне.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xp_in_level: Option<i64>,
+    /// M15/F24: опыт до следующего уровня (`0` — максимум).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xp_to_next: Option<i64>,
     #[serde(default)]
     pub equip: EquipMap,
     #[serde(default)]

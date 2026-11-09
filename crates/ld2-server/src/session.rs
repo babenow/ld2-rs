@@ -1192,6 +1192,10 @@ impl Session {
             inventory.push(item_snapshot(&item, &def));
         }
 
+        // M15/F24: уровень и шкала опыта (окно персонажа).
+        let (level, xp_in_level, xp_to_next) =
+            crate::systems::level_for_total(row.total_xp, &self.state.config.gameplay.level);
+
         Ok(CharacterState {
             id: row.id.clone(),
             name: row.name.clone(),
@@ -1217,6 +1221,10 @@ impl Session {
                 max: i64::from(row.mp_max),
             },
             xp_pool: row.xp_pool,
+            level: Some(level),
+            total_xp: Some(row.total_xp),
+            xp_in_level: Some(xp_in_level),
+            xp_to_next: Some(xp_to_next),
             equip,
             inventory,
             crime: CrimeState {

@@ -105,6 +105,10 @@ const SNAPSHOT_JSON: &str = r#"{
     "hp": { "cur": 42, "max": 60 },
     "mp": { "cur": 45, "max": 60 },
     "xp_pool": 120,
+    "level": 7,
+    "total_xp": 5734,
+    "xp_in_level": 134,
+    "xp_to_next": 2800,
     "equip": { "main_hand": "i_17", "staff": null },
     "inventory": [ { "uid": "i_17", "type": "staff", "name": "Ясеневый посох",
                      "rarity": "rare", "upgrade": 2, "stats": {},
@@ -142,6 +146,10 @@ fn snapshot_matches_doc_example() {
         "D4: mp — объект, не null"
     );
     assert_eq!(snap.char.xp_pool, 120, "пул опыта квестов");
+    assert_eq!(snap.char.level, Some(7), "M15/F24: уровень");
+    assert_eq!(snap.char.total_xp, Some(5734), "M15/F24: общий опыт");
+    assert_eq!(snap.char.xp_in_level, Some(134), "M15/F24: опыт в уровне");
+    assert_eq!(snap.char.xp_to_next, Some(2800), "M15/F24: до уровня");
     assert_eq!(
         snap.char.skills[0].description, None,
         "M14/F17: сервер без description → None (обратная совместимость)"

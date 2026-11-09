@@ -36,6 +36,13 @@ attack_interval_s = 1.0     # период атак в бою, с
 base_damage = 6             # базовый урон персонажа (v1)
 flee_chance = 0.5           # шанс cmd/combat.flee, 0..=1
 
+[gameplay.level]            # M15/F24: уровень персонажа (окно персонажа)
+# XP = round(A×level² + B×level + C) — опыт перехода level → level+1
+a = 50.0                    # рост на высоких уровнях
+b = 50.0                    # темп в начале
+c = 0.0                     # базовое смещение (XP(1) = 100)
+max_level = 60
+
 [gameplay.features]        # → §5 features; неизвестные ключи разрешены
 "loot.roll" = false
 "respawn.inn" = true

@@ -15,6 +15,8 @@ pub struct CharacterRow {
     pub mp_cur: i32,
     pub mp_max: i32,
     pub xp_pool: i64,
+    /// M15/F24: весь опыт за убийства — уровень персонажа.
+    pub total_xp: i64,
     pub state_version: i64,
     /// Базовые/квестовые атрибуты (skills.md §1; JSONB, старт — все 10).
     pub attrs: serde_json::Value,
@@ -26,7 +28,7 @@ pub struct CharacterRow {
 pub async fn list(pool: &PgPool, account_id: i64) -> Result<Vec<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
         "SELECT id, name, profile, location_id, hp_cur, hp_max, \
-         mp_cur, mp_max, xp_pool, state_version, attrs, gold \
+         mp_cur, mp_max, xp_pool, total_xp, state_version, attrs, gold \
          FROM characters \
          WHERE account_id = $1 AND deleted_at IS NULL ORDER BY created_at",
     )
@@ -58,7 +60,7 @@ pub async fn create(
         "INSERT INTO characters (account_id, name, profile) VALUES ($1, $2, $3) \
          ON CONFLICT (name) WHERE deleted_at IS NULL DO NOTHING \
          RETURNING id, name, profile, location_id, hp_cur, hp_max, \
-                  mp_cur, mp_max, xp_pool, state_version, attrs, gold",
+                  mp_cur, mp_max, xp_pool, total_xp, state_version, attrs, gold",
     )
     .bind(account_id)
     .bind(name)
@@ -75,7 +77,7 @@ pub async fn find(
 ) -> Result<Option<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
         "SELECT id, name, profile, location_id, hp_cur, hp_max, \
-         mp_cur, mp_max, xp_pool, state_version, attrs, gold \
+         mp_cur, mp_max, xp_pool, total_xp, state_version, attrs, gold \
          FROM characters \
          WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
     )
@@ -101,7 +103,7 @@ pub async fn bump_state_version(pool: &PgPool, char_id: &str) -> Result<i64, sql
 pub async fn get(pool: &PgPool, char_id: &str) -> Result<Option<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
         "SELECT id, name, profile, location_id, hp_cur, hp_max, \
-         mp_cur, mp_max, xp_pool, state_version, attrs, gold \
+         mp_cur, mp_max, xp_pool, total_xp, state_version, attrs, gold \
          FROM characters WHERE id = $1 AND deleted_at IS NULL",
     )
     .bind(char_id)
@@ -197,6 +199,20 @@ pub async fn add_xp_pool(pool: &PgPool, char_id: &str, amount: i64) -> Result<i6
     .bind(amount)
     .fetch_one(pool)
     .await
+}
+
+/// M15/F24: накопить общий опыт за убийства — растёт всегда, даже
+/// когда навык на гейте/потолке и его XP не изменился.
+pub async fn add_total_xp(pool: &PgPool, char_id: &str, amount: i64) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE characters SET total_xp = total_xp + $2 \
+         WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(char_id)
+    .bind(amount)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Баланс золота персонажа (сделки, ФР-15).

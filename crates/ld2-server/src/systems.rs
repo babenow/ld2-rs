@@ -1,10 +1,38 @@
 //! Чистые игровые правила (без tokio/sqlx) — юнит-тесты (M12.5).
 
-use crate::config::{SkillsSection, UpgradeSection};
+use crate::config::{LevelSection, SkillsSection, UpgradeSection};
 
 /// Порог ранга: `round(base_xp × growth^rank)` (skills.md §2.2, D25).
 pub fn xp_to_next(rank: u32, cfg: &SkillsSection) -> i64 {
     ((cfg.base_xp as f64) * cfg.growth.powi(rank as i32)).round() as i64
+}
+
+/// M15/F24: порог уровня: `XP = round(A×level² + B×level + C)` —
+/// опыт перехода `level → level+1` (level ≥ 1).
+pub fn level_xp_to_next(level: u32, cfg: &LevelSection) -> i64 {
+    let l = f64::from(level.max(1));
+    (cfg.a * l * l + cfg.b * l + cfg.c).round() as i64
+}
+
+/// M15/F24: уровень по общему опыту → `(level, xp в уровне, xp до
+/// следующего)`. На `max_level` опыт копится, `xp_to_next = 0` (UI
+/// прячет шкалу) — зерно потолка навыков.
+pub fn level_for_total(total_xp: i64, cfg: &LevelSection) -> (u32, i64, i64) {
+    let mut level = 1u32;
+    let mut rest = total_xp.max(0);
+    while level < cfg.max_level {
+        let need = level_xp_to_next(level, cfg);
+        if need <= 0 || rest < need {
+            break;
+        }
+        rest -= need;
+        level += 1;
+    }
+    if level >= cfg.max_level {
+        (level, rest, 0)
+    } else {
+        (level, rest, level_xp_to_next(level, cfg))
+    }
 }
 
 /// Применить опыт убийства к навыку (skills.md §2.3): ранги растут, пока
@@ -135,6 +163,45 @@ mod tests {
             (1..20).all(|r| xp_to_next(r, &c) < xp_to_next(r + 1, &c)),
             "пороги монотонно растут"
         );
+    }
+
+    fn level_cfg() -> LevelSection {
+        LevelSection {
+            a: 50.0,
+            b: 50.0,
+            c: 0.0,
+            max_level: 60,
+        }
+    }
+
+    /// M15/F24: квадратичная кривая — round(A×level²+B×level+C).
+    #[test]
+    fn level_curve_follows_config() {
+        let c = level_cfg();
+        assert_eq!(level_xp_to_next(1, &c), 100, "50 + 50 + 0");
+        assert_eq!(level_xp_to_next(2, &c), 300, "50·4 + 50·2");
+        assert_eq!(level_xp_to_next(3, &c), 600, "50·9 + 50·3");
+        assert!(
+            (1..60).all(|l| level_xp_to_next(l, &c) < level_xp_to_next(l + 1, &c)),
+            "пороги монотонно растут"
+        );
+    }
+
+    /// M15/F24: разбор общего опыта: уровень / прогресс / порог.
+    #[test]
+    fn level_for_total_walks_thresholds() {
+        let c = level_cfg();
+        assert_eq!(level_for_total(0, &c), (1, 0, 100));
+        assert_eq!(level_for_total(99, &c), (1, 99, 100));
+        assert_eq!(level_for_total(100, &c), (2, 0, 300));
+        assert_eq!(level_for_total(399, &c), (2, 299, 300));
+        assert_eq!(level_for_total(400, &c), (3, 0, 600));
+        // Потолок: сумма квадратичных порогов до 60 ≈ 3.6M — берём i64::MAX.
+        let (lvl, xp, next) = level_for_total(i64::MAX, &c);
+        assert_eq!(lvl, 60, "потолок max_level");
+        assert_eq!(next, 0, "на потолке шкалы нет");
+        assert!(xp > 0, "опыт копится на потолке");
+        assert_eq!(level_for_total(-5, &c), (1, 0, 100), "защита от минуса");
     }
 
     #[test]
