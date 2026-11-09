@@ -11,7 +11,7 @@
 # запускайте их одновременно.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: ld2
       POSTGRES_PASSWORD: ld2
@@ -19,7 +19,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./.pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ld2 -d ld2"]
       interval: 5s
@@ -39,6 +39,3 @@ services:
       - ./content:/content:ro
     ports:
       - "24817:24817"
-
-volumes:
-  pgdata:
