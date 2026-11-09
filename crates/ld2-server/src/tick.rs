@@ -434,6 +434,15 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         _ => return None,
     };
 
+    // M15/F24: общий опыт растёт при каждом убийстве — даже когда
+    // навык на гейте и его XP не изменился.
+    if work.amount > 0 {
+        if let Err(e) = crate::db::characters::add_total_xp(pool, &work.char_id, work.amount).await
+        {
+            warn!("тик (total_xp {}): {e}", work.char_id);
+        }
+    }
+
     let (new_xp, new_rank) =
         crate::systems::apply_kill_xp(xp, rank, work.amount, &state.config.skills, max_attr);
     if new_xp == xp && new_rank == rank {

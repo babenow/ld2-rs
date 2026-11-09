@@ -14,7 +14,7 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
         return;
     };
     let ws = common::start_ws_server(&db_url).await;
-    let (mut c, _login, _char_id) = in_world(&ws).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
 
     // В лес — к волку (агрессивный, hp 18, урон сервера 6 → 3 удара).
     let ack = {
@@ -72,6 +72,18 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     assert_eq!(c.ack(seq).await["result"], "ok", "взятие лута трупа");
     let added = c.wait_event("evt/item/added").await;
     assert_eq!(added["payload"]["item"]["name"], "Зелье лечения");
+
+    // M15/F24: общий опыт и шкала уровня в свежем снапшоте (26 XP).
+    let seq = c
+        .send("cmd/char.select", json!({ "char_id": char_id }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "перевыбор персонажа");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let ch = &snap["payload"]["char"];
+    assert_eq!(ch["total_xp"], 26, "total_xp = XP убийства: {ch}");
+    assert_eq!(ch["level"], 1, "26 < 200 → уровень 1");
+    assert_eq!(ch["xp_in_level"], 26, "прогресс в уровне");
+    assert_eq!(ch["xp_to_next"], 100, "порог 1-го уровня: 50+50+0");
 }
 
 #[tokio::test]
