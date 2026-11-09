@@ -107,6 +107,14 @@ fn main() -> anyhow::Result<()> {
             })
             .detach();
 
+            // M14/F21: смена раскладки клавиатуры → перерисовка экрана
+            // входа (предупреждение читает раскладку в рендере).
+            let layout_watch = root.clone();
+            cx.on_keyboard_layout_change(move |acx| {
+                layout_watch.update(acx, |_root, cx| cx.notify());
+            })
+            .detach();
+
             // Фоновый цикл: опрос транспорта с idle-backoff (НФР §8).
             let poller = root.clone();
             cx.spawn(async move |cx: &mut gpui::AsyncApp| {

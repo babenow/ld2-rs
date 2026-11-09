@@ -244,6 +244,8 @@ pub(super) fn t(key: Key) -> &'static str {
         ExitNowBtn => "Выйти сейчас",
         CancelBtn => "Отмена",
         SkillInfoBtn => "О навыке",
+        WarnCaps => "Caps Lock включён — учётные данные вводятся с заглавными",
+        WarnRuLayout => "Раскладка клавиатуры — русская, переключите на английскую",
         RolePlayer => "Игрок",
         RoleAdmin => "Админ",
         RoleModerator => "Модератор",

@@ -279,6 +279,9 @@ pub enum Key {
     CancelBtn,
     // M14 F17: карточка навыка (иконка ⓘ)
     SkillInfoBtn,
+    // M14 F21: предупреждения экрана входа (Caps/раскладка)
+    WarnCaps,
+    WarnRuLayout,
     // M14 F19: роли и модерация чата
     RolePlayer,
     RoleAdmin,
@@ -619,6 +622,8 @@ mod tests {
         Key::ExitNowBtn,
         Key::CancelBtn,
         Key::SkillInfoBtn,
+        Key::WarnCaps,
+        Key::WarnRuLayout,
         Key::RolePlayer,
         Key::RoleAdmin,
         Key::RoleModerator,

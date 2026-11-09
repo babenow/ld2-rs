@@ -1107,10 +1107,22 @@ impl Root {
             )
     }
 
-    fn login_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    fn login_screen(&mut self, window: &Window, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let error = self.store.login_error.clone();
+        // M14/F21: живое чтение состояния на каждый рендер — Caps из
+        // поля окна (обновляется каждым ModifiersChanged), раскладка —
+        // из TIS-источника ввода.
+        let caps_on = window.capslock().on;
+        let (layout_id, layout_name) = {
+            let layout = cx.keyboard_layout();
+            (layout.id().to_string(), layout.name().to_string())
+        };
+        let ru_layout = is_cyrillic_layout(&layout_id, &layout_name);
         div()
+            // M14/F21: смена модификаторов (Caps/Shift/Ctrl) → перерисовка:
+            // предупреждения читаются в рендере из window/keyboard_layout.
+            .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .flex()
             .flex_col()
             .items_center()
@@ -1133,6 +1145,21 @@ impl Root {
                     .w(px(320.0))
                     .child(PasswordInput::new(self.ti(&self.password_input))),
             )
+            // M14/F21: предупреждения Caps/раскладка — под полями ввода.
+            .children(caps_on.then(|| {
+                div()
+                    .w(px(320.0))
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.warn))
+                    .child(t(lang, Key::WarnCaps))
+            }))
+            .children(ru_layout.then(|| {
+                div()
+                    .w(px(320.0))
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.warn))
+                    .child(t(lang, Key::WarnRuLayout))
+            }))
             .child(btn(
                 cx,
                 t(lang, Key::BtnLogin).to_string(),
@@ -1500,6 +1527,15 @@ impl Root {
 }
 
 /// Текущая ОС — для разрешения `secondary-` в Keystroke::parse_with_os.
+/// M14/F21: русская/кириллическая раскладка по TIS-id и локализованному
+/// имени (macOS: `com.apple.keylayout.Russian` + «Русская»/«Russian»;
+/// Linux: id `ru`). Чистая функция — юнит-тест.
+fn is_cyrillic_layout(id: &str, name: &str) -> bool {
+    let id = id.to_lowercase();
+    let name = name.to_lowercase();
+    id == "ru" || id.contains("russ") || name.contains("russ") || name.contains("русск")
+}
+
 fn host_os() -> gpui::OperatingSystem {
     if cfg!(target_os = "macos") {
         gpui::OperatingSystem::Mac
@@ -2295,7 +2331,7 @@ impl Render for Root {
                     .flex_grow_1()
                     .min_h_0()
                     .child(match self.store.screen {
-                        Screen::Login => self.login_screen(cx, &pal),
+                        Screen::Login => self.login_screen(window, cx, &pal),
                         Screen::Characters => self.characters_screen(cx, &pal),
                         Screen::Game => self.game_screen(cx, &pal),
                     }),
@@ -2429,6 +2465,20 @@ mod tests {
             status_color(&light, &TransportStatus::Stopped).0,
             light.success
         );
+    }
+
+    /// M14/F21: детект русской раскладки по id/имени источника ввода.
+    #[test]
+    fn cyrillic_layout_detected() {
+        assert!(is_cyrillic_layout("com.apple.keylayout.Russian", "Русская"));
+        assert!(is_cyrillic_layout(
+            "com.apple.keylayout.Russian-PC",
+            "Russian"
+        ));
+        assert!(is_cyrillic_layout("ru", "QWERTY"), "Linux/xkb: id ru");
+        assert!(is_cyrillic_layout("com.apple.keylayout.ABC", "русская"));
+        assert!(!is_cyrillic_layout("com.apple.keylayout.ABC", "ABC"));
+        assert!(!is_cyrillic_layout("", ""), "пустой источник — не русская");
     }
 
     /// M14/F1: бейджи локации — PvP по флагу, иначе Safe; прочие — muted.
