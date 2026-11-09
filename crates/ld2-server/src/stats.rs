@@ -168,6 +168,7 @@ mod tests {
             id: id.into(),
             name: None,
             description: None,
+            group: None,
             rank,
             xp: 0,
             xp_to_next: 0,

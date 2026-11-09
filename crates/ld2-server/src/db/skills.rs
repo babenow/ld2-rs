@@ -9,6 +9,9 @@ pub struct SkillContentRow {
     pub name: String,
     /// M14/F17: описание из контента — уходит в SkillSnapshot.
     pub description: String,
+    /// M15/F28: группа из контента (skills.md §3) — группировка UI.
+    /// COALESCE: колонка могла быть NULL у строк старого сида.
+    pub skill_group: String,
 }
 
 /// Вложенный навык персонажа.
@@ -21,9 +24,12 @@ pub struct SkillRow {
 
 /// Все навыки контента (снапшот §6 отдаёт их всех — у невложенных нули).
 pub async fn content_skills(pool: &PgPool) -> Result<Vec<SkillContentRow>, sqlx::Error> {
-    sqlx::query_as::<_, SkillContentRow>("SELECT id, name, description FROM skills ORDER BY id")
-        .fetch_all(pool)
-        .await
+    sqlx::query_as::<_, SkillContentRow>(
+        "SELECT id, name, COALESCE(skill_group, '') AS skill_group, description \
+         FROM skills ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
 }
 
 /// Один навык контента (валидация `char.xp_invest`); `None` — нет в сиде.

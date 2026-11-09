@@ -518,4 +518,19 @@ mod tests {
             );
         }
     }
+
+    /// M15/F28: у каждого навыка контента есть группа (skills.md §3).
+    #[test]
+    fn every_skill_has_group() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = load(&dir).expect("контент контента загружается");
+        assert!(!content.skills.is_empty(), "навыки есть");
+        for skill in &content.skills {
+            assert!(
+                !skill.group.trim().is_empty(),
+                "нет группы у навыка {}",
+                skill.id
+            );
+        }
+    }
 }

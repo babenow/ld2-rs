@@ -278,6 +278,12 @@ pub(super) fn t(key: Key) -> &'static str {
         ParMagicDispel => "Magic dispel",
         ParMagicCritDamage => "Magic crit",
         ParMagicCritChance => "Magic crit chance",
+        SkillGroupWeapon => "Combat weapons",
+        SkillGroupDefense => "Defense",
+        SkillGroupMagic => "Magic",
+        SkillGroupStealth => "Dexterity",
+        SkillGroupPractice => "Practice",
+        SkillGroupSocial => "Social",
 
         HkConsumable => "Scroll/potion",
         HotbarNoTarget => "Select a target",

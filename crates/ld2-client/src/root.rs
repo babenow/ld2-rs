@@ -2547,6 +2547,7 @@ mod tests {
             id: id.to_string(),
             name: None,
             description: None,
+            group: None,
             rank,
             xp: 0,
             xp_to_next: 120,

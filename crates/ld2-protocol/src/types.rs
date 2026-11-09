@@ -148,6 +148,10 @@ pub struct SkillSnapshot {
     /// Опционально: серверы без контента обходят поле вовсе.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// M15/F28: группа навыка (skills.md §3: weapon/defense/magic/
+    /// stealth/practice/social); None — сервер без групп.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     pub rank: u32,
     pub xp: i64,
     pub xp_to_next: i64,

@@ -100,7 +100,8 @@ const SNAPSHOT_JSON: &str = r#"{
   "char": {
     "id": "c1", "name": "Ким",
     "attrs": { "str": 14, "int": 9 },
-    "skills": [ { "id": "sword", "rank": 3, "xp": 612, "xp_to_next": 480 } ],
+    "skills": [ { "id": "sword", "group": "weapon",
+                  "rank": 3, "xp": 612, "xp_to_next": 480 } ],
     "professions": [ { "id": "scribe", "rank": 2, "xp": 140, "xp_to_next": 200 } ],
     "hp": { "cur": 42, "max": 60 },
     "mp": { "cur": 45, "max": 60 },
@@ -164,6 +165,11 @@ fn snapshot_matches_doc_example() {
     assert_eq!(
         snap.char.skills[0].description, None,
         "M14/F17: сервер без description → None (обратная совместимость)"
+    );
+    assert_eq!(
+        snap.char.skills[0].group.as_deref(),
+        Some("weapon"),
+        "M15/F28: группа навыка из контента"
     );
     assert_eq!(
         snap.char.equip.get("staff"),

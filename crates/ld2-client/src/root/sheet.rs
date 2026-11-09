@@ -25,7 +25,7 @@ use ld2_protocol::cmd::{
     GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse, QuestAbandon, QuestAccept,
     QuestTurnIn, SocketExtract, SocketInsert, UpgradePreview, UpgradeStart,
 };
-use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity};
+use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity, SkillSnapshot};
 
 use crate::palette::Palette;
 use ely::buttons::IconButton;
@@ -105,6 +105,17 @@ impl SheetTab {
         }
     }
 }
+
+/// M15/F28: группы навыков в порядке GDD §3 (A–F); ид — значение
+/// `skills.skill_group` из контента, ключ — заголовок группы.
+const SKILL_GROUPS: [(&str, Key); 6] = [
+    ("weapon", Key::SkillGroupWeapon),
+    ("defense", Key::SkillGroupDefense),
+    ("magic", Key::SkillGroupMagic),
+    ("stealth", Key::SkillGroupStealth),
+    ("practice", Key::SkillGroupPractice),
+    ("social", Key::SkillGroupSocial),
+];
 
 /// Демо-каталог профессий для обучения (skills.md §5; сервер валидирует).
 const LEARN_CATALOG: [(&str, Key); 7] = [
@@ -655,92 +666,136 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::Loading));
         };
-        let mut col =
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().font_weight(gpui::FontWeight::BOLD).child(format!(
-                    "{}: {}",
-                    t(lang, Key::XpPoolLabel),
-                    snap.char.xp_pool
-                )));
-        for skill in &snap.char.skills {
-            let name = skill.name.clone().unwrap_or_else(|| skill.id.clone());
-            let id = skill.id.clone();
-            let rank = skill.rank;
-            // M14/F17: описание навыка — в тултипе строки; ⓘ открывает
-            // карточку с полной информацией.
-            let desc = skill.description.clone().unwrap_or_default();
-            let info_id = id.clone();
-            let mut row = div().id(format!("ld2-skill-{id}"));
-            if !desc.is_empty() {
-                row = row.tooltip(Tooltip::text(desc));
+        let pool = snap.char.xp_pool;
+        let mut col = div().flex().flex_col().gap_2().child(
+            div().font_weight(gpui::FontWeight::BOLD).child(format!(
+                "{}: {}",
+                t(lang, Key::XpPoolLabel),
+                pool
+            )),
+        );
+        // M15/F28: навыки по группам GDD §3 (A–F) — заголовок группы,
+        // если в снапшоте есть хоть один её навык.
+        for (gid, key) in SKILL_GROUPS {
+            let group: Vec<&SkillSnapshot> = snap
+                .char
+                .skills
+                .iter()
+                .filter(|s| s.group.as_deref() == Some(gid))
+                .collect();
+            if group.is_empty() {
+                continue;
             }
-            let mut row = row
-                .flex()
-                .flex_col()
-                .gap_1()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(div().child(name))
-                        .child(div().text_color(rgb(pal.muted)).child(format!("·{rank}")))
-                        .child(div().flex_grow_1())
-                        .child(
-                            IconButton::new(format!("ld2-skill-info-{id}"), IconName::Info)
-                                .tooltip(t(lang, Key::SkillInfoBtn))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.skill_info = Some(info_id.clone());
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .child(bar(
-                    if skill.xp_to_next > 0 {
-                        skill.xp as f32 / skill.xp_to_next as f32
-                    } else {
-                        0.0
-                    },
-                    format!("{}/{}", skill.xp, skill.xp_to_next),
-                    pal.accent,
-                    pal,
-                ));
-            // Вложение очков из пула (D3/D4, ФР-04).
-            if snap.char.xp_pool > 0 {
-                let pool = snap.char.xp_pool;
-                let mut buttons = div().flex().flex_row().gap_1();
-                for (label, points) in [("+1", 1_i64), ("+5", 5_i64)] {
-                    let sid = id.clone();
-                    buttons =
-                        buttons.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
-                            this.invest(&sid, points.min(pool));
-                            let _ = cx;
-                        }));
-                }
-                let sid = id.clone();
-                buttons = buttons.child(act_btn(
-                    cx,
-                    t(lang, Key::MaxLabel),
-                    pal.panel,
-                    pal.text,
-                    move |this, cx| {
-                        this.invest(&sid, pool);
-                        let _ = cx;
-                    },
-                ));
-                row = row.child(buttons);
+            col = col.child(
+                div()
+                    .mt(px(6.0))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(t(lang, key)),
+            );
+            for skill in group {
+                col = col.child(self.skill_row(cx, pal, skill, pool));
             }
-            col = col.child(row);
+        }
+        // Строки без известной группы — в конце: старый сервер (group =
+        // None) или новая группа контента без ключа l10n.
+        let rest: Vec<&SkillSnapshot> = snap
+            .char
+            .skills
+            .iter()
+            .filter(|s| {
+                s.group
+                    .as_deref()
+                    .is_none_or(|g| !SKILL_GROUPS.iter().any(|(id, _)| *id == g))
+            })
+            .collect();
+        for skill in rest {
+            col = col.child(self.skill_row(cx, pal, skill, pool));
         }
         col
+    }
+
+    /// M15/F28: строка навыка (перенос из таба) — название/ранг,
+    /// тултип описания, ⓘ-карточка, прогресс и вложение XP из пула.
+    fn skill_row(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        skill: &SkillSnapshot,
+        pool: i64,
+    ) -> impl gpui::IntoElement {
+        let lang = self.lang;
+        let name = skill.name.clone().unwrap_or_else(|| skill.id.clone());
+        let id = skill.id.clone();
+        let rank = skill.rank;
+        // M14/F17: описание навыка — в тултипе строки; ⓘ открывает
+        // карточку с полной информацией.
+        let desc = skill.description.clone().unwrap_or_default();
+        let info_id = id.clone();
+        let mut row = div().id(format!("ld2-skill-{id}"));
+        if !desc.is_empty() {
+            row = row.tooltip(Tooltip::text(desc));
+        }
+        let mut row = row
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .child(div().child(name))
+                    .child(div().text_color(rgb(pal.muted)).child(format!("·{rank}")))
+                    .child(div().flex_grow_1())
+                    .child(
+                        IconButton::new(format!("ld2-skill-info-{id}"), IconName::Info)
+                            .tooltip(t(lang, Key::SkillInfoBtn))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.skill_info = Some(info_id.clone());
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(bar(
+                if skill.xp_to_next > 0 {
+                    skill.xp as f32 / skill.xp_to_next as f32
+                } else {
+                    0.0
+                },
+                format!("{}/{}", skill.xp, skill.xp_to_next),
+                pal.accent,
+                pal,
+            ));
+        // Вложение очков из пула (D3/D4, ФР-04).
+        if pool > 0 {
+            let mut buttons = div().flex().flex_row().gap_1();
+            for (label, points) in [("+1", 1_i64), ("+5", 5_i64)] {
+                let sid = id.clone();
+                buttons =
+                    buttons.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
+                        this.invest(&sid, points.min(pool));
+                        let _ = cx;
+                    }));
+            }
+            let sid = id.clone();
+            buttons = buttons.child(act_btn(
+                cx,
+                t(lang, Key::MaxLabel),
+                pal.panel,
+                pal.text,
+                move |this, cx| {
+                    this.invest(&sid, pool);
+                    let _ = cx;
+                },
+            ));
+            row = row.child(buttons);
+        }
+        row
     }
 
     fn invest(&mut self, skill_id: &str, points: i64) {
@@ -2154,6 +2209,19 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M15/F28: группы — в порядке GDD §3, иды уникальны.
+    #[test]
+    fn skill_groups_match_gdd_order() {
+        let ids: Vec<&str> = SKILL_GROUPS.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            ids,
+            ["weapon", "defense", "magic", "stealth", "practice", "social"],
+            "порядок групп как в skills.md §3 (A–F)"
+        );
+        let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(ids.len(), unique.len(), "иды групп уникальны");
+    }
 
     /// M15/F25: состав и порядок вкладок окна — по спеке пользователя
     /// (Параметры | Навыки | Профессии | Репутация + нетронутые).
