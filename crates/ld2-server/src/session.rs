@@ -2441,6 +2441,11 @@ impl Session {
         };
         rows.into_iter()
             .filter_map(|(id, channel, from, name, text, sent_at)| {
+                // M14/F22: реплей помечается — клиент не показывает
+                // прошлую сессию новому входу (кольцо D25 в БД живёт,
+                // совместимость — через extra §11).
+                let mut extra = serde_json::Map::new();
+                extra.insert("replay".to_string(), serde_json::Value::Bool(true));
                 let payload = ld2_protocol::evt::ChatMessage {
                     // M14/F19: id переживает рестарт — реплей тоже удаляем.
                     id: Some(id.max(0) as u64),
@@ -2450,7 +2455,7 @@ impl Session {
                     text,
                     tags: None,
                     sent_at,
-                    extra: Default::default(),
+                    extra,
                 };
                 event_payload_text("evt/chat/message", &payload).map(Out::Text)
             })

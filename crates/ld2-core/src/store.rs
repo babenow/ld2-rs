@@ -1362,6 +1362,12 @@ impl AppStore {
                 let Ok(msg) = serde_json::from_value::<ChatMessage>(payload) else {
                     return vec![];
                 };
+                // M14/F22: реплей истории (маркер replay) не показываем —
+                // журнал и чат входят в игру пустыми; кольцо D25 живёт
+                // на сервере, совместимость — через extra (§11).
+                if msg.extra.get("replay").and_then(|v| v.as_bool()) == Some(true) {
+                    return vec![];
+                }
                 // ФР-13: история per-channel (ring) + адресат для «ответить».
                 let my_id = self
                     .snapshot
@@ -2113,6 +2119,47 @@ mod tests {
 
     /// M14/F19: evt/chat/deleted убирает строку из истории канала;
     /// can_moderate — по роли из session.start (старый сервер → player).
+    /// M14/F22: строки с маркером replay не попадают ни в чат, ни в
+    /// журнал — прошлая сессия не навязывается новому входу.
+    #[test]
+    fn replay_marked_messages_not_shown() {
+        let mut store = store_with_session();
+        let log_before = store.log.len();
+
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 7, "channel": "global", "from": "p", "name": "Старый",
+                "text": "вчерашнее", "sent_at": "2026-11-08T12:00:00Z",
+                "replay": true
+            })),
+        }));
+        assert!(
+            !store.chat.contains_key("global"),
+            "реплей не создаёт кольцо канала"
+        );
+        assert_eq!(store.log.len(), log_before, "реплей не пушится в журнал");
+
+        // Обычное сообщение (без маркера) — как раньше.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 8, "channel": "global", "from": "p", "name": "Живой",
+                "text": "сейчас", "sent_at": "2026-11-09T12:00:00Z"
+            })),
+        }));
+        assert_eq!(store.chat.get("global").expect("живое сообщение").len(), 1);
+        assert_eq!(store.log.len(), log_before + 1, "живое — в журнал идёт");
+    }
+
     #[test]
     fn chat_deleted_event_removes_message() {
         let mut store = store_with_session();

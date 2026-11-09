@@ -372,7 +372,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ### Социальное
 | Событие | Payload | Назначение |
 |---|---|---|
-| `evt/chat/message` | `{ id?, channel, from, name, text, tags[]?, sent_at (ISO-8601) }` | сообщение чата (`id` — для удаления, M14/F19) |
+| `evt/chat/message` | `{ id?, channel, from, name, text, tags[]?, sent_at (ISO-8601), replay? }` | сообщение чата (`id` — для удаления M14/F19; `replay:true` — реплей истории при входе, клиент не показывает, M14/F22) |
 | `evt/chat/deleted` | `{ id }` | сообщение удалено из истории (M14/F19) |
 | `evt/party/updated` | `{ party: PartyState \| null }` | полное состояние группы (список, лидер, HP) |
 | `evt/trade/state` | `{ offer_id, version, you: ItemSnapshot[], them: ItemSnapshot[], you_gold, them_gold, you_locked, them_locked, value_hint? }` | каждое изменение = новый `version` |
