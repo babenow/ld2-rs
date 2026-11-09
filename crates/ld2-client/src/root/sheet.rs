@@ -14,7 +14,9 @@
 use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, SharedString};
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
-use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, Act, UpgradeView};
+use ld2_core::store::{
+    crime_kind_title, filter_active_statuses, local_epoch, Act, Screen, UpgradeView,
+};
 use ld2_protocol::cmd::{
     CharXpInvest, CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave,
     GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse, QuestAbandon, QuestAccept,
@@ -28,7 +30,7 @@ use ely::forms::{Choice, Input, Select};
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
-use ely::primitives::{IconName, Tooltip};
+use ely::primitives::{Backdrop, IconName, Tooltip};
 
 use super::{act_btn, scrollable_tab, Root};
 
@@ -204,16 +206,24 @@ impl Root {
 
     // ── каркас окна ───────────────────────────────────────────────────────
 
-    /// M15/F25: **окно персонажа** — оверлей поверх игрового экрана
-    /// (открывается кнопкой в шапке/хоткеем `c`; Esc/✕/кнопка закрывает).
-    /// Сверху заголовок, ниже две колонки: левая (опыт/экипировка/
-    /// атрибуты/статусы) и правая (вкладки).
-    pub(crate) fn character_window(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    /// M15/F25b: **окно персонажа** — всплывающий диалог поверх игры
+    /// (решение пользователя): скрим Ely `Backdrop` (клик мимо
+    /// закрывает), карточка 760×560 по центру; Esc и ✕ в шапке карточки
+    /// закрывают, кнопка в шапке/хоткей `c` — открывают. Игра видна
+    /// позади (слой поверх `game_screen`, а не замена ему).
+    pub(crate) fn character_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        if !self.character_open || self.store.screen != Screen::Game {
+            return None;
+        }
         // Автозагрузки один раз (ФР-08/16 + M15/F25 журнал статусов).
         if self.store.snapshot.is_some() {
             // M15/F25: журнал нарушений нужен левой колонке окна —
             // грузим при открытии (вкладки «Статусы» больше нет).
-            if self.character_open && !self.store.crime_log_loaded {
+            if !self.store.crime_log_loaded {
                 self.store.crime_log_loaded = true;
                 self.send_cmd(&CrimeLog { limit: Some(50) }, Act::CrimeLog);
             }
@@ -248,11 +258,17 @@ impl Root {
                     })),
             );
 
-        div()
+        let card = div()
             .flex()
             .flex_col()
             .gap_2()
-            .size_full()
+            .w(px(760.0))
+            .h(px(560.0))
+            .p(px(12.0))
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(pal.border))
+            .bg(rgb(pal.panel))
             .child(top)
             .child(
                 div()
@@ -263,7 +279,14 @@ impl Root {
                     .min_h_0()
                     .child(self.character_left_column(cx, pal))
                     .child(self.character_tabs(cx, pal)),
-            )
+            );
+
+        Some(
+            Backdrop::new("ld2-char-backdrop")
+                .on_dismiss(self.dismiss(cx, |root| root.character_open = false))
+                .child(card)
+                .into_any_element(),
+        )
     }
 
     /// M15/F25: левая колонка окна — шкала опыта, экипировка,
@@ -384,8 +407,9 @@ impl Root {
         }
 
         let body = match tab {
-            // M15/F25: заглушки до F26 («Параметры») и F27 («Репутация»).
-            SheetTab::Params | SheetTab::Reputation => div()
+            // M15/F26: производные характеристики; заглушка до F27 — «Репутация».
+            SheetTab::Params => self.tab_params(pal),
+            SheetTab::Reputation => div()
                 .px_2()
                 .py_1()
                 .text_color(rgb(pal.muted))
@@ -400,6 +424,7 @@ impl Root {
         // прокручиваются, остальные вкладки ведут себя как раньше.
         col = col.child(match tab {
             SheetTab::Skills => scrollable_tab("ld2-skills-scroll", &self.skills_scroll, body),
+            SheetTab::Params => scrollable_tab("ld2-params-scroll", &self.params_scroll, body),
             SheetTab::Professions => {
                 scrollable_tab("ld2-professions-scroll", &self.professions_scroll, body)
             }
@@ -408,6 +433,68 @@ impl Root {
             }
             _ => body,
         });
+        col
+    }
+
+    /// M15/F26: вкладка «Параметры» — 16 производных характеристик
+    /// (серверные `derived`; у сервера без M15 — заглушка).
+    fn tab_params(&self, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        let Some(d) = snap.char.derived.as_ref() else {
+            return div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::CharComingSoon));
+        };
+        // Порядок строк — спецификация пользователя (16 позиций).
+        let rows: [(&Key, String); 16] = [
+            (&Key::ParAccuracy, format!("{}%", d.accuracy)),
+            (
+                &Key::ParDamage,
+                format!("{}..{}", d.damage_min, d.damage_max),
+            ),
+            (&Key::ParCritChance, format!("{}%", d.crit_chance)),
+            (&Key::ParCritDamage, format!("{}%", d.crit_damage)),
+            (&Key::ParArmor, d.armor.to_string()),
+            (&Key::ParDodge, format!("{}%", d.dodge)),
+            (&Key::ParParry, format!("{}..{}", d.parry_min, d.parry_max)),
+            (&Key::ParParryChance, format!("{}%", d.parry_chance)),
+            (&Key::ParBlock, format!("{}..{}", d.block_min, d.block_max)),
+            (&Key::ParBlockChance, format!("{}%", d.block_chance)),
+            (&Key::ParMagicDefense, d.magic_defense.to_string()),
+            (&Key::ParMagicDodge, format!("{}%", d.magic_dodge)),
+            (&Key::ParMagicResist, format!("{}%", d.magic_resist)),
+            (&Key::ParMagicDispel, format!("{}%", d.magic_dispel)),
+            (
+                &Key::ParMagicCritDamage,
+                format!("{}%", d.magic_crit_damage),
+            ),
+            (
+                &Key::ParMagicCritChance,
+                format!("{}%", d.magic_crit_chance),
+            ),
+        ];
+        let mut col = div().flex().flex_col().gap_1();
+        for (label, value) in rows {
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .child(div().text_color(rgb(pal.muted)).child(t(lang, *label)))
+                    .child(div().font_weight(gpui::FontWeight::BOLD).child(value)),
+            );
+        }
         col
     }
 

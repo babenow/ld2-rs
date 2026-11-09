@@ -195,6 +195,8 @@ pub struct Root {
     professions_scroll: ScrollHandle,
     /// M15/F25: прокрутка вкладки «Инвентарь» в окне персонажа.
     inventory_scroll: ScrollHandle,
+    /// M15/F26: прокрутка вкладки «Параметры» (16 строк).
+    params_scroll: ScrollHandle,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
     log_tab: LogTab,
     /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
@@ -262,6 +264,7 @@ impl Root {
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
             inventory_scroll: ScrollHandle::new(),
+            params_scroll: ScrollHandle::new(),
             log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
@@ -2407,9 +2410,6 @@ impl Render for Root {
                     .child(match self.store.screen {
                         Screen::Login => self.login_screen(window, cx, &pal),
                         Screen::Characters => self.characters_screen(cx, &pal),
-                        // M15/F25: окно персонажа перекрывает игру
-                        // (заголовок/шапка/TitleBar остаются).
-                        Screen::Game if self.character_open => self.character_window(cx, &pal),
                         Screen::Game => self.game_screen(cx, &pal),
                     }),
             )
@@ -2420,6 +2420,9 @@ impl Render for Root {
             .when_some(self.skill_info_dialog(cx, &pal), |d, dialog| {
                 d.child(dialog)
             })
+            // M15/F25b: окно персонажа — всплывающий диалог (скрим);
+            // игровые диалоги/настройки/выход рисуются позже — выше.
+            .when_some(self.character_dialog(cx, &pal), |d, layer| d.child(layer))
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
