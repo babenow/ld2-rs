@@ -1701,9 +1701,11 @@ impl Session {
         // M14: оплата тренеру — ПОСЛЕ всех проверок (тренер → пул → ранг →
         // гейт атрибутов): за неудачное вложение золото не списывается.
         let gold = trainers::gold_price(&price, i64::from(rank_at_start));
-        if let Err(e) = self.pay_trainer(seq, &char_id, &price, gold).await {
-            return vec![e];
-        }
+        // F29a: оплата монетами — события списания в конце ответа.
+        let money_events = match self.pay_trainer(seq, &char_id, &price, gold).await {
+            Ok(events) => events,
+            Err(e) => return vec![e],
+        };
 
         let pool_left = pool_now - cmd.points;
         if let Err(e) =
@@ -1712,7 +1714,7 @@ impl Session {
             warn!("xp_invest (транзакция): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
-        vec![
+        let mut outs = vec![
             Self::ack_payload(seq, &serde_json::json!({ "pool_left": pool_left })),
             out_event(
                 "evt/char/xp",
@@ -1727,7 +1729,9 @@ impl Session {
                 })
                 .unwrap_or_default(),
             ),
-        ]
+        ];
+        outs.extend(money_events);
+        outs
     }
 
     /// `cmd/item.use` (§7): взятие статического лута (`loot:*`) или расход
@@ -1902,22 +1906,48 @@ impl Session {
             if took.is_none() {
                 return vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")];
             }
-            let row = match db::items::insert(&pool, char_id, &def_id, i64::from(def.qty)).await {
-                Ok(row) => row,
-                Err(e) => {
-                    warn!("take_loot (insert): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            // F29a: монеты складываются в существующий стак (патч
+            // qty), обычные предметы — новым инстансом.
+            let (row, stacked) = if def.item_type == db::items::MONEY_TYPE {
+                match db::items::grant_stacking(&pool, char_id, &def_id, i64::from(def.qty)).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("take_loot (стак монет): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                }
+            } else {
+                match db::items::insert(&pool, char_id, &def_id, i64::from(def.qty)).await {
+                    Ok(row) => (row, false),
+                    Err(e) => {
+                        warn!("take_loot (insert): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
                 }
             };
-            let item = item_snapshot(&row, &def);
-            return vec![
-                Self::ack_payload(seq, &serde_json::json!({})),
+            let ev = if stacked {
+                let mut patch = serde_json::Map::new();
+                patch.insert("qty".into(), serde_json::json!(row.qty));
+                out_event(
+                    "evt/item/state",
+                    None,
+                    serde_json::to_value(ItemState {
+                        uid: row.uid.clone(),
+                        patch,
+                    })
+                    .unwrap_or_default(),
+                )
+            } else {
                 out_event(
                     "evt/item/added",
                     None,
-                    serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
-                ),
-            ];
+                    serde_json::to_value(ItemAdded {
+                        item: item_snapshot(&row, &def),
+                    })
+                    .unwrap_or_default(),
+                )
+            };
+            return vec![Self::ack_payload(seq, &serde_json::json!({})), ev];
         }
 
         // Статический лут из сида (D26): однократно на персонажа.
@@ -3367,9 +3397,27 @@ impl Session {
         let Ok(n) = amount.parse::<i64>() else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректная сумма")];
         };
-        if let Err(e) = db::characters::add_gold(&self.state.pool, &char_id, n).await {
-            warn!("scenario gold: {e}");
-            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        // F29a: золото — стак монет (первое начисление создаёт стак).
+        match db::items::grant_stacking_by_type(
+            &self.state.pool,
+            &char_id,
+            db::items::MONEY_TYPE,
+            n,
+        )
+        .await
+        {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "валюта не найдена в контенте",
+                )];
+            }
+            Err(e) => {
+                warn!("scenario gold: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
         }
         vec![Self::ack_payload(seq, &serde_json::json!({}))]
     }
@@ -3520,11 +3568,11 @@ impl Session {
             )];
         }
 
-        // Золото списывается всегда (до броска).
+        // Золото списывается всегда (до броска); F29a: монеты-стаки.
         let cost = crate::systems::upgrade_cost(i64::from(level), &cfg);
-        match db::characters::spend_gold(&pool, &char_id, cost).await {
-            Ok(true) => {}
-            Ok(false) => {
+        let money_events = match db::items::consume_money(&pool, &char_id, cost).await {
+            Ok(Some(changes)) => Self::money_events(changes),
+            Ok(None) => {
                 return vec![Self::err(
                     seq,
                     ErrorCode::Ingredients,
@@ -3532,10 +3580,10 @@ impl Session {
                 )];
             }
             Err(e) => {
-                warn!("upgrade.start (золото): {e}");
+                warn!("upgrade.start (монеты): {e}");
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
-        }
+        };
 
         let chance = crate::systems::upgrade_chance(i64::from(level), &cfg);
         let success = crate::systems::upgrade_roll(crate::time::now_ms()) < chance;
@@ -3554,6 +3602,8 @@ impl Session {
         let cost_json = serde_json::json!({ "gold": cost });
 
         let mut outs = Vec::new();
+        // F29a: оплата монетами — события списания до результата.
+        outs.extend(money_events);
         if success {
             let new_level = level + 1;
             if let Err(e) = db::items::set_upgrade(&pool, &item.uid, item.upgrade + 1).await {
@@ -3649,6 +3699,34 @@ impl Session {
         result
     }
 
+    /// F29a: события списания стаков монет — патч `qty` уцелевшего
+    /// стака либо `evt/item/removed` опустевшего (Consumed).
+    fn money_events(changes: Vec<(String, Option<i64>)>) -> Vec<Out> {
+        changes
+            .into_iter()
+            .map(|(uid, new_qty)| match new_qty {
+                Some(qty) => {
+                    let mut patch = serde_json::Map::new();
+                    patch.insert("qty".into(), serde_json::json!(qty));
+                    out_event(
+                        "evt/item/state",
+                        None,
+                        serde_json::to_value(ItemState { uid, patch }).unwrap_or_default(),
+                    )
+                }
+                None => out_event(
+                    "evt/item/removed",
+                    None,
+                    serde_json::to_value(ItemRemoved {
+                        uid,
+                        reason: ItemRemovalReason::Consumed,
+                    })
+                    .unwrap_or_default(),
+                ),
+            })
+            .collect()
+    }
+
     /// Оплата тренеру (M14): сначала **проверки** (золото и предметы),
     /// потом списания — иначе отказ «нет предмета» съедал бы уже
     /// уплаченное золото. Нехватка → `E_INGREDIENTS` (гейт тренера и
@@ -3659,23 +3737,19 @@ impl Session {
         char_id: &str,
         price: &trainers::TrainerPrice,
         gold: i64,
-    ) -> Result<(), Out> {
+    ) -> Result<Vec<Out>, Out> {
         let pool = &self.state.pool;
 
         // 1) Проверки.
         if gold > 0 {
-            let have: i64 =
-                match sqlx::query_scalar("SELECT COALESCE(gold, 0) FROM characters WHERE id = $1")
-                    .bind(char_id)
-                    .fetch_one(pool)
-                    .await
-                {
-                    Ok(have) => have,
-                    Err(e) => {
-                        warn!("тренер (золото): {e}");
-                        return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
-                    }
-                };
+            // F29a: баланс — сумма стаков монет (type=money).
+            let have = match db::items::count_by_type(pool, char_id, db::items::MONEY_TYPE).await {
+                Ok(have) => have,
+                Err(e) => {
+                    warn!("тренер (монеты): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            };
             if have < gold {
                 return Err(Self::err(
                     seq,
@@ -3701,11 +3775,13 @@ impl Session {
             }
         }
 
-        // 2) Списания (все проверки прошли).
+        // 2) Списания (все проверки прошли); F29a: монеты — стаки,
+        // изменения уходят событиями в outs вызывающего.
+        let mut events = Vec::new();
         if gold > 0 {
-            match db::characters::spend_gold(pool, char_id, gold).await {
-                Ok(true) => {}
-                Ok(false) => {
+            match db::items::consume_money(pool, char_id, gold).await {
+                Ok(Some(changes)) => events.extend(Self::money_events(changes)),
+                Ok(None) => {
                     return Err(Self::err(
                         seq,
                         ErrorCode::Ingredients,
@@ -3713,7 +3789,7 @@ impl Session {
                     ));
                 }
                 Err(e) => {
-                    warn!("тренер (золото): {e}");
+                    warn!("тренер (монеты): {e}");
                     return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
                 }
             }
@@ -3734,7 +3810,7 @@ impl Session {
                 }
             }
         }
-        Ok(())
+        Ok(events)
     }
 
     /// `cmd/crime.log` (§7): журнал нарушений (новые первые), limit —
@@ -4042,13 +4118,15 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
-        let balance = match db::characters::gold_of(&self.state.pool, &char_id).await {
-            Ok(gold) => gold,
-            Err(e) => {
-                warn!("trade.gold (баланс): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        };
+        let balance =
+            match db::items::count_by_type(&self.state.pool, &char_id, db::items::MONEY_TYPE).await
+            {
+                Ok(gold) => gold,
+                Err(e) => {
+                    warn!("trade.gold (баланс): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
         if cmd.gold > balance {
             return vec![Self::err(
                 seq,
@@ -4215,27 +4293,84 @@ impl Session {
                 }
                 moved.push(serde_json::json!({ "uid": uid, "qty": qty }));
             }
-            // Золото: атомарное списание с проверкой баланса.
+            // F29a: деньги — стаки монет: списание у `from` (стаки
+            // убывают, пустые удаляются) и начисление `to` (в старый
+            // стак либо новым) — той же транзакцией, что и предметы.
             if side.gold > 0 {
-                let affected = sqlx::query(
-                    "UPDATE characters SET gold = gold - $2 \
-                     WHERE id = $1 AND gold >= $2 AND deleted_at IS NULL",
+                let rows: Vec<(String, i32)> = sqlx::query_as(
+                    "SELECT i.uid, i.qty FROM items i \
+                     JOIN item_defs d ON d.id = i.def_id \
+                     WHERE i.character_id = $1 AND d.item_type = $2 \
+                     ORDER BY i.created_at, i.uid FOR UPDATE",
                 )
                 .bind(from)
-                .bind(side.gold)
-                .execute(&mut *tx)
+                .bind(db::items::MONEY_TYPE)
+                .fetch_all(&mut *tx)
                 .await
-                .map_err(|e| format!("золото {from}: {e}"))?
-                .rows_affected();
-                if affected != 1 {
-                    return Err(format!("недостаточно золота у {from}"));
+                .map_err(|e| format!("монеты {from}: {e}"))?;
+                let mut left = side.gold;
+                for (uid, qty) in rows {
+                    if left <= 0 {
+                        break;
+                    }
+                    let take = i64::from(qty).min(left);
+                    left -= take;
+                    let rest = qty - take as i32;
+                    if rest <= 0 {
+                        sqlx::query("DELETE FROM items WHERE uid = $1")
+                            .bind(&uid)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(|e| format!("списание {uid}: {e}"))?;
+                    } else {
+                        sqlx::query("UPDATE items SET qty = $2 WHERE uid = $1")
+                            .bind(&uid)
+                            .bind(rest)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(|e| format!("стак {uid}: {e}"))?;
+                    }
                 }
-                sqlx::query("UPDATE characters SET gold = gold + $2 WHERE id = $1")
+                if left > 0 {
+                    return Err(format!("недостаточно монет у {from}"));
+                }
+                let target: Option<String> = sqlx::query_scalar(
+                    "SELECT i.uid FROM items i \
+                     JOIN item_defs d ON d.id = i.def_id \
+                     WHERE i.character_id = $1 AND d.item_type = $2 \
+                     ORDER BY i.created_at, i.uid LIMIT 1 FOR UPDATE",
+                )
+                .bind(to)
+                .bind(db::items::MONEY_TYPE)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| format!("стак {to}: {e}"))?;
+                if let Some(uid) = target {
+                    sqlx::query("UPDATE items SET qty = qty + $2 WHERE uid = $1")
+                        .bind(&uid)
+                        .bind(side.gold)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| format!("зачисление {uid}: {e}"))?;
+                } else {
+                    let def_id: String = sqlx::query_scalar(
+                        "SELECT id FROM item_defs WHERE item_type = $1 ORDER BY id LIMIT 1",
+                    )
+                    .bind(db::items::MONEY_TYPE)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| format!("определение валюты: {e}"))?
+                    .ok_or_else(|| "нет определения валюты в контенте".to_string())?;
+                    sqlx::query(
+                        "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3)",
+                    )
                     .bind(to)
+                    .bind(&def_id)
                     .bind(side.gold)
                     .execute(&mut *tx)
                     .await
                     .map_err(|e| format!("зачисление {to}: {e}"))?;
+                }
             }
         }
         tx.commit().await.map_err(|e| format!("commit: {e}"))?;
@@ -5246,9 +5381,11 @@ impl Session {
 
         // M14: оплата тренеру (новая профессия — ранг 0 → базовая цена).
         let gold = trainers::gold_price(&price, 0);
-        if let Err(e) = self.pay_trainer(seq, &char_id, &price, gold).await {
-            return vec![e];
-        }
+        // F29a: оплата монетами — события списания в конце ответа.
+        let money_events = match self.pay_trainer(seq, &char_id, &price, gold).await {
+            Ok(events) => events,
+            Err(e) => return vec![e],
+        };
 
         match db::professions::learn(pool, &char_id, &cmd.profession_id).await {
             Ok(_) => {}
@@ -5270,6 +5407,7 @@ impl Session {
             })
             .unwrap_or_default(),
         ));
+        outs.extend(money_events);
         outs
     }
 

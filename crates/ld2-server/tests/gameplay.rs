@@ -392,12 +392,20 @@ async fn death_loses_lut_but_keeps_progress() {
     let death = c.wait_event("evt/char/death").await;
     assert_eq!(death["payload"]["victim_char"], true);
     let lost = death["payload"]["lost_items"].as_array().expect("утрачено");
-    assert_eq!(lost.len(), 1, "утрачен весь лут: {lost:?}");
-    assert_eq!(lost[0]["name"], "Кинжал");
+    // F29a: деньги — обычные предметы: вместе с лутом теряются монеты
+    // (остаток 1000 − 100 цены вложения).
+    let mut lost_names: Vec<&str> = lost.iter().filter_map(|i| i["name"].as_str()).collect();
+    lost_names.sort();
+    assert_eq!(
+        lost_names,
+        ["Золотая монета", "Кинжал"],
+        "утрачен весь лут: {lost:?}"
+    );
     assert_eq!(death["payload"]["respawn"]["location_id"], "l_village");
-    let removed = c.wait_event("evt/item/removed").await;
+    let removed = c
+        .wait(|v| v["type"] == "evt/item/removed" && v["payload"]["uid"] == knife_uid)
+        .await;
     assert_eq!(removed["payload"]["reason"], "lost_on_death");
-    assert_eq!(removed["payload"]["uid"], knife_uid);
     let stats = c.wait_event("evt/char/stats").await;
     assert_eq!(stats["payload"]["patch"]["hp"]["cur"], 100, "респаун полон");
     let changed = c.wait_event("evt/location/changed").await;
@@ -495,7 +503,16 @@ async fn progress_survives_restart() {
     let inv = snap["payload"]["char"]["inventory"]
         .as_array()
         .expect("инвентарь");
-    assert_eq!(inv.len(), 1, "инвентарь пережил рестарт: {inv:?}");
+    // F29a: наряду с лутом инвентарь переживает рестарт и стак монет.
+    assert_eq!(inv.len(), 2, "инвентарь пережил рестарт: {inv:?}");
+    assert!(
+        inv.iter().any(|i| i["type"] == "money" && i["qty"] == 900),
+        "монеты пережили рестарт: {inv:?}"
+    );
+    assert!(
+        inv.iter().any(|i| i["type"] == "weapon"),
+        "нож пережил рестарт: {inv:?}"
+    );
     assert_eq!(
         snap["payload"]["char"]["xp_pool"], 475,
         "пул пережил рестарт"
