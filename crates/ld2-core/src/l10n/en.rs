@@ -305,5 +305,15 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsDamageBold => "Bold",
         // M14 F14: tab
         SettingsFonts => "Fonts",
+        // M16/F29b: backpack window
+        BackpackTitle => "Backpack",
+        BpTabWeapon => "Weapons",
+        BpTabPotion => "Potions",
+        BpTabMagic => "Magic",
+        BpTabMaterial => "Materials",
+        BpTabTool => "Tools",
+        BpTabOther => "Other",
+        BpCurrencies => "Currencies",
+        HkOpenBackpack => "Open backpack",
     }
 }

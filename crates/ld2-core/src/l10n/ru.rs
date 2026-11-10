@@ -305,5 +305,15 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsDamageBold => "Жирным",
         // M14 F14: вкладка
         SettingsFonts => "Шрифты",
+        // M16/F29b: окно рюкзака
+        BackpackTitle => "Рюкзак",
+        BpTabWeapon => "Оружие",
+        BpTabPotion => "Зелья",
+        BpTabMagic => "Магия",
+        BpTabMaterial => "Материалы",
+        BpTabTool => "Инструменты",
+        BpTabOther => "Прочее",
+        BpCurrencies => "Валюты",
+        HkOpenBackpack => "Открыть рюкзак",
     }
 }

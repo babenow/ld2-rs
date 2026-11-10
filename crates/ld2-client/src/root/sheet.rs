@@ -1,7 +1,9 @@
 //! Окно персонажа gpui (M15/F25; порт листа M10.4): левая колонка —
 //! шкала опыта, экипировка, атрибуты, статусы со временем; правая —
-//! вкладки (параметры/навыки/профессии/репутация/квесты/гильдия/
-//! инвентарь). Модалки предмета/улучшения/инкрустации — прежние.
+//! вкладки (параметры/навыки/профессии/репутация/квесты/гильдия;
+//! инвентарь — отдельное окно рюкзака, M16/F29b). Модалки предмета/
+//! улучшения/инкрустации — прежние. Оболочка всплывающих окон
+//! (scrim + drag/resize) — `Root::popup_window`.
 //!
 //! Правило дубликатов: атрибуты/статусы живут только в левой колонке —
 //! одноимённых вкладок больше нет.
@@ -31,13 +33,13 @@ use crate::palette::Palette;
 use ely::buttons::IconButton;
 use ely::forms::{Choice, Input, Select};
 use ely::layout::ScrollArea;
-use ely::menus::{ContextMenu, Menu, MenuItem};
+use ely::menus::{Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
 use super::{
-    act_btn, char_card_origin, clamp_char_size, scrim_closes_on_up, scrollable_tab, CharDialogDrag,
-    CharDialogResize, Root,
+    act_btn, char_card_origin, clamp_char_size, scrim_closes_on_up, scrollable_tab, PopupDrag,
+    PopupKind, PopupResize, Root,
 };
 
 /// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
@@ -52,11 +54,12 @@ pub(crate) enum SheetTab {
     Reputation,
     Quests,
     Guild,
-    Inventory,
 }
 
 impl SheetTab {
-    fn all() -> [(SheetTab, Key); 7] {
+    /// M16/F29b: «Инвентарь» убран из окна — он живёт в отдельном
+    /// окне рюкзака (правило дубликатов).
+    fn all() -> [(SheetTab, Key); 6] {
         [
             (SheetTab::Params, Key::SheetParams),
             (SheetTab::Skills, Key::SheetSkills),
@@ -64,7 +67,6 @@ impl SheetTab {
             (SheetTab::Reputation, Key::SheetReputation),
             (SheetTab::Quests, Key::QuestsTab),
             (SheetTab::Guild, Key::GuildTab),
-            (SheetTab::Inventory, Key::SheetInventory),
         ]
     }
 
@@ -77,7 +79,6 @@ impl SheetTab {
             SheetTab::Reputation => IconName::Shield,
             SheetTab::Quests => IconName::ListChecks,
             SheetTab::Guild => IconName::Flag,
-            SheetTab::Inventory => IconName::Package,
         }
     }
 
@@ -89,7 +90,6 @@ impl SheetTab {
             SheetTab::Reputation => "reputation",
             SheetTab::Quests => "quests",
             SheetTab::Guild => "guild",
-            SheetTab::Inventory => "inventory",
         }
     }
 
@@ -100,10 +100,10 @@ impl SheetTab {
             "reputation" => SheetTab::Reputation,
             "quests" => SheetTab::Quests,
             "guild" => SheetTab::Guild,
-            "inventory" => SheetTab::Inventory,
             // M15/F25: старые значения удалённых вкладок (attrs/statuses)
-            // из сохранённого конфига → «Параметры» (ближайшая инфо-вкладка).
-            "attrs" | "statuses" => SheetTab::Params,
+            // из сохранённого конфига → «Параметры» (ближайшая инфо-вкладка);
+            // M16/F29b: «inventory» переехал в окно рюкзака.
+            "attrs" | "statuses" | "inventory" => SheetTab::Params,
             _ => SheetTab::Params,
         }
     }
@@ -223,18 +223,19 @@ impl Root {
 
     // ── каркас окна ───────────────────────────────────────────────────────
 
-    /// M15/F25b: **окно персонажа** — всплывающий диалог поверх игры
-    /// (решение пользователя): скрим Ely `Backdrop` (клик мимо
-    /// закрывает), карточка 760×560 по центру; Esc и ✕ в шапке карточки
-    /// закрывают, кнопка в шапке/хоткей `c` — открывают. Игра видна
-    /// позади (слой поверх `game_screen`, а не замена ему).
+    /// M15/F25b/M16: **окно персонажа** — всплывающий диалог поверх
+    /// игры: скрим (клик мимо закрывает), карточка 760×560 по центру;
+    /// Esc и ✕ в шапке закрывают, кнопка в шапке/хоткей `c` —
+    /// открывают. Игра видна позади (слой поверх `game_screen`, а не
+    /// замена ему). Инвентарь — отдельное окно рюкзака (M16/F29b);
+    /// геометрия/жесты — оболочка `popup_window`.
     pub(crate) fn character_dialog(
         &mut self,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
-        if !self.character_open || self.store.screen != Screen::Game {
+        if !self.char_popup.open || self.store.screen != Screen::Game {
             return None;
         }
         // Автозагрузки один раз (ФР-08/16 + M15/F25 журнал статусов).
@@ -256,136 +257,163 @@ impl Root {
         }
 
         let lang = self.lang;
-        // Верх окна: заголовок + ✕ (дублирует Esc и кнопку в шапке).
+        // M16/F29b: тело собирается до оболочки — та берёт у Root
+        // только геометрию `PopupState` вида `kind`.
+        let body = div()
+            .flex()
+            .flex_row()
+            .gap_3()
+            .flex_grow_1()
+            .min_h_0()
+            .child(self.character_left_column(cx, pal))
+            .child(self.character_tabs(cx, pal));
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Character,
+            t(lang, Key::BtnCharacter),
+            body,
+        ))
+    }
+
+    /// M16/F29b: оболочка всплывающего окна (механика M15/F25b–g):
+    /// слой со scrim (закрытие — только полный клик, начатый на нём),
+    /// карточка с drag за шапку и resize уголком; `body` — содержимое
+    /// под шапкой. Геометрия и флаги жестов — `PopupState` вида
+    /// `kind` (окна персонажа и рюкзака живут по одному коду).
+    pub(super) fn popup_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        kind: PopupKind,
+        title: impl Into<SharedString>,
+        body: Div,
+    ) -> AnyElement {
+        let lang = self.lang;
+        let title = title.into();
+        let (w, h) = self.popup(kind).size;
+        let delta = self.popup(kind).delta;
+        let id = kind.id();
+
         // M15/F25c: шапка — drag-регион (захват указателя gpui:
         // события идут, даже когда курсор ушёл за карточку).
-        let top = {
-            let drag_this = cx.entity();
-            div()
-                .id("ld2-char-titlebar")
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .cursor_grab()
-                // M15/F25e: жест начат на шапке — scrim его не закроет.
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|root, _, _, _| {
-                        root.char_scrim_down = false;
-                    }),
-                )
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(t(lang, Key::BtnCharacter)),
-                )
-                .child(
-                    IconButton::new("ld2-char-close", IconName::X)
-                        .tooltip(t(lang, Key::BtnClose))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.character_open = false;
-                            cx.notify();
-                        })),
-                )
-                // Захват: запоминаем смещение указателя внутри шапки
-                // (конструктор on_drag получает offset от gpui).
-                .on_drag(CharDialogDrag, move |_value, offset, _window, acx| {
-                    drag_this.update(acx, |root, cx| {
-                        root.char_drag_offset = Some((f32::from(offset.x), f32::from(offset.y)));
+        let drag_this = cx.entity();
+        let top = div()
+            .id(format!("{id}-titlebar"))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .cursor_grab()
+            // M15/F25e: жест начат на шапке — scrim его не закроет.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |root, _, _, _| {
+                    root.popup_mut(kind).scrim_down = false;
+                }),
+            )
+            .child(div().font_weight(gpui::FontWeight::BOLD).child(title))
+            .child(
+                IconButton::new(format!("{id}-close"), IconName::X)
+                    .tooltip(t(lang, Key::BtnClose))
+                    .on_click(cx.listener(move |root, _, _, cx| {
+                        root.popup_mut(kind).open = false;
                         cx.notify();
-                    });
-                    acx.new(|_| EmptyView)
-                })
-                .on_drag_move(cx.listener(
-                    move |root, event: &DragMoveEvent<CharDialogDrag>, window, cx| {
-                        let Some(offset) = root.char_drag_offset else {
-                            return;
-                        };
-                        let position = event.event.position;
-                        let viewport = window.viewport_size();
-                        let (w, h) = root.char_dialog_size;
-                        let base_x = ((f32::from(viewport.width) - w) / 2.0).max(0.0);
-                        let base_y = ((f32::from(viewport.height) - h) / 2.0).max(0.0);
-                        // Шапка внутри padding-а карточки (12 px) — левый
-                        // верхний угол карточки = указатель − offset − 12.
-                        root.char_dialog_delta.0 = f32::from(position.x) - offset.0 - base_x - 12.0;
-                        root.char_dialog_delta.1 = f32::from(position.y) - offset.1 - base_y - 12.0;
-                        cx.notify();
-                    },
-                ))
-        };
+                    })),
+            )
+            // Захват: запоминаем смещение указателя внутри шапки
+            // (конструктор on_drag получает offset от gpui).
+            .on_drag(PopupDrag, move |_value, offset, _window, acx| {
+                drag_this.update(acx, |root, cx| {
+                    root.popup_mut(kind).drag_offset =
+                        Some((f32::from(offset.x), f32::from(offset.y)));
+                    cx.notify();
+                });
+                acx.new(|_| EmptyView)
+            })
+            .on_drag_move(cx.listener(
+                move |root, event: &DragMoveEvent<PopupDrag>, window, cx| {
+                    let st = root.popup_mut(kind);
+                    let Some(offset) = st.drag_offset else {
+                        return;
+                    };
+                    let position = event.event.position;
+                    let viewport = window.viewport_size();
+                    let (w, h) = st.size;
+                    let base_x = ((f32::from(viewport.width) - w) / 2.0).max(0.0);
+                    let base_y = ((f32::from(viewport.height) - h) / 2.0).max(0.0);
+                    // Шапка внутри padding-а карточки (12 px) — левый
+                    // верхний угол карточки = указатель − offset − 12.
+                    st.delta.0 = f32::from(position.x) - offset.0 - base_x - 12.0;
+                    st.delta.1 = f32::from(position.y) - offset.1 - base_y - 12.0;
+                    cx.notify();
+                },
+            ));
 
         // M15/F25c: уголок изменения размера (правый нижний).
-        let resize_grip = {
-            let grip_this = cx.entity();
-            div()
-                .id("ld2-char-resize")
-                .absolute()
-                .right_0()
-                .bottom_0()
-                .size(px(18.0))
-                .rounded_md()
-                .border_l_1()
-                .border_t_1()
-                .border_color(rgb(pal.border))
-                .bg(rgb(pal.panel))
-                .cursor_pointer()
-                // M15/F25e: жест начат на уголке — scrim не закроет.
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|root, _, _, _| {
-                        root.char_scrim_down = false;
-                    }),
-                )
-                .on_drag(CharDialogResize, move |_value, _offset, _window, acx| {
-                    grip_this.update(acx, |root, cx| {
-                        // Новый захват — новый якорь (иначе скачок по
-                        // остатку старого).
-                        root.char_resize_anchor = None;
-                        cx.notify();
-                    });
-                    acx.new(|_| EmptyView)
-                })
-                .on_drag_move(cx.listener(
-                    move |root, event: &DragMoveEvent<CharDialogResize>, window, cx| {
-                        let pos = (
-                            f32::from(event.event.position.x),
-                            f32::from(event.event.position.y),
-                        );
-                        let (cur_w, cur_h) = root.char_dialog_size;
-                        // Якорь — первый move (позицию захвата в конструктор
-                        // on_drag не передаёт); кадр движения теряем.
-                        let Some((ax, ay, w0, h0, dx0, dy0)) = root.char_resize_anchor else {
-                            root.char_resize_anchor = Some((
-                                pos.0,
-                                pos.1,
-                                cur_w,
-                                cur_h,
-                                root.char_dialog_delta.0,
-                                root.char_dialog_delta.1,
-                            ));
-                            return;
-                        };
-                        let viewport = window.viewport_size();
-                        let (nw, nh) = clamp_char_size(
-                            w0 + (pos.0 - ax),
-                            h0 + (pos.1 - ay),
-                            f32::from(viewport.width),
-                            f32::from(viewport.height),
-                        );
-                        // Якорим левый верхний угол: компенсируем
-                        // центрирование Backdrop (resize от центра
-                        // сдвигал бы оба края на Δ/2).
-                        root.char_dialog_delta.0 = dx0 + (nw - w0) / 2.0;
-                        root.char_dialog_delta.1 = dy0 + (nh - h0) / 2.0;
-                        root.char_dialog_size = (nw, nh);
-                        cx.notify();
-                    },
-                ))
-        };
+        let grip_this = cx.entity();
+        let resize_grip = div()
+            .id(format!("{id}-resize"))
+            .absolute()
+            .right_0()
+            .bottom_0()
+            .size(px(18.0))
+            .rounded_md()
+            .border_l_1()
+            .border_t_1()
+            .border_color(rgb(pal.border))
+            .bg(rgb(pal.panel))
+            .cursor_pointer()
+            // M15/F25e: жест начат на уголке — scrim не закроет.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |root, _, _, _| {
+                    root.popup_mut(kind).scrim_down = false;
+                }),
+            )
+            .on_drag(PopupResize, move |_value, _offset, _window, acx| {
+                grip_this.update(acx, |root, cx| {
+                    // Новый захват — новый якорь (иначе скачок по
+                    // остатку старого).
+                    root.popup_mut(kind).resize_anchor = None;
+                    cx.notify();
+                });
+                acx.new(|_| EmptyView)
+            })
+            .on_drag_move(cx.listener(
+                move |root, event: &DragMoveEvent<PopupResize>, window, cx| {
+                    let pos = (
+                        f32::from(event.event.position.x),
+                        f32::from(event.event.position.y),
+                    );
+                    let st = root.popup_mut(kind);
+                    let (cur_w, cur_h) = st.size;
+                    // Якорь — первый move (позицию захвата в конструктор
+                    // on_drag не передаём); кадр движения теряем.
+                    let Some((ax, ay, w0, h0, dx0, dy0)) = st.resize_anchor else {
+                        st.resize_anchor =
+                            Some((pos.0, pos.1, cur_w, cur_h, st.delta.0, st.delta.1));
+                        return;
+                    };
+                    let viewport = window.viewport_size();
+                    let (nw, nh) = clamp_char_size(
+                        w0 + (pos.0 - ax),
+                        h0 + (pos.1 - ay),
+                        f32::from(viewport.width),
+                        f32::from(viewport.height),
+                    );
+                    // Якорим левый верх угол: компенсируем центрирование
+                    // Backdrop (resize от центра сдвигал бы оба края
+                    // на Δ/2).
+                    st.delta.0 = dx0 + (nw - w0) / 2.0;
+                    st.delta.1 = dy0 + (nh - h0) / 2.0;
+                    st.size = (nw, nh);
+                    cx.notify();
+                },
+            ));
 
-        let (w, h) = self.char_dialog_size;
         // M15/F25d: absolute-позиция от слоя (F14-подход): центр
         // вьюпорта + смещение — марджины центрирования давали лишь
         // половину сдвига («резиновый» drag).
@@ -395,10 +423,10 @@ impl Root {
             f32::from(viewport.height),
             w,
             h,
-            self.char_dialog_delta,
+            delta,
         );
         let card = div()
-            .id("ld2-char-card")
+            .id(format!("{id}-card"))
             // M15/F25g: hitbox карточки перекрывает scrim под ней —
             // клик в ЛЮБУЮ точку окна попадает в окно, а не в скрим
             // (иначе «пустые» места карточки без interactivity уходили
@@ -409,8 +437,8 @@ impl Root {
             // целиком прошедший по scrim.
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|root, _, _, _| {
-                    root.char_scrim_down = false;
+                cx.listener(move |root, _, _, _| {
+                    root.popup_mut(kind).scrim_down = false;
                 }),
             )
             .absolute()
@@ -427,56 +455,47 @@ impl Root {
             .border_color(rgb(pal.border))
             .bg(rgb(pal.panel))
             .child(top)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_3()
-                    .flex_grow_1()
-                    .min_h_0()
-                    .child(self.character_left_column(cx, pal))
-                    .child(self.character_tabs(cx, pal)),
-            )
+            .child(body)
             .child(resize_grip);
 
         // M15/F25d: свой слой по F14-шаблону: scrim закрывает по
         // mouse-**up** — попытка перетаскивания (mousedown) физически
         // не может закрыть окно; Esc — наш глобальный обработчик.
-        Some(
-            div()
-                .id("ld2-char-dialog-layer")
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .child(
-                    div()
-                        .id("ld2-char-scrim")
-                        .size_full()
-                        .bg(rgba(0x99000000))
-                        // M15/F25e: запоминаем, что жест начат на scrim.
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|root, _, _, _| {
-                                root.char_scrim_down = true;
-                            }),
-                        )
-                        .on_mouse_up(
-                            MouseButton::Left,
-                            cx.listener(|root, _, _, cx| {
-                                let close =
-                                    scrim_closes_on_up(root.char_scrim_down, cx.has_active_drag());
-                                root.char_scrim_down = false;
-                                if close {
-                                    root.character_open = false;
-                                    cx.notify();
-                                }
-                            }),
-                        ),
-                )
-                .child(card)
-                .into_any_element(),
-        )
+        div()
+            .id(format!("{id}-dialog-layer"))
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(
+                div()
+                    .id(format!("{id}-scrim"))
+                    .size_full()
+                    .bg(rgba(0x99000000))
+                    // M15/F25e: запоминаем, что жест начат на scrim.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |root, _, _, _| {
+                            root.popup_mut(kind).scrim_down = true;
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(move |root, _, _, cx| {
+                            let close = scrim_closes_on_up(
+                                root.popup(kind).scrim_down,
+                                cx.has_active_drag(),
+                            );
+                            root.popup_mut(kind).scrim_down = false;
+                            if close {
+                                root.popup_mut(kind).open = false;
+                                cx.notify();
+                            }
+                        }),
+                    ),
+            )
+            .child(card)
+            .into_any_element()
     }
 
     /// M15/F25: левая колонка окна — шкала опыта, экипировка,
@@ -605,7 +624,6 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::CharComingSoon)),
             SheetTab::Skills => self.tab_skills(cx, pal),
-            SheetTab::Inventory => self.tab_inventory(cx, pal),
             SheetTab::Quests => self.tab_quests(cx, pal),
             SheetTab::Professions => self.tab_professions(cx, pal),
             SheetTab::Guild => self.tab_guild(cx, pal),
@@ -617,9 +635,6 @@ impl Root {
             SheetTab::Params => scrollable_tab("ld2-params-scroll", &self.params_scroll, body),
             SheetTab::Professions => {
                 scrollable_tab("ld2-professions-scroll", &self.professions_scroll, body)
-            }
-            SheetTab::Inventory => {
-                scrollable_tab("ld2-inventory-scroll", &self.inventory_scroll, body)
             }
             _ => body,
         });
@@ -1012,83 +1027,8 @@ impl Root {
         col
     }
 
-    fn tab_inventory(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let lang = self.lang;
-        let Some(snap) = self.store.snapshot.clone() else {
-            return div()
-                .text_color(rgb(pal.muted))
-                .child(t(lang, Key::Loading));
-        };
-        let mut col = div().flex().flex_col().gap_2();
-
-        // Сетка инвентаря (ФР-07): клик — описание, ПКМ — действия.
-        col = col.child(
-            div()
-                .font_weight(gpui::FontWeight::BOLD)
-                .child(t(lang, Key::SheetInventory)),
-        );
-        if snap.char.inventory.is_empty() {
-            // M14/F3: вместо многоточия — понятное пустое состояние.
-            col = col.child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::InventoryEmpty)),
-            );
-        }
-        for item in &snap.char.inventory {
-            let uid = item.uid.clone();
-            let detail = serde_json::to_value(item).unwrap_or_default();
-            let tile = div()
-                .id(format!("ld2-item-{uid}"))
-                .tooltip(Tooltip::text(format!(
-                    "{} · {} · +{}",
-                    item.name, item.rarity, item.upgrade
-                )))
-                .flex()
-                .flex_row()
-                .gap_2()
-                .items_center()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.border))
-                .cursor_pointer()
-                .hover(move |s| s.bg(rgb(pal.selection)))
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener({
-                        let detail = detail.clone();
-                        move |this, _, _, cx| {
-                            // Левый клик — описание (паритет тултипа egui).
-                            this.store.item_detail = Some(detail.clone());
-                            cx.notify();
-                        }
-                    }),
-                )
-                .child(
-                    div()
-                        .text_color(rgb(rarity_color(&item.rarity, pal)))
-                        .child(format!("{} {}", item.name, badges(item))),
-                );
-            // M11.4: ПКМ по предмету — контекстное меню Ely (полный набор
-            // действий egui-паритета; инлайн-раскрытие M10 снято).
-            col = col.child(
-                ContextMenu::new(
-                    format!("ld2-item-ctx-{uid}"),
-                    self.item_actions(cx, pal, &snap.char, item),
-                )
-                .child(tile),
-            );
-        }
-        col
-    }
-
     /// Действия предмета — контекстное меню Ely (ФР-07/09/10, egui-паритет).
-    fn item_actions(
+    pub(crate) fn item_actions(
         &mut self,
         cx: &mut Context<'_, Self>,
         _pal: &Palette,
@@ -2187,7 +2127,7 @@ fn xp_kv_row(pal: &Palette, label: &str, value: &str) -> Div {
 }
 
 /// Бейджи плитки: +N, сокеты ◈○, количество ×N (паритет egui).
-fn badges(item: &ItemSnapshot) -> String {
+pub(crate) fn badges(item: &ItemSnapshot) -> String {
     let mut parts: Vec<String> = Vec::new();
     if item.upgrade > 0 {
         parts.push(format!("+{}", item.upgrade));
@@ -2221,7 +2161,7 @@ fn menu_item(
 }
 
 /// Цвет редкости предмета (палитра §7.4).
-fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
+pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
     match rarity {
         "common" => pal.muted,
         "uncommon" => 0x98_c3_79,
@@ -2299,7 +2239,8 @@ mod tests {
     }
 
     /// M15/F25: состав и порядок вкладок окна — по спеке пользователя
-    /// (Параметры | Навыки | Профессии | Репутация + нетронутые).
+    /// (Параметры | Навыки | Профессии | Репутация + нетронутые);
+    /// M16/F29b: «Инвентарь» убран (окно рюкзака — отдельное).
     #[test]
     fn character_window_tabs_cover_spec() {
         let tabs: Vec<&'static str> = SheetTab::all().iter().map(|(t, _)| t.as_str()).collect();
@@ -2311,8 +2252,7 @@ mod tests {
                 "professions",
                 "reputation",
                 "quests",
-                "guild",
-                "inventory",
+                "guild"
             ],
             "порядок вкладок правой колонки"
         );
@@ -2323,5 +2263,6 @@ mod tests {
         // из сохранённого конфига маппятся на «Параметры».
         assert_eq!(SheetTab::parse("attrs"), SheetTab::Params);
         assert_eq!(SheetTab::parse("statuses"), SheetTab::Params);
+        assert_eq!(SheetTab::parse("inventory"), SheetTab::Params);
     }
 }
