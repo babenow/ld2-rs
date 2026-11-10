@@ -1703,10 +1703,70 @@ fn keystroke_matches(spec: &str, ks: &gpui::Keystroke) -> bool {
                 && want.modifiers.shift == ks.modifiers.shift
                 && want.modifiers.platform == ks.modifiers.platform
                 && want.modifiers.function == ks.modifiers.function
-                && want.key.eq_ignore_ascii_case(&ks.key)
+                // M15: одна и та же физическая клавиша на латинице и
+                // ЙЦУКЕН («c» на русской раскладке приходит как «с» —
+                // charactersIgnoringModifiers отдаёт символ раскладки).
+                && (want.key.eq_ignore_ascii_case(&ks.key)
+                    || keys_physically_equal(&want.key, &ks.key))
         }
         Err(_) => false,
     }
+}
+
+/// M15: раскладки QWERTY ↔ ЙЦУКЕН (26 букв; одиночные символы хоткеев).
+const QWERTY_CYRILLIC: [(char, char); 26] = [
+    ('q', 'й'),
+    ('w', 'ц'),
+    ('e', 'у'),
+    ('r', 'к'),
+    ('t', 'е'),
+    ('y', 'н'),
+    ('u', 'г'),
+    ('i', 'ш'),
+    ('o', 'щ'),
+    ('p', 'з'),
+    ('a', 'ф'),
+    ('s', 'ы'),
+    ('d', 'в'),
+    ('f', 'а'),
+    ('g', 'п'),
+    ('h', 'р'),
+    ('j', 'о'),
+    ('k', 'л'),
+    ('l', 'д'),
+    ('z', 'я'),
+    ('x', 'ч'),
+    ('c', 'с'),
+    ('v', 'м'),
+    ('b', 'и'),
+    ('n', 'т'),
+    ('m', 'ь'),
+];
+
+/// M15: приводит одиночный символ к «физическому» виду — кириллица
+/// ЙЦУКЕН → латиница QWERTY, регистр не важен; прочие символы — как есть.
+fn physical_key_char(ch: char) -> char {
+    let lower = ch.to_ascii_lowercase();
+    if lower.is_ascii_alphabetic() {
+        return lower;
+    }
+    QWERTY_CYRILLIC
+        .iter()
+        .find(|(_, cyr)| *cyr == lower)
+        .map(|(lat, _)| *lat)
+        .unwrap_or(lower)
+}
+
+/// M15: совпадение одиночных клавиш с учётом раскладки: «c» ↔ «с».
+fn keys_physically_equal(want: &str, got: &str) -> bool {
+    let (mut w, mut g) = (want.chars(), got.chars());
+    let (Some(w1), Some(g1), None) = (w.next(), g.next(), w.next()) else {
+        return false;
+    };
+    if g.next().is_some() {
+        return false;
+    }
+    physical_key_char(w1) == physical_key_char(g1)
 }
 
 /// Строка настройки: подпись слева, контролы справа.
@@ -2597,6 +2657,24 @@ mod tests {
             (560.0, 400.0),
             "вьюпорт меньше min → min"
         );
+    }
+
+    /// M15: хоткей «c» работает на латинице И на русской раскладке
+    /// (система отдаёт символ раскладки: «с»).
+    #[test]
+    fn hotkey_matches_across_layouts() {
+        let en = gpui::Keystroke::parse_with_os("c", host_os()).expect("спек парсится");
+        assert!(keystroke_matches("c", &en), "латиница ↔ латиница");
+
+        let mut ru = en.clone();
+        ru.key = "с".into();
+        assert!(keystroke_matches("c", &ru), "спек «c» ← нажатие на русской");
+
+        // Многосимвольные спеки и «соседние» клавиши не ломаются.
+        let tab = gpui::Keystroke::parse_with_os("tab", host_os()).expect("tab");
+        assert!(keystroke_matches("tab", &tab));
+        assert!(!keys_physically_equal("tab", "t"));
+        assert!(!keys_physically_equal("c", "x"), "чужая клавиша");
     }
 
     /// M14/F4: гейт «Мощного удара» — владение мечом 5 (skills.md §4).
