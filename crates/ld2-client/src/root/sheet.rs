@@ -36,8 +36,8 @@ use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
 use super::{
-    act_btn, char_card_origin, clamp_char_size, scrollable_tab, CharDialogDrag, CharDialogResize,
-    Root,
+    act_btn, char_card_origin, clamp_char_size, scrim_closes_on_up, scrollable_tab, CharDialogDrag,
+    CharDialogResize, Root,
 };
 
 /// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
@@ -268,6 +268,13 @@ impl Root {
                 .items_center()
                 .justify_between()
                 .cursor_grab()
+                // M15/F25e: жест начат на шапке — scrim его не закроет.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|root, _, _, _| {
+                        root.char_scrim_down = false;
+                    }),
+                )
                 .child(
                     div()
                         .font_weight(gpui::FontWeight::BOLD)
@@ -324,6 +331,13 @@ impl Root {
                 .border_color(rgb(pal.border))
                 .bg(rgb(pal.panel))
                 .cursor_pointer()
+                // M15/F25e: жест начат на уголке — scrim не закроет.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|root, _, _, _| {
+                        root.char_scrim_down = false;
+                    }),
+                )
                 .on_drag(CharDialogResize, move |_value, _offset, _window, acx| {
                     grip_this.update(acx, |root, cx| {
                         // Новый захват — новый якорь (иначе скачок по
@@ -384,6 +398,21 @@ impl Root {
             self.char_dialog_delta,
         );
         let card = div()
+            .id("ld2-char-card")
+            // M15/F25g: hitbox карточки перекрывает scrim под ней —
+            // клик в ЛЮБУЮ точку окна попадает в окно, а не в скрим
+            // (иначе «пустые» места карточки без interactivity уходили
+            // в scrim и закрывали окно «будто по пустоте»).
+            .occlude()
+            // M15/F25g: любой жест, начавшийся внутри карточки,
+            // снимает scrim-флаг — закрыть может только полный клик,
+            // целиком прошедший по scrim.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|root, _, _, _| {
+                    root.char_scrim_down = false;
+                }),
+            )
             .absolute()
             .left(px(left))
             .top(px(top_xy))
@@ -425,11 +454,23 @@ impl Root {
                         .id("ld2-char-scrim")
                         .size_full()
                         .bg(rgba(0x99000000))
+                        // M15/F25e: запоминаем, что жест начат на scrim.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|root, _, _, _| {
+                                root.char_scrim_down = true;
+                            }),
+                        )
                         .on_mouse_up(
                             MouseButton::Left,
                             cx.listener(|root, _, _, cx| {
-                                root.character_open = false;
-                                cx.notify();
+                                let close =
+                                    scrim_closes_on_up(root.char_scrim_down, cx.has_active_drag());
+                                root.char_scrim_down = false;
+                                if close {
+                                    root.character_open = false;
+                                    cx.notify();
+                                }
                             }),
                         ),
                 )
