@@ -239,6 +239,94 @@ pub struct Root {
     delete_target: Option<(String, String)>,
 }
 
+/// M15/F25i: поле ввода, чей фокус блокирует хоткеи на экране:
+/// (экран, имя поля для теста, доступ к полю Root).
+struct TypingField {
+    screen: Screen,
+    /// Имя поля — только для теста покрытия (в рендере не читается).
+    #[allow(dead_code)]
+    name: &'static str,
+    get: fn(&Root) -> &Option<Entity<TextInput>>,
+}
+
+/// M15/F25i: поля ввода по экранам — источник истины
+/// `Root::typing_focused` (тест покрывает все TextInput Root): на
+/// экране проверяются только его поля — после смены экрана фокус
+/// формально остаётся на неотрисованном поле (пароль на Login →
+/// Game), и все хоткеи «залипали».
+const TYPING_FIELDS: &[TypingField] = &[
+    TypingField {
+        screen: Screen::Login,
+        name: "login",
+        get: |r| &r.login_input,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "password",
+        get: |r| &r.password_input,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "reg_login",
+        get: |r| &r.reg_login,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "reg_email",
+        get: |r| &r.reg_email,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "reg_password",
+        get: |r| &r.reg_password,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "reg_password2",
+        get: |r| &r.reg_password2,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "host",
+        get: |r| &r.host_input,
+    },
+    TypingField {
+        screen: Screen::Characters,
+        name: "create_name",
+        get: |r| &r.create_name,
+    },
+    TypingField {
+        screen: Screen::Characters,
+        name: "delete_name",
+        get: |r| &r.delete_name,
+    },
+    TypingField {
+        screen: Screen::Characters,
+        name: "host",
+        get: |r| &r.host_input,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "chat",
+        get: |r| &r.chat_input,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "chat_filter",
+        get: |r| &r.chat_filter,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "guild",
+        get: |r| &r.guild_input,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "host",
+        get: |r| &r.host_input,
+    },
+];
+
 impl Root {
     pub fn new(cx: &mut Context<'_, Self>, shell: Shell) -> Self {
         let sheet_tab = sheet::SheetTab::parse(&shell.config.sheet_tab);
@@ -605,25 +693,14 @@ impl Root {
         .detach();
     }
 
-    /// Есть ли фокус в любом текстовом поле (навигация не должна
-    /// срабатывать при наборе текста).
+    /// Есть ли фокус в текстовом поле **текущего экрана** (навигация
+    /// не должна срабатывать при наборе текста).
     pub(crate) fn typing_focused(&self, window: &Window, cx: &gpui::App) -> bool {
-        [
-            &self.login_input,
-            &self.password_input,
-            &self.reg_login,
-            &self.reg_email,
-            &self.reg_password,
-            &self.reg_password2,
-            &self.host_input,
-            &self.guild_input,
-            &self.chat_input,
-            &self.chat_filter,
-            &self.delete_name,
-        ]
-        .iter()
-        .filter_map(|input| input.as_ref())
-        .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+        TYPING_FIELDS
+            .iter()
+            .filter(|f| f.screen == self.store.screen)
+            .filter_map(|f| (f.get)(self).as_ref())
+            .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
     }
 
     /// Обработка глобального нажатия: навигация/цикл целей по хоткеям
@@ -2675,6 +2752,51 @@ mod tests {
         assert!(keystroke_matches("tab", &tab));
         assert!(!keys_physically_equal("tab", "t"));
         assert!(!keys_physically_equal("c", "x"), "чужая клавиша");
+    }
+
+    /// M15/F25i: `TYPING_FIELDS` покрывает все TextInput Root, а экран
+    /// игры — только его собственные поля: залипший фокус пароля после
+    /// Login → Game не блокирует хоткеи.
+    #[test]
+    fn typing_fields_cover_every_input_and_gate_game() {
+        const ALL: [&str; 12] = [
+            "login",
+            "password",
+            "reg_login",
+            "reg_email",
+            "reg_password",
+            "reg_password2",
+            "host",
+            "guild",
+            "chat",
+            "chat_filter",
+            "delete_name",
+            "create_name",
+        ];
+        for field in TYPING_FIELDS {
+            assert!(
+                ALL.contains(&field.name),
+                "неизвестное поле {:?} на экране {:?}",
+                field.name,
+                field.screen
+            );
+        }
+        for name in ALL {
+            assert!(
+                TYPING_FIELDS.iter().any(|f| f.name == name),
+                "поле {name} не проверяется ни на одном экране"
+            );
+        }
+        let game: Vec<&str> = TYPING_FIELDS
+            .iter()
+            .filter(|f| f.screen == Screen::Game)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(
+            game,
+            ["chat", "chat_filter", "guild", "host"],
+            "игровой экран проверяет только свои поля"
+        );
     }
 
     /// M14/F4: гейт «Мощного удара» — владение мечом 5 (skills.md §4).
