@@ -15,8 +15,8 @@
 
 use ely::overlays::Dialog;
 use gpui::{
-    div, prelude::*, px, rgb, rgba, AnyElement, Context, Div, DragMoveEvent, EmptyView,
-    MouseButton, SharedString, Window,
+    div, prelude::*, px, rgb, AnyElement, Context, Div, DragMoveEvent, EmptyView, MouseButton,
+    SharedString, Window,
 };
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{
@@ -38,8 +38,8 @@ use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
 use super::{
-    act_btn, char_card_origin, clamp_char_size, scrim_closes_on_up, scrollable_tab, PopupDrag,
-    PopupKind, PopupResize, Root,
+    act_btn, char_card_origin, clamp_char_size, scrollable_tab, PopupDrag, PopupKind, PopupResize,
+    Root,
 };
 
 /// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
@@ -278,10 +278,10 @@ impl Root {
     }
 
     /// M16/F29b: оболочка всплывающего окна (механика M15/F25b–g):
-    /// слой со scrim (закрытие — только полный клик, начатый на нём),
-    /// карточка с drag за шапку и resize уголком; `body` — содержимое
-    /// под шапкой. Геометрия и флаги жестов — `PopupState` вида
-    /// `kind` (окна персонажа и рюкзака живут по одному коду).
+    /// слой с карточкой — drag за шапку, resize уголком; `body` —
+    /// содержимое под шапкой. Скрим общий для всех окон (могут быть
+    /// открыты одновременно) — `Root::popup_scrim`; геометрия и
+    /// флаги жестов — `PopupState` вида `kind`.
     pub(super) fn popup_window(
         &mut self,
         window: &mut Window,
@@ -307,11 +307,18 @@ impl Root {
             .items_center()
             .justify_between()
             .cursor_grab()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            // M16/F29b: шапка слегка подсвечена — «за неё тянут».
+            .bg(rgb(pal.selection))
+            .border_1()
+            .border_color(rgb(pal.border))
             // M15/F25e: жест начат на шапке — scrim его не закроет.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |root, _, _, _| {
-                    root.popup_mut(kind).scrim_down = false;
+                    root.popup_scrim_down = false;
                 }),
             )
             .child(div().font_weight(gpui::FontWeight::BOLD).child(title))
@@ -370,7 +377,7 @@ impl Root {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |root, _, _, _| {
-                    root.popup_mut(kind).scrim_down = false;
+                    root.popup_scrim_down = false;
                 }),
             )
             .on_drag(PopupResize, move |_value, _offset, _window, acx| {
@@ -438,7 +445,7 @@ impl Root {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |root, _, _, _| {
-                    root.popup_mut(kind).scrim_down = false;
+                    root.popup_scrim_down = false;
                 }),
             )
             .absolute()
@@ -458,42 +465,15 @@ impl Root {
             .child(body)
             .child(resize_grip);
 
-        // M15/F25d: свой слой по F14-шаблону: scrim закрывает по
-        // mouse-**up** — попытка перетаскивания (mousedown) физически
-        // не может закрыть окно; Esc — наш глобальный обработчик.
+        // M16/F29b: слой карточки (позиционирование); scrim общий
+        // для всех окон — `Root::popup_scrim` лежит под карточками,
+        // клик мимо закрывает верхнее открытое окно.
         div()
             .id(format!("{id}-dialog-layer"))
             .absolute()
             .top_0()
             .left_0()
             .size_full()
-            .child(
-                div()
-                    .id(format!("{id}-scrim"))
-                    .size_full()
-                    .bg(rgba(0x99000000))
-                    // M15/F25e: запоминаем, что жест начат на scrim.
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |root, _, _, _| {
-                            root.popup_mut(kind).scrim_down = true;
-                        }),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(move |root, _, _, cx| {
-                            let close = scrim_closes_on_up(
-                                root.popup(kind).scrim_down,
-                                cx.has_active_drag(),
-                            );
-                            root.popup_mut(kind).scrim_down = false;
-                            if close {
-                                root.popup_mut(kind).open = false;
-                                cx.notify();
-                            }
-                        }),
-                    ),
-            )
             .child(card)
             .into_any_element()
     }

@@ -6,8 +6,8 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, App, Context, Div, EmptyView, Entity, Focusable, Hsla,
-    MouseButton, Render, ScrollHandle, SharedString, Window, WindowControlArea,
+    div, prelude::*, px, rgb, rgba, AnyElement, App, Context, Div, EmptyView, Entity, Focusable,
+    Hsla, MouseButton, Render, ScrollHandle, SharedString, Window, WindowControlArea,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -95,8 +95,6 @@ struct PopupState {
     drag_offset: Option<(f32, f32)>,
     /// Якорь resize — (курсор_x, курсор_y, w, h, delta_x, delta_y).
     resize_anchor: Option<(f32, f32, f32, f32, f32, f32)>,
-    /// mousedown последнего жеста пришёлся на scrim.
-    scrim_down: bool,
 }
 
 impl PopupState {
@@ -107,7 +105,6 @@ impl PopupState {
             delta: (0.0, 0.0),
             drag_offset: None,
             resize_anchor: None,
-            scrim_down: false,
         }
     }
 }
@@ -223,8 +220,13 @@ pub struct Root {
     /// M16/F29b: окно персонажа — оверлей поверх игрового экрана
     /// (геометрия/флаги жестов — в `char_popup`).
     char_popup: PopupState,
-    /// M16/F29b: окно рюкзака — взаимно исключено с окном персонажа.
+    /// M16/F29b: окно рюкзака — может быть открыто одновременно с
+    /// персонажем (общий scrim группы окон).
     backpack_popup: PopupState,
+    /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
+    /// всплывающих окон — закрытие по mouse-up только для настоящего
+    /// «клика мимо» (M15/F25e).
+    popup_scrim_down: bool,
     /// M16/F29b: активная вкладка рюкзака (персистентна в config).
     backpack_tab: backpack::BackpackTab,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
@@ -399,8 +401,14 @@ impl Root {
             host_input: None,
             settings_open: false,
             char_popup: PopupState::new((760.0, 560.0)),
-            backpack_popup: PopupState::new((760.0, 560.0)),
+            // Рюкзак со сдвигом: при открытии обоих окон видны обе
+            // шапки (дальше позиция перетаскивается).
+            backpack_popup: PopupState {
+                delta: (40.0, 40.0),
+                ..PopupState::new((760.0, 560.0))
+            },
             backpack_tab: backpack::BackpackTab::default(),
+            popup_scrim_down: false,
             exit_timer: None,
             skill_info: None,
             first_frame: true,
@@ -791,21 +799,15 @@ impl Root {
             }
         }
         // M15/F25: хоткей окна персонажа (кнопка в шапке дублирует);
-        // M16/F29b: окна взаимно исключают друг друга (один scrim).
+        // M16/F29b: окна открываются одновременно (общий scrim).
         if keystroke_matches(&self.config.hotkeys.open_character, ks) {
             self.char_popup.open = !self.char_popup.open;
-            if self.char_popup.open {
-                self.backpack_popup.open = false;
-            }
             cx.notify();
             return;
         }
         // M16/F29b: хоткей рюкзака (кнопка в шапке дублирует).
         if keystroke_matches(&self.config.hotkeys.open_backpack, ks) {
             self.backpack_popup.open = !self.backpack_popup.open;
-            if self.backpack_popup.open {
-                self.char_popup.open = false;
-            }
             cx.notify();
             return;
         }
@@ -950,6 +952,55 @@ impl Root {
         }
     }
 
+    /// M16/F29b: общий scrim группы всплывающих окон — окна могут
+    /// быть открыты одновременно (персонаж + рюкзак), поэтому scrim
+    /// один на всех и лежит ПОД карточками; клик мимо закрывает
+    /// верхнее открытое окно (рюкзак, затем персонаж).
+    fn popup_scrim(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
+        if !self.char_popup.open && !self.backpack_popup.open {
+            return None;
+        }
+        Some(
+            div()
+                .id("ld2-popup-scrim-layer")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(
+                    div()
+                        .id("ld2-popup-scrim")
+                        .size_full()
+                        .bg(rgba(0x99000000))
+                        // M15/F25e: запоминаем, что жест начат на scrim.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|root, _, _, _| {
+                                root.popup_scrim_down = true;
+                            }),
+                        )
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|root, _, _, cx| {
+                                let close =
+                                    scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
+                                root.popup_scrim_down = false;
+                                if close {
+                                    // Верхнее окно: рюкзак рисуется поверх.
+                                    if root.backpack_popup.open {
+                                        root.backpack_popup.open = false;
+                                    } else if root.char_popup.open {
+                                        root.char_popup.open = false;
+                                    }
+                                    cx.notify();
+                                }
+                            }),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn save_config(&mut self) {
         if let Err(e) = self.config_store.save(&self.config) {
             tracing::warn!("не удалось сохранить конфиг: {e:#}");
@@ -982,17 +1033,11 @@ impl Root {
             }
             Click::ToggleCharacter => {
                 self.char_popup.open = !self.char_popup.open;
-                if self.char_popup.open {
-                    self.backpack_popup.open = false;
-                }
                 cx.notify();
             }
-            // M16/F29b: окно рюкзака — взаимное исключение с персонажем.
+            // M16/F29b: окно рюкзака (открывается вместе с персонажем).
             Click::ToggleInventory => {
                 self.backpack_popup.open = !self.backpack_popup.open;
-                if self.backpack_popup.open {
-                    self.char_popup.open = false;
-                }
                 cx.notify();
             }
             Click::Theme(theme) => {
@@ -2712,12 +2757,15 @@ impl Render for Root {
             .when_some(self.skill_info_dialog(cx, &pal), |d, dialog| {
                 d.child(dialog)
             })
-            // M15/F25b: окно персонажа — всплывающий диалог (скрим);
+            // M16/F29b: общий scrim всплывающих окон — под карточками
+            // (персонаж и рюкзак могут быть открыты одновременно).
+            .when_some(self.popup_scrim(cx), |d, layer| d.child(layer))
+            // M15/F25b: окно персонажа — всплывающий диалог;
             // игровые диалоги/настройки/выход рисуются позже — выше.
             .when_some(self.character_dialog(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
-            // M16/F29b: окно рюкзака (взаимно исключено с персонажем).
+            // M16/F29b: окно рюкзака (открывается вместе с персонажем).
             .when_some(self.backpack_dialog(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
