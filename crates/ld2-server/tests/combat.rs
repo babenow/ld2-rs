@@ -61,8 +61,10 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "осмотр трупа: {ack}");
     let loot = ack["payload"]["loot"].as_array().expect("лут трупа");
-    assert_eq!(loot.len(), 1, "drops волка: {loot:?}");
+    assert_eq!(loot.len(), 2, "drops волка: {loot:?}");
     assert_eq!(loot[0]["name"], "Зелье лечения");
+    // F29a: монеты падают с моба обычным предметом (слот 2).
+    assert_eq!(loot[1]["name"], "Золотая монета", "монеты лутом");
     let seq = c
         .send(
             "cmd/item.use",
@@ -72,6 +74,16 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     assert_eq!(c.ack(seq).await["result"], "ok", "взятие лута трупа");
     let added = c.wait_event("evt/item/added").await;
     assert_eq!(added["payload"]["item"]["name"], "Зелье лечения");
+    let seq = c
+        .send(
+            "cmd/item.use",
+            json!({ "item_uid": loot[1]["uid"].as_str().expect("uid") }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "взятие монет");
+    let added = c.wait_event("evt/item/added").await;
+    assert_eq!(added["payload"]["item"]["name"], "Золотая монета");
+    assert_eq!(added["payload"]["item"]["qty"], 10, "стак монет из def");
 
     // M15/F24: общий опыт и шкала уровня в свежем снапшоте (26 XP).
     let seq = c
@@ -80,6 +92,15 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     assert_eq!(c.ack(seq).await["result"], "ok", "перевыбор персонажа");
     let snap = c.wait_event("evt/state/snapshot").await;
     let ch = &snap["payload"]["char"];
+    assert!(
+        ch["inventory"]
+            .as_array()
+            .expect("инвентарь")
+            .iter()
+            .any(|i| i["type"] == "money" && i["qty"] == 10),
+        "F29a: монеты в инвентаре: {}",
+        ch["inventory"]
+    );
     assert_eq!(ch["total_xp"], 26, "total_xp = XP убийства: {ch}");
     assert_eq!(ch["level"], 1, "26 < 200 → уровень 1");
     assert_eq!(ch["xp_in_level"], 26, "прогресс в уровне");

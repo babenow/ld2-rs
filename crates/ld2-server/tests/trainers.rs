@@ -18,15 +18,19 @@ async fn give_gold(c: &mut ld2_test_kit::WsClient, amount: i64) {
     assert_eq!(c.ack(seq).await["result"], "ok", "gold {amount}");
 }
 
-/// Золото персонажа напрямую из БД (проверка списаний).
+/// Золото персонажа напрямую из БД (F29a: стаки монет type=money).
 async fn gold_of(db_url: &str, char_id: &str) -> i64 {
     let cfg = common::test_config(db_url, |_| {});
     let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
-    let gold: i64 = sqlx::query_scalar("SELECT gold FROM characters WHERE id = $1")
-        .bind(char_id)
-        .fetch_one(&pool)
-        .await
-        .expect("золото");
+    let gold: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(i.qty), 0) FROM items i \
+         JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = 'money'",
+    )
+    .bind(char_id)
+    .fetch_one(&pool)
+    .await
+    .expect("золото");
     pool.close().await;
     gold
 }

@@ -1,6 +1,15 @@
 {
   "items": [
     {
+      "id": "gold_coin",
+      "type": "money",
+      "name": "Золотая монета",
+      "rarity": "common",
+      "upgrade": 0,
+      "gold_value": 1,
+      "qty": 10
+    },
+    {
       "id": "dagger_knife",
       "type": "weapon",
       "name": "Кинжал",

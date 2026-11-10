@@ -4,6 +4,10 @@
 use serde_json::Value;
 use sqlx::PgPool;
 
+/// F29a (M16): деньги — предметы-монеты (тип контента; стак в
+/// инвентаре, лут с мобов, оплата покупок).
+pub const MONEY_TYPE: &str = "money";
+
 /// Инстанс предмета в инвентаре персонажа.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ItemRow {
@@ -330,4 +334,103 @@ pub async fn find_any(pool: &PgPool, uid: &str) -> Result<Option<ItemRow>, sqlx:
     .bind(uid)
     .fetch_optional(pool)
     .await
+}
+
+/// F29a: выдать `qty` в существующий стак `def_id` (самый старый)
+/// либо новым стаком — монеты при подборе/начислении не съедают
+/// слоты. `true` — добавлено в существий стак (клиенту патч `qty`).
+pub async fn grant_stacking(
+    pool: &PgPool,
+    char_id: &str,
+    def_id: &str,
+    qty: i64,
+) -> Result<(ItemRow, bool), sqlx::Error> {
+    let existing: Option<(String, i32)> = sqlx::query_as(
+        "SELECT uid, qty FROM items WHERE character_id = $1 AND def_id = $2 \
+         ORDER BY created_at, uid LIMIT 1",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_optional(pool)
+    .await?;
+    if let Some((uid, cur)) = existing {
+        let new_qty = i64::from(cur) + qty;
+        sqlx::query("UPDATE items SET qty = $2 WHERE uid = $1")
+            .bind(&uid)
+            .bind(new_qty)
+            .execute(pool)
+            .await?;
+        let row = find(pool, &uid, char_id)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)?;
+        return Ok((row, true));
+    }
+    Ok((insert(pool, char_id, def_id, qty).await?, false))
+}
+
+/// F29a: выдать `qty` предметов первого определения типа `item_type`
+/// (`/scenario gold`, награды): `None` — такого типа нет в контенте.
+pub async fn grant_stacking_by_type(
+    pool: &PgPool,
+    char_id: &str,
+    item_type: &str,
+    qty: i64,
+) -> Result<Option<(ItemRow, bool)>, sqlx::Error> {
+    let def_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM item_defs WHERE item_type = $1 ORDER BY id LIMIT 1")
+            .bind(item_type)
+            .fetch_optional(pool)
+            .await?;
+    match def_id {
+        Some(def_id) => grant_stacking(pool, char_id, &def_id, qty).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// F29a: списать `need` монет со счётом стаков (пустые удаляются) —
+/// `(uid, новое qty | None = стак удалён)` для `evt/item/state`/
+/// `evt/item/removed`. `None` — не хватает (ничего не списано);
+/// баланс проверяется здесь же — вызывающий не теряет монеты.
+pub async fn consume_money(
+    pool: &PgPool,
+    char_id: &str,
+    need: i64,
+) -> Result<Option<Vec<(String, Option<i64>)>>, sqlx::Error> {
+    if need <= 0 {
+        return Ok(Some(Vec::new()));
+    }
+    if count_by_type(pool, char_id, MONEY_TYPE).await? < need {
+        return Ok(None);
+    }
+    let rows: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT i.uid, i.qty FROM items i \
+         JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = $2 \
+         ORDER BY i.created_at, i.uid",
+    )
+    .bind(char_id)
+    .bind(MONEY_TYPE)
+    .fetch_all(pool)
+    .await?;
+    let mut left = need;
+    let mut changes = Vec::new();
+    for (uid, qty) in rows {
+        if left <= 0 {
+            break;
+        }
+        let take = i64::from(qty).min(left);
+        left -= take;
+        let rest = qty - take as i32;
+        if rest <= 0 {
+            sqlx::query("DELETE FROM items WHERE uid = $1")
+                .bind(&uid)
+                .execute(pool)
+                .await?;
+            changes.push((uid, None));
+        } else {
+            set_qty(pool, &uid, i64::from(rest)).await?;
+            changes.push((uid, Some(i64::from(rest))));
+        }
+    }
+    Ok(Some(changes))
 }
