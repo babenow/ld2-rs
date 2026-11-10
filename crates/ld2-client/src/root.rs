@@ -213,6 +213,9 @@ pub struct Root {
     char_drag_offset: Option<(f32, f32)>,
     /// M15/F25c: якорь resize — (курсор_x, курсор_y, w, h, delta_x, delta_y).
     char_resize_anchor: Option<(f32, f32, f32, f32, f32, f32)>,
+    /// M15/F25e: mousedown последнего жеста пришёлся на scrim —
+    /// закрытие по mouse-up только для настоящего «клика мимо».
+    char_scrim_down: bool,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
     log_tab: LogTab,
     /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
@@ -285,6 +288,7 @@ impl Root {
             char_dialog_size: (760.0, 560.0),
             char_drag_offset: None,
             char_resize_anchor: None,
+            char_scrim_down: false,
             log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
@@ -1637,6 +1641,13 @@ fn host_os() -> gpui::OperatingSystem {
     }
 }
 
+/// M15/F25e: закрыть окно по mouse-up на scrim можно, только если
+/// жест **начался** на scrim (настоящий «клик мимо») и это не
+/// завершение перетаскивания/resize (gpui ещё держит active_drag).
+pub(crate) fn scrim_closes_on_up(scrim_down: bool, has_active_drag: bool) -> bool {
+    scrim_down && !has_active_drag
+}
+
 /// M15/F25d: верхний левый угол карточки окна персонажа — центр
 /// вьюпорта + смещение drag (absolute-позиционирование как в F14:
 /// без марджинов, «половинных» сдвигов центрирования нет).
@@ -2524,6 +2535,23 @@ mod tests {
         assert_eq!(hk.action_attack, "f5");
         assert_eq!(hk.action_flee, "4", "остальные не тронуты");
         assert_eq!((HOTKEY_ROWS[5].get)(&hk), "f5");
+    }
+
+    /// M15/F25e: жест с шапки (drag) не закрывает окно по завершении.
+    #[test]
+    fn scrim_close_requires_gesture_started_on_scrim() {
+        assert!(
+            scrim_closes_on_up(true, false),
+            "настоящий клик мимо (down+up на scrim) закрывает"
+        );
+        assert!(
+            !scrim_closes_on_up(false, false),
+            "жест начат не на scrim → не закрываем"
+        );
+        assert!(
+            !scrim_closes_on_up(true, true),
+            "завершение перетаскивания (active_drag) не закрывает"
+        );
     }
 
     /// M15/F25d: позиция карточки — центр + смещение, без половинности.

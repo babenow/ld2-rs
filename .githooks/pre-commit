@@ -11,4 +11,7 @@ echo "[pre-commit] cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
 echo "[pre-commit] cargo test --workspace"
+# M15: gated-тесты (PostgreSQL) реально гоняются, а не пропускаются —
+# CI ловил регрессии, которые хук молча пропускал без переменной.
+export LD2_TEST_DATABASE_URL="${LD2_TEST_DATABASE_URL:-postgres://ld2:ld2@127.0.0.1:5432/ld2_test}"
 cargo test --workspace

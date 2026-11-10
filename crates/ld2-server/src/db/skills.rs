@@ -37,10 +37,13 @@ pub async fn content_skill(
     pool: &PgPool,
     skill_id: &str,
 ) -> Result<Option<SkillContentRow>, sqlx::Error> {
-    sqlx::query_as::<_, SkillContentRow>("SELECT id, name, description FROM skills WHERE id = $1")
-        .bind(skill_id)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as::<_, SkillContentRow>(
+        "SELECT id, name, COALESCE(skill_group, '') AS skill_group, description \
+         FROM skills WHERE id = $1",
+    )
+    .bind(skill_id)
+    .fetch_optional(pool)
+    .await
 }
 
 /// Вложенные навыки персонажа.
