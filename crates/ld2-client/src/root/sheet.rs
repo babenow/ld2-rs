@@ -398,6 +398,21 @@ impl Root {
             self.char_dialog_delta,
         );
         let card = div()
+            .id("ld2-char-card")
+            // M15/F25g: hitbox карточки перекрывает scrim под ней —
+            // клик в ЛЮБУЮ точку окна попадает в окно, а не в скрим
+            // (иначе «пустые» места карточки без interactivity уходили
+            // в scrim и закрывали окно «будто по пустоте»).
+            .occlude()
+            // M15/F25g: любой жест, начавшийся внутри карточки,
+            // снимает scrim-флаг — закрыть может только полный клик,
+            // целиком прошедший по scrim.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|root, _, _, _| {
+                    root.char_scrim_down = false;
+                }),
+            )
             .absolute()
             .left(px(left))
             .top(px(top_xy))
