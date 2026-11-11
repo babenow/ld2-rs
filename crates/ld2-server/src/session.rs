@@ -2534,6 +2534,12 @@ impl Session {
         if let Some(kind) = scenario.strip_prefix("crime ") {
             return self.scenario_crime(kind.trim(), seq).await;
         }
+        // `/scenario kit` — тестовый набор рюкзака (M16/F29b):
+        // предметы разных типов/редкостей, улучшения, экипировка,
+        // монеты.
+        if scenario == "kit" {
+            return self.scenario_kit(seq).await;
+        }
         if scenario != "death" {
             return vec![Self::err(
                 seq,
@@ -2571,6 +2577,115 @@ impl Session {
 
     /// `/scenario give <def_id>` (dev): выдать предмет персонажу —
     /// сокеты посоха создаются сразу (ADR-002, иначе UI не увидит слоты).
+    /// `/scenario kit` (M16/F29b): тестовый набор в рюкзак — предметы
+    /// разных типов и редкостей с улучшениями +N, полная экипировка
+    /// (слоты из конфига) и стак монет. Наполнение окна рюкзака для
+    /// смоука; повторный вызов добавляет стаки (слоты переносятся).
+    async fn scenario_kit(&mut self, seq: u32) -> Vec<Out> {
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+
+        // (def_id, qty, улучшение +N, слот): экипировка — уникальные
+        // инстансы, расходники/материалы — в существующие стаки.
+        let grants: [(&str, i64, i32, Option<&str>); 13] = [
+            ("sword_knight", 1, 3, Some("main_hand")),
+            ("staff_apprentice", 1, 1, Some("staff")),
+            ("helmet_leather", 1, 2, Some("head")),
+            ("armor_bronze", 1, 4, Some("body")),
+            ("boots_traveler", 1, 5, Some("feet")),
+            ("potion_heal", 3, 0, None),
+            ("rune_fire", 2, 0, None),
+            ("scroll_frost", 1, 0, None),
+            ("herb", 5, 0, None),
+            ("wood_oak", 3, 0, None),
+            ("parchment", 2, 0, None),
+            ("ink", 2, 0, None),
+            ("tool_quill", 1, 0, None),
+        ];
+        for (def_id, qty, upgrade, slot) in grants {
+            let Some(def) = db::items::def(pool, def_id).await.ok().flatten() else {
+                warn!("scenario kit: нет определения {def_id} — пропуск");
+                continue;
+            };
+            let row = if let Some(slot) = slot {
+                // Слот занят — прежний предмет снимается (паритет
+                // cmd/item.equip).
+                if let Ok(Some(prev)) = db::items::find_equipped_in_slot(pool, &char_id, slot).await
+                {
+                    let _ = db::items::set_equipped(pool, &prev.uid, None).await;
+                }
+                let Ok(mut row) = db::items::insert(pool, &char_id, def_id, qty).await else {
+                    warn!("scenario kit: insert {def_id} — пропуск");
+                    continue;
+                };
+                if upgrade > 0 {
+                    row.upgrade = upgrade;
+                    let _ = db::items::set_upgrade(pool, &row.uid, upgrade).await;
+                }
+                let _ = db::items::set_equipped(pool, &row.uid, Some(slot)).await;
+                if def.item_type == "staff" && def.sockets > 0 {
+                    row.sockets = Self::empty_sockets(def.sockets);
+                    let _ = db::items::set_sockets(pool, &row.uid, row.sockets.clone()).await;
+                }
+                row
+            } else {
+                match db::items::grant_stacking(pool, &char_id, def_id, qty).await {
+                    Ok((row, _)) => row,
+                    Err(e) => {
+                        warn!("scenario kit (стак {def_id}): {e}");
+                        continue;
+                    }
+                }
+            };
+            let item = item_snapshot(&row, &def);
+            outs.push(out_event(
+                "evt/item/added",
+                None,
+                serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+            ));
+        }
+
+        // Монеты — стак (F29a): патч qty, если стак уже есть.
+        match db::items::grant_stacking_by_type(pool, &char_id, db::items::MONEY_TYPE, 500).await {
+            Ok(Some((row, stacked))) => {
+                let ev = if stacked {
+                    let mut patch = serde_json::Map::new();
+                    patch.insert("qty".into(), serde_json::json!(row.qty));
+                    out_event(
+                        "evt/item/state",
+                        None,
+                        serde_json::to_value(ItemState {
+                            uid: row.uid,
+                            patch,
+                        })
+                        .unwrap_or_default(),
+                    )
+                } else {
+                    let def = db::items::def(pool, &row.def_id).await.ok().flatten();
+                    match def {
+                        Some(def) => out_event(
+                            "evt/item/added",
+                            None,
+                            serde_json::to_value(ItemAdded {
+                                item: item_snapshot(&row, &def),
+                            })
+                            .unwrap_or_default(),
+                        ),
+                        None => return outs,
+                    }
+                };
+                outs.push(ev);
+            }
+            Ok(None) => warn!("scenario kit: валюта не найдена в контенте"),
+            Err(e) => warn!("scenario kit (монеты): {e}"),
+        }
+        outs
+    }
+
     async fn scenario_give(&mut self, def_id: &str, seq: u32) -> Vec<Out> {
         let char_id = match self.require_char_id(seq) {
             Ok(id) => id,

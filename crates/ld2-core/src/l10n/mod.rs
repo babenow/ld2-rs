@@ -353,6 +353,16 @@ pub enum Key {
     SettingsDamageBold,
     // M14 F14: вкладка «Шрифты»
     SettingsFonts,
+    // M16/F29b: окно рюкзака и его хоткей
+    BackpackTitle,
+    BpTabWeapon,
+    BpTabPotion,
+    BpTabMagic,
+    BpTabMaterial,
+    BpTabTool,
+    BpTabOther,
+    BpCurrencies,
+    HkOpenBackpack,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -717,6 +727,16 @@ mod tests {
         Key::SettingsLogAttackColor,
         Key::SettingsDamageBold,
         Key::SettingsFonts,
+        // M16/F29b: окно рюкзака и его хоткей
+        Key::BackpackTitle,
+        Key::BpTabWeapon,
+        Key::BpTabPotion,
+        Key::BpTabMagic,
+        Key::BpTabMaterial,
+        Key::BpTabTool,
+        Key::BpTabOther,
+        Key::BpCurrencies,
+        Key::HkOpenBackpack,
     ];
 
     #[test]
