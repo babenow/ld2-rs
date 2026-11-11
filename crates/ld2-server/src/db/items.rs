@@ -41,7 +41,7 @@ pub struct ItemDefRow {
 pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
         "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items \
-         WHERE character_id = $1 ORDER BY created_at, uid",
+         WHERE character_id = $1 ORDER BY sort_order NULLS LAST, created_at, uid",
     )
     .bind(char_id)
     .fetch_all(pool)
@@ -103,7 +103,9 @@ pub async fn insert(
     qty: i64,
 ) -> Result<ItemRow, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3) \
+        "INSERT INTO items (character_id, def_id, qty, sort_order) \
+         VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
+         FROM items WHERE character_id = $1), 0)) \
          RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
     )
     .bind(char_id)
@@ -190,7 +192,9 @@ pub async fn take_loot_tx(
         return Ok(None); // tx откатывается при дропе
     }
     let row = sqlx::query_as::<_, ItemRow>(
-        "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3) \
+        "INSERT INTO items (character_id, def_id, qty, sort_order) \
+         VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
+         FROM items WHERE character_id = $1), 0)) \
          RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
     )
     .bind(char_id)
@@ -433,4 +437,50 @@ pub async fn consume_money(
         }
     }
     Ok(Some(changes))
+}
+
+/// M16/F29g: поменять местами порядок двух предметов (перетаскивание
+/// в рюкзаке); оба должны принадлежать персонажу. `false` — предмета
+/// нет (ничего не изменено).
+pub async fn swap_order(
+    pool: &PgPool,
+    char_id: &str,
+    a: &str,
+    b: &str,
+) -> Result<bool, sqlx::Error> {
+    if a == b {
+        return Ok(true);
+    }
+    let mut tx = pool.begin().await?;
+    let rows: Vec<(String, Option<i32>)> = sqlx::query_as(
+        "SELECT uid, sort_order FROM items \
+         WHERE character_id = $1 AND uid = ANY($2) FOR UPDATE",
+    )
+    .bind(char_id)
+    .bind(vec![a.to_string(), b.to_string()])
+    .fetch_all(&mut *tx)
+    .await?;
+    if rows.len() != 2 {
+        return Ok(false); // tx откатывается
+    }
+    let so = |uid: &str| {
+        rows.iter()
+            .find(|(u, _)| u.as_str() == uid)
+            .and_then(|(_, s)| *s)
+    };
+    let (so_a, so_b) = (so(a), so(b));
+    sqlx::query("UPDATE items SET sort_order = $2 WHERE character_id = $1 AND uid = $3")
+        .bind(char_id)
+        .bind(so_b)
+        .bind(a)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE items SET sort_order = $2 WHERE character_id = $1 AND uid = $3")
+        .bind(char_id)
+        .bind(so_a)
+        .bind(b)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
 }

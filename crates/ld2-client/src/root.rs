@@ -25,7 +25,7 @@ mod social;
 
 use crate::palette::{palette, Palette};
 use ely::buttons::IconButton;
-use ely::feedback::{Toast, ToastViewport, Toaster};
+use ely::feedback::{Toast, Toaster};
 use ely::forms::{
     hex, parse_hex, Choice, ColorPicker, HotkeyInput, Input, InputEvent, PasswordInput, Slider,
     Switch, TextInput,
@@ -249,6 +249,8 @@ pub struct Root {
     /// M16/F29d: запрос контекстного меню экипировки — (слот, номер,
     /// точка клика); номер растёт, чтобы Ely переоткрыл меню.
     equip_menu: Option<(String, u64, gpui::Point<gpui::Pixels>)>,
+    /// M16/F29g: то же для контекстного меню предмета рюкзака (uid).
+    bp_menu: Option<(String, u64, gpui::Point<gpui::Pixels>)>,
     /// M10.5: чат — ввод, фильтр, активный канал.
     chat_input: Option<Entity<TextInput>>,
     chat_filter: Option<Entity<TextInput>>,
@@ -427,6 +429,7 @@ impl Root {
             guild_input: None,
             sheet_tab,
             equip_menu: None,
+            bp_menu: None,
             chat_input: None,
             chat_filter: None,
             chat_channel: "location".into(),
@@ -1015,6 +1018,53 @@ impl Root {
         let n = self.equip_menu.as_ref().map(|(_, n, _)| *n).unwrap_or(0) + 1;
         self.equip_menu = Some((slot, n, at));
         cx.notify();
+    }
+
+    /// M16/F29g: запрос контекстного меню предмета рюкзака (левый и
+    /// правый клик) — номер растёт, чтобы Ely переоткрыл меню.
+    fn bump_bp_menu(
+        &mut self,
+        uid: String,
+        at: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let n = self.bp_menu.as_ref().map(|(_, n, _)| *n).unwrap_or(0) + 1;
+        self.bp_menu = Some((uid, n, at));
+        cx.notify();
+    }
+
+    /// M16/F29h: системные уведомления — стеком вверху по центру.
+    /// Тайминг и жизнь тостов — у Toaster (ely-стек показывает их
+    /// внизу справа и не позиционируется — здесь только отрисовка).
+    fn toast_stack(&self, window: &Window, cx: &Context<'_, Self>, pal: &Palette) -> Div {
+        let toasts = self.toaster.read(cx).shown();
+        if toasts.is_empty() {
+            return div();
+        }
+        let width = 420.0f32;
+        let left = ((f32::from(window.viewport_size().width) - width) / 2.0).max(8.0);
+        div()
+            .absolute()
+            .left(px(left))
+            .top(px(16.0))
+            .w(px(width))
+            // Клики по уведомлению не проходят сквозь него (occlude).
+            .occlude()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(toasts.into_iter().map(|(title, _)| {
+                div()
+                    .px_4()
+                    .py_2()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .border_1()
+                    .border_color(rgb(pal.accent))
+                    .text_size(px(13.0))
+                    .text_center()
+                    .child(title.to_string())
+            }))
     }
 
     /// M16/F29b: общий scrim группы всплывающих окон — окна могут
@@ -2851,8 +2901,10 @@ impl Render for Root {
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
             .when_some(self.exit_dialog(cx, &pal), |d, dialog| d.child(dialog))
-            // M11.4: всплывающие тосты (notice → Ely Toast).
-            .child(ToastViewport::new("ld2-toasts", &self.toaster))
+            // M16/F29h: системные уведомления — вверху по центру
+            // (ely ToastViewport показывает внизу справа и не
+            // позиционируется — заменён; тайминг у Toaster).
+            .child(self.toast_stack(window, cx, &pal))
     }
 }
 

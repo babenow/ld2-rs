@@ -7,11 +7,13 @@
 
 use ely::forms::Choice;
 use ely::menus::ContextMenu;
+use ely::motion::Reorder;
 use ely::navigation::Tabs;
-use ely::primitives::{IconName, Tooltip};
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, Window};
+use ely::primitives::{Icon, IconName, Tooltip};
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Window};
 use ld2_core::l10n::{t, Key};
-use ld2_core::store::Screen;
+use ld2_core::store::{Act, Screen};
+use ld2_protocol::cmd::ItemMove;
 use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
@@ -24,9 +26,10 @@ use super::{scrollable_tab, PopupKind, Root};
 /// [`tab_for_type`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum BackpackTab {
-    /// Оружие: клинки и посохи (weapon, staff) — дефолтная вкладка
-    /// (сохранённое значение конфига по умолчанию).
+    /// Все предметы без фильтра (M16/F29g) — дефолтная вкладка.
     #[default]
+    All,
+    /// Оружие: клинки и посохи (weapon, staff).
     Weapon,
     /// Броня (armor) — шлемы/доспехи/сапоги (M16/F29f).
     Armor,
@@ -45,8 +48,9 @@ pub(crate) enum BackpackTab {
 }
 
 impl BackpackTab {
-    pub(crate) fn all() -> [(BackpackTab, Key); 8] {
+    pub(crate) fn all() -> [(BackpackTab, Key); 9] {
         [
+            (BackpackTab::All, Key::BpTabAll),
             (BackpackTab::Weapon, Key::BpTabWeapon),
             (BackpackTab::Armor, Key::BpTabArmor),
             (BackpackTab::Potion, Key::BpTabPotion),
@@ -60,6 +64,7 @@ impl BackpackTab {
 
     pub(crate) fn icon(self) -> IconName {
         match self {
+            BackpackTab::All => IconName::LayoutGrid,
             BackpackTab::Weapon => IconName::Target,
             BackpackTab::Armor => IconName::Shield,
             BackpackTab::Potion => IconName::Pipette,
@@ -73,6 +78,7 @@ impl BackpackTab {
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
+            BackpackTab::All => "all",
             BackpackTab::Weapon => "weapon",
             BackpackTab::Armor => "armor",
             BackpackTab::Potion => "potion",
@@ -86,6 +92,7 @@ impl BackpackTab {
 
     pub(crate) fn parse(s: &str) -> Self {
         match s {
+            "all" => BackpackTab::All,
             "armor" => BackpackTab::Armor,
             "potion" => BackpackTab::Potion,
             "magic" => BackpackTab::Magic,
@@ -97,9 +104,10 @@ impl BackpackTab {
         }
     }
 
-    /// Предмет принадлежит вкладке (валюты — только в «Валюты»).
+    /// Предмет принадлежит вкладке: «Все предметы» — без фильтра,
+    /// иначе по типу (валюты — только в «Валюты»).
     fn matches(self, item: &ItemSnapshot) -> bool {
-        tab_for_type(&item.item_type) == self
+        self == BackpackTab::All || tab_for_type(&item.item_type) == self
     }
 }
 
@@ -184,9 +192,37 @@ impl Root {
                 "ld2-backpack-scroll",
                 &self.backpack_scroll,
                 grid,
-            ))
-            .child(div().h(px(1.0)).bg(rgb(pal.border)))
-            .child(self.currency_row(pal));
+            ));
+
+        // M16/F29g: нижняя панель — по аналогии с верхней: иконка
+        // монет и количество денег персонажа.
+        let money: i64 = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| {
+                money_totals(&s.char.inventory)
+                    .into_iter()
+                    .map(|(_, q)| q)
+                    .sum()
+            })
+            .unwrap_or(0);
+        let footer = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .bg(rgb(pal.selection))
+            .border_t_1()
+            .border_color(rgb(pal.border))
+            .child(Icon::new(IconName::Wallet))
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(money.to_string()),
+            );
 
         Some(self.popup_window(
             window,
@@ -195,12 +231,16 @@ impl Root {
             PopupKind::Backpack,
             t(lang, Key::BackpackTitle),
             body,
+            Some(footer),
         ))
     }
 
     /// Сетка предметов активной вкладки: плитка + ПКМ-меню — те же
     /// действия, что были во вкладке «Инвентарь» окна персонажа
     /// (M15/F3/F7; тело переехало сюда, M16/F29b).
+    /// Сетка предметов активной вкладки: плитка + контекстное меню
+    /// (ЛКМ и ПКМ), перетаскивание меняет предметы местами (Reorder →
+    /// `cmd/item.move`). Надетое сюда не попадает (M16/F29f).
     fn backpack_grid(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let tab = self.backpack_tab;
@@ -231,10 +271,14 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::InventoryEmpty));
         }
-        let mut col = div().flex().flex_col().gap_2();
+
+        // M16/F29g: перетаскиваемый список — ЛКМ/ПКМ открывают меню,
+        // drag меняет предметы местами (порядок строк = порядок сетки).
+        let this = cx.entity();
+        let order: Vec<String> = items.iter().map(|i| i.uid.clone()).collect();
+        let mut list = Reorder::new("ld2-backpack-rows");
         for item in items {
             let uid = item.uid.clone();
-            let detail = serde_json::to_value(item).unwrap_or_default();
             let tile = div()
                 .id(format!("ld2-bp-item-{uid}"))
                 .tooltip(Tooltip::text(format!(
@@ -255,65 +299,70 @@ impl Root {
                 .border_color(rgb(pal.border))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(pal.selection)))
-                .on_mouse_up(
-                    gpui::MouseButton::Left,
-                    cx.listener({
-                        let detail = detail.clone();
-                        move |this, _, _, cx| {
-                            // Левый клик — описание (паритет тултипа egui).
-                            this.store.item_detail = Some(detail.clone());
-                            cx.notify();
-                        }
-                    }),
-                )
                 .child(
                     div()
                         .text_color(rgb(rarity_color(&item.rarity, pal)))
                         .child(format!("{} {}", item.name, badges(item))),
                 );
-            // ПКМ по предмету — контекстное меню Ely (те же действия).
-            col = col.child(
-                ContextMenu::new(
-                    format!("ld2-bp-ctx-{uid}"),
-                    self.item_actions(cx, pal, &snap.char, item),
-                )
-                .child(tile),
-            );
+            // ЛКМ — меню (после перетаскивания gpui подавляет клик; на
+            // всякий случай — guard по активному drag), ПКМ — меню.
+            let tile = tile
+                .on_click(cx.listener({
+                    let uid = uid.clone();
+                    move |this, event: &gpui::ClickEvent, _window, cx| {
+                        if cx.has_active_drag() {
+                            return;
+                        }
+                        this.bump_bp_menu(uid.clone(), event.position(), cx);
+                    }
+                }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener({
+                        let uid = uid.clone();
+                        move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            window.prevent_default();
+                            this.bump_bp_menu(uid.clone(), event.position, cx);
+                        }
+                    }),
+                );
+            let request = match &self.bp_menu {
+                Some((u, n, at)) if *u == uid => Some((*n, *at)),
+                _ => None,
+            };
+            let ctx = ContextMenu::new(
+                format!("ld2-bp-ctx-{uid}"),
+                self.item_actions(cx, pal, &snap.char, item),
+            )
+            .manual(request)
+            .child(tile);
+            // Отступ между строками списка (у Reorder нет gap).
+            list = list.row(uid, div().pb(px(8.0)).child(ctx));
         }
-        col
-    }
-
-    /// M16/F29b: нижняя строка валюты — суммы стаков `money`
-    /// (параллельно с вкладкой «Валюты»: строка — всегда, вкладка —
-    /// детализация).
-    fn currency_row(&self, pal: &Palette) -> Div {
-        let lang = self.lang;
-        let money = self
-            .store
-            .snapshot
-            .as_ref()
-            .map(|s| money_totals(&s.char.inventory))
-            .unwrap_or_default();
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .px_2()
-            .py_1()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(t(lang, Key::BpCurrencies)),
-            );
-        if money.is_empty() {
-            row = row.child(div().text_color(rgb(pal.muted)).child("—"));
-        } else {
-            for (name, total) in money {
-                row = row.child(div().text_size(px(13.0)).child(format!("{name} ×{total}")));
+        div().child(list.on_reorder(move |from, to, _window, cx| {
+            let Some(a) = order.get(from).cloned() else {
+                return;
+            };
+            let Some(b) = order.get(to).cloned() else {
+                return;
+            };
+            if a == b {
+                return;
             }
-        }
-        row
+            this.update(cx, |root, cx| {
+                // Локально — сразу (сетка), порядок сервера
+                // подхватится при resync.
+                root.store.swap_inventory(&a, &b);
+                root.send_cmd(
+                    &ItemMove {
+                        item_uid: a.clone(),
+                        target_uid: b.clone(),
+                    },
+                    Act::Drop,
+                );
+                cx.notify();
+            });
+        }))
     }
 }
 
@@ -349,6 +398,7 @@ mod tests {
     #[test]
     fn backpack_tabs_order_and_round_trip() {
         let all = BackpackTab::all();
+        assert_eq!(all[0].0, BackpackTab::All, "«Все предметы» — первая");
         assert_eq!(
             all[all.len() - 1].0,
             BackpackTab::Currencies,
@@ -357,7 +407,7 @@ mod tests {
         for (tab, _) in all {
             assert_eq!(BackpackTab::parse(tab.as_str()), tab, "round-trip");
         }
-        assert_eq!(BackpackTab::default(), BackpackTab::Weapon);
+        assert_eq!(BackpackTab::default(), BackpackTab::All);
         assert_eq!(tab_for_type("saddle"), BackpackTab::Other, "новый тип");
     }
 

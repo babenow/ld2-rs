@@ -989,12 +989,7 @@ impl Root {
                 }
             }
         }
-        if let Some(err) = self
-            .store
-            .world_error
-            .clone()
-            .or_else(|| self.store.sheet_error.clone())
-        {
+        if let Some(err) = self.store.world_error.clone() {
             col = col.child(div().text_color(rgb(pal.danger)).child(err));
         }
         col.child(btn(

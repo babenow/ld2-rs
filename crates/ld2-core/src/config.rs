@@ -107,8 +107,8 @@ fn default_sheet_tab() -> String {
     "skills".into()
 }
 fn default_backpack_tab() -> String {
-    // Первая вкладка рюкзака — группы типов (M16/F29b).
-    "weapon".into()
+    // Первая вкладка рюкзака — «Все предметы» (M16/F29g).
+    "all".into()
 }
 
 /// Ремаппинг горячих клавиш (ФР-19): действие → спецификация вида
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(cfg.hotkeys.open_character, "c");
         // M16/F29b: окно рюкзака и его вкладка — дефолты старого файла.
         assert_eq!(cfg.hotkeys.open_backpack, "i");
-        assert_eq!(cfg.backpack_tab, "weapon");
+        assert_eq!(cfg.backpack_tab, "all");
         // M14/F8: шрифты чата/лога в старом конфиге — дефолт 12 px.
         assert_eq!(cfg.chat_font_px, 12.0);
         assert_eq!(cfg.log_font_px, 12.0);
