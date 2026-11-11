@@ -20,6 +20,7 @@ use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
+use super::sheet::rarity_label;
 use super::social::show_party;
 use super::{btn, hex_to_u32, Click, LogTab, Root};
 
@@ -901,11 +902,13 @@ impl Root {
                     .child(t(lang, Key::DeathLost)),
             )
             .children(death.lost_items.iter().map(|item| {
-                div().child(format!(
-                    "• {} ({})",
-                    item.name,
-                    item.rarity.as_deref().unwrap_or("-")
-                ))
+                // M16/F29e: редкость — на языке игрока.
+                let rarity = item
+                    .rarity
+                    .as_deref()
+                    .map(|r| rarity_label(lang, r))
+                    .unwrap_or_else(|| "-".to_string());
+                div().child(format!("• {} ({})", item.name, rarity))
             }))
             .child(
                 btn(

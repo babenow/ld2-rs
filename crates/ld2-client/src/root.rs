@@ -243,6 +243,9 @@ pub struct Root {
     guild_input: Option<Entity<TextInput>>,
     /// Открытая вкладка листа (ФР-19: персистентна в config).
     sheet_tab: sheet::SheetTab,
+    /// M16/F29d: запрос контекстного меню экипировки — (слот, номер,
+    /// точка клика); номер растёт, чтобы Ely переоткрыл меню.
+    equip_menu: Option<(String, u64, gpui::Point<gpui::Pixels>)>,
     /// M10.5: чат — ввод, фильтр, активный канал.
     chat_input: Option<Entity<TextInput>>,
     chat_filter: Option<Entity<TextInput>>,
@@ -419,6 +422,7 @@ impl Root {
             first_frame: true,
             guild_input: None,
             sheet_tab,
+            equip_menu: None,
             chat_input: None,
             chat_filter: None,
             chat_channel: "location".into(),
@@ -806,13 +810,22 @@ impl Root {
         // M15/F25: хоткей окна персонажа (кнопка в шапке дублирует);
         // M16/F29b: окна открываются одновременно (общий scrim).
         if keystroke_matches(&self.config.hotkeys.open_character, ks) {
-            self.char_popup.open = !self.char_popup.open;
+            if self.char_popup.open {
+                self.char_popup.open = false;
+            } else {
+                // M16/F29d: базовый размер + первая вкладка.
+                self.open_popup(PopupKind::Character);
+            }
             cx.notify();
             return;
         }
         // M16/F29b: хоткей рюкзака (кнопка в шапке дублирует).
         if keystroke_matches(&self.config.hotkeys.open_backpack, ks) {
-            self.backpack_popup.open = !self.backpack_popup.open;
+            if self.backpack_popup.open {
+                self.backpack_popup.open = false;
+            } else {
+                self.open_popup(PopupKind::Backpack);
+            }
             cx.notify();
             return;
         }
@@ -957,6 +970,40 @@ impl Root {
         }
     }
 
+    /// M16/F29e: открытие окна — **базовый размер 760×560** (диалог
+    /// уже игрового окна), по центру (drag/resize живут до закрытия)
+    /// и первая вкладка.
+    fn open_popup(&mut self, kind: PopupKind) {
+        let (w, h) = (760.0, 560.0);
+        let delta = match kind {
+            PopupKind::Character => (0.0, 0.0),
+            PopupKind::Backpack => (40.0, 40.0),
+        };
+        let st = self.popup_mut(kind);
+        st.open = true;
+        st.size = (w, h);
+        st.delta = delta;
+        st.drag_offset = None;
+        st.resize_anchor = None;
+        match kind {
+            PopupKind::Character => self.sheet_tab = sheet::SheetTab::Params,
+            PopupKind::Backpack => self.backpack_tab = backpack::BackpackTab::default(),
+        }
+    }
+
+    /// M16/F29d: запрос контекстного меню экипировки (левый/правый
+    /// клик по предмету) — номер растёт, чтобы Ely переоткрыл меню.
+    fn bump_equip_menu(
+        &mut self,
+        slot: String,
+        at: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let n = self.equip_menu.as_ref().map(|(_, n, _)| *n).unwrap_or(0) + 1;
+        self.equip_menu = Some((slot, n, at));
+        cx.notify();
+    }
+
     /// M16/F29b: общий scrim группы всплывающих окон — окна могут
     /// быть открыты одновременно (персонаж + рюкзак), поэтому scrim
     /// один на всех и лежит ПОД карточками; клик мимо закрывает
@@ -1037,12 +1084,21 @@ impl Root {
                 }
             }
             Click::ToggleCharacter => {
-                self.char_popup.open = !self.char_popup.open;
+                if self.char_popup.open {
+                    self.char_popup.open = false;
+                } else {
+                    // M16/F29d: базовый размер + первая вкладка.
+                    self.open_popup(PopupKind::Character);
+                }
                 cx.notify();
             }
             // M16/F29b: окно рюкзака (открывается вместе с персонажем).
             Click::ToggleInventory => {
-                self.backpack_popup.open = !self.backpack_popup.open;
+                if self.backpack_popup.open {
+                    self.backpack_popup.open = false;
+                } else {
+                    self.open_popup(PopupKind::Backpack);
+                }
                 cx.notify();
             }
             Click::Theme(theme) => {
