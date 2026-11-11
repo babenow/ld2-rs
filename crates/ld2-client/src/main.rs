@@ -40,6 +40,19 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("keyring: resume-токен найден ({login})");
         }
     }
+    // M16/F29j: запомненный пароль → предзаполнение поля на экране
+    // входа. Чтение только при включённой галочке, с таймаутом как
+    // у resume-токена (зависший диалог keyring не блокирует старт).
+    let mut prefill_password = None;
+    if config.remember_password {
+        if let Some(login) = &config.last_login {
+            prefill_password = ld2_core::secrets::get_password_with_timeout(
+                &config.host,
+                login,
+                Duration::from_secs(1),
+            );
+        }
+    }
     let (tx, rx) = mpsc::unbounded_channel();
     let transport = transport::spawn(tcfg, tx);
 
@@ -63,6 +76,7 @@ fn main() -> anyhow::Result<()> {
         transport,
         ingress: rx,
         update_rx,
+        prefill_password,
     };
 
     // D16/M11.1: gpui-pre 0.3.10 + ассеты Ely (шрифты Inter/JetBrains Mono,

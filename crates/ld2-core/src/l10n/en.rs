@@ -309,6 +309,7 @@ pub(super) fn t(key: Key) -> &'static str {
         BpTabAll => "All items",
         // M16/F29f: backpack armor tab
         BpTabArmor => "Armor",
+        RememberPassword => "Remember password",
         // M16/F29e: item stats, rarities, equip slots, types
         StatDamage => "Damage",
         StatHeal => "Heal",

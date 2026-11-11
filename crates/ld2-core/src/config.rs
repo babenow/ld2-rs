@@ -59,6 +59,11 @@ pub struct Config {
     /// Состояние UI: открытая вкладка рюкзака (M16/F29b: сохраняется).
     #[serde(default = "default_backpack_tab")]
     pub backpack_tab: String,
+    /// M16/F29j: «запомнить пароль» — галочка на экране входа и
+    /// предзаполнение поля. Сам пароль хранится ТОЛЬКО в keyring
+    /// (protocol.md §4), в конфиг не попадает.
+    #[serde(default)]
+    pub remember_password: bool,
     /// Состояние UI: свёрнут ли пати-виджет (ФР-19).
     #[serde(default)]
     pub party_collapsed: bool,
@@ -299,6 +304,7 @@ impl Default for Config {
             chat_limit: default_chat_limit(),
             sheet_tab: default_sheet_tab(),
             backpack_tab: default_backpack_tab(),
+            remember_password: false,
             party_collapsed: false,
             hotkeys: Hotkeys::default(),
         }
@@ -383,6 +389,8 @@ mod tests {
         // M16/F29b: окно рюкзака и его вкладка — дефолты старого файла.
         assert_eq!(cfg.hotkeys.open_backpack, "i");
         assert_eq!(cfg.backpack_tab, "all");
+        // M16/F29j: «запомнить пароль» в старом конфиге выключено.
+        assert!(!cfg.remember_password);
         // M14/F8: шрифты чата/лога в старом конфиге — дефолт 12 px.
         assert_eq!(cfg.chat_font_px, 12.0);
         assert_eq!(cfg.log_font_px, 12.0);

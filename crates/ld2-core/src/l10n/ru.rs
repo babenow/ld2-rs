@@ -309,6 +309,7 @@ pub(super) fn t(key: Key) -> &'static str {
         BpTabAll => "Все предметы",
         // M16/F29f: вкладка рюкзака
         BpTabArmor => "Броня",
+        RememberPassword => "Запомнить пароль",
         // M16/F29e: характеристики, редкости, слоты, типы
         StatDamage => "Урон",
         StatHeal => "Лечение",

@@ -27,8 +27,8 @@ use crate::palette::{palette, Palette};
 use ely::buttons::IconButton;
 use ely::feedback::{Toast, Toaster};
 use ely::forms::{
-    hex, parse_hex, Choice, ColorPicker, HotkeyInput, Input, InputEvent, PasswordInput, Slider,
-    Switch, TextInput,
+    hex, parse_hex, Checkbox, Choice, ColorPicker, HotkeyInput, Input, InputEvent, PasswordInput,
+    Slider, Switch, TextInput,
 };
 use ely::layout::ScrollArea;
 use ely::navigation::Tabs;
@@ -192,6 +192,9 @@ pub struct Shell {
     pub transport: TransportHandle,
     pub ingress: mpsc::UnboundedReceiver<IngressEvent>,
     pub update_rx: std::sync::mpsc::Receiver<String>,
+    /// M16/F29j: запомненный пароль из keyring для предзаполнения
+    /// поля на экране входа (читается в main.rs, один раз при старте).
+    pub prefill_password: Option<String>,
 }
 
 use tokio::sync::mpsc;
@@ -207,6 +210,13 @@ pub struct Root {
     update_available: Option<String>,
     login_input: Option<Entity<TextInput>>,
     password_input: Option<Entity<TextInput>>,
+    /// M16/F29j: пароль последней отправки входа/регистрации — живёт
+    /// до успешного `PersistSession` и там же уходит в keyring
+    /// (или стирается, если галочка выключена).
+    pending_password: Option<String>,
+    /// M16/F29j: предзаполнение пароля из keyring — отдаётся полю
+    /// в `init_inputs` (один раз при старте, `take()`).
+    prefill_password: Option<String>,
     /// Поля диалога регистрации (M13.3, D35): живут только в UI-состоянии,
     /// в store/логи не попадают.
     register_open: bool,
@@ -404,6 +414,8 @@ impl Root {
             update_available: None,
             login_input: None,
             password_input: None,
+            pending_password: None,
+            prefill_password: shell.prefill_password,
             register_open: false,
             register_submitted: false,
             reg_login: None,
@@ -565,6 +577,25 @@ impl Root {
                     {
                         tracing::warn!("keyring: не удалось сохранить токен: {e}");
                     }
+                    // M16/F29j: запомненный пароль — только в keyring.
+                    // Стэш пуст при resume (вход по токену) — старую
+                    // запись не трогаем; выключенная галочка её стирает.
+                    let pending = self.pending_password.take();
+                    if self.config.remember_password {
+                        if let Some(pw) = pending {
+                            if let Err(e) =
+                                ld2_core::secrets::set_password(&self.config.host, &login, &pw)
+                            {
+                                tracing::warn!("keyring: не удалось сохранить пароль: {e}");
+                            }
+                        }
+                    } else if pending.is_some() {
+                        if let Err(e) =
+                            ld2_core::secrets::delete_password(&self.config.host, &login)
+                        {
+                            tracing::warn!("keyring: не удалось удалить пароль: {e}");
+                        }
+                    }
                     self.config.last_login = Some(login);
                     if let Err(e) = self.config_store.save(&self.config) {
                         tracing::warn!("не удалось сохранить конфиг: {e:#}");
@@ -602,6 +633,9 @@ impl Root {
             self.store.login_error = Some(t(self.lang, Key::ErrFillFields).to_string());
             return;
         }
+        // M16/F29j: пароль до move в cmd — для keyring при успешном
+        // входе (PersistSession).
+        self.pending_password = Some(password.clone());
         let cmd = AuthLogin {
             login: login.clone(),
             password,
@@ -670,7 +704,14 @@ impl Root {
             cx,
             t(lang, Key::FieldPassword).to_string(),
             true,
-            None,
+            // M16/F29j: при включённой галочке «Запомнить пароль»
+            // пароль уже введён (чтение keyring — в main.rs, один
+            // раз при старте).
+            if self.config.remember_password {
+                self.prefill_password.take()
+            } else {
+                None
+            },
         ));
         self.host_input = Some(mk(window, cx, host.clone(), false, Some(host)));
         self.guild_input = Some(mk(window, cx, "…".into(), false, None));
@@ -1585,6 +1626,25 @@ impl Root {
                     .w(px(320.0))
                     .child(PasswordInput::new(self.ti(&self.password_input))),
             )
+            // M16/F29j: «запомнить пароль» — пароль живёт только в
+            // keyring; флаг — в конфиге (сохраняется сразу).
+            .child({
+                let me = cx.entity();
+                let on = self.config.remember_password;
+                div().w(px(320.0)).child(
+                    Checkbox::new("ld2-login-remember", on)
+                        .label(t(lang, Key::RememberPassword))
+                        .on_change(move |on, _, acx| {
+                            me.update(acx, |root, cx| {
+                                root.config.remember_password = on;
+                                if let Err(e) = root.config_store.save(&root.config) {
+                                    tracing::warn!("не удалось сохранить конфиг: {e:#}");
+                                }
+                                cx.notify();
+                            })
+                        }),
+                )
+            })
             // M14/F21: предупреждения Caps/раскладка — под полями ввода.
             .children(caps_on.then(|| {
                 div()
