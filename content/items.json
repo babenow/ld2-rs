@@ -132,6 +132,82 @@
       "gold_value": 95
     },
     {
+      "id": "sword_champion",
+      "type": "weapon",
+      "name": "Клинок чемпиона",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "dmg": "10..16"
+      },
+      "gold_value": 900,
+      "skill": "sword"
+    },
+    {
+      "id": "staff_archmage",
+      "type": "staff",
+      "name": "Посох архимага",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "magic": 6
+      },
+      "gold_value": 850,
+      "sockets": 3
+    },
+    {
+      "id": "helm_champion",
+      "type": "armor",
+      "name": "Шлем чемпиона",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "armor": 8
+      },
+      "gold_value": 480
+    },
+    {
+      "id": "boots_thunder",
+      "type": "armor",
+      "name": "Сапоги грома",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "armor": 6
+      },
+      "gold_value": 430
+    },
+    {
+      "id": "rune_frost",
+      "type": "rune",
+      "name": "Руна мороза",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "spell": "frost_bolt",
+        "damage": 10,
+        "school": "frost",
+        "charges": 6,
+        "max": 8
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_storm",
+      "type": "rune",
+      "name": "Руна шторма",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "spell": "storm_bolt",
+        "damage": 14,
+        "school": "storm",
+        "charges": 5,
+        "max": 8
+      },
+      "gold_value": 75
+    },
+    {
       "id": "dagger_knife",
       "type": "weapon",
       "name": "Кинжал",

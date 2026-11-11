@@ -305,6 +305,8 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsDamageBold => "Жирным",
         // M14 F14: вкладка
         SettingsFonts => "Шрифты",
+        // M16/F29g: первая вкладка рюкзака
+        BpTabAll => "Все предметы",
         // M16/F29f: вкладка рюкзака
         BpTabArmor => "Броня",
         // M16/F29e: характеристики, редкости, слоты, типы
@@ -318,6 +320,7 @@ pub(super) fn t(key: Key) -> &'static str {
         StatMax => "Макс. зарядов",
         SchoolFire => "Огонь",
         SchoolFrost => "Мороз",
+        SchoolStorm => "Шторм",
         RarityCommon => "Обычный",
         RarityUncommon => "Необычный",
         RarityRare => "Редкий",

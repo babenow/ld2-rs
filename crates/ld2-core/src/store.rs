@@ -172,8 +172,6 @@ pub struct AppStore {
     pub select_error: Option<String>,
     /// Ошибки действий мира (move/attack/examine), ФР-03.
     pub world_error: Option<String>,
-    /// Ошибки действий листа/инвентаря (invest/equip/…), ФР-04/ФР-07.
-    pub sheet_error: Option<String>,
     /// Модалка смерти (ФР-06): закрывается только подтверждением.
     pub death: Option<ld2_protocol::evt::CharDeath>,
     /// Описание предмета (ФР-07 «показать описание»).
@@ -367,7 +365,6 @@ impl AppStore {
             create_error: None,
             select_error: None,
             world_error: None,
-            sheet_error: None,
             death: None,
             item_detail: None,
             upgrade: None,
@@ -488,17 +485,20 @@ impl AppStore {
                     self.notice = Some(msg);
                 }
                 Act::Move | Act::Attack | Act::Examine => self.world_error = Some(msg),
+                // M16/F29h: ошибки листа — системные уведомления
+                // (тосты), как и весь прочий фидбек.
                 Act::Invest
                 | Act::Equip
                 | Act::Unequip
                 | Act::Drop
                 | Act::Preview
                 | Act::Upgrade
-                | Act::Socket => self.sheet_error = Some(msg),
+                | Act::Socket
+                | Act::CrimeLog
+                | Act::Learn
+                | Act::Craft
+                | Act::Quest => self.notice = Some(msg),
                 Act::Cast => self.world_error = Some(msg),
-                Act::CrimeLog | Act::Learn | Act::Craft | Act::Quest => {
-                    self.sheet_error = Some(msg)
-                }
                 // Лимиты чата (E_RATE_LIMITED §9) и права (E_PERMISSION,
                 // M14/F19) — тостом.
                 Act::Chat | Act::ChatDelete => self.notice = Some(msg),
@@ -633,7 +633,6 @@ impl AppStore {
                         }
                     }
                 }
-                self.sheet_error = None;
             }
             Act::Preview => {
                 if let (Some(upgrade), Some(payload)) =
@@ -1437,8 +1436,22 @@ impl AppStore {
 
     /// Отправка команды листа/инвентаря (ФР-04/ФР-07).
     pub fn on_sheet_sent(&mut self, act: Act) {
-        self.sheet_error = None;
         self.pending = Some(act);
+    }
+
+    /// M16/F29g: локальный обмен позициями предметов в сетке рюкзака
+    /// (после cmd/item.move — порядок сервера подхватится при resync).
+    pub fn swap_inventory(&mut self, a: &str, b: &str) {
+        let Some(snap) = self.snapshot.as_mut() else {
+            return;
+        };
+        let Some(i) = snap.char.inventory.iter().position(|i| i.uid == a) else {
+            return;
+        };
+        let Some(j) = snap.char.inventory.iter().position(|i| i.uid == b) else {
+            return;
+        };
+        snap.char.inventory.swap(i, j);
     }
 
     /// Подтверждение смерти (ФР-06): окно «Вы погибли» закрывается
@@ -1449,7 +1462,6 @@ impl AppStore {
 
     /// Открыть модалку улучшения (ФР-10); превью придёт от сервера.
     pub fn open_upgrade(&mut self, item_uid: String, item_name: String) {
-        self.sheet_error = None;
         self.upgrade = Some(UpgradeView {
             item_uid,
             item_name,
@@ -1463,7 +1475,6 @@ impl AppStore {
 
     /// Открыть инкрустацию посоха (ФР-09).
     pub fn open_socketing(&mut self, staff_uid: String) {
-        self.sheet_error = None;
         self.socketing = Some(staff_uid);
     }
 
@@ -1562,7 +1573,6 @@ impl AppStore {
         self.create_error = None;
         self.select_error = None;
         self.world_error = None;
-        self.sheet_error = None;
         self.death = None;
         self.item_detail = None;
         self.entity_detail = None;
@@ -1634,7 +1644,6 @@ impl AppStore {
         self.snapshot = None;
         self.select_error = None;
         self.world_error = None;
-        self.sheet_error = None;
         self.entity_detail = None;
         self.item_detail = None;
         self.death = None;
@@ -3035,16 +3044,16 @@ mod tests {
             Some(&Some("loot_m_3".to_string())),
             "экипировка применена из ack (нет событий на смену слота)"
         );
-        assert!(store.sheet_error.is_none() && store.pending.is_none());
+        assert!(store.notice.is_none() && store.pending.is_none());
     }
 
     #[test]
-    fn equip_ack_error_goes_to_sheet_error() {
+    fn equip_ack_error_goes_to_notice() {
         let mut store = in_game();
         store.on_sheet_sent(Act::Equip);
         let ack = ld2_protocol::Ack::error(12, None, &ErrorCode::ItemGone, "предмета нет");
         store.apply(IngressEvent::Ack(ack));
-        assert_eq!(store.sheet_error.as_deref(), Some("предмета нет"));
+        assert_eq!(store.notice.as_deref(), Some("предмета нет"));
         assert!(store.world_error.is_none(), "ошибки листа не в мире");
     }
 
@@ -3217,7 +3226,7 @@ mod tests {
             snap.char.inventory.iter().any(|i| i.uid == "rune_i_17_0"),
             "руна в инвентаре"
         );
-        assert!(store.sheet_error.is_none());
+        assert!(store.notice.is_none());
     }
 
     #[test]
@@ -3227,7 +3236,7 @@ mod tests {
         let ack = ld2_protocol::Ack::error(23, None, &ErrorCode::NotEnoughMp, "не хватает маны");
         store.apply(IngressEvent::Ack(ack));
         assert_eq!(store.world_error.as_deref(), Some("не хватает маны"));
-        assert!(store.sheet_error.is_none(), "каст — не лист");
+        assert!(store.notice.is_none(), "каст — не лист");
     }
 
     // ─── M6: время, цель, кулдауны, статусы ─────────────────────────────────

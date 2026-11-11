@@ -9,9 +9,9 @@ use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
     ChatDelete, ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
     GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip,
-    ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, PartyAccept, PartyInvite,
-    PartyKick, SkillUse, SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel,
-    TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
+    ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, PartyAccept,
+    PartyInvite, PartyKick, SkillUse, SocketExtract, SocketInsert, StateResync, TradeAddItem,
+    TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -212,6 +212,7 @@ impl Session {
             "cmd/item.equip" => self.item_equip(env, seq).await,
             "cmd/item.unequip" => self.item_unequip(env, seq).await,
             "cmd/item.drop" => self.item_drop(env, seq).await,
+            "cmd/item.move" => self.item_move(env, seq).await,
             // dev-сценарии (`/scenario …`); чат — ФР-13 в фазе M12.7
             "cmd/chat.send" => self.chat_send(env, seq).await,
             "cmd/chat.delete" => self.chat_delete(env, seq).await,
@@ -1732,6 +1733,32 @@ impl Session {
         ];
         outs.extend(money_events);
         outs
+    }
+
+    /// `cmd/item.move` (M16/F29g): поменять местами два предмета
+    /// рюкзака (перетаскивание) → ack `{}`; порядок — `items.sort_order`,
+    /// клиент меняет сетку локально при отправке.
+    async fn item_move(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ItemMove>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        match db::items::swap_order(&self.state.pool, &char_id, &cmd.item_uid, &cmd.target_uid)
+            .await
+        {
+            Ok(true) => vec![Self::ack_payload(seq, &serde_json::json!({}))],
+            Ok(false) => vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")],
+            Err(e) => {
+                warn!("item.move: {e}");
+                vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
+            }
+        }
     }
 
     /// `cmd/item.use` (§7): взятие статического лута (`loot:*`) или расход
@@ -4397,7 +4424,9 @@ impl Session {
                             .await
                             .map_err(|e| format!("деф {uid}: {e}"))?;
                     sqlx::query(
-                        "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3)",
+                        "INSERT INTO items (character_id, def_id, qty, sort_order) \
+                         VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
+                         FROM items WHERE character_id = $1), 0))",
                     )
                     .bind(to)
                     .bind(&def_id)
@@ -4477,7 +4506,9 @@ impl Session {
                     .map_err(|e| format!("определение валюты: {e}"))?
                     .ok_or_else(|| "нет определения валюты в контенте".to_string())?;
                     sqlx::query(
-                        "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3)",
+                        "INSERT INTO items (character_id, def_id, qty, sort_order) \
+                         VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
+                         FROM items WHERE character_id = $1), 0))",
                     )
                     .bind(to)
                     .bind(&def_id)

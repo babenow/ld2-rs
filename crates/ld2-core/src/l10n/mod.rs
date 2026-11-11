@@ -353,6 +353,8 @@ pub enum Key {
     SettingsDamageBold,
     // M14 F14: вкладка «Шрифты»
     SettingsFonts,
+    // M16/F29g: вкладка «Все предметы» рюкзака (первая)
+    BpTabAll,
     // M16/F29f: вкладка «Броня» рюкзака
     BpTabArmor,
     // M16/F29e: переводы характеристик, редкостей, слотов и типов
@@ -366,6 +368,7 @@ pub enum Key {
     StatMax,
     SchoolFire,
     SchoolFrost,
+    SchoolStorm,
     RarityCommon,
     RarityUncommon,
     RarityRare,
@@ -766,6 +769,8 @@ mod tests {
         Key::SettingsLogAttackColor,
         Key::SettingsDamageBold,
         Key::SettingsFonts,
+        // M16/F29g: вкладка «Все предметы» рюкзака (первая)
+        Key::BpTabAll,
         // M16/F29f: вкладка «Броня» рюкзака
         Key::BpTabArmor,
         // M16/F29e: переводы характеристик, редкостей, слотов и типов
@@ -779,6 +784,7 @@ mod tests {
         Key::StatMax,
         Key::SchoolFire,
         Key::SchoolFrost,
+        Key::SchoolStorm,
         Key::RarityCommon,
         Key::RarityUncommon,
         Key::RarityRare,

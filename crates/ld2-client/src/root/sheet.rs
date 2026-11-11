@@ -274,7 +274,7 @@ impl Root {
             .min_h_0()
             .child(self.character_left_column(cx, pal))
             .child(self.character_tabs(cx, pal));
-        Some(self.popup_window(window, cx, pal, PopupKind::Character, title, body))
+        Some(self.popup_window(window, cx, pal, PopupKind::Character, title, body, None))
     }
 
     /// M16/F29b: оболочка всплывающего окна (механика M15/F25b–g):
@@ -282,6 +282,9 @@ impl Root {
     /// содержимое под шапкой. Скрим общий для всех окон (могут быть
     /// открыты одновременно) — `Root::popup_scrim`; геометрия и
     /// флаги жестов — `PopupState` вида `kind`.
+    // Оболочка окна: контекст (окно/cx/палитра) + вид + заголовок +
+    // тело + подвал — набор неизменен, кроме растущих частей.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn popup_window(
         &mut self,
         window: &mut Window,
@@ -290,6 +293,8 @@ impl Root {
         kind: PopupKind,
         title: impl Into<SharedString>,
         body: Div,
+        // M16/F29g: нижняя панель под телом (по аналогии с шапкой).
+        footer: Option<Div>,
     ) -> AnyElement {
         let lang = self.lang;
         let title = title.into();
@@ -484,6 +489,8 @@ impl Root {
                     .p(px(12.0))
                     .child(body),
             )
+            // M16/F29g: нижняя панель (по аналогии с верхней) — у рюкзака.
+            .children(footer)
             .child(resize_grip);
 
         // M16/F29b: слой карточки (позиционирование); scrim общий
@@ -614,10 +621,6 @@ impl Root {
         );
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
 
-        if let Some(err) = &self.store.sheet_error {
-            col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
-        }
-
         let body = match tab {
             // M15/F26: производные характеристики; заглушка до F27 — «Репутация».
             SheetTab::Params => self.tab_params(pal),
@@ -734,10 +737,10 @@ impl Root {
     }
 
     /// Отправка команды листа (паритет egui `send`).
-    fn send_cmd<C: ld2_protocol::Command>(&mut self, cmd: &C, act: Act) {
+    pub(crate) fn send_cmd<C: ld2_protocol::Command>(&mut self, cmd: &C, act: Act) {
         match self.transport.send(cmd) {
             Ok(_) => self.store.on_sheet_sent(act),
-            Err(e) => self.store.sheet_error = Some(format!("нет связи: {e}")),
+            Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
         }
     }
 
@@ -1487,10 +1490,6 @@ impl Root {
             col = col.child(row);
         }
 
-        if let Some(err) = &self.store.sheet_error.clone() {
-            col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
-        }
-
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
         col = col.child(
             div()
@@ -1696,9 +1695,6 @@ impl Root {
                         )),
                 );
             }
-            if let Some(err) = &self.store.sheet_error.clone() {
-                col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
-            }
             return col;
         };
 
@@ -1839,9 +1835,6 @@ impl Root {
                         .child(format!("• {}", entry.text)),
                 );
             }
-        }
-        if let Some(err) = &self.store.sheet_error.clone() {
-            col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
         }
         col
     }
@@ -1986,9 +1979,6 @@ impl Root {
                 );
             }
         }
-        if let Some(err) = &self.store.sheet_error.clone() {
-            col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
-        }
 
         let preview_id = preview["preview_id"]
             .as_str()
@@ -2129,9 +2119,6 @@ impl Root {
             col = col.child(row);
         }
 
-        if let Some(err) = &self.store.sheet_error.clone() {
-            col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
-        }
         col = col.child(act_btn(
             cx,
             t(lang, Key::Exit),
@@ -2309,6 +2296,7 @@ pub(crate) fn school_label(lang: Lang, school: &str) -> String {
     match school {
         "fire" => t(lang, Key::SchoolFire),
         "frost" => t(lang, Key::SchoolFrost),
+        "storm" => t(lang, Key::SchoolStorm),
         other => other,
     }
     .to_string()
@@ -2382,7 +2370,8 @@ mod tests {
         assert_eq!(stat_label(ru, "damage"), "Урон", "dmg и damage — один ключ");
         assert_eq!(stat_label(ru, "piety"), "piety", "fallback");
         assert_eq!(school_label(ru, "fire"), "Огонь");
-        assert_eq!(school_label(ru, "storm"), "storm", "fallback");
+        assert_eq!(school_label(ru, "storm"), "Шторм");
+        assert_eq!(school_label(ru, "necro"), "necro", "fallback");
     }
 
     /// M15/F28: группы — в порядке GDD §3, иды уникальны.
