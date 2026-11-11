@@ -231,6 +231,9 @@ pub struct Root {
     /// с общим payload-типом получают ВСЕ открытые окна, двигаться/
     /// ресайзиться может только владелец (иначе окна едут вместе).
     drag_owner: Option<PopupKind>,
+    /// M16/F29f: вьюпорт кэшируется в render — базовый размер окна
+    /// клампится под экран при открытии (в обработчиках нет Window).
+    viewport: (f32, f32),
     /// M16/F29b: активная вкладка рюкзака (персистентна в config).
     backpack_tab: backpack::BackpackTab,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
@@ -417,6 +420,7 @@ impl Root {
             backpack_tab: backpack::BackpackTab::default(),
             popup_scrim_down: false,
             drag_owner: None,
+            viewport: (0.0, 0.0),
             exit_timer: None,
             skill_info: None,
             first_frame: true,
@@ -970,11 +974,20 @@ impl Root {
         }
     }
 
-    /// M16/F29e: открытие окна — **базовый размер 760×560** (диалог
-    /// уже игрового окна), по центру (drag/resize живут до закрытия)
-    /// и первая вкладка.
+    /// M16/F29f: открытие окна — базовый размер (персонаж **выше**:
+    /// 760×760; рюкзак 760×560), по центру с клампом под вьюпорт
+    /// (drag/resize живут до закрытия) и первая вкладка.
     fn open_popup(&mut self, kind: PopupKind) {
-        let (w, h) = (760.0, 560.0);
+        let (tw, th) = match kind {
+            PopupKind::Character => (760.0, 760.0),
+            PopupKind::Backpack => (760.0, 560.0),
+        };
+        let (vw, vh) = self.viewport;
+        let (w, h) = if vw > 0.0 && vh > 0.0 {
+            clamp_char_size(tw, th, vw, vh)
+        } else {
+            (tw, th)
+        };
         let delta = match kind {
             PopupKind::Character => (0.0, 0.0),
             PopupKind::Backpack => (40.0, 40.0),
@@ -2781,6 +2794,10 @@ impl Render for Root {
         cx: &mut Context<'_, Self>,
     ) -> impl gpui::IntoElement {
         let pal = palette(&self.config.theme);
+        // M16/F29f: вьюпорт кэшируется — базовый размер окна
+        // клампится под экран при открытии (в обработчиках нет Window).
+        let vp = window.viewport_size();
+        self.viewport = (f32::from(vp.width), f32::from(vp.height));
         // Автофокус поля логина на первом кадре (экран входа).
         if self.first_frame {
             self.first_frame = false;

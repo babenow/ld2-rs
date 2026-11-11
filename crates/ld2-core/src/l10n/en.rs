@@ -305,6 +305,8 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsDamageBold => "Bold",
         // M14 F14: tab
         SettingsFonts => "Fonts",
+        // M16/F29f: backpack armor tab
+        BpTabArmor => "Armor",
         // M16/F29e: item stats, rarities, equip slots, types
         StatDamage => "Damage",
         StatHeal => "Heal",

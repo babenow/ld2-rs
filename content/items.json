@@ -55,6 +55,83 @@
       "gold_value": 90
     },
     {
+      "id": "hood_scout",
+      "type": "armor",
+      "name": "Капюшон разведчика",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 70
+    },
+    {
+      "id": "helm_knight",
+      "type": "armor",
+      "name": "Шлем рыцаря",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "armor": 5
+      },
+      "gold_value": 180
+    },
+    {
+      "id": "armor_leather",
+      "type": "armor",
+      "name": "Кожаный доспех",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 50
+    },
+    {
+      "id": "chainmail",
+      "type": "armor",
+      "name": "Кольчуга",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "armor": 9
+      },
+      "gold_value": 260
+    },
+    {
+      "id": "plate_steel",
+      "type": "armor",
+      "name": "Стальной доспех",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "armor": 12
+      },
+      "gold_value": 520
+    },
+    {
+      "id": "boots_leather",
+      "type": "armor",
+      "name": "Кожаные сапоги",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 1
+      },
+      "gold_value": 25
+    },
+    {
+      "id": "greaves_iron",
+      "type": "armor",
+      "name": "Железные поножи",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 4
+      },
+      "gold_value": 95
+    },
+    {
       "id": "dagger_knife",
       "type": "weapon",
       "name": "Кинжал",

@@ -305,6 +305,8 @@ pub(super) fn t(key: Key) -> &'static str {
         SettingsDamageBold => "Жирным",
         // M14 F14: вкладка
         SettingsFonts => "Шрифты",
+        // M16/F29f: вкладка рюкзака
+        BpTabArmor => "Броня",
         // M16/F29e: характеристики, редкости, слоты, типы
         StatDamage => "Урон",
         StatHeal => "Лечение",

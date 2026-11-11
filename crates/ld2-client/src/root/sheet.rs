@@ -307,12 +307,12 @@ impl Root {
             .items_center()
             .justify_between()
             .cursor_grab()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            // M16/F29b: шапка слегка подсвечена — «за неё тянут».
+            .px_3()
+            .py_2()
+            // M16/F29f: шапка встык к верхней кромке окна (скругление
+            // карточки срезает overflow_hidden) и слегка подсвечена.
             .bg(rgb(pal.selection))
-            .border_1()
+            .border_b_1()
             .border_color(rgb(pal.border))
             // M15/F25e: жест начат на шапке — scrim его не закроет.
             .on_mouse_down(
@@ -357,10 +357,10 @@ impl Root {
                     let (w, h) = st.size;
                     let base_x = ((f32::from(viewport.width) - w) / 2.0).max(0.0);
                     let base_y = ((f32::from(viewport.height) - h) / 2.0).max(0.0);
-                    // Шапка внутри padding-а карточки (12 px) — левый
-                    // верхний угол карточки = указатель − offset − 12.
-                    st.delta.0 = f32::from(position.x) - offset.0 - base_x - 12.0;
-                    st.delta.1 = f32::from(position.y) - offset.1 - base_y - 12.0;
+                    // M16/F29f: шапка встык с кромкой карточки —
+                    // её левый верх = указатель − offset (без −12).
+                    st.delta.0 = f32::from(position.x) - offset.0 - base_x;
+                    st.delta.1 = f32::from(position.y) - offset.1 - base_y;
                     cx.notify();
                 },
             ));
@@ -463,16 +463,27 @@ impl Root {
             .top(px(top_xy))
             .flex()
             .flex_col()
-            .gap_2()
             .w(px(w))
             .h(px(h))
-            .p(px(12.0))
             .rounded_md()
+            // M16/F29f: шапка прилегает к кромке — карточка срезает
+            // её углы своим скруглением.
+            .overflow_hidden()
             .border_1()
             .border_color(rgb(pal.border))
             .bg(rgb(pal.panel))
             .child(top)
-            .child(body)
+            // M16/F29f: тело — с внутренними отступами (бывший
+            // padding карточки переехал сюда).
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_grow_1()
+                    .min_h_0()
+                    .p(px(12.0))
+                    .child(body),
+            )
             .child(resize_grip);
 
         // M16/F29b: слой карточки (позиционирование); scrim общий
@@ -492,7 +503,9 @@ impl Root {
     /// разделитель, атрибуты, разделитель, статусы со временем
     /// (+ журнал нарушений) — по спеке пользователя; скроллится.
     fn character_left_column(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let mut col = div().flex().flex_col().gap_2();
+        // M16/F29f: справа запас под скроллбар — цифры значений не
+        // налазили на индикатор прокрутки.
+        let mut col = div().flex().flex_col().gap_2().pr(px(16.0));
         col = col.child(self.character_xp_block(pal));
         col = col.child(self.equip_block(cx, pal));
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
@@ -618,6 +631,9 @@ impl Root {
             SheetTab::Professions => self.tab_professions(cx, pal),
             SheetTab::Guild => self.tab_guild(cx, pal),
         };
+        // M16/F29f: справа запас под скроллбар — цифры значений не
+        // налазили на индикатор прокрутки (как в левой колонке).
+        let body = body.pr(px(16.0));
         // M14/F3: длинные списки (навыки/профессии с рецептами) —
         // прокручиваются, остальные вкладки ведут себя как раньше.
         col = col.child(match tab {
