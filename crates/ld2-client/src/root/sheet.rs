@@ -33,7 +33,7 @@ use crate::palette::Palette;
 use ely::buttons::IconButton;
 use ely::forms::{Choice, Input, Select};
 use ely::layout::ScrollArea;
-use ely::menus::{Menu, MenuItem};
+use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
@@ -257,6 +257,13 @@ impl Root {
         }
 
         let lang = self.lang;
+        // M16/F29d: в заголовке — никнейм персонажа (не «Персонаж»).
+        let title = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| s.char.name.clone())
+            .unwrap_or_else(|| t(lang, Key::BtnCharacter).to_string());
         // M16/F29b: тело собирается до оболочки — та берёт у Root
         // только геометрию `PopupState` вида `kind`.
         let body = div()
@@ -267,14 +274,7 @@ impl Root {
             .min_h_0()
             .child(self.character_left_column(cx, pal))
             .child(self.character_tabs(cx, pal));
-        Some(self.popup_window(
-            window,
-            cx,
-            pal,
-            PopupKind::Character,
-            t(lang, Key::BtnCharacter),
-            body,
-        ))
+        Some(self.popup_window(window, cx, pal, PopupKind::Character, title, body))
     }
 
     /// M16/F29b: оболочка всплывающего окна (механика M15/F25b–g):
@@ -503,7 +503,7 @@ impl Root {
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(300.0))
+            .w(px(360.0))
             .min_h_0()
             .child(
                 ScrollArea::new("ld2-char-left")
@@ -647,48 +647,72 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::CharComingSoon));
         };
-        // Порядок строк — спецификация пользователя (16 позиций).
-        let rows: [(&Key, String); 16] = [
-            (&Key::ParAccuracy, format!("{}%", d.accuracy)),
+        // M16/F29d: группы аналогично навыкам (заголовок + строки);
+        // порядок 16 позиций спецификации сохранён внутри групп.
+        let groups: [(&Key, Vec<(&Key, String)>); 3] = [
             (
-                &Key::ParDamage,
-                format!("{}..{}", d.damage_min, d.damage_max),
-            ),
-            (&Key::ParCritChance, format!("{}%", d.crit_chance)),
-            (&Key::ParCritDamage, format!("{}%", d.crit_damage)),
-            (&Key::ParArmor, d.armor.to_string()),
-            (&Key::ParDodge, format!("{}%", d.dodge)),
-            (&Key::ParParry, format!("{}..{}", d.parry_min, d.parry_max)),
-            (&Key::ParParryChance, format!("{}%", d.parry_chance)),
-            (&Key::ParBlock, format!("{}..{}", d.block_min, d.block_max)),
-            (&Key::ParBlockChance, format!("{}%", d.block_chance)),
-            (&Key::ParMagicDefense, d.magic_defense.to_string()),
-            (&Key::ParMagicDodge, format!("{}%", d.magic_dodge)),
-            (&Key::ParMagicResist, format!("{}%", d.magic_resist)),
-            (&Key::ParMagicDispel, format!("{}%", d.magic_dispel)),
-            (
-                &Key::ParMagicCritDamage,
-                format!("{}%", d.magic_crit_damage),
+                &Key::ParGroupAttack,
+                vec![
+                    (&Key::ParAccuracy, format!("{}%", d.accuracy)),
+                    (
+                        &Key::ParDamage,
+                        format!("{}..{}", d.damage_min, d.damage_max),
+                    ),
+                    (&Key::ParCritChance, format!("{}%", d.crit_chance)),
+                    (&Key::ParCritDamage, format!("{}%", d.crit_damage)),
+                ],
             ),
             (
-                &Key::ParMagicCritChance,
-                format!("{}%", d.magic_crit_chance),
+                &Key::SkillGroupDefense,
+                vec![
+                    (&Key::ParArmor, d.armor.to_string()),
+                    (&Key::ParDodge, format!("{}%", d.dodge)),
+                    (&Key::ParParry, format!("{}..{}", d.parry_min, d.parry_max)),
+                    (&Key::ParParryChance, format!("{}%", d.parry_chance)),
+                    (&Key::ParBlock, format!("{}..{}", d.block_min, d.block_max)),
+                    (&Key::ParBlockChance, format!("{}%", d.block_chance)),
+                ],
+            ),
+            (
+                &Key::SkillGroupMagic,
+                vec![
+                    (&Key::ParMagicDefense, d.magic_defense.to_string()),
+                    (&Key::ParMagicDodge, format!("{}%", d.magic_dodge)),
+                    (&Key::ParMagicResist, format!("{}%", d.magic_resist)),
+                    (&Key::ParMagicDispel, format!("{}%", d.magic_dispel)),
+                    (
+                        &Key::ParMagicCritDamage,
+                        format!("{}%", d.magic_crit_damage),
+                    ),
+                    (
+                        &Key::ParMagicCritChance,
+                        format!("{}%", d.magic_crit_chance),
+                    ),
+                ],
             ),
         ];
         let mut col = div().flex().flex_col().gap_1();
-        for (label, value) in rows {
+        for (header, rows) in groups {
             col = col.child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .justify_between()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(pal.panel))
-                    .child(div().text_color(rgb(pal.muted)).child(t(lang, *label)))
-                    .child(div().font_weight(gpui::FontWeight::BOLD).child(value)),
+                    .mt(px(6.0))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(t(lang, *header)),
             );
+            for (label, value) in rows {
+                col = col.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_between()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(pal.panel))
+                        .child(div().text_color(rgb(pal.muted)).child(t(lang, *label)))
+                        .child(div().font_weight(gpui::FontWeight::BOLD).child(value)),
+                );
+            }
         }
         col
     }
@@ -953,6 +977,8 @@ impl Root {
             let item = uid
                 .as_ref()
                 .and_then(|u| snap.char.inventory.iter().find(|i| i.uid == *u));
+            // M16/F29d: подпись слева, предмет — по правому краю;
+            // кнопки «Снять»/«Описание» убраны в контекстное меню.
             let mut row = div()
                 .flex()
                 .flex_row()
@@ -962,55 +988,77 @@ impl Root {
                 .py_1()
                 .rounded_md()
                 .bg(rgb(pal.panel))
+                .cursor_pointer()
                 .child(
                     div()
                         .w(px(72.0))
                         .text_size(px(12.0))
                         .text_color(rgb(pal.muted))
-                        .child(slot.clone()),
+                        .child(slot_label(lang, slot)),
                 );
-            match item {
-                Some(item) => {
-                    let color = rarity_color(&item.rarity, pal);
-                    row = row.child(div().flex_grow_1().text_color(rgb(color)).child(format!(
+            let Some(item) = item else {
+                row = row.child(
+                    div()
+                        .flex_grow_1()
+                        .text_size(px(12.0))
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::EmptySlot)),
+                );
+                col = col.child(row);
+                continue;
+            };
+            let color = rarity_color(&item.rarity, pal);
+            // Отступ-заполнитель прижимает предмет к правому краю.
+            row =
+                row.child(div().flex_grow_1())
+                    .child(div().text_color(rgb(color)).child(format!(
                         "{} {}",
                         item.name,
                         badges(item)
                     )));
-                    let slot = slot.clone();
-                    row = row.child(act_btn(
-                        cx,
-                        t(lang, Key::MenuUnequip),
-                        pal.panel,
-                        pal.text,
-                        move |this, cx| {
-                            let cmd = ItemUnequip { slot: slot.clone() };
-                            this.send_cmd(&cmd, Act::Unequip);
-                            let _ = cx;
-                        },
-                    ));
-                    let detail = serde_json::to_value(item).unwrap_or_default();
-                    row = row.child(act_btn(
-                        cx,
-                        t(lang, Key::MenuDesc),
-                        pal.panel,
-                        pal.text,
-                        move |this, cx| {
-                            this.store.item_detail = Some(detail.clone());
-                            let _ = cx;
-                        },
-                    ));
-                }
-                None => {
-                    row = row.child(
-                        div()
-                            .flex_grow_1()
-                            .text_size(px(12.0))
-                            .text_color(rgb(pal.muted))
-                            .child(t(lang, Key::EmptySlot)),
-                    );
-                }
-            }
+            // Меню предмета (F29d): Описание и Снять — вместо кнопок.
+            let mut menu = Menu::new();
+            let detail = serde_json::to_value(item).unwrap_or_default();
+            menu = menu.item(menu_item(cx, t(lang, Key::MenuDesc), move |this, _cx| {
+                this.store.item_detail = Some(detail.clone());
+            }));
+            let slot_for_cmd = slot.clone();
+            menu = menu.item(menu_item(
+                cx,
+                t(lang, Key::MenuUnequip),
+                move |this, _cx| {
+                    let cmd = ItemUnequip {
+                        slot: slot_for_cmd.clone(),
+                    };
+                    this.send_cmd(&cmd, Act::Unequip);
+                },
+            ));
+            // Запрос меню: левый и правый клик по строке (номер растёт —
+            // Ely переоткрывает; в manual-режиме host-правый клик выключен).
+            let request = match &self.equip_menu {
+                Some((s, n, at)) if s == slot => Some((*n, *at)),
+                _ => None,
+            };
+            let slot_right = slot.clone();
+            let slot_left = slot.clone();
+            let row = ContextMenu::new(format!("ld2-equip-ctx-{slot}"), menu)
+                .manual(request)
+                .child(
+                    row.on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            window.prevent_default();
+                            this.bump_equip_menu(slot_right.clone(), event.position, cx);
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            window.prevent_default();
+                            this.bump_equip_menu(slot_left.clone(), event.position, cx);
+                        }),
+                    ),
+                );
             col = col.child(row);
         }
 
@@ -1793,18 +1841,31 @@ impl Root {
     ) -> Div {
         let lang = self.lang;
         let rarity = detail["rarity"].as_str().unwrap_or("common");
+        let item_type = detail["type"].as_str().unwrap_or("?");
         let mut col = div().flex().flex_col().gap_1().child(
             div()
                 .text_color(rgb(rarity_color(rarity, pal)))
                 .child(format!(
-                    "{rarity} · {} · +{}",
-                    detail["type"].as_str().unwrap_or("?"),
+                    "{} · {} · +{}",
+                    rarity_label(lang, rarity),
+                    type_label(lang, item_type),
                     detail["upgrade"].as_i64().unwrap_or(0)
                 )),
         );
         if let Some(stats) = detail["stats"].as_object() {
             for (key, value) in stats {
-                col = col.child(div().child(format!("{key}: {value}")));
+                // M16/F29e: ключи и значения — на языке игрока
+                // (школы — свои названия; прочие значения — как есть).
+                let raw = value
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| value.to_string());
+                let value = if key == "school" {
+                    school_label(lang, &raw)
+                } else {
+                    raw
+                };
+                col = col.child(div().child(format!("{}: {}", stat_label(lang, key), value)));
             }
         }
         if let Some(sockets) = detail["sockets"].as_array() {
@@ -2162,6 +2223,81 @@ pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
     }
 }
 
+/// M16/F29e: название редкости (l10n; неизвестная — как есть).
+pub(crate) fn rarity_label(lang: Lang, rarity: &str) -> String {
+    match rarity {
+        "common" => t(lang, Key::RarityCommon),
+        "uncommon" => t(lang, Key::RarityUncommon),
+        "rare" => t(lang, Key::RarityRare),
+        "epic" => t(lang, Key::RarityEpic),
+        "legendary" => t(lang, Key::RarityLegendary),
+        other => other,
+    }
+    .to_string()
+}
+
+/// M16/F29e: слот экипировки (конфиг открытый — fallback сырой).
+pub(crate) fn slot_label(lang: Lang, slot: &str) -> String {
+    match slot {
+        "head" => t(lang, Key::SlotHead),
+        "body" => t(lang, Key::SlotBody),
+        "main_hand" => t(lang, Key::SlotMainHand),
+        "staff" => t(lang, Key::SlotStaff),
+        "feet" => t(lang, Key::SlotFeet),
+        other => other,
+    }
+    .to_string()
+}
+
+/// M16/F29e: тип предмета (контент открытый — fallback сырой).
+pub(crate) fn type_label(lang: Lang, item_type: &str) -> String {
+    match item_type {
+        "weapon" => t(lang, Key::ItemTypeWeapon),
+        "staff" => t(lang, Key::ItemTypeStaff),
+        "potion" => t(lang, Key::ItemTypePotion),
+        "rune" => t(lang, Key::ItemTypeRune),
+        "scroll" => t(lang, Key::ItemTypeScroll),
+        "armor" => t(lang, Key::ItemTypeArmor),
+        "money" => t(lang, Key::ItemTypeMoney),
+        "herb" => t(lang, Key::ItemTypeHerb),
+        "wood_oak" => t(lang, Key::ItemTypeWoodOak),
+        "parchment" => t(lang, Key::ItemTypeParchment),
+        "ink" => t(lang, Key::ItemTypeInk),
+        "flask" => t(lang, Key::ItemTypeFlask),
+        "chisel" => t(lang, Key::ItemTypeChisel),
+        "quill" => t(lang, Key::ItemTypeQuill),
+        other => other,
+    }
+    .to_string()
+}
+
+/// M16/F29e: характеристика предмета (`stats`; `dmg` и `damage` —
+/// один ключ). Значения школ переводятся отдельно.
+pub(crate) fn stat_label(lang: Lang, stat: &str) -> String {
+    match stat {
+        "dmg" | "damage" => t(lang, Key::StatDamage),
+        "heal" => t(lang, Key::StatHeal),
+        "armor" => t(lang, Key::StatArmor),
+        "magic" => t(lang, Key::StatMagic),
+        "spell" => t(lang, Key::StatSpell),
+        "school" => t(lang, Key::StatSchool),
+        "charges" => t(lang, Key::StatCharges),
+        "max" => t(lang, Key::StatMax),
+        other => other,
+    }
+    .to_string()
+}
+
+/// M16/F29e: школа магии (значение `school`; fallback — сырое).
+pub(crate) fn school_label(lang: Lang, school: &str) -> String {
+    match school {
+        "fire" => t(lang, Key::SchoolFire),
+        "frost" => t(lang, Key::SchoolFrost),
+        other => other,
+    }
+    .to_string()
+}
+
 /// Слот экипировки для типа предмета (гейт клиента; сервер — истина, §7).
 fn slot_for(item_type: &str) -> Option<&'static str> {
     match item_type {
@@ -2214,6 +2350,24 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M16/F29e: лейблы переводят контент и падают на сырое значение
+    /// для открытых строк (новый тип/слот/статс/школа).
+    #[test]
+    fn labels_translate_and_fall_back() {
+        let ru = Lang::Ru;
+        assert_eq!(rarity_label(ru, "rare"), "Редкий");
+        assert_eq!(rarity_label(ru, "mythic"), "mythic", "fallback");
+        assert_eq!(slot_label(ru, "main_hand"), "Правая рука");
+        assert_eq!(slot_label(ru, "tail"), "tail", "fallback");
+        assert_eq!(type_label(ru, "money"), "Валюта");
+        assert_eq!(type_label(ru, "saddle"), "saddle", "fallback");
+        assert_eq!(stat_label(ru, "dmg"), "Урон");
+        assert_eq!(stat_label(ru, "damage"), "Урон", "dmg и damage — один ключ");
+        assert_eq!(stat_label(ru, "piety"), "piety", "fallback");
+        assert_eq!(school_label(ru, "fire"), "Огонь");
+        assert_eq!(school_label(ru, "storm"), "storm", "fallback");
+    }
 
     /// M15/F28: группы — в порядке GDD §3, иды уникальны.
     #[test]

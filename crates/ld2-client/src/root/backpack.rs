@@ -16,7 +16,7 @@ use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
-use super::sheet::{badges, rarity_color};
+use super::sheet::{badges, rarity_color, rarity_label};
 use super::{scrollable_tab, PopupKind, Root};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
@@ -226,7 +226,9 @@ impl Root {
                 .id(format!("ld2-bp-item-{uid}"))
                 .tooltip(Tooltip::text(format!(
                     "{} · {} · +{}",
-                    item.name, item.rarity, item.upgrade
+                    item.name,
+                    rarity_label(lang, &item.rarity),
+                    item.upgrade
                 )))
                 .flex()
                 .flex_row()

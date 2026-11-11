@@ -126,7 +126,16 @@ fn main() -> anyhow::Result<()> {
             })
             .detach();
 
-            let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
+            // M16/F29e: окно приложения — 90% монитора по центру
+            // (было фиксированные 960×640).
+            let win_size = cx
+                .primary_display()
+                .map(|d| {
+                    let b = d.visible_bounds();
+                    size(b.size.width * 0.9, b.size.height * 0.9)
+                })
+                .unwrap_or(size(px(960.0), px(640.0)));
+            let bounds = Bounds::centered(None, win_size, cx);
             cx.open_window(
                 WindowOptions {
                     titlebar: Some(gpui::TitlebarOptions {
