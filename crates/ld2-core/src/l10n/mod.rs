@@ -353,6 +353,8 @@ pub enum Key {
     SettingsDamageBold,
     // M14 F14: вкладка «Шрифты»
     SettingsFonts,
+    // M16/F29f: вкладка «Броня» рюкзака
+    BpTabArmor,
     // M16/F29e: переводы характеристик, редкостей, слотов и типов
     StatDamage,
     StatHeal,
@@ -764,6 +766,8 @@ mod tests {
         Key::SettingsLogAttackColor,
         Key::SettingsDamageBold,
         Key::SettingsFonts,
+        // M16/F29f: вкладка «Броня» рюкзака
+        Key::BpTabArmor,
         // M16/F29e: переводы характеристик, редкостей, слотов и типов
         Key::StatDamage,
         Key::StatHeal,

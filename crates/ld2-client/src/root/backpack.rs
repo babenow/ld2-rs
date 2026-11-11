@@ -28,6 +28,8 @@ pub(crate) enum BackpackTab {
     /// (сохранённое значение конфига по умолчанию).
     #[default]
     Weapon,
+    /// Броня (armor) — шлемы/доспехи/сапоги (M16/F29f).
+    Armor,
     /// Зелья (potion).
     Potion,
     /// Магия: руны и свитки (rune, scroll).
@@ -43,9 +45,10 @@ pub(crate) enum BackpackTab {
 }
 
 impl BackpackTab {
-    pub(crate) fn all() -> [(BackpackTab, Key); 7] {
+    pub(crate) fn all() -> [(BackpackTab, Key); 8] {
         [
             (BackpackTab::Weapon, Key::BpTabWeapon),
+            (BackpackTab::Armor, Key::BpTabArmor),
             (BackpackTab::Potion, Key::BpTabPotion),
             (BackpackTab::Magic, Key::BpTabMagic),
             (BackpackTab::Material, Key::BpTabMaterial),
@@ -58,6 +61,7 @@ impl BackpackTab {
     pub(crate) fn icon(self) -> IconName {
         match self {
             BackpackTab::Weapon => IconName::Target,
+            BackpackTab::Armor => IconName::Shield,
             BackpackTab::Potion => IconName::Pipette,
             BackpackTab::Magic => IconName::WandSparkles,
             BackpackTab::Material => IconName::Box,
@@ -70,6 +74,7 @@ impl BackpackTab {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             BackpackTab::Weapon => "weapon",
+            BackpackTab::Armor => "armor",
             BackpackTab::Potion => "potion",
             BackpackTab::Magic => "magic",
             BackpackTab::Material => "material",
@@ -81,6 +86,7 @@ impl BackpackTab {
 
     pub(crate) fn parse(s: &str) -> Self {
         match s {
+            "armor" => BackpackTab::Armor,
             "potion" => BackpackTab::Potion,
             "magic" => BackpackTab::Magic,
             "material" => BackpackTab::Material,
@@ -108,9 +114,7 @@ fn tab_for_type(item_type: &str) -> BackpackTab {
         "herb" | "wood_oak" | "parchment" | "ink" => BackpackTab::Material,
         "flask" | "chisel" | "quill" => BackpackTab::Tool,
         "money" => BackpackTab::Currencies,
-        // Броня — своя группа по спеке не предусмотрена (M16/F29b):
-        // до появления вкладки «Броня» живёт в «Прочем».
-        "armor" => BackpackTab::Other,
+        "armor" => BackpackTab::Armor,
         _ => BackpackTab::Other,
     }
 }
@@ -205,11 +209,20 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::Loading));
         };
+        // M16/F29f: надетое «на персонаже» из рюкзака убираем —
+        // оно живёт в блоке экипировки окна персонажа.
+        let equipped: std::collections::HashSet<&str> = snap
+            .char
+            .equip
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .collect();
         let items: Vec<&ItemSnapshot> = snap
             .char
             .inventory
             .iter()
-            .filter(|item| tab.matches(item))
+            .filter(|item| tab.matches(item) && !equipped.contains(item.uid.as_str()))
             .collect();
         if items.is_empty() {
             return div()
@@ -321,12 +334,6 @@ mod tests {
         assert!(!items.is_empty(), "контент есть");
         for item in items {
             let item_type = item["type"].as_str().expect("type");
-            // «Прочее» — документированные исключения (без своей
-            // группы по спеке пользователя).
-            if item_type == "armor" {
-                assert_eq!(tab_for_type(item_type), BackpackTab::Other);
-                continue;
-            }
             assert_ne!(
                 tab_for_type(item_type),
                 BackpackTab::Other,
