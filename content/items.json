@@ -10,6 +10,51 @@
       "qty": 10
     },
     {
+      "id": "sword_knight",
+      "type": "weapon",
+      "name": "Рыцарский меч",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "dmg": "6..9"
+      },
+      "gold_value": 180,
+      "skill": "sword"
+    },
+    {
+      "id": "helmet_leather",
+      "type": "armor",
+      "name": "Кожаный шлем",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 40
+    },
+    {
+      "id": "armor_bronze",
+      "type": "armor",
+      "name": "Бронзовый доспех",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 6
+      },
+      "gold_value": 120
+    },
+    {
+      "id": "boots_traveler",
+      "type": "armor",
+      "name": "Сапоги странника",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 90
+    },
+    {
       "id": "dagger_knife",
       "type": "weapon",
       "name": "Кинжал",

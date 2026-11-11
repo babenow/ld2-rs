@@ -108,6 +108,9 @@ fn tab_for_type(item_type: &str) -> BackpackTab {
         "herb" | "wood_oak" | "parchment" | "ink" => BackpackTab::Material,
         "flask" | "chisel" | "quill" => BackpackTab::Tool,
         "money" => BackpackTab::Currencies,
+        // Броня — своя группа по спеке не предусмотрена (M16/F29b):
+        // до появления вкладки «Броня» живёт в «Прочем».
+        "armor" => BackpackTab::Other,
         _ => BackpackTab::Other,
     }
 }
@@ -316,6 +319,12 @@ mod tests {
         assert!(!items.is_empty(), "контент есть");
         for item in items {
             let item_type = item["type"].as_str().expect("type");
+            // «Прочее» — документированные исключения (без своей
+            // группы по спеке пользователя).
+            if item_type == "armor" {
+                assert_eq!(tab_for_type(item_type), BackpackTab::Other);
+                continue;
+            }
             assert_ne!(
                 tab_for_type(item_type),
                 BackpackTab::Other,

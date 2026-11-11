@@ -334,6 +334,9 @@ impl Root {
             // (конструктор on_drag получает offset от gpui).
             .on_drag(PopupDrag, move |_value, offset, _window, acx| {
                 drag_this.update(acx, |root, cx| {
+                    // M16/F29b: жест принадлежит этому окну — чужой
+                    // on_drag_move на общем payload не должен ехать.
+                    root.drag_owner = Some(kind);
                     root.popup_mut(kind).drag_offset =
                         Some((f32::from(offset.x), f32::from(offset.y)));
                     cx.notify();
@@ -342,6 +345,9 @@ impl Root {
             })
             .on_drag_move(cx.listener(
                 move |root, event: &DragMoveEvent<PopupDrag>, window, cx| {
+                    if root.drag_owner != Some(kind) {
+                        return;
+                    }
                     let st = root.popup_mut(kind);
                     let Some(offset) = st.drag_offset else {
                         return;
@@ -382,8 +388,9 @@ impl Root {
             )
             .on_drag(PopupResize, move |_value, _offset, _window, acx| {
                 grip_this.update(acx, |root, cx| {
-                    // Новый захват — новый якорь (иначе скачок по
-                    // остатку старого).
+                    // M16/F29b: жест принадлежит этому окну; новый
+                    // захват — новый якорь (иначе скачок по остатку).
+                    root.drag_owner = Some(kind);
                     root.popup_mut(kind).resize_anchor = None;
                     cx.notify();
                 });
@@ -391,6 +398,9 @@ impl Root {
             })
             .on_drag_move(cx.listener(
                 move |root, event: &DragMoveEvent<PopupResize>, window, cx| {
+                    if root.drag_owner != Some(kind) {
+                        return;
+                    }
                     let pos = (
                         f32::from(event.event.position.x),
                         f32::from(event.event.position.y),

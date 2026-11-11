@@ -227,6 +227,10 @@ pub struct Root {
     /// всплывающих окон — закрытие по mouse-up только для настоящего
     /// «клика мимо» (M15/F25e).
     popup_scrim_down: bool,
+    /// M16/F29b: владелец текущего жеста drag/resize — `DragMoveEvent`
+    /// с общим payload-типом получают ВСЕ открытые окна, двигаться/
+    /// ресайзиться может только владелец (иначе окна едут вместе).
+    drag_owner: Option<PopupKind>,
     /// M16/F29b: активная вкладка рюкзака (персистентна в config).
     backpack_tab: backpack::BackpackTab,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
@@ -409,6 +413,7 @@ impl Root {
             },
             backpack_tab: backpack::BackpackTab::default(),
             popup_scrim_down: false,
+            drag_owner: None,
             exit_timer: None,
             skill_info: None,
             first_frame: true,
