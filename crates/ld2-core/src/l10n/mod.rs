@@ -428,6 +428,11 @@ pub enum Key {
     BpTabOther,
     // M17/F30b: вкладка артефактов рюкзака
     BpTabArtifact,
+    // M17/F30a: инкрустация руны из контекстного меню + каст-бар
+    MenuInscribe,
+    InscribePick,
+    InscribeCasting,
+    InscribeNoWeapons,
     BpCurrencies,
     HkOpenBackpack,
 }
@@ -869,6 +874,11 @@ mod tests {
         Key::BpTabOther,
         // M17/F30b: вкладка артефактов
         Key::BpTabArtifact,
+        // M17/F30a: инкрустация руны + каст-бар
+        Key::MenuInscribe,
+        Key::InscribePick,
+        Key::InscribeCasting,
+        Key::InscribeNoWeapons,
         Key::BpCurrencies,
         Key::HkOpenBackpack,
     ];

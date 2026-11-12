@@ -2747,10 +2747,7 @@ impl Session {
             };
             // Посох в рюкзаке тоже должен иметь пустые сокеты (окно
             // инкрустации открывается по предмету, без экипировки).
-            if def.item_type == "staff"
-                && def.sockets > 0
-                && row.sockets.as_array().is_none_or(|a| a.is_empty())
-            {
+            if def.sockets > 0 && row.sockets.as_array().is_none_or(|a| a.is_empty()) {
                 row.sockets = Self::empty_sockets(def.sockets);
                 let _ = db::items::set_sockets(pool, &row.uid, row.sockets.clone()).await;
             }
@@ -2834,7 +2831,7 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
-        if def.item_type == "staff" && def.sockets > 0 {
+        if def.sockets > 0 {
             row.sockets = Self::empty_sockets(def.sockets);
             if let Err(e) = db::items::set_sockets(pool, &row.uid, row.sockets.clone()).await {
                 warn!("scenario give (сокеты): {e}");
@@ -2886,10 +2883,12 @@ impl Session {
             return vec![Self::err(
                 seq,
                 ErrorCode::Internal,
-                "нет определения посоха",
+                "нет определения предмета",
             )];
         };
-        if staff_def.item_type != "staff" || staff_def.sockets == 0 {
+        // M17/F30a: сокеты принимает любой предмет с `sockets > 0`
+        // (посохи и мечи равноправны); каст руны — только посох.
+        if staff_def.sockets == 0 {
             return vec![Self::err(
                 seq,
                 ErrorCode::NoRuneSlot,
@@ -2946,6 +2945,9 @@ impl Session {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+        // M17/F30a: damage руны пишется в сокет — прибавляется к урону
+        // оружия (stats::derive) и попадает в снапшот.
+        let damage = rune_def.stats.get("damage").and_then(|v| v.as_i64());
         *slot = serde_json::json!({
             "index": cmd.socket_index,
             "def_id": rune_def.id,
@@ -2954,6 +2956,7 @@ impl Session {
                 "spell": spell,
                 "charges": charges,
                 "max": max,
+                "damage": damage,
             }
         });
         let sockets_value = Value::Array(sockets);
@@ -3049,7 +3052,7 @@ impl Session {
             return vec![Self::err(
                 seq,
                 ErrorCode::Internal,
-                "нет определения посоха",
+                "нет определения предмета",
             )];
         };
         let mut sockets: Vec<Value> =

@@ -182,6 +182,9 @@ enum ExitKind {
 
 /// M14/F16: длина таймера выхода, мс.
 const EXIT_DELAY_MS: i64 = 20_000;
+/// M17/F30a: длительность каст-бара инкрустации, мс (спека: 3 с,
+/// без отмены — движение/урон не прерывают).
+pub(crate) const INSCRIBE_MS: i64 = 3_000;
 
 /// Инициализация корневого view (всё, что создаётся вне gpui-контекста).
 pub struct Shell {
@@ -210,6 +213,9 @@ pub struct Root {
     update_available: Option<String>,
     login_input: Option<Entity<TextInput>>,
     password_input: Option<Entity<TextInput>>,
+    /// M17/F30a: активный каст инкрустации (uid руны, uid оружия,
+    /// epoch-мс завершения); без отмены — идёт до конца.
+    cast_inscribe: Option<(String, String, i64)>,
     /// M16/F29j: пароль последней отправки входа/регистрации — живёт
     /// до успешного `PersistSession` и там же уходит в keyring
     /// (или стирается, если галочка выключена).
@@ -414,6 +420,7 @@ impl Root {
             update_available: None,
             login_input: None,
             password_input: None,
+            cast_inscribe: None,
             pending_password: None,
             prefill_password: shell.prefill_password,
             register_open: false,
@@ -527,6 +534,16 @@ impl Root {
             }
         }
 
+        // M17/F30a: каст-бар инкрустации (3 с, без отмены) — по
+        // завершении отправляем socket.insert в первый свободный сокет.
+        let inscribe_active = self.cast_inscribe.is_some();
+        if let Some((rune_uid, target_uid, ends)) = self.cast_inscribe.clone() {
+            if self.now_ms() >= ends {
+                self.cast_inscribe = None;
+                self.finish_inscribe(rune_uid, target_uid);
+            }
+        }
+
         // M11.4: новый notice → всплывающий тост Ely (текст в экране
         // остаётся до замены — на время жизни тоста возможен дубль).
         if let Some(notice) = self.store.notice.clone() {
@@ -551,15 +568,17 @@ impl Root {
                 .values()
                 .any(|until_s| until_s.saturating_mul(1000) > now_ms);
 
-        if had_events || cd_active || exit_active {
+        if had_events || cd_active || exit_active || inscribe_active {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
-        Duration::from_millis(if had_events || cd_active || exit_active {
-            50
-        } else {
-            200
-        })
+        Duration::from_millis(
+            if had_events || cd_active || exit_active || inscribe_active {
+                50
+            } else {
+                200
+            },
+        )
     }
 
     fn exec_effects(&mut self, effects: Vec<Effect>) {
@@ -644,6 +663,39 @@ impl Root {
             Ok(_) => self.store.on_login_sent(&login),
             Err(e) => self.store.login_error = Some(format!("нет связи: {e}")),
         }
+    }
+
+    /// M17/F30a: начало каста инкрустации — окно закрывается, полоса
+    /// идёт 3 с без отмены; повторный каст во время активного не стартует.
+    pub(crate) fn start_inscribe(&mut self, rune_uid: String, target_uid: String) {
+        if self.cast_inscribe.is_some() {
+            return;
+        }
+        self.store.close_inscribe();
+        self.cast_inscribe = Some((rune_uid, target_uid, self.now_ms() + INSCRIBE_MS));
+    }
+
+    /// M17/F30a: каст завершён — cmd/socket.insert в первый свободный
+    /// сокет (индекс по свежему снапшоту; сервер валидирует — занятый
+    /// слот/нет сокетов → тост через notice).
+    fn finish_inscribe(&mut self, rune_uid: String, target_uid: String) {
+        let index = self
+            .store
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.char.inventory.iter().find(|i| i.uid == target_uid))
+            .and_then(|item| item.sockets.as_ref())
+            .and_then(|sockets| sockets.iter().position(|s| s.rune.is_none()));
+        let Some(index) = index else {
+            self.store.notice = Some(t(self.lang, Key::InscribeNoWeapons).to_string());
+            return;
+        };
+        let cmd = ld2_protocol::cmd::SocketInsert {
+            staff_uid: target_uid,
+            socket_index: index as u32,
+            rune_uid,
+        };
+        self.send_cmd(&cmd, Act::Socket);
     }
 
     fn logout(&mut self) {

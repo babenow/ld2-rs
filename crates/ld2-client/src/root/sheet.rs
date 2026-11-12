@@ -168,7 +168,78 @@ impl Root {
                     .into_any_element(),
             );
         }
+        // M17/F30a: выбор оружия под инкрустацию руны (пункт меню руны).
+        if let Some(rune_uid) = self.store.inscribe.clone() {
+            let title = t(self.lang, Key::InscribePick).to_string();
+            let body = self.inscribe_view(cx, pal, &rune_uid).into_any_element();
+            let close = self.dismiss(cx, |r| r.store.close_inscribe());
+            return Some(
+                Dialog::new("ld2-inscribe", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
         None
+    }
+
+    /// M17/F30a: список оружия, куда можно инкрустировать руну —
+    /// предметы с сокетами и хотя бы одним свободным; клик → каст-бар
+    /// 3 с (root::start_inscribe), без отмены.
+    pub(crate) fn inscribe_view(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        rune_uid: &str,
+    ) -> Div {
+        let lang = self.lang;
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        let mut col = div().flex().flex_col().gap_1();
+        let mut found = false;
+        for item in &snap.char.inventory {
+            let Some(sockets) = item.sockets.as_ref() else {
+                continue;
+            };
+            if !sockets.iter().any(|s| s.rune.is_none()) {
+                continue;
+            }
+            found = true;
+            let rune = rune_uid.to_string();
+            let uid = item.uid.clone();
+            col = col.child(
+                div()
+                    .id(format!("ld2-inscribe-{uid}"))
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.start_inscribe(rune.clone(), uid.clone());
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .text_color(rgb(rarity_color(&item.rarity, pal)))
+                            .child(format!("{} {}", item.name, badges(item))),
+                    ),
+            );
+        }
+        if !found {
+            col = col.child(
+                div()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::InscribeNoWeapons)),
+            );
+        }
+        col
     }
 
     /// M14/F17: карточка информации о навыке (иконка ⓘ во вкладке
@@ -1123,6 +1194,18 @@ impl Root {
             this.send_cmd(&cmd, Act::Drop);
         }));
 
+        // M17/F30a: инкрустация руны — окно выбора оружия + каст-бар.
+        if item.item_type == "rune" {
+            let uid = item.uid.clone();
+            menu = menu.item(menu_item(
+                cx,
+                t(lang, Key::MenuInscribe),
+                move |this, _cx| {
+                    this.store.open_inscribe(uid.clone());
+                },
+            ));
+        }
+
         // M17/F30b: экипировка — по слоту предмета; сервер — истина (§7).
         if let Some(slot) = slot_for(item, ch) {
             let equipped = ch.equip.values().flatten().any(|u| u == &item.uid);
@@ -1158,8 +1241,9 @@ impl Root {
             }));
         }
 
-        // Инкрустация (ФР-09): только посох с сокетами.
-        if item.item_type == "staff" && item.sockets.is_some() {
+        // Инкрустация (ФР-09): предмет с сокетами — посох или меч
+        // (M17/F30a: сокеты у любого оружия).
+        if item.sockets.is_some() {
             let uid = item.uid.clone();
             menu = menu.item(menu_item(
                 cx,

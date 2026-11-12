@@ -180,6 +180,8 @@ pub struct AppStore {
     pub upgrade: Option<UpgradeView>,
     /// Открытая инкрустация (ФР-09): uid посоха.
     pub socketing: Option<String>,
+    /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
+    pub inscribe: Option<String>,
     /// Смещение часов сервера (evt/time.sync): server = local + offset.
     pub time_offset: i64,
     /// Выбранная цель (ФР-05): клик по строке / Tab.
@@ -369,6 +371,7 @@ impl AppStore {
             item_detail: None,
             upgrade: None,
             socketing: None,
+            inscribe: None,
             time_offset: 0,
             target: None,
             combat_cooldowns: BTreeMap::new(),
@@ -1480,6 +1483,15 @@ impl AppStore {
 
     pub fn close_socketing(&mut self) {
         self.socketing = None;
+    }
+
+    /// M17/F30a: открыть список оружия под инкрустацию руны.
+    pub fn open_inscribe(&mut self, rune_uid: String) {
+        self.inscribe = Some(rune_uid);
+    }
+
+    pub fn close_inscribe(&mut self) {
+        self.inscribe = None;
     }
 
     /// Выбор цели кликом по строке сущности (ФР-05).
@@ -3168,6 +3180,7 @@ mod tests {
         // Патч целым предметом (сокеты после инкрустации).
         let mut full = fixtures::staff_item();
         full.sockets.as_mut().unwrap()[1].rune = Some(ld2_protocol::types::RuneInfo {
+            damage: None,
             name: "Руна льда".into(),
             spell: "ice_shard".into(),
             charges: 5,
