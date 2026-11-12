@@ -669,6 +669,8 @@ impl Session {
             world.bind_char(&row.id, &row.name, self.out_tx.clone());
             world.set_char_location(&row.id, &location_id);
         }
+        // M17/F30f: чем бьёт — по экипированному оружию (кэш мира).
+        self.refresh_char_hits_as(&row.id).await;
         if let Some(account_id) = self.account_id {
             if let Err(e) = db::accounts::set_last_char(&self.state.pool, account_id, &row.id).await
             {
@@ -822,9 +824,13 @@ impl Session {
                         self.char = Some(state);
                         self.location_id = Some(location_id.clone());
                         self.selected_char_id = Some(row.id.clone());
-                        let mut world = self.state.world.lock().expect("мир");
-                        world.bind_char(&row.id, &row.name, self.out_tx.clone());
-                        world.set_char_location(&row.id, &location_id);
+                        {
+                            let mut world = self.state.world.lock().expect("мир");
+                            world.bind_char(&row.id, &row.name, self.out_tx.clone());
+                            world.set_char_location(&row.id, &location_id);
+                        }
+                        // M17/F30f: чем бьёт — по экипированному оружию.
+                        self.refresh_char_hits_as(&row.id).await;
                     }
                     Err(e) => warn!("восстановление листа персонажа: {e}"),
                 }
@@ -1616,6 +1622,12 @@ impl Session {
             ));
         }
 
+        // M17/F30f: имя способности из контента — в логе без сырых id.
+        let skill_name = match db::skills::content_skill(pool, &cmd.skill_id).await {
+            Ok(Some(row)) => row.name,
+            _ => cmd.skill_id.clone(),
+        };
+
         // Урон цели: hit/hp → при смерти: despawn/труп/бой окончен + XP.
         let mut others: Vec<(String, String)> = Vec::new();
         let mut xp_work: Option<crate::tick::KillXp> = None;
@@ -1638,7 +1650,7 @@ impl Session {
                     amount: damage,
                     crit: false,
                     miss: false,
-                    text: format!("«{}»: −{damage}", cmd.skill_id),
+                    text: format!("«{skill_name}»: **−{damage}**"),
                     extra: Default::default(),
                 };
                 for addr in world.chars_in_location(&location) {
@@ -2354,6 +2366,8 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "предмет исчез")];
             }
         };
+        // M17/F30f: оружие изменилось — пересчёт «чем бьёт».
+        self.refresh_char_hits_as(&char_id).await;
         vec![Self::ack_payload(
             seq,
             &serde_json::json!({ "char": char_state, "item": updated }),
@@ -2403,6 +2417,8 @@ impl Session {
                 "нет определения предмета",
             )];
         };
+        // M17/F30f: оружие снято — пересчёт «чем бьёт».
+        self.refresh_char_hits_as(&char_id).await;
         let updated = item_snapshot(&item, &def);
         vec![Self::ack_payload(
             seq,
@@ -3436,6 +3452,8 @@ impl Session {
                         .map(|m| m.name.clone())
                         .unwrap_or_default();
                     let mob_max = world.mob_max_hp(target);
+                    // M17/F30f: строка со словами заклинания — кастеру
+                    // «вы», наблюдателям — имя; урон жирный (§8).
                     let hit = CombatHit {
                         source: char_id.clone(),
                         source_name: by_name.clone(),
@@ -3445,13 +3463,21 @@ impl Session {
                         amount: damage,
                         crit: false,
                         miss: false,
-                        text: format!("Заклинание «{spell}»: {mob_name} −{damage}"),
+                        text: String::new(),
                         extra: Default::default(),
                     };
                     for addr in world.chars_in_location(&location) {
+                        let mut per = hit.clone();
+                        per.text = crate::combat_log::spell_hit_text(
+                            &spell,
+                            &by_name,
+                            &mob_name,
+                            damage,
+                            addr == char_id,
+                        );
                         plan.push((
                             addr.clone(),
-                            event_payload_text("evt/combat/hit", &hit).unwrap_or_default(),
+                            event_payload_text("evt/combat/hit", &per).unwrap_or_default(),
                         ));
                         plan.push((
                             addr,
@@ -3671,6 +3697,8 @@ impl Session {
                         .map(|m| m.name.clone())
                         .unwrap_or_default();
                     let mob_max = world.mob_max_hp(target);
+                    // M17/F30f: свиток кастует заклинание — слова и
+                    // «чем бьёт» как у руны (§8).
                     let hit = CombatHit {
                         source: char_id.clone(),
                         source_name: by_name.clone(),
@@ -3680,13 +3708,21 @@ impl Session {
                         amount: damage,
                         crit: false,
                         miss: false,
-                        text: format!("Заклинание «{spell}»: {mob_name} −{damage}"),
+                        text: String::new(),
                         extra: Default::default(),
                     };
                     for addr in world.chars_in_location(&location) {
+                        let mut per = hit.clone();
+                        per.text = crate::combat_log::spell_hit_text(
+                            &spell,
+                            &by_name,
+                            &mob_name,
+                            damage,
+                            addr == char_id,
+                        );
                         plan.push((
                             addr.clone(),
-                            event_payload_text("evt/combat/hit", &hit).unwrap_or_default(),
+                            event_payload_text("evt/combat/hit", &per).unwrap_or_default(),
                         ));
                         plan.push((
                             addr,
@@ -6270,6 +6306,27 @@ fn attr_genitive(id: &str) -> &str {
         "vit" => "стойкости",
         "int" => "интеллекта",
         other => other,
+    }
+}
+
+impl Session {
+    /// M17/F30f: обновить «чем бьёт» в мире — по экипированному
+    /// оружию (main_hand); без него — «руками». Вызывается при входе
+    /// в мир и после экипировки/снятия.
+    async fn refresh_char_hits_as(&self, char_id: &str) {
+        let hits = match db::items::find_equipped_in_slot(&self.state.pool, char_id, "main_hand")
+            .await
+        {
+            Ok(Some(item)) => match db::items::def(&self.state.pool, &item.def_id).await {
+                Ok(Some(def)) => {
+                    crate::combat_log::weapon_hits_as(def.skill.as_deref(), def.item_type.as_str())
+                }
+                _ => "руками",
+            },
+            _ => "руками",
+        };
+        let mut world = self.state.world.lock().expect("мир");
+        world.set_char_hits_as(char_id, hits);
     }
 }
 

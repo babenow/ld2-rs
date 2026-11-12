@@ -433,6 +433,10 @@ pub enum Key {
     BpTabOther,
     // M17/F30b: вкладка артефактов рюкзака
     BpTabArtifact,
+    // M17/F30f: названия заклинаний (лог боя, статы предметов)
+    SpellFireDart,
+    SpellFrostBolt,
+    SpellStormBolt,
     // M17/F30e: название ресурса класса (полоса слева)
     RageLabel,
     EnergyLabel,
@@ -887,6 +891,10 @@ mod tests {
         Key::BpTabOther,
         // M17/F30b: вкладка артефактов
         Key::BpTabArtifact,
+        // M17/F30f: заклинания
+        Key::SpellFireDart,
+        Key::SpellFrostBolt,
+        Key::SpellStormBolt,
         // M17/F30e: ресурсы по классам
         Key::RageLabel,
         Key::EnergyLabel,

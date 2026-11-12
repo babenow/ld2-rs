@@ -937,11 +937,26 @@ impl Root {
                                     }
                                     kind => (log_color(kind, dark), false),
                                 };
-                                div()
+                                // M17/F30f: **...** — жирные сегменты
+                                // (слова заклинания и урон), §8.
+                                let text = entry.text.clone();
+                                let line = div()
                                     .text_size(px(log_font))
                                     .text_color(rgb(color))
-                                    .when(bold, |line| line.font_weight(gpui::FontWeight::BOLD))
-                                    .child(entry.text.clone())
+                                    .when(bold, |line| line.font_weight(gpui::FontWeight::BOLD));
+                                if text.contains("**") {
+                                    line.flex().flex_row().children(
+                                        split_bold(&text).into_iter().map(|(seg, is_bold)| {
+                                            div()
+                                                .when(is_bold, |d| {
+                                                    d.font_weight(gpui::FontWeight::BOLD)
+                                                })
+                                                .child(seg.to_string())
+                                        }),
+                                    )
+                                } else {
+                                    line.child(text)
+                                }
                             }),
                         )),
                 ),
@@ -1126,6 +1141,28 @@ impl Root {
 }
 
 /// Полоса-прогресс (паритет egui ProgressBar).
+/// M17/F30f: сегменты строки лога по маркерам `**...**` —
+/// (текст, жирный). Пробелы остаются в исходных сегментах.
+fn split_bold(text: &str) -> Vec<(&str, bool)> {
+    let mut out: Vec<(&str, bool)> = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("**") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("**") else {
+            break; // незакрытый маркер — хвост как есть
+        };
+        if start > 0 {
+            out.push((&rest[..start], false));
+        }
+        out.push((&after[..end], true));
+        rest = &after[end + 2..];
+    }
+    if !rest.is_empty() {
+        out.push((rest, false));
+    }
+    out
+}
+
 fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
     div()
         .flex()
@@ -1257,5 +1294,34 @@ fn entity_tooltip(entity: &Entity) -> String {
         format!("{}{hp}", entity.name)
     } else {
         format!("{}{hp} · {tags}", entity.name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M17/F30f: маркеры **...** → сегменты; незакрытый не ломает строку.
+    #[test]
+    fn split_bold_marks_segments() {
+        assert_eq!(
+            split_bold("Bbnf: **Farta Lussen**, вы бьёте Волк струёй пламени **10**"),
+            vec![
+                ("Bbnf: ", false),
+                ("Farta Lussen", true),
+                (", вы бьёте Волк струёй пламени ", false),
+                ("10", true),
+            ]
+        );
+        assert_eq!(
+            split_bold("обычная строка"),
+            vec![("обычная строка", false)]
+        );
+        let open = split_bold("хвост **без пары");
+        assert_eq!(
+            open,
+            vec![("хвост **без пары", false)],
+            "незакрытый — как есть"
+        );
     }
 }

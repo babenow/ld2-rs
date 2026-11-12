@@ -37,6 +37,8 @@
 
     { "id": "haggle", "name": "Торговля", "group": "social" , "description": "−1% к цене покупки, +1% к цене продажи"},
     { "id": "lore", "name": "Знания", "group": "social" , "description": "доступ к скрытым диалогам и текстам, чтение руин"},
-    { "id": "leadership", "name": "Командование", "group": "social" , "description": "+0.5% опыта всем членам группы (вклада себе не даёт)"}
+    { "id": "leadership", "name": "Командование", "group": "social" , "description": "+0.5% опыта всем членам группы (вклада себе не даёт)"},
+
+    { "id": "power_strike", "name": "Удар мощью", "group": "weapon" , "description": "Мощный удар оружием: ×1.8 урона; открывается владением мечом 5 (skills.md §4)"}
   ]
 }

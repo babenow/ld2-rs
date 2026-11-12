@@ -351,7 +351,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ### Бой и магия
 | Событие | Payload | Назначение |
 |---|---|---|
-| `evt/combat/hit` | `{ source, source_name, target, target_name, kind, amount, crit, miss, text }` | удар; `kind` = melee\|skill\|rune\|scroll; `text` — серверный, рендерится как есть |
+| `evt/combat/hit` | `{ source, source_name, target, target_name, kind, amount, crit, miss, text }` | удар; `kind` = melee\|skill\|rune\|scroll; `text` — серверный, рендерится как есть; M17/F30f: `**…**` — жирные сегменты (слова заклинания и урон), кастеру — «вы», наблюдателям — имя |
 | `evt/combat/cooldown` | `{ skill_id?, until_epoch }` | блокировка действия |
 | `evt/combat/end` | `{ reason }` | конец боя |
 | `evt/magic/cast` | `{ by, by_name, spell, what: "scroll"\|"rune", target?, charges_left?, mp_left?, ok }` | каст (свой/чужой); `charges_left` — заряды руны, `mp_left` — остаток маны |
@@ -495,7 +495,7 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 ← { "v":1, "type":"ack", "seq":4, "state_version":1339, "result":"ok" }
 ← { "v":1, "type":"evt/combat/hit", "ts":"…", "state_version":1339, "payload":
     { "source":"c1","source_name":"Ким","target":"m_3","target_name":"Волк","kind":"melee",
-      "amount":7,"crit":false,"miss":false,"text":"Вы бьете волка на 7." } }
+      "amount":7,"crit":false,"miss":false,"text":"Вы бьёте Волк руками **7**" } }
 ```
 
 ### 12.3 Мародёрство → статус
