@@ -171,7 +171,7 @@ async fn character_validation_and_slot_limit() {
         .await;
     assert_eq!(c.ack(seq).await["error"]["code"], "E_NAME_TAKEN");
 
-    create_char(&mut c, &unique_name("Единственный"), "rogue").await;
+    create_char(&mut c, &unique_name("Единственный"), "archer").await;
 
     // Второй персонаж при limit = 1 → E_CHAR_LIMIT (конфиг, не код).
     // Проверка лимита идёт раньше занятости имени — как в моке, поэтому
@@ -230,7 +230,7 @@ async fn character_delete_rules() {
 
     // Чужой персонаж → «не найден» (E_NAME_TAKEN, паритет с моком).
     let (mut b, _) = registered(&ws).await;
-    let foreign = create_char(&mut b, &unique_name("Чужой"), "rogue").await;
+    let foreign = create_char(&mut b, &unique_name("Чужой"), "archer").await;
     let foreign_id = foreign["payload"]["character"]["id"]
         .as_str()
         .expect("id")

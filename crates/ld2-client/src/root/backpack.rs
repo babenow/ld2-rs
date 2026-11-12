@@ -43,12 +43,14 @@ pub(crate) enum BackpackTab {
     Tool,
     /// Неизвестные типы контента — будущие новые типы.
     Other,
+    /// M17/F30b: артефакты (artifact) — 2 слота особых предметов.
+    Artifact,
     /// Валюты (money) — за них можно покупать.
     Currencies,
 }
 
 impl BackpackTab {
-    pub(crate) fn all() -> [(BackpackTab, Key); 9] {
+    pub(crate) fn all() -> [(BackpackTab, Key); 10] {
         [
             (BackpackTab::All, Key::BpTabAll),
             (BackpackTab::Weapon, Key::BpTabWeapon),
@@ -58,6 +60,7 @@ impl BackpackTab {
             (BackpackTab::Material, Key::BpTabMaterial),
             (BackpackTab::Tool, Key::BpTabTool),
             (BackpackTab::Other, Key::BpTabOther),
+            (BackpackTab::Artifact, Key::BpTabArtifact),
             (BackpackTab::Currencies, Key::BpCurrencies),
         ]
     }
@@ -72,6 +75,7 @@ impl BackpackTab {
             BackpackTab::Material => IconName::Box,
             BackpackTab::Tool => IconName::Wrench,
             BackpackTab::Other => IconName::Package,
+            BackpackTab::Artifact => IconName::Sparkles,
             BackpackTab::Currencies => IconName::Wallet,
         }
     }
@@ -86,6 +90,7 @@ impl BackpackTab {
             BackpackTab::Material => "material",
             BackpackTab::Tool => "tool",
             BackpackTab::Other => "other",
+            BackpackTab::Artifact => "artifact",
             BackpackTab::Currencies => "currencies",
         }
     }
@@ -99,6 +104,7 @@ impl BackpackTab {
             "material" => BackpackTab::Material,
             "tool" => BackpackTab::Tool,
             "other" => BackpackTab::Other,
+            "artifact" => BackpackTab::Artifact,
             "currencies" => BackpackTab::Currencies,
             _ => BackpackTab::Weapon,
         }
@@ -122,7 +128,8 @@ fn tab_for_type(item_type: &str) -> BackpackTab {
         "herb" | "wood_oak" | "parchment" | "ink" => BackpackTab::Material,
         "flask" | "chisel" | "quill" => BackpackTab::Tool,
         "money" => BackpackTab::Currencies,
-        "armor" => BackpackTab::Armor,
+        "armor" | "shield" => BackpackTab::Armor,
+        "artifact" => BackpackTab::Artifact,
         _ => BackpackTab::Other,
     }
 }
@@ -409,6 +416,12 @@ mod tests {
         }
         assert_eq!(BackpackTab::default(), BackpackTab::All);
         assert_eq!(tab_for_type("saddle"), BackpackTab::Other, "новый тип");
+        assert_eq!(tab_for_type("shield"), BackpackTab::Armor, "щит — в броне");
+        assert_eq!(
+            tab_for_type("artifact"),
+            BackpackTab::Artifact,
+            "артефакты — своей вкладкой"
+        );
     }
 
     /// M16/F29b: строка валюты суммирует стаки монет по названию и
@@ -416,6 +429,8 @@ mod tests {
     #[test]
     fn currency_row_sums_money_stacks() {
         let item = |name: &str, item_type: &str, qty: i64| ItemSnapshot {
+            slot: None,
+            hands: None,
             uid: format!("i_{name}_{qty}"),
             item_type: item_type.into(),
             name: name.into(),

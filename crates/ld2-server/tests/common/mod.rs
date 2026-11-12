@@ -113,6 +113,12 @@ use serde_json::json;
 /// Регистрация + персонаж + выбор: клиент в мире (общий e2e-флоу).
 /// Возвращает (клиент, логин, char_id).
 pub async fn in_world(ws: &str) -> (WsClient, String, String) {
+    in_world_profile(ws, "warrior").await
+}
+
+/// M17/F30b: тот же e2e-флоу с произвольным стартовым профилем
+/// (`warrior`/`archer`/`mage`).
+pub async fn in_world_profile(ws: &str, profile: &str) -> (WsClient, String, String) {
     let mut c = WsClient::connect(ws).await;
     let login = checks::unique_login();
     let seq = c
@@ -139,7 +145,7 @@ pub async fn in_world(ws: &str) -> (WsClient, String, String) {
     let seq = c
         .send(
             "cmd/char.create",
-            json!({ "name": name, "profile": "warrior" }),
+            json!({ "name": name, "profile": profile }),
         )
         .await;
     let ack = c.ack(seq).await;

@@ -60,7 +60,7 @@ pub struct CharList {}
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct CharCreate {
     pub name: String,
-    /// Стартовый профиль: Воин/Вор/Маг (список — capability сервера).
+    /// Стартовый профиль: Воин/Лучник/Маг (список — capability сервера).
     pub profile: String,
 }
 

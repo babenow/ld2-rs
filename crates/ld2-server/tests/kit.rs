@@ -67,14 +67,25 @@ async fn scenario_kit_fills_backpack_and_equip() {
         );
     }
 
-    // Экипировка: все 5 слотов конфига заняты.
+    // M17/F30b: экипировка — 12 из 15 слотов (ring2 и артефакты пусты).
     let equip = ch["equip"].as_object().expect("equip");
     let filled = equip.values().filter(|v| !v.is_null()).count();
-    assert_eq!(filled, 5, "все слоты экипированы: {equip:?}");
-    // Слоты указывают на реальные предметы инвентаря.
+    assert_eq!(filled, 12, "слоты экипированы: {equip:?}");
+    for slot in [
+        "main_hand",
+        "off_hand",
+        "shoulders",
+        "cloak",
+        "ring1",
+        "amulet",
+    ] {
+        assert!(!equip[slot].is_null(), "слот {slot} занят: {equip:?}");
+    }
+    // Слоты указывают на реальные предметы инвентаря (пустые — уже
+    // посчитаны проверкой filled: ring2 и артефакты остаются null).
     let uids: Vec<&str> = inv.iter().filter_map(|i| i["uid"].as_str()).collect();
     for (slot, uid) in equip {
-        let uid = uid.as_str().expect("uid в слоте");
+        let Some(uid) = uid.as_str() else { continue };
         assert!(uids.contains(&uid), "слот {slot} → {uid} есть в инвентаре");
     }
 }

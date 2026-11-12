@@ -43,7 +43,7 @@ const SESSION_START_JSON: &str = r#"{
   "chat": { "server_history": 200,
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
-  "inventory": { "slots": 40, "equip_slots": ["head","body","main_hand","staff","feet"] },
+  "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
@@ -117,7 +117,8 @@ const SNAPSHOT_JSON: &str = r#"{
                  "block_chance": 0, "magic_defense": 10, "magic_dodge": 3,
                  "magic_resist": 5, "magic_dispel": 5,
                  "magic_crit_damage": 52, "magic_crit_chance": 8 },
-    "equip": { "main_hand": "i_17", "staff": null },
+    "profile": "mage",
+    "equip": { "main_hand": "i_17", "off_hand": null },
     "inventory": [ { "uid": "i_17", "type": "staff", "name": "Ясеневый посох",
                      "rarity": "rare", "upgrade": 2, "stats": {},
                      "sockets": [ { "index": 0, "rune": { "name": "Руна огня",
@@ -172,7 +173,12 @@ fn snapshot_matches_doc_example() {
         "M15/F28: группа навыка из контента"
     );
     assert_eq!(
-        snap.char.equip.get("staff"),
+        snap.char.profile.as_deref(),
+        Some("mage"),
+        "M17/F30b: класс"
+    );
+    assert_eq!(
+        snap.char.equip.get("off_hand"),
         Some(&None),
         "пустой слот = null"
     );

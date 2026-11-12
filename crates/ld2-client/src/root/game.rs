@@ -35,6 +35,23 @@ pub(crate) fn power_strike_open(skills: &[ld2_protocol::types::SkillSnapshot]) -
         .is_some_and(|s| s.rank >= 5)
 }
 
+/// M17/F30b: uid надетого посоха — слот `staff` удалён (посох теперь
+/// двуручное оружие правой руки), ищем по типу среди надетого.
+fn equipped_staff_uid(snap: &StateSnapshot) -> Option<String> {
+    let equipped: std::collections::HashSet<&str> = snap
+        .char
+        .equip
+        .values()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    snap.char
+        .inventory
+        .iter()
+        .find(|i| i.item_type == "staff" && equipped.contains(i.uid.as_str()))
+        .map(|i| i.uid.clone())
+}
+
 impl Root {
     /// M14/F4: первая доступная руна посоха (хоткей «руна») — заряды и
     /// мана в порядке, как у первой включённой кнопки рун на панели.
@@ -46,7 +63,7 @@ impl Root {
             .as_ref()
             .map(|s| s.magic.mana.rune_cost)
             .unwrap_or(0);
-        let staff_uid = snap.char.equip.get("staff").cloned().flatten()?;
+        let staff_uid = equipped_staff_uid(snap)?;
         let staff = snap.char.inventory.iter().find(|i| i.uid == staff_uid)?;
         staff
             .sockets
@@ -672,7 +689,7 @@ impl Root {
         }
 
         // ── 4) Руны экипированного посоха: ×N зарядов (ФР-09) ──
-        if let Some(staff_uid) = snap.char.equip.get("staff").cloned().flatten() {
+        if let Some(staff_uid) = equipped_staff_uid(snap) {
             if let Some(staff) = snap.char.inventory.iter().find(|i| i.uid == staff_uid) {
                 for socket in staff.sockets.iter().flatten() {
                     let Some(rune) = &socket.rune else { continue };

@@ -12,6 +12,7 @@
     {
       "id": "sword_knight",
       "type": "weapon",
+      "slot": "main_hand",
       "name": "Рыцарский меч",
       "rarity": "rare",
       "upgrade": 0,
@@ -24,6 +25,7 @@
     {
       "id": "helmet_leather",
       "type": "armor",
+      "slot": "head",
       "name": "Кожаный шлем",
       "rarity": "common",
       "upgrade": 0,
@@ -35,6 +37,7 @@
     {
       "id": "armor_bronze",
       "type": "armor",
+      "slot": "body",
       "name": "Бронзовый доспех",
       "rarity": "uncommon",
       "upgrade": 0,
@@ -46,6 +49,7 @@
     {
       "id": "boots_traveler",
       "type": "armor",
+      "slot": "feet",
       "name": "Сапоги странника",
       "rarity": "rare",
       "upgrade": 0,
@@ -57,6 +61,7 @@
     {
       "id": "hood_scout",
       "type": "armor",
+      "slot": "head",
       "name": "Капюшон разведчика",
       "rarity": "uncommon",
       "upgrade": 0,
@@ -68,6 +73,7 @@
     {
       "id": "helm_knight",
       "type": "armor",
+      "slot": "head",
       "name": "Шлем рыцаря",
       "rarity": "rare",
       "upgrade": 0,
@@ -79,6 +85,7 @@
     {
       "id": "armor_leather",
       "type": "armor",
+      "slot": "body",
       "name": "Кожаный доспех",
       "rarity": "common",
       "upgrade": 0,
@@ -90,6 +97,7 @@
     {
       "id": "chainmail",
       "type": "armor",
+      "slot": "body",
       "name": "Кольчуга",
       "rarity": "rare",
       "upgrade": 0,
@@ -101,6 +109,7 @@
     {
       "id": "plate_steel",
       "type": "armor",
+      "slot": "body",
       "name": "Стальной доспех",
       "rarity": "epic",
       "upgrade": 0,
@@ -112,6 +121,7 @@
     {
       "id": "boots_leather",
       "type": "armor",
+      "slot": "feet",
       "name": "Кожаные сапоги",
       "rarity": "common",
       "upgrade": 0,
@@ -123,6 +133,7 @@
     {
       "id": "greaves_iron",
       "type": "armor",
+      "slot": "legs",
       "name": "Железные поножи",
       "rarity": "uncommon",
       "upgrade": 0,
@@ -134,6 +145,7 @@
     {
       "id": "sword_champion",
       "type": "weapon",
+      "slot": "main_hand",
       "name": "Клинок чемпиона",
       "rarity": "epic",
       "upgrade": 0,
@@ -146,6 +158,8 @@
     {
       "id": "staff_archmage",
       "type": "staff",
+      "slot": "main_hand",
+      "hands": 2,
       "name": "Посох архимага",
       "rarity": "epic",
       "upgrade": 0,
@@ -158,6 +172,7 @@
     {
       "id": "helm_champion",
       "type": "armor",
+      "slot": "head",
       "name": "Шлем чемпиона",
       "rarity": "epic",
       "upgrade": 0,
@@ -169,6 +184,7 @@
     {
       "id": "boots_thunder",
       "type": "armor",
+      "slot": "feet",
       "name": "Сапоги грома",
       "rarity": "epic",
       "upgrade": 0,
@@ -208,8 +224,259 @@
       "gold_value": 75
     },
     {
+      "id": "bow_hunter",
+      "type": "weapon",
+      "name": "Охотничий лук",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "dmg": "4..7"
+      },
+      "gold_value": 60,
+      "skill": "bow",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "bow_long",
+      "type": "weapon",
+      "name": "Длинный лук",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "dmg": "7..11"
+      },
+      "gold_value": 260,
+      "skill": "bow",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "twohand_sword",
+      "type": "weapon",
+      "name": "Двуручный меч",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "dmg": "9..15"
+      },
+      "gold_value": 320,
+      "skill": "twohand",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "hammer_battle",
+      "type": "weapon",
+      "name": "Боевой молот",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "dmg": "11..16"
+      },
+      "gold_value": 210,
+      "skill": "twohand",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "axe_war",
+      "type": "weapon",
+      "name": "Секира",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "dmg": "10..14"
+      },
+      "gold_value": 190,
+      "skill": "axe",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "shield_wood",
+      "type": "shield",
+      "name": "Деревянный щит",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 40,
+      "slot": "off_hand"
+    },
+    {
+      "id": "shield_iron",
+      "type": "shield",
+      "name": "Железный щит",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 6
+      },
+      "gold_value": 160,
+      "slot": "off_hand"
+    },
+    {
+      "id": "shoulders_leather",
+      "type": "armor",
+      "name": "Кожаные наплечники",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 45,
+      "slot": "shoulders"
+    },
+    {
+      "id": "shoulders_steel",
+      "type": "armor",
+      "name": "Стальные наплечники",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 4
+      },
+      "gold_value": 130,
+      "slot": "shoulders"
+    },
+    {
+      "id": "bracers_leather",
+      "type": "armor",
+      "name": "Кожаные поручи",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 45,
+      "slot": "bracers"
+    },
+    {
+      "id": "bracers_steel",
+      "type": "armor",
+      "name": "Стальные поручи",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 4
+      },
+      "gold_value": 130,
+      "slot": "bracers"
+    },
+    {
+      "id": "gloves_cloth",
+      "type": "armor",
+      "name": "Тканевые перчатки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 1
+      },
+      "gold_value": 30,
+      "slot": "gloves"
+    },
+    {
+      "id": "gloves_leather",
+      "type": "armor",
+      "name": "Кожаные перчатки",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 95,
+      "slot": "gloves"
+    },
+    {
+      "id": "cloak_traveler",
+      "type": "armor",
+      "name": "Плащ странника",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 60,
+      "slot": "cloak"
+    },
+    {
+      "id": "cloak_wolf",
+      "type": "armor",
+      "name": "Волчий плащ",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 4
+      },
+      "gold_value": 155,
+      "slot": "cloak"
+    },
+    {
+      "id": "ring_silver",
+      "type": "armor",
+      "name": "Серебряное кольцо",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 1
+      },
+      "gold_value": 70,
+      "slot": "ring"
+    },
+    {
+      "id": "ring_ruby",
+      "type": "armor",
+      "name": "Рубиновое кольцо",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 180,
+      "slot": "ring"
+    },
+    {
+      "id": "amulet_talisman",
+      "type": "armor",
+      "name": "Талисман",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 140,
+      "slot": "amulet"
+    },
+    {
+      "id": "artifact_heart",
+      "type": "artifact",
+      "name": "Сердце пламени",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "magic": 3
+      },
+      "gold_value": 700,
+      "slot": "artifact"
+    },
+    {
+      "id": "artifact_shard",
+      "type": "artifact",
+      "name": "Грозовой осколок",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "magic": 4
+      },
+      "gold_value": 720,
+      "slot": "artifact"
+    },
+    {
       "id": "dagger_knife",
       "type": "weapon",
+      "slot": "main_hand",
       "name": "Кинжал",
       "rarity": "common",
       "upgrade": 0,
@@ -234,6 +501,8 @@
     {
       "id": "staff_apprentice",
       "type": "staff",
+      "slot": "main_hand",
+      "hands": 2,
       "name": "Посох подмастерья",
       "rarity": "common",
       "upgrade": 0,

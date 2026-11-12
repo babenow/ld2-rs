@@ -176,7 +176,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "chat": { "server_history": 200,
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
-  "inventory": { "slots": 40, "equip_slots": ["head","body","main_hand","staff","feet"] },
+  "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
@@ -188,8 +188,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ```
 
 `profile` в `characters[]` — опционально (аддитивно, ADR-005): класс из
-`char.create` (`warrior`/`rogue`/`mage`) для цвета ника на экране выбора;
-сервер без поля валиден — клиент рисует нейтрально.
+`char.create` (`warrior`/`archer`/`mage` — M17/F30b: «Вор» → «Лучник»)
+для цвета ника на экране выбора; сервер без поля валиден — клиент
+рисует нейтрально.
 
 - `kinds` — расширяемый список видов статусов; клиент рендерит любые `kind` через title/severity, незнакомые — generic.
 - `min_client` (string|null) — если не `null` и версия приложения меньше → экран «Требуется обновление», вход блокируется.
@@ -234,6 +235,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "requires": { "attr": { "int": 12 }, "profession": null, "level": null },
   "sockets": [ { "index": 0, "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10 } },
                { "index": 1, "rune": null } ],
+  "slot": "main_hand", "hands": 2,         // M17/F30b: слот предмета (ring/artifact —
+                                            // псевдослоты пар) и руки (2 — двуручник)
   "qty": 1, "gold_value": 120 }
 
 // SkillSnapshot
@@ -263,7 +266,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `auth.logout` | `{}` | `{}` | + | выход |
 | `session.refresh` | `{}` | `{access_token, expires_in_s}` | + | ротация токена |
 | `char.list` | `{}` | `{characters[]}` | + | список персонажей |
-| `char.create` | `{name, profile}` | `{character}` | − | создание (profile: Воин/Вор/Маг, список — capability сервера) |
+| `char.create` | `{name, profile}` | `{character}` | − | создание (profile: Воин/Лучник/Маг, список — capability сервера) |
 | `char.select` | `{char_id}` | `{}` (→ `evt/state/snapshot`) | + | вход в мир |
 | `char.delete` | `{char_id}` | `{}` | − | удаление |
 | `char.xp_invest` | `{skill_id, points}` | `{pool_left}` | − | вложить очки опыта в навык |
@@ -275,7 +278,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `combat.flee` | `{}` | `{}` | − | попытка сбежать |
 | `skill.use` | `{skill_id, target_id?}` | `{}` | − | активный навык |
 | `item.use` | `{item_uid, target_id?}` | `{}` | − | зелье/свиток-прочее |
-| `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть |
+| `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
 | `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |

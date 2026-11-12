@@ -1020,12 +1020,26 @@ impl Root {
                         .child(slot_label(lang, slot)),
                 );
             let Some(item) = item else {
+                // M17/F30b: левая рука закрыта, пока в правой двуручник.
+                let twohand = snap
+                    .char
+                    .equip
+                    .get("main_hand")
+                    .cloned()
+                    .flatten()
+                    .and_then(|u| snap.char.inventory.iter().find(|i| i.uid == u))
+                    .is_some_and(|i| i.hands.unwrap_or(1) >= 2);
+                let blocked = slot == "off_hand" && twohand;
                 row = row.child(
                     div()
                         .flex_grow_1()
                         .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(t(lang, Key::EmptySlot)),
+                        .text_color(rgb(if blocked { pal.warn } else { pal.muted }))
+                        .child(if blocked {
+                            t(lang, Key::SlotBlocked)
+                        } else {
+                            t(lang, Key::EmptySlot)
+                        }),
                 );
                 col = col.child(row);
                 continue;
@@ -1109,12 +1123,11 @@ impl Root {
             this.send_cmd(&cmd, Act::Drop);
         }));
 
-        // Экипировать (гейт клиента по типу; сервер — истина, §7).
-        if let Some(slot) = slot_for(&item.item_type) {
+        // M17/F30b: экипировка — по слоту предмета; сервер — истина (§7).
+        if let Some(slot) = slot_for(item, ch) {
             let equipped = ch.equip.values().flatten().any(|u| u == &item.uid);
             if !equipped {
                 let uid = item.uid.clone();
-                let slot = slot.to_string();
                 menu = menu.item(menu_item(cx, t(lang, Key::MenuEquip), move |this, _cx| {
                     let cmd = ItemEquip {
                         item_uid: uid.clone(),
@@ -2264,6 +2277,17 @@ pub(crate) fn slot_label(lang: Lang, slot: &str) -> String {
         "main_hand" => t(lang, Key::SlotMainHand),
         "staff" => t(lang, Key::SlotStaff),
         "feet" => t(lang, Key::SlotFeet),
+        "shoulders" => t(lang, Key::SlotShoulders),
+        "bracers" => t(lang, Key::SlotBracers),
+        "gloves" => t(lang, Key::SlotGloves),
+        "legs" => t(lang, Key::SlotLegs),
+        "cloak" => t(lang, Key::SlotCloak),
+        "ring1" => t(lang, Key::SlotRing1),
+        "ring2" => t(lang, Key::SlotRing2),
+        "amulet" => t(lang, Key::SlotAmulet),
+        "off_hand" => t(lang, Key::SlotOffHand),
+        "artifact1" => t(lang, Key::SlotArtifact1),
+        "artifact2" => t(lang, Key::SlotArtifact2),
         other => other,
     }
     .to_string()
@@ -2286,6 +2310,8 @@ pub(crate) fn type_label(lang: Lang, item_type: &str) -> String {
         "flask" => t(lang, Key::ItemTypeFlask),
         "chisel" => t(lang, Key::ItemTypeChisel),
         "quill" => t(lang, Key::ItemTypeQuill),
+        "shield" => t(lang, Key::ItemTypeShield),
+        "artifact" => t(lang, Key::ItemTypeArtifact),
         other => other,
     }
     .to_string()
@@ -2319,13 +2345,22 @@ pub(crate) fn school_label(lang: Lang, school: &str) -> String {
     .to_string()
 }
 
-/// Слот экипировки для типа предмета (гейт клиента; сервер — истина, §7).
-fn slot_for(item_type: &str) -> Option<&'static str> {
-    match item_type {
-        "staff" => Some("staff"),
-        "weapon" => Some("main_hand"),
-        "armor" => Some("body"),
-        _ => None,
+/// M17/F30b: слот для предмета — из поля `slot` снапшота (парные
+/// ring/artifact занимают первую свободную ячейку); `None` — предмет
+/// не экипируется либо пара занята целиком. Сервер — истина (§7).
+fn slot_for(item: &ItemSnapshot, ch: &CharacterState) -> Option<String> {
+    let slot = item.slot.as_deref()?;
+    let free = |s: &str| ch.equip.get(s).map(|v| v.is_none()).unwrap_or(true);
+    match slot {
+        "ring" => ["ring1", "ring2"]
+            .into_iter()
+            .find(|s| free(s))
+            .map(str::to_string),
+        "artifact" => ["artifact1", "artifact2"]
+            .into_iter()
+            .find(|s| free(s))
+            .map(str::to_string),
+        other => Some(other.to_string()),
     }
 }
 
@@ -2380,8 +2415,13 @@ mod tests {
         assert_eq!(rarity_label(ru, "rare"), "Редкий");
         assert_eq!(rarity_label(ru, "mythic"), "mythic", "fallback");
         assert_eq!(slot_label(ru, "main_hand"), "Правая рука");
+        assert_eq!(slot_label(ru, "shoulders"), "Наплечники");
+        assert_eq!(slot_label(ru, "artifact1"), "Артефакт 1");
+        assert_eq!(slot_label(Lang::En, "off_hand"), "Off hand");
         assert_eq!(slot_label(ru, "tail"), "tail", "fallback");
         assert_eq!(type_label(ru, "money"), "Валюта");
+        assert_eq!(type_label(ru, "shield"), "Щит");
+        assert_eq!(type_label(ru, "artifact"), "Артефакт");
         assert_eq!(type_label(ru, "saddle"), "saddle", "fallback");
         assert_eq!(stat_label(ru, "dmg"), "Урон");
         assert_eq!(stat_label(ru, "damage"), "Урон", "dmg и damage — один ключ");
