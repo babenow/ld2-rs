@@ -78,6 +78,10 @@ impl Root {
             return;
         }
         let email = form.normalized_email();
+        // M16/F29j: пароль до move в cmd — при включённой галочке
+        // PersistSession сохранит его в keyring (регистрация =
+        // немедленный вход, ADR-006).
+        self.pending_password = Some(form.password.clone());
         let cmd = AuthRegister {
             login: form.login.clone(),
             password: form.password,

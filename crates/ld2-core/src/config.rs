@@ -56,6 +56,14 @@ pub struct Config {
     /// Состояние UI: открытая вкладка листа (ФР-19: сохраняется).
     #[serde(default = "default_sheet_tab")]
     pub sheet_tab: String,
+    /// Состояние UI: открытая вкладка рюкзака (M16/F29b: сохраняется).
+    #[serde(default = "default_backpack_tab")]
+    pub backpack_tab: String,
+    /// M16/F29j: «запомнить пароль» — галочка на экране входа и
+    /// предзаполнение поля. Сам пароль хранится ТОЛЬКО в keyring
+    /// (protocol.md §4), в конфиг не попадает.
+    #[serde(default)]
+    pub remember_password: bool,
     /// Состояние UI: свёрнут ли пати-виджет (ФР-19).
     #[serde(default)]
     pub party_collapsed: bool,
@@ -103,6 +111,10 @@ fn default_chat_limit() -> usize {
 fn default_sheet_tab() -> String {
     "skills".into()
 }
+fn default_backpack_tab() -> String {
+    // Первая вкладка рюкзака — «Все предметы» (M16/F29g).
+    "all".into()
+}
 
 /// Ремаппинг горячих клавиш (ФР-19): действие → спецификация вида
 /// `alt+up` / `tab` (формат — [`crate::ui::hotkey`]).
@@ -140,6 +152,14 @@ pub struct Hotkeys {
     /// Свиток/зелье (расходник).
     #[serde(default = "hk_digit6")]
     pub action_consumable: String,
+    // ── M15/F25: окно персонажа ──
+    /// Открыть/закрыть окно персонажа.
+    #[serde(default = "hk_char")]
+    pub open_character: String,
+    // ── M16/F29b: окно рюкзака ──
+    /// Открыть/закрыть окно рюкзака (дефолт «i» — классика MMO).
+    #[serde(default = "hk_backpack")]
+    pub open_backpack: String,
 }
 
 fn hk_alt_up() -> String {
@@ -175,6 +195,12 @@ fn hk_digit5() -> String {
 fn hk_digit6() -> String {
     "6".into()
 }
+fn hk_char() -> String {
+    "c".into()
+}
+fn hk_backpack() -> String {
+    "i".into()
+}
 
 impl Default for Hotkeys {
     fn default() -> Self {
@@ -190,6 +216,8 @@ impl Default for Hotkeys {
             action_flee: hk_digit4(),
             action_rune: hk_digit5(),
             action_consumable: hk_digit6(),
+            open_character: hk_char(),
+            open_backpack: hk_backpack(),
         }
     }
 }
@@ -209,6 +237,8 @@ impl Hotkeys {
             ("action_flee", &mut self.action_flee),
             ("action_rune", &mut self.action_rune),
             ("action_consumable", &mut self.action_consumable),
+            ("open_character", &mut self.open_character),
+            ("open_backpack", &mut self.open_backpack),
         ]
     }
 }
@@ -273,6 +303,8 @@ impl Default for Config {
             notify: default_true(),
             chat_limit: default_chat_limit(),
             sheet_tab: default_sheet_tab(),
+            backpack_tab: default_backpack_tab(),
+            remember_password: false,
             party_collapsed: false,
             hotkeys: Hotkeys::default(),
         }
@@ -352,6 +384,13 @@ mod tests {
         assert_eq!(cfg.hotkeys.action_flee, "4");
         assert_eq!(cfg.hotkeys.action_rune, "5");
         assert_eq!(cfg.hotkeys.action_consumable, "6");
+        // M15/F25: окно персонажа — дефолт в старом конфиге.
+        assert_eq!(cfg.hotkeys.open_character, "c");
+        // M16/F29b: окно рюкзака и его вкладка — дефолты старого файла.
+        assert_eq!(cfg.hotkeys.open_backpack, "i");
+        assert_eq!(cfg.backpack_tab, "all");
+        // M16/F29j: «запомнить пароль» в старом конфиге выключено.
+        assert!(!cfg.remember_password);
         // M14/F8: шрифты чата/лога в старом конфиге — дефолт 12 px.
         assert_eq!(cfg.chat_font_px, 12.0);
         assert_eq!(cfg.log_font_px, 12.0);

@@ -9,9 +9,9 @@ use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
     ChatDelete, ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
     GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip,
-    ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, PartyAccept, PartyInvite,
-    PartyKick, SkillUse, SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel,
-    TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
+    ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, PartyAccept,
+    PartyInvite, PartyKick, SkillUse, SocketExtract, SocketInsert, StateResync, TradeAddItem,
+    TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -212,6 +212,7 @@ impl Session {
             "cmd/item.equip" => self.item_equip(env, seq).await,
             "cmd/item.unequip" => self.item_unequip(env, seq).await,
             "cmd/item.drop" => self.item_drop(env, seq).await,
+            "cmd/item.move" => self.item_move(env, seq).await,
             // dev-сценарии (`/scenario …`); чат — ФР-13 в фазе M12.7
             "cmd/chat.send" => self.chat_send(env, seq).await,
             "cmd/chat.delete" => self.chat_delete(env, seq).await,
@@ -585,6 +586,20 @@ impl Session {
         }
         match db::characters::create(pool, account_id, &cmd.name, &cmd.profile).await {
             Ok(Some(row)) => {
+                // M17/F30e: стартовый ресурс по профилю (WoW): воин —
+                // ярость с нуля, лучник — полная энергия; мана (маг) —
+                // дефолт колонок.
+                let res = &self.state.config.gameplay.resource;
+                let resource = match cmd.profile.as_str() {
+                    "warrior" => Some((0, res.rage_max as i32)),
+                    "archer" => Some((res.energy_max as i32, res.energy_max as i32)),
+                    _ => None,
+                };
+                if let Some((cur, max)) = resource {
+                    if let Err(e) = db::characters::set_resource(pool, &row.id, cur, max).await {
+                        warn!("char.create (ресурс): {e}");
+                    }
+                }
                 let character = self.summary_for(&row).await;
                 vec![Self::ack_payload(
                     seq,
@@ -654,6 +669,8 @@ impl Session {
             world.bind_char(&row.id, &row.name, self.out_tx.clone());
             world.set_char_location(&row.id, &location_id);
         }
+        // M17/F30f: чем бьёт — по экипированному оружию (кэш мира).
+        self.refresh_char_hits_as(&row.id).await;
         if let Some(account_id) = self.account_id {
             if let Err(e) = db::accounts::set_last_char(&self.state.pool, account_id, &row.id).await
             {
@@ -807,9 +824,13 @@ impl Session {
                         self.char = Some(state);
                         self.location_id = Some(location_id.clone());
                         self.selected_char_id = Some(row.id.clone());
-                        let mut world = self.state.world.lock().expect("мир");
-                        world.bind_char(&row.id, &row.name, self.out_tx.clone());
-                        world.set_char_location(&row.id, &location_id);
+                        {
+                            let mut world = self.state.world.lock().expect("мир");
+                            world.bind_char(&row.id, &row.name, self.out_tx.clone());
+                            world.set_char_location(&row.id, &location_id);
+                        }
+                        // M17/F30f: чем бьёт — по экипированному оружию.
+                        self.refresh_char_hits_as(&row.id).await;
                     }
                     Err(e) => warn!("восстановление листа персонажа: {e}"),
                 }
@@ -1149,7 +1170,7 @@ impl Session {
         row: &db::characters::CharacterRow,
     ) -> Result<CharacterState, sqlx::Error> {
         let pool = &self.state.pool;
-        let attrs: BTreeMap<String, i64> =
+        let mut attrs: BTreeMap<String, i64> =
             serde_json::from_value(row.attrs.clone()).unwrap_or_default();
 
         let mut learned = HashMap::new();
@@ -1165,6 +1186,8 @@ impl Session {
                 name: Some(skill.name),
                 // M14/F17: пустое описание старого сида → None (без поля).
                 description: (!skill.description.is_empty()).then_some(skill.description),
+                // M15/F28: группа (skills.md §3) — группировка вкладки.
+                group: (!skill.skill_group.is_empty()).then_some(skill.skill_group),
                 rank: rank_u32,
                 xp,
                 xp_to_next: crate::systems::xp_to_next(rank_u32, &self.state.config.skills),
@@ -1181,6 +1204,9 @@ impl Session {
             .map(|slot| (slot.clone(), None))
             .collect();
         let mut inventory = Vec::new();
+        // M17/F30c: raw-сокеты надетой брони — из них считаются
+        // бонусы самоцветов (правило контента, вручную).
+        let mut armor_sockets: Vec<Value> = Vec::new();
         for item in db::items::inventory(pool, &row.id).await? {
             let Some(def) = db::items::def(pool, &item.def_id).await? else {
                 warn!("нет определения {} для предмета {}", item.def_id, item.uid);
@@ -1188,13 +1214,64 @@ impl Session {
             };
             if let Some(slot) = &item.equipped_slot {
                 equip.insert(slot.clone(), Some(item.uid.clone()));
+                if def.item_type == "armor" {
+                    armor_sockets.push(item.sockets.clone());
+                }
             }
             inventory.push(item_snapshot(&item, &def));
         }
+        // M17/F30c: самоцветы в сокетах надетой брони улучшают
+        // основные характеристики — бонус в снапшот-attrs (виден в
+        // «Атрибутах»/«Параметрах», участвует в требованиях и гейтах).
+        for sockets_json in &armor_sockets {
+            let sockets: Vec<Value> =
+                serde_json::from_value(sockets_json.clone()).unwrap_or_default();
+            for socket in sockets {
+                let Some(gem_id) = socket.get("def_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Ok(Some(gem)) = db::items::def(pool, gem_id).await else {
+                    continue;
+                };
+                if gem.item_type != "gem" {
+                    continue;
+                }
+                let (Some(attr), Some(value)) = (
+                    gem.stats.get("attr").and_then(|v| v.as_str()),
+                    gem.stats.get("value").and_then(|v| v.as_i64()),
+                ) else {
+                    continue;
+                };
+                *attrs.entry(attr.to_string()).or_insert(0) += value;
+            }
+        }
+
+        // M15/F24: уровень и шкала опыта (окно персонажа).
+        let (level, xp_in_level, xp_to_next) =
+            crate::systems::level_for_total(row.total_xp, &self.state.config.gameplay.level);
+
+        // M15/F26: производные характеристики (вкладка «Параметры») —
+        // из атрибутов, навыков и именно снаряжённых предметов.
+        let equip_uids: std::collections::HashSet<&str> =
+            equip.values().flatten().map(String::as_str).collect();
+        let equipped: Vec<ld2_protocol::types::ItemSnapshot> = inventory
+            .iter()
+            .filter(|i| equip_uids.contains(i.uid.as_str()))
+            .cloned()
+            .collect();
+        let derived = crate::stats::derive(
+            &attrs,
+            &skills,
+            &equipped,
+            self.state.config.gameplay.combat.base_damage,
+        );
 
         Ok(CharacterState {
             id: row.id.clone(),
             name: row.name.clone(),
+            // M17/F30b: класс для правил экипировки на клиенте (F30e —
+            // ресурс боя).
+            profile: Some(row.profile.clone()),
             attrs,
             skills,
             // Изученные профессии (§6, M12.6).
@@ -1212,11 +1289,24 @@ impl Session {
                 cur: i64::from(row.hp_cur),
                 max: i64::from(row.hp_max),
             },
-            mp: Mp {
-                cur: i64::from(row.mp_cur),
-                max: i64::from(row.mp_max),
+            // M17/F30e: ресурс по профилю — ярость/энергия/мана.
+            mp: {
+                let max = crate::systems::resource_max(
+                    row.profile.as_str(),
+                    &self.state.config.gameplay.resource,
+                    i64::from(row.mp_max),
+                );
+                Mp {
+                    cur: i64::from(row.mp_cur).clamp(0, max),
+                    max,
+                }
             },
             xp_pool: row.xp_pool,
+            level: Some(level),
+            total_xp: Some(row.total_xp),
+            xp_in_level: Some(xp_in_level),
+            xp_to_next: Some(xp_to_next),
+            derived: Some(derived),
             equip,
             inventory,
             crime: CrimeState {
@@ -1447,10 +1537,49 @@ impl Session {
             }
         }
 
+        // M17/F30e: ресурс класса — стоимость активной способности
+        // (ярость воина / энергия лучника / мана мага; 0 — бесплатно)
+        // и профиль для прироста ярости за урон.
+        let Some(crow) = (match db::characters::get(pool, &char_id).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("skill.use (ресурс): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
+        };
+        let profile = crow.profile.as_str();
+        let res_cfg = &self.state.config.gameplay.resource;
+        let res_max = crate::systems::resource_max(profile, res_cfg, i64::from(crow.mp_max));
+        let mut res_cur = i64::from(crow.mp_cur).min(res_max);
+        let mut resource_spent = false;
+        if active.cost > 0 {
+            let cost = i64::from(active.cost);
+            if res_cur < cost {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::NotEnoughMp,
+                    format!(
+                        "не хватает {}: {res_cur} < {cost}",
+                        crate::systems::resource_name(profile)
+                    ),
+                )];
+            }
+            res_cur -= cost;
+            if let Err(e) = db::characters::set_mp(pool, &char_id, res_cur as i32).await {
+                warn!("skill.use (списание ресурса): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            resource_spent = true;
+        }
+
         // Урон: base_damage × множитель способности (§4: ×1.8).
         let damage = ((self.state.config.gameplay.combat.base_damage as f64) * active.damage_mult)
             .round()
             .max(1.0) as i64;
+        // M17/F30e: ярость воина за нанесённый урон (15 % — конфиг).
+        let rage = crate::systems::rage_gain(res_cfg, profile, damage);
 
         // Кулдаун фиксируем ДО удара (защита от двойного нажатия в одном тике).
         let until = now_s + active.cooldown_s.ceil() as i64;
@@ -1476,16 +1605,39 @@ impl Session {
             serde_json::to_value(CombatCooldown {
                 skill_id: Some(cmd.skill_id.clone()),
                 until_epoch: until,
+                // M17/F30g: полная длительность — прогресс-бар клиента.
+                duration_ms: Some((active.cooldown_s * 1000.0).round() as i64),
             })
             .unwrap_or_default(),
         ));
+        // M17/F30e: списанный ресурс — сразу клиенту (патч mp).
+        if resource_spent {
+            let mut patch = serde_json::Map::new();
+            patch.insert(
+                "mp".into(),
+                serde_json::json!({ "cur": res_cur, "max": res_max }),
+            );
+            mine.push(out_event(
+                "evt/char/stats",
+                None,
+                serde_json::to_value(CharStats { patch }).unwrap_or_default(),
+            ));
+        }
+
+        // M17/F30f: имя способности из контента — в логе без сырых id.
+        let skill_name = match db::skills::content_skill(pool, &cmd.skill_id).await {
+            Ok(Some(row)) => row.name,
+            _ => cmd.skill_id.clone(),
+        };
 
         // Урон цели: hit/hp → при смерти: despawn/труп/бой окончен + XP.
         let mut others: Vec<(String, String)> = Vec::new();
         let mut xp_work: Option<crate::tick::KillXp> = None;
+        let mut hit_done = false;
         {
             let mut world = self.state.world.lock().expect("мир");
             if let Some(hp) = world.damage_mob(target, damage) {
+                hit_done = true;
                 let mob_name = world
                     .mob(target)
                     .map(|m| m.name.clone())
@@ -1500,7 +1652,7 @@ impl Session {
                     amount: damage,
                     crit: false,
                     miss: false,
-                    text: format!("«{}»: −{damage}", cmd.skill_id),
+                    text: format!("«{skill_name}»: **−{damage}**"),
                     extra: Default::default(),
                 };
                 for addr in world.chars_in_location(&location) {
@@ -1528,6 +1680,28 @@ impl Session {
                         &char_id,
                         skills_cfg,
                     );
+                }
+            }
+        }
+        // M17/F30e: прирост ярости за нанесённый урон (воин) — после
+        // удара, с патчем клиенту.
+        if rage > 0 && hit_done {
+            let new_rage = (res_cur + rage).min(res_max);
+            if new_rage > res_cur {
+                match db::characters::set_mp(pool, &char_id, new_rage as i32).await {
+                    Ok(()) => {
+                        let mut patch = serde_json::Map::new();
+                        patch.insert(
+                            "mp".into(),
+                            serde_json::json!({ "cur": new_rage, "max": res_max }),
+                        );
+                        mine.push(out_event(
+                            "evt/char/stats",
+                            None,
+                            serde_json::to_value(CharStats { patch }).unwrap_or_default(),
+                        ));
+                    }
+                    Err(e) => warn!("skill.use (ярость {char_id}): {e}"),
                 }
             }
         }
@@ -1674,9 +1848,11 @@ impl Session {
         // M14: оплата тренеру — ПОСЛЕ всех проверок (тренер → пул → ранг →
         // гейт атрибутов): за неудачное вложение золото не списывается.
         let gold = trainers::gold_price(&price, i64::from(rank_at_start));
-        if let Err(e) = self.pay_trainer(seq, &char_id, &price, gold).await {
-            return vec![e];
-        }
+        // F29a: оплата монетами — события списания в конце ответа.
+        let money_events = match self.pay_trainer(seq, &char_id, &price, gold).await {
+            Ok(events) => events,
+            Err(e) => return vec![e],
+        };
 
         let pool_left = pool_now - cmd.points;
         if let Err(e) =
@@ -1685,7 +1861,7 @@ impl Session {
             warn!("xp_invest (транзакция): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
-        vec![
+        let mut outs = vec![
             Self::ack_payload(seq, &serde_json::json!({ "pool_left": pool_left })),
             out_event(
                 "evt/char/xp",
@@ -1700,7 +1876,35 @@ impl Session {
                 })
                 .unwrap_or_default(),
             ),
-        ]
+        ];
+        outs.extend(money_events);
+        outs
+    }
+
+    /// `cmd/item.move` (M16/F29g): поменять местами два предмета
+    /// рюкзака (перетаскивание) → ack `{}`; порядок — `items.sort_order`,
+    /// клиент меняет сетку локально при отправке.
+    async fn item_move(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ItemMove>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        match db::items::swap_order(&self.state.pool, &char_id, &cmd.item_uid, &cmd.target_uid)
+            .await
+        {
+            Ok(true) => vec![Self::ack_payload(seq, &serde_json::json!({}))],
+            Ok(false) => vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")],
+            Err(e) => {
+                warn!("item.move: {e}");
+                vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
+            }
+        }
     }
 
     /// `cmd/item.use` (§7): взятие статического лута (`loot:*`) или расход
@@ -1742,6 +1946,10 @@ impl Session {
                 "нет определения предмета",
             )];
         };
+        // M17/F30g: кулдаун предмета (cooldown_s, дефолт 1 с).
+        if let Some(err) = self.item_cd_gate(seq, &char_id, &def).await {
+            return vec![err];
+        }
         // Зелье: heal из stats (открытый объект §6).
         if def.item_type == "potion" {
             if let Some(heal) = def.stats.get("heal").and_then(|v| v.as_i64()) {
@@ -1804,6 +2012,8 @@ impl Session {
                     None,
                     serde_json::to_value(CharStats { patch }).unwrap_or_default(),
                 ));
+                // M17/F30g: кулдаун использования → таймер кнопки.
+                outs.push(self.item_cd_started(&char_id, &def));
                 return outs;
             }
         }
@@ -1875,22 +2085,48 @@ impl Session {
             if took.is_none() {
                 return vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")];
             }
-            let row = match db::items::insert(&pool, char_id, &def_id, i64::from(def.qty)).await {
-                Ok(row) => row,
-                Err(e) => {
-                    warn!("take_loot (insert): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            // F29a: монеты складываются в существующий стак (патч
+            // qty), обычные предметы — новым инстансом.
+            let (row, stacked) = if def.item_type == db::items::MONEY_TYPE {
+                match db::items::grant_stacking(&pool, char_id, &def_id, i64::from(def.qty)).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("take_loot (стак монет): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                }
+            } else {
+                match db::items::insert(&pool, char_id, &def_id, i64::from(def.qty)).await {
+                    Ok(row) => (row, false),
+                    Err(e) => {
+                        warn!("take_loot (insert): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
                 }
             };
-            let item = item_snapshot(&row, &def);
-            return vec![
-                Self::ack_payload(seq, &serde_json::json!({})),
+            let ev = if stacked {
+                let mut patch = serde_json::Map::new();
+                patch.insert("qty".into(), serde_json::json!(row.qty));
+                out_event(
+                    "evt/item/state",
+                    None,
+                    serde_json::to_value(ItemState {
+                        uid: row.uid.clone(),
+                        patch,
+                    })
+                    .unwrap_or_default(),
+                )
+            } else {
                 out_event(
                     "evt/item/added",
                     None,
-                    serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
-                ),
-            ];
+                    serde_json::to_value(ItemAdded {
+                        item: item_snapshot(&row, &def),
+                    })
+                    .unwrap_or_default(),
+                )
+            };
+            return vec![Self::ack_payload(seq, &serde_json::json!({})), ev];
         }
 
         // Статический лут из сида (D26): однократно на персонажа.
@@ -2033,8 +2269,62 @@ impl Session {
                     return vec![Self::err(
                         seq,
                         ErrorCode::RequirementAttr,
-                        format!("не хватает {attr}: {have} < {need}"),
+                        format!("не хватает {}: {have} < {need}", attr_genitive(attr)),
                     )];
+                }
+            }
+        }
+        // M17/F30b: слот↔предмет (парные ring/artifact — по
+        // псевдослоту); без слота предмет не экипируется.
+        match def.slot.as_deref() {
+            None => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::ItemGone,
+                    "предмет не экипируется",
+                )];
+            }
+            Some(req) => {
+                let ok = req == cmd.slot
+                    || (req == "ring" && (cmd.slot == "ring1" || cmd.slot == "ring2"))
+                    || (req == "artifact" && (cmd.slot == "artifact1" || cmd.slot == "artifact2"));
+                if !ok {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::ItemGone,
+                        format!("«{}» не надевается в этот слот", def.name),
+                    )];
+                }
+            }
+        }
+        // M17/F30b: правила классов для оружия/щитов/посоха.
+        if matches!(def.item_type.as_str(), "weapon" | "staff" | "shield") {
+            let profile = self.char.as_ref().and_then(|c| c.profile.clone());
+            let is_bow = def.skill.as_deref() == Some("bow");
+            let gate = match profile.as_deref() {
+                Some("mage") if def.item_type != "staff" => Some("маг носит только посох"),
+                Some("archer") if !is_bow => Some("лучник носит только луки"),
+                Some("warrior") if def.item_type == "staff" => Some("воин не носит посох"),
+                Some("warrior") if is_bow => Some("воин не носит луки"),
+                _ => None,
+            };
+            if let Some(msg) = gate {
+                return vec![Self::err(seq, ErrorCode::ItemGone, msg)];
+            }
+        }
+        // M17/F30b: левая рука закрыта, пока в правой двуручник.
+        if cmd.slot == "off_hand" {
+            if let Ok(Some(main)) =
+                db::items::find_equipped_in_slot(&pool, &char_id, "main_hand").await
+            {
+                if let Ok(Some(main_def)) = db::items::def(&pool, &main.def_id).await {
+                    if main_def.hands >= 2 {
+                        return vec![Self::err(
+                            seq,
+                            ErrorCode::ItemGone,
+                            "левая рука занята двуручным оружием",
+                        )];
+                    }
                 }
             }
         }
@@ -2057,6 +2347,23 @@ impl Session {
             warn!("item.equip (надевание): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        // M17/F30b: двуручник в правой руке блокирует левую — щит
+        // автоматически снимается (как в WoW при смене на двуручное).
+        if cmd.slot == "main_hand" && def.hands >= 2 {
+            match db::items::find_equipped_in_slot(&pool, &char_id, "off_hand").await {
+                Ok(Some(prev)) => {
+                    if let Err(e) = db::items::set_equipped(&pool, &prev.uid, None).await {
+                        warn!("item.equip (снятие левой руки): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warn!("item.equip (левая рука): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+        }
         let char_state = match self.reload_char(seq, &char_id).await {
             Ok(state) => state,
             Err(out) => return vec![out],
@@ -2067,6 +2374,8 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "предмет исчез")];
             }
         };
+        // M17/F30f: оружие изменилось — пересчёт «чем бьёт».
+        self.refresh_char_hits_as(&char_id).await;
         vec![Self::ack_payload(
             seq,
             &serde_json::json!({ "char": char_state, "item": updated }),
@@ -2116,6 +2425,8 @@ impl Session {
                 "нет определения предмета",
             )];
         };
+        // M17/F30f: оружие снято — пересчёт «чем бьёт».
+        self.refresh_char_hits_as(&char_id).await;
         let updated = item_snapshot(&item, &def);
         vec![Self::ack_payload(
             seq,
@@ -2477,6 +2788,12 @@ impl Session {
         if let Some(kind) = scenario.strip_prefix("crime ") {
             return self.scenario_crime(kind.trim(), seq).await;
         }
+        // `/scenario kit` — тестовый набор рюкзака (M16/F29b):
+        // предметы разных типов/редкостей, улучшения, экипировка,
+        // монеты.
+        if scenario == "kit" {
+            return self.scenario_kit(seq).await;
+        }
         if scenario != "death" {
             return vec![Self::err(
                 seq,
@@ -2514,6 +2831,124 @@ impl Session {
 
     /// `/scenario give <def_id>` (dev): выдать предмет персонажу —
     /// сокеты посоха создаются сразу (ADR-002, иначе UI не увидит слоты).
+    /// `/scenario kit` (M16/F29b): тестовый набор в рюкзак — предметы
+    /// разных типов и редкостей с улучшениями +N, полная экипировка
+    /// (слоты из конфига) и стак монет. Наполнение окна рюкзака для
+    /// смоука; повторный вызов добавляет стаки (слоты переносятся).
+    async fn scenario_kit(&mut self, seq: u32) -> Vec<Out> {
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+
+        // (def_id, qty, улучшение +N, слот): экипировка — уникальные
+        // инстансы, расходники/материалы — в существующие стаки.
+        // M17/F30b: экипировка по новым слотам (12 из 15 — ring2 и
+        // артефакты остаются пустыми для смоука).
+        let grants: [(&str, i64, i32, Option<&str>); 18] = [
+            ("sword_knight", 1, 3, Some("main_hand")),
+            ("shield_wood", 1, 1, Some("off_hand")),
+            ("helmet_leather", 1, 2, Some("head")),
+            ("shoulders_leather", 1, 1, Some("shoulders")),
+            ("bracers_leather", 1, 1, Some("bracers")),
+            ("gloves_cloth", 1, 2, Some("gloves")),
+            ("armor_bronze", 1, 4, Some("body")),
+            ("greaves_iron", 1, 3, Some("legs")),
+            ("boots_traveler", 1, 5, Some("feet")),
+            ("cloak_traveler", 1, 2, Some("cloak")),
+            ("ring_silver", 1, 1, Some("ring1")),
+            ("amulet_talisman", 1, 1, Some("amulet")),
+            ("staff_apprentice", 1, 1, None),
+            ("potion_heal", 3, 0, None),
+            ("rune_fire", 2, 0, None),
+            ("scroll_frost", 1, 0, None),
+            ("herb", 5, 0, None),
+            ("tool_quill", 1, 0, None),
+        ];
+        for (def_id, qty, upgrade, slot) in grants {
+            let Some(def) = db::items::def(pool, def_id).await.ok().flatten() else {
+                warn!("scenario kit: нет определения {def_id} — пропуск");
+                continue;
+            };
+            let mut row = if let Some(slot) = slot {
+                // Слот занят — прежний предмет снимается (паритет
+                // cmd/item.equip).
+                if let Ok(Some(prev)) = db::items::find_equipped_in_slot(pool, &char_id, slot).await
+                {
+                    let _ = db::items::set_equipped(pool, &prev.uid, None).await;
+                }
+                let Ok(mut row) = db::items::insert(pool, &char_id, def_id, qty).await else {
+                    warn!("scenario kit: insert {def_id} — пропуск");
+                    continue;
+                };
+                if upgrade > 0 {
+                    row.upgrade = upgrade;
+                    let _ = db::items::set_upgrade(pool, &row.uid, upgrade).await;
+                }
+                let _ = db::items::set_equipped(pool, &row.uid, Some(slot)).await;
+                row
+            } else {
+                match db::items::grant_stacking(pool, &char_id, def_id, qty).await {
+                    Ok((row, _)) => row,
+                    Err(e) => {
+                        warn!("scenario kit (стак {def_id}): {e}");
+                        continue;
+                    }
+                }
+            };
+            // Посох в рюкзаке тоже должен иметь пустые сокеты (окно
+            // инкрустации открывается по предмету, без экипировки).
+            if def.sockets > 0 && row.sockets.as_array().is_none_or(|a| a.is_empty()) {
+                row.sockets = Self::empty_sockets(def.sockets);
+                let _ = db::items::set_sockets(pool, &row.uid, row.sockets.clone()).await;
+            }
+            let item = item_snapshot(&row, &def);
+            outs.push(out_event(
+                "evt/item/added",
+                None,
+                serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+            ));
+        }
+
+        // Монеты — стак (F29a): патч qty, если стак уже есть.
+        match db::items::grant_stacking_by_type(pool, &char_id, db::items::MONEY_TYPE, 500).await {
+            Ok(Some((row, stacked))) => {
+                let ev = if stacked {
+                    let mut patch = serde_json::Map::new();
+                    patch.insert("qty".into(), serde_json::json!(row.qty));
+                    out_event(
+                        "evt/item/state",
+                        None,
+                        serde_json::to_value(ItemState {
+                            uid: row.uid,
+                            patch,
+                        })
+                        .unwrap_or_default(),
+                    )
+                } else {
+                    let def = db::items::def(pool, &row.def_id).await.ok().flatten();
+                    match def {
+                        Some(def) => out_event(
+                            "evt/item/added",
+                            None,
+                            serde_json::to_value(ItemAdded {
+                                item: item_snapshot(&row, &def),
+                            })
+                            .unwrap_or_default(),
+                        ),
+                        None => return outs,
+                    }
+                };
+                outs.push(ev);
+            }
+            Ok(None) => warn!("scenario kit: валюта не найдена в контенте"),
+            Err(e) => warn!("scenario kit (монеты): {e}"),
+        }
+        outs
+    }
+
     async fn scenario_give(&mut self, def_id: &str, seq: u32) -> Vec<Out> {
         let char_id = match self.require_char_id(seq) {
             Ok(id) => id,
@@ -2549,7 +2984,7 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
-        if def.item_type == "staff" && def.sockets > 0 {
+        if def.sockets > 0 {
             row.sockets = Self::empty_sockets(def.sockets);
             if let Err(e) = db::items::set_sockets(pool, &row.uid, row.sockets.clone()).await {
                 warn!("scenario give (сокеты): {e}");
@@ -2601,10 +3036,12 @@ impl Session {
             return vec![Self::err(
                 seq,
                 ErrorCode::Internal,
-                "нет определения посоха",
+                "нет определения предмета",
             )];
         };
-        if staff_def.item_type != "staff" || staff_def.sockets == 0 {
+        // M17/F30a: сокеты принимает любой предмет с `sockets > 0`
+        // (посохи и мечи равноправны); каст руны — только посох.
+        if staff_def.sockets == 0 {
             return vec![Self::err(
                 seq,
                 ErrorCode::NoRuneSlot,
@@ -2629,8 +3066,27 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
         };
-        if rune_def.item_type != "rune" {
-            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "это не руна")];
+        // M17/F30c: в сокет идут руны и самоцветы (броня).
+        if !matches!(rune_def.item_type.as_str(), "rune" | "gem") {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoRuneSlot,
+                "в сокет идут руны и самоцветы",
+            )];
+        }
+        // M18/F32: руны — только в оружие (weapon/staff), самоцветы —
+        // только в броню (armor); окна клиента фильтруют список целей,
+        // сервер — истина (§7).
+        let target_ok = match rune_def.item_type.as_str() {
+            "gem" => staff_def.item_type == "armor",
+            _ => matches!(staff_def.item_type.as_str(), "weapon" | "staff"),
+        };
+        if !target_ok {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoRuneSlot,
+                "руны вставляются только в оружие, самоцветы — только в броню",
+            )];
         }
 
         // Ленивая инициализация: пустой массив → слоты по определению.
@@ -2661,6 +3117,9 @@ impl Session {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+        // M17/F30a: damage руны пишется в сокет — прибавляется к урону
+        // оружия (stats::derive) и попадает в снапшот.
+        let damage = rune_def.stats.get("damage").and_then(|v| v.as_i64());
         *slot = serde_json::json!({
             "index": cmd.socket_index,
             "def_id": rune_def.id,
@@ -2669,6 +3128,7 @@ impl Session {
                 "spell": spell,
                 "charges": charges,
                 "max": max,
+                "damage": damage,
             }
         });
         let sockets_value = Value::Array(sockets);
@@ -2712,7 +3172,9 @@ impl Session {
             ));
         }
 
-        // ack `{staff}` (§7): посох с новыми сокетами.
+        // ack `{staff, char?}` (§7): посох с новыми сокетами; M18/F32:
+        // цель надета → бонусы (самоцвет/урон руны) уже в силу — несём
+        // свежий `char` (паритет с `item.equip`).
         let staff_row = match db::items::find(pool, &staff.uid, &char_id).await {
             Ok(Some(row)) => row,
             Ok(None) => staff,
@@ -2721,10 +3183,22 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
-        let mut result = vec![Self::ack_payload(
-            seq,
-            &serde_json::json!({ "staff": item_snapshot(&staff_row, &staff_def) }),
-        )];
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "staff".into(),
+            serde_json::to_value(item_snapshot(&staff_row, &staff_def)).unwrap_or(Value::Null),
+        );
+        if staff_row.equipped_slot.is_some() {
+            let char_state = match self.reload_char(seq, &char_id).await {
+                Ok(state) => state,
+                Err(out) => return vec![out],
+            };
+            payload.insert(
+                "char".into(),
+                serde_json::to_value(char_state).unwrap_or(Value::Null),
+            );
+        }
+        let mut result = vec![Self::ack_payload(seq, &Value::Object(payload))];
         result.extend(outs);
         result
     }
@@ -2764,7 +3238,7 @@ impl Session {
             return vec![Self::err(
                 seq,
                 ErrorCode::Internal,
-                "нет определения посоха",
+                "нет определения предмета",
             )];
         };
         let mut sockets: Vec<Value> =
@@ -2820,13 +3294,28 @@ impl Session {
             Ok(Some(row)) => row,
             _ => staff,
         };
-        vec![Self::ack_payload(
-            seq,
-            &serde_json::json!({
-                "staff": item_snapshot(&staff_row, &staff_def),
-                "rune": item_snapshot(&rune_row, &rune_def),
-            }),
-        )]
+        // M18/F32: цель надета → извлечение сразу меняет бонусы —
+        // ack дополнен `char` (паритет с `socket.insert`).
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "staff".into(),
+            serde_json::to_value(item_snapshot(&staff_row, &staff_def)).unwrap_or(Value::Null),
+        );
+        payload.insert(
+            "rune".into(),
+            serde_json::to_value(item_snapshot(&rune_row, &rune_def)).unwrap_or(Value::Null),
+        );
+        if staff_row.equipped_slot.is_some() {
+            let char_state = match self.reload_char(seq, &char_id).await {
+                Ok(state) => state,
+                Err(out) => return vec![out],
+            };
+            payload.insert(
+                "char".into(),
+                serde_json::to_value(char_state).unwrap_or(Value::Null),
+            );
+        }
+        vec![Self::ack_payload(seq, &Value::Object(payload))]
     }
 
     /// `cmd/magic.rune_cast` (§7, D4): мана + заряд руны → урон цели
@@ -2902,6 +3391,10 @@ impl Session {
                 ErrorCode::NoRuneSlot,
                 "у предмета нет сокетов",
             )];
+        }
+        // M17/F30g: кулдаун каста руны (cooldown_s, дефолт 1 с).
+        if let Some(err) = self.item_cd_gate(seq, &char_id, &rune_def).await {
+            return vec![err];
         }
 
         // Мана (D4: каст тратит ману И заряд).
@@ -3014,6 +3507,8 @@ impl Session {
                         .map(|m| m.name.clone())
                         .unwrap_or_default();
                     let mob_max = world.mob_max_hp(target);
+                    // M17/F30f: строка со словами заклинания — кастеру
+                    // «вы», наблюдателям — имя; урон жирный (§8).
                     let hit = CombatHit {
                         source: char_id.clone(),
                         source_name: by_name.clone(),
@@ -3023,13 +3518,21 @@ impl Session {
                         amount: damage,
                         crit: false,
                         miss: false,
-                        text: format!("Заклинание «{spell}»: {mob_name} −{damage}"),
+                        text: String::new(),
                         extra: Default::default(),
                     };
                     for addr in world.chars_in_location(&location) {
+                        let mut per = hit.clone();
+                        per.text = crate::combat_log::spell_hit_text(
+                            &spell,
+                            &by_name,
+                            &mob_name,
+                            damage,
+                            addr == char_id,
+                        );
                         plan.push((
                             addr.clone(),
-                            event_payload_text("evt/combat/hit", &hit).unwrap_or_default(),
+                            event_payload_text("evt/combat/hit", &per).unwrap_or_default(),
                         ));
                         plan.push((
                             addr,
@@ -3088,6 +3591,8 @@ impl Session {
                 world.send_to_char(&addr, text);
             }
         }
+        // M17/F30g: кулдаун каста → таймер кнопки.
+        mine.push(self.item_cd_started(&char_id, &rune_def));
         mine
     }
 
@@ -3130,6 +3635,10 @@ impl Session {
         };
         if scroll_def.item_type != "scroll" {
             return vec![Self::err(seq, ErrorCode::ItemGone, "это не свиток")];
+        }
+        // M17/F30g: кулдаун каста свитка (cooldown_s, дефолт 1 с).
+        if let Some(err) = self.item_cd_gate(seq, &char_id, &scroll_def).await {
+            return vec![err];
         }
 
         let location = self.current_location(&char_id).await;
@@ -3249,6 +3758,8 @@ impl Session {
                         .map(|m| m.name.clone())
                         .unwrap_or_default();
                     let mob_max = world.mob_max_hp(target);
+                    // M17/F30f: свиток кастует заклинание — слова и
+                    // «чем бьёт» как у руны (§8).
                     let hit = CombatHit {
                         source: char_id.clone(),
                         source_name: by_name.clone(),
@@ -3258,13 +3769,21 @@ impl Session {
                         amount: damage,
                         crit: false,
                         miss: false,
-                        text: format!("Заклинание «{spell}»: {mob_name} −{damage}"),
+                        text: String::new(),
                         extra: Default::default(),
                     };
                     for addr in world.chars_in_location(&location) {
+                        let mut per = hit.clone();
+                        per.text = crate::combat_log::spell_hit_text(
+                            &spell,
+                            &by_name,
+                            &mob_name,
+                            damage,
+                            addr == char_id,
+                        );
                         plan.push((
                             addr.clone(),
-                            event_payload_text("evt/combat/hit", &hit).unwrap_or_default(),
+                            event_payload_text("evt/combat/hit", &per).unwrap_or_default(),
                         ));
                         plan.push((
                             addr,
@@ -3317,6 +3836,8 @@ impl Session {
                 }
             }
         }
+        // M17/F30g: кулдаун каста → таймер кнопки.
+        mine.push(self.item_cd_started(&char_id, &scroll_def));
         mine
     }
 
@@ -3340,9 +3861,27 @@ impl Session {
         let Ok(n) = amount.parse::<i64>() else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректная сумма")];
         };
-        if let Err(e) = db::characters::add_gold(&self.state.pool, &char_id, n).await {
-            warn!("scenario gold: {e}");
-            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        // F29a: золото — стак монет (первое начисление создаёт стак).
+        match db::items::grant_stacking_by_type(
+            &self.state.pool,
+            &char_id,
+            db::items::MONEY_TYPE,
+            n,
+        )
+        .await
+        {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "валюта не найдена в контенте",
+                )];
+            }
+            Err(e) => {
+                warn!("scenario gold: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
         }
         vec![Self::ack_payload(seq, &serde_json::json!({}))]
     }
@@ -3493,11 +4032,11 @@ impl Session {
             )];
         }
 
-        // Золото списывается всегда (до броска).
+        // Золото списывается всегда (до броска); F29a: монеты-стаки.
         let cost = crate::systems::upgrade_cost(i64::from(level), &cfg);
-        match db::characters::spend_gold(&pool, &char_id, cost).await {
-            Ok(true) => {}
-            Ok(false) => {
+        let money_events = match db::items::consume_money(&pool, &char_id, cost).await {
+            Ok(Some(changes)) => Self::money_events(changes),
+            Ok(None) => {
                 return vec![Self::err(
                     seq,
                     ErrorCode::Ingredients,
@@ -3505,10 +4044,10 @@ impl Session {
                 )];
             }
             Err(e) => {
-                warn!("upgrade.start (золото): {e}");
+                warn!("upgrade.start (монеты): {e}");
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
-        }
+        };
 
         let chance = crate::systems::upgrade_chance(i64::from(level), &cfg);
         let success = crate::systems::upgrade_roll(crate::time::now_ms()) < chance;
@@ -3527,6 +4066,8 @@ impl Session {
         let cost_json = serde_json::json!({ "gold": cost });
 
         let mut outs = Vec::new();
+        // F29a: оплата монетами — события списания до результата.
+        outs.extend(money_events);
         if success {
             let new_level = level + 1;
             if let Err(e) = db::items::set_upgrade(&pool, &item.uid, item.upgrade + 1).await {
@@ -3622,6 +4163,34 @@ impl Session {
         result
     }
 
+    /// F29a: события списания стаков монет — патч `qty` уцелевшего
+    /// стака либо `evt/item/removed` опустевшего (Consumed).
+    fn money_events(changes: Vec<(String, Option<i64>)>) -> Vec<Out> {
+        changes
+            .into_iter()
+            .map(|(uid, new_qty)| match new_qty {
+                Some(qty) => {
+                    let mut patch = serde_json::Map::new();
+                    patch.insert("qty".into(), serde_json::json!(qty));
+                    out_event(
+                        "evt/item/state",
+                        None,
+                        serde_json::to_value(ItemState { uid, patch }).unwrap_or_default(),
+                    )
+                }
+                None => out_event(
+                    "evt/item/removed",
+                    None,
+                    serde_json::to_value(ItemRemoved {
+                        uid,
+                        reason: ItemRemovalReason::Consumed,
+                    })
+                    .unwrap_or_default(),
+                ),
+            })
+            .collect()
+    }
+
     /// Оплата тренеру (M14): сначала **проверки** (золото и предметы),
     /// потом списания — иначе отказ «нет предмета» съедал бы уже
     /// уплаченное золото. Нехватка → `E_INGREDIENTS` (гейт тренера и
@@ -3632,23 +4201,19 @@ impl Session {
         char_id: &str,
         price: &trainers::TrainerPrice,
         gold: i64,
-    ) -> Result<(), Out> {
+    ) -> Result<Vec<Out>, Out> {
         let pool = &self.state.pool;
 
         // 1) Проверки.
         if gold > 0 {
-            let have: i64 =
-                match sqlx::query_scalar("SELECT COALESCE(gold, 0) FROM characters WHERE id = $1")
-                    .bind(char_id)
-                    .fetch_one(pool)
-                    .await
-                {
-                    Ok(have) => have,
-                    Err(e) => {
-                        warn!("тренер (золото): {e}");
-                        return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
-                    }
-                };
+            // F29a: баланс — сумма стаков монет (type=money).
+            let have = match db::items::count_by_type(pool, char_id, db::items::MONEY_TYPE).await {
+                Ok(have) => have,
+                Err(e) => {
+                    warn!("тренер (монеты): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            };
             if have < gold {
                 return Err(Self::err(
                     seq,
@@ -3674,11 +4239,13 @@ impl Session {
             }
         }
 
-        // 2) Списания (все проверки прошли).
+        // 2) Списания (все проверки прошли); F29a: монеты — стаки,
+        // изменения уходят событиями в outs вызывающего.
+        let mut events = Vec::new();
         if gold > 0 {
-            match db::characters::spend_gold(pool, char_id, gold).await {
-                Ok(true) => {}
-                Ok(false) => {
+            match db::items::consume_money(pool, char_id, gold).await {
+                Ok(Some(changes)) => events.extend(Self::money_events(changes)),
+                Ok(None) => {
                     return Err(Self::err(
                         seq,
                         ErrorCode::Ingredients,
@@ -3686,7 +4253,7 @@ impl Session {
                     ));
                 }
                 Err(e) => {
-                    warn!("тренер (золото): {e}");
+                    warn!("тренер (монеты): {e}");
                     return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
                 }
             }
@@ -3707,7 +4274,7 @@ impl Session {
                 }
             }
         }
-        Ok(())
+        Ok(events)
     }
 
     /// `cmd/crime.log` (§7): журнал нарушений (новые первые), limit —
@@ -4015,13 +4582,15 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
-        let balance = match db::characters::gold_of(&self.state.pool, &char_id).await {
-            Ok(gold) => gold,
-            Err(e) => {
-                warn!("trade.gold (баланс): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        };
+        let balance =
+            match db::items::count_by_type(&self.state.pool, &char_id, db::items::MONEY_TYPE).await
+            {
+                Ok(gold) => gold,
+                Err(e) => {
+                    warn!("trade.gold (баланс): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
         if cmd.gold > balance {
             return vec![Self::err(
                 seq,
@@ -4177,7 +4746,9 @@ impl Session {
                             .await
                             .map_err(|e| format!("деф {uid}: {e}"))?;
                     sqlx::query(
-                        "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3)",
+                        "INSERT INTO items (character_id, def_id, qty, sort_order) \
+                         VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
+                         FROM items WHERE character_id = $1), 0))",
                     )
                     .bind(to)
                     .bind(&def_id)
@@ -4188,27 +4759,86 @@ impl Session {
                 }
                 moved.push(serde_json::json!({ "uid": uid, "qty": qty }));
             }
-            // Золото: атомарное списание с проверкой баланса.
+            // F29a: деньги — стаки монет: списание у `from` (стаки
+            // убывают, пустые удаляются) и начисление `to` (в старый
+            // стак либо новым) — той же транзакцией, что и предметы.
             if side.gold > 0 {
-                let affected = sqlx::query(
-                    "UPDATE characters SET gold = gold - $2 \
-                     WHERE id = $1 AND gold >= $2 AND deleted_at IS NULL",
+                let rows: Vec<(String, i32)> = sqlx::query_as(
+                    "SELECT i.uid, i.qty FROM items i \
+                     JOIN item_defs d ON d.id = i.def_id \
+                     WHERE i.character_id = $1 AND d.item_type = $2 \
+                     ORDER BY i.created_at, i.uid FOR UPDATE",
                 )
                 .bind(from)
-                .bind(side.gold)
-                .execute(&mut *tx)
+                .bind(db::items::MONEY_TYPE)
+                .fetch_all(&mut *tx)
                 .await
-                .map_err(|e| format!("золото {from}: {e}"))?
-                .rows_affected();
-                if affected != 1 {
-                    return Err(format!("недостаточно золота у {from}"));
+                .map_err(|e| format!("монеты {from}: {e}"))?;
+                let mut left = side.gold;
+                for (uid, qty) in rows {
+                    if left <= 0 {
+                        break;
+                    }
+                    let take = i64::from(qty).min(left);
+                    left -= take;
+                    let rest = qty - take as i32;
+                    if rest <= 0 {
+                        sqlx::query("DELETE FROM items WHERE uid = $1")
+                            .bind(&uid)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(|e| format!("списание {uid}: {e}"))?;
+                    } else {
+                        sqlx::query("UPDATE items SET qty = $2 WHERE uid = $1")
+                            .bind(&uid)
+                            .bind(rest)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(|e| format!("стак {uid}: {e}"))?;
+                    }
                 }
-                sqlx::query("UPDATE characters SET gold = gold + $2 WHERE id = $1")
+                if left > 0 {
+                    return Err(format!("недостаточно монет у {from}"));
+                }
+                let target: Option<String> = sqlx::query_scalar(
+                    "SELECT i.uid FROM items i \
+                     JOIN item_defs d ON d.id = i.def_id \
+                     WHERE i.character_id = $1 AND d.item_type = $2 \
+                     ORDER BY i.created_at, i.uid LIMIT 1 FOR UPDATE",
+                )
+                .bind(to)
+                .bind(db::items::MONEY_TYPE)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| format!("стак {to}: {e}"))?;
+                if let Some(uid) = target {
+                    sqlx::query("UPDATE items SET qty = qty + $2 WHERE uid = $1")
+                        .bind(&uid)
+                        .bind(side.gold)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| format!("зачисление {uid}: {e}"))?;
+                } else {
+                    let def_id: String = sqlx::query_scalar(
+                        "SELECT id FROM item_defs WHERE item_type = $1 ORDER BY id LIMIT 1",
+                    )
+                    .bind(db::items::MONEY_TYPE)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| format!("определение валюты: {e}"))?
+                    .ok_or_else(|| "нет определения валюты в контенте".to_string())?;
+                    sqlx::query(
+                        "INSERT INTO items (character_id, def_id, qty, sort_order) \
+                         VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
+                         FROM items WHERE character_id = $1), 0))",
+                    )
                     .bind(to)
+                    .bind(&def_id)
                     .bind(side.gold)
                     .execute(&mut *tx)
                     .await
                     .map_err(|e| format!("зачисление {to}: {e}"))?;
+                }
             }
         }
         tx.commit().await.map_err(|e| format!("commit: {e}"))?;
@@ -5219,9 +5849,11 @@ impl Session {
 
         // M14: оплата тренеру (новая профессия — ранг 0 → базовая цена).
         let gold = trainers::gold_price(&price, 0);
-        if let Err(e) = self.pay_trainer(seq, &char_id, &price, gold).await {
-            return vec![e];
-        }
+        // F29a: оплата монетами — события списания в конце ответа.
+        let money_events = match self.pay_trainer(seq, &char_id, &price, gold).await {
+            Ok(events) => events,
+            Err(e) => return vec![e],
+        };
 
         match db::professions::learn(pool, &char_id, &cmd.profession_id).await {
             Ok(_) => {}
@@ -5243,6 +5875,7 @@ impl Session {
             })
             .unwrap_or_default(),
         ));
+        outs.extend(money_events);
         outs
     }
 
@@ -5654,14 +6287,36 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
             let sockets: Vec<Socket> =
                 serde_json::from_value(item.sockets.clone()).unwrap_or_default();
             if sockets.is_empty() {
-                None
+                // M18/F31: предмет с сокетами показывает их даже до
+                // первой вставки — окно инкрустации и список целей
+                // видят всё оружие/броню с сокетами (ленивая форма).
+                if def.sockets > 0 {
+                    let list: Vec<serde_json::Value> = (0..def.sockets.max(0))
+                        .map(|i| serde_json::json!({ "index": i, "rune": null }))
+                        .collect();
+                    serde_json::from_value(serde_json::Value::Array(list)).ok()
+                } else {
+                    None
+                }
             } else {
                 Some(sockets)
             }
         },
         qty: Some(i64::from(item.qty)),
         gold_value: Some(i64::from(def.gold_value)),
-        extra: Default::default(),
+        // M17/F30g: определение — ключ кулдауна использования.
+        def_id: Some(item.def_id.clone()),
+        slot: def.slot.clone(),
+        hands: Some(def.hands),
+        // M17/F30b: навык оружия в снапшот — включает вклад навыка в
+        // производные характеристики (stats.rs, док модуля).
+        extra: {
+            let mut m = serde_json::Map::new();
+            if let Some(skill) = &def.skill {
+                m.insert("skill".into(), serde_json::Value::String(skill.clone()));
+            }
+            m
+        },
     }
 }
 
@@ -5717,9 +6372,94 @@ fn location_snapshot(location_id: &str) -> LocationSnapshot {
     }
 }
 
-/// Стартовые профили `char.create` (ADR-003: Воин/Вор/Маг) — тройка v1;
-/// расширение списка — capability сервера (§7).
-const PROFILES: &[&str] = &["warrior", "rogue", "mage"];
+/// M17/F30d: родительный падеж основных характеристик для ошибок
+/// требований (локализация сервера — русская, §8).
+fn attr_genitive(id: &str) -> &str {
+    match id {
+        "str" => "силы",
+        "dex" => "ловкости",
+        "vit" => "стойкости",
+        "int" => "интеллекта",
+        other => other,
+    }
+}
+
+impl Session {
+    /// M17/F30f: обновить «чем бьёт» в мире — по экипированному
+    /// оружию (main_hand); без него — «руками». Вызывается при входе
+    /// в мир и после экипировки/снятия.
+    async fn refresh_char_hits_as(&self, char_id: &str) {
+        let main = db::items::find_equipped_in_slot(&self.state.pool, char_id, "main_hand")
+            .await
+            .ok()
+            .flatten();
+        let def = match &main {
+            Some(item) => db::items::def(&self.state.pool, &item.def_id)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        };
+        let hits = def
+            .as_ref()
+            .map(|d| crate::combat_log::weapon_hits_as(d.skill.as_deref(), d.item_type.as_str()))
+            .unwrap_or("руками");
+        // M17/F30g: скорость атаки — cooldown_s оружия (нет оружия —
+        // значение снимается, в plan берётся конфиг).
+        let attack_ms = def
+            .as_ref()
+            .map(|d| (d.cooldown_s.max(0.001) * 1000.0).round() as i64);
+        let mut world = self.state.world.lock().expect("мир");
+        world.set_char_hits_as(char_id, hits);
+        world.set_char_attack_ms(char_id, attack_ms);
+    }
+
+    /// M17/F30g: гейт кулдауна предмета (cooldown_s, дефолт 1 с) —
+    /// активный кулдаун → `Some(E_COOLDOWN + retry_after_s)`.
+    async fn item_cd_gate(
+        &self,
+        seq: u32,
+        char_id: &str,
+        def: &db::items::ItemDefRow,
+    ) -> Option<Out> {
+        let key = format!("item:{}", def.id);
+        let left = {
+            let world = self.state.world.lock().expect("мир");
+            world.ability_cooldown_left(char_id, &key, crate::time::now_epoch())
+        };
+        let left = left?;
+        let mut ack = Ack::error(seq, None, &ErrorCode::Cooldown, "предмет перезаряжается");
+        if let Some(err) = ack.error.as_mut() {
+            err.retry_after_s = Some(left.max(1) as u64);
+        }
+        Some(out_ack(ack))
+    }
+
+    /// M17/F30g: зафиксировать кулдаун предмета → событие клиенту
+    /// (таймер + прогресс-бар кнопки).
+    fn item_cd_started(&self, char_id: &str, def: &db::items::ItemDefRow) -> Out {
+        let cd = def.cooldown_s.max(0.001);
+        let until = crate::time::now_epoch() + cd.ceil() as i64;
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.set_ability_cooldown(char_id, &format!("item:{}", def.id), until);
+        }
+        out_event(
+            "evt/combat/cooldown",
+            None,
+            serde_json::to_value(CombatCooldown {
+                skill_id: Some(format!("item:{}", def.id)),
+                until_epoch: until,
+                duration_ms: Some((cd * 1000.0).round() as i64),
+            })
+            .unwrap_or_default(),
+        )
+    }
+}
+
+/// Стартовые профили `char.create` (ADR-003: Воин/Лучник/Маг — M17/F30b
+/// «Вор» переименован в «Лучник»); расширение списка — capability (§7).
+const PROFILES: &[&str] = &["warrior", "archer", "mage"];
 
 /// Ack → текст конверта (§2.2).
 fn out_ack(ack: Ack) -> Out {

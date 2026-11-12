@@ -101,6 +101,13 @@ pub struct RuneInfo {
     pub spell: String,
     pub charges: i32,
     pub max: i32,
+    /// M17/F30a: +урон руны в оружии (аддитивно §6: `None` — у
+    /// сервера без поля).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub damage: Option<i64>,
+    /// M17/F30g: определение руны — ключ кулдауна каста на клиенте.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub def_id: Option<String>,
 }
 
 /// Сокет посоха: `rune: null` — свободный (`◈◈○` в UI, ФР-09).
@@ -130,6 +137,18 @@ pub struct ItemSnapshot {
     /// Только для предметов со сокетами (посохи).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sockets: Option<Vec<Socket>>,
+    /// M17/F30g: определение предмета — ключ кулдауна использования
+    /// на клиенте (аддитивно §6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub def_id: Option<String>,
+    /// M17/F30b: слот предмета (main_hand/off_hand/head/…; ring/artifact —
+    /// псевдослоты пар); `None` — не экипируется (открытая строка §6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
+    /// M17/F30b: руки (2 — двуручное: занимает обе руки и блокирует
+    /// левую); `None` → 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hands: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qty: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,6 +167,10 @@ pub struct SkillSnapshot {
     /// Опционально: серверы без контента обходят поле вовсе.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// M15/F28: группа навыка (skills.md §3: weapon/defense/magic/
+    /// stealth/practice/social); None — сервер без групп.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     pub rank: u32,
     pub xp: i64,
     pub xp_to_next: i64,
@@ -249,6 +272,51 @@ pub struct CrimeLogEntry {
 /// Экипировка: слот → `item_uid` (или `null`, если пусто) — §4.8.2.
 pub type EquipMap = BTreeMap<String, Option<String>>;
 
+/// M15/F26: производные характеристики — вкладка «Параметры» окна
+/// персонажа. Чистое представление серверных формул (skills.md §1, §A/B);
+/// additive §11 — `None` у серверов без M15.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DerivedParams {
+    /// Точность, % (шанс попадания).
+    pub accuracy: i64,
+    /// Физ. урон, мин (оружие/база + модификатор силы).
+    pub damage_min: i64,
+    /// Физ. урон, макс.
+    pub damage_max: i64,
+    /// Шанс крит. удара, %.
+    pub crit_chance: i64,
+    /// Крит. удар — бонус урона, %.
+    pub crit_damage: i64,
+    /// Броня, единиц (сумма статов экипировки).
+    pub armor: i64,
+    /// Уклон, %.
+    pub dodge: i64,
+    /// Парирование — контрудар, мин урона.
+    pub parry_min: i64,
+    /// Парирование — контрудар, макс урона.
+    pub parry_max: i64,
+    /// Шанс парирования, %.
+    pub parry_chance: i64,
+    /// Блок щитом — снижение, мин урона.
+    pub block_min: i64,
+    /// Блок щитом — снижение, макс урона.
+    pub block_max: i64,
+    /// Шанс блока щитом, %.
+    pub block_chance: i64,
+    /// Магическая защита, единиц.
+    pub magic_defense: i64,
+    /// Магический уклон, %.
+    pub magic_dodge: i64,
+    /// Сопротивление магии, %.
+    pub magic_resist: i64,
+    /// Рассеивание магии, %.
+    pub magic_dispel: i64,
+    /// Маг. крит — бонус урона, %.
+    pub magic_crit_damage: i64,
+    /// Шанс маг. крита, %.
+    pub magic_crit_chance: i64,
+}
+
 /// Полное состояние персонажа в `evt/state/snapshot` (§3, §4.8.2 ТЗ).
 ///
 /// `xp_pool` — свободные очки опыта от квестов (D3/D4: вкладываются командой
@@ -267,6 +335,27 @@ pub struct CharacterState {
     pub mp: Mp,
     #[serde(default)]
     pub xp_pool: i64,
+    /// M15/F24: уровень персонажа (`None` — сервер без уровня, шкалу
+    /// не показываем; аддитивно §11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+    /// M15/F24: весь опыт за убийства.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_xp: Option<i64>,
+    /// M15/F24: опыт в текущем уровне.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xp_in_level: Option<i64>,
+    /// M15/F24: опыт до следующего уровня (`0` — максимум).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xp_to_next: Option<i64>,
+    /// M15/F26: производные характеристики окна «Параметры»
+    /// (`None` — сервер без M15, вкладка покажет заглушку).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived: Option<DerivedParams>,
+    /// M17/F30b: класс персонажа (`warrior`/`archer`/`mage`) —
+    /// правила экипировки и ресурс боя (F30e); аддитивно §6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     #[serde(default)]
     pub equip: EquipMap,
     #[serde(default)]

@@ -43,7 +43,7 @@ const SESSION_START_JSON: &str = r#"{
   "chat": { "server_history": 200,
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
-  "inventory": { "slots": 40, "equip_slots": ["head","body","main_hand","staff","feet"] },
+  "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
@@ -100,16 +100,29 @@ const SNAPSHOT_JSON: &str = r#"{
   "char": {
     "id": "c1", "name": "Ким",
     "attrs": { "str": 14, "int": 9 },
-    "skills": [ { "id": "sword", "rank": 3, "xp": 612, "xp_to_next": 480 } ],
+    "skills": [ { "id": "sword", "group": "weapon",
+                  "rank": 3, "xp": 612, "xp_to_next": 480 } ],
     "professions": [ { "id": "scribe", "rank": 2, "xp": 140, "xp_to_next": 200 } ],
     "hp": { "cur": 42, "max": 60 },
     "mp": { "cur": 45, "max": 60 },
     "xp_pool": 120,
-    "equip": { "main_hand": "i_17", "staff": null },
+    "level": 7,
+    "total_xp": 5734,
+    "xp_in_level": 134,
+    "xp_to_next": 2800,
+    "derived": { "accuracy": 80, "damage_min": 11, "damage_max": 11,
+                 "crit_chance": 8, "crit_damage": 52, "armor": 0,
+                 "dodge": 7, "parry_min": 5, "parry_max": 5,
+                 "parry_chance": 6, "block_min": 0, "block_max": 0,
+                 "block_chance": 0, "magic_defense": 10, "magic_dodge": 3,
+                 "magic_resist": 5, "magic_dispel": 5,
+                 "magic_crit_damage": 52, "magic_crit_chance": 8 },
+    "profile": "mage",
+    "equip": { "main_hand": "i_17", "off_hand": null },
     "inventory": [ { "uid": "i_17", "type": "staff", "name": "Ясеневый посох",
                      "rarity": "rare", "upgrade": 2, "stats": {},
                      "sockets": [ { "index": 0, "rune": { "name": "Руна огня",
-                       "spell": "fire_dart", "charges": 7, "max": 10 } },
+                       "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
                                   { "index": 1, "rune": null } ] } ],
     "crime": { "statuses": [ { "kind": "murderer", "severity": "high",
                                "expires_at": 1762150000 } ] },
@@ -142,12 +155,30 @@ fn snapshot_matches_doc_example() {
         "D4: mp — объект, не null"
     );
     assert_eq!(snap.char.xp_pool, 120, "пул опыта квестов");
+    assert_eq!(snap.char.level, Some(7), "M15/F24: уровень");
+    assert_eq!(snap.char.total_xp, Some(5734), "M15/F24: общий опыт");
+    assert_eq!(snap.char.xp_in_level, Some(134), "M15/F24: опыт в уровне");
+    assert_eq!(snap.char.xp_to_next, Some(2800), "M15/F24: до уровня");
+    let der = snap.char.derived.as_ref().expect("M15/F26: derived");
+    assert_eq!(der.accuracy, 80, "M15/F26: точность стартового");
+    assert_eq!((der.damage_min, der.damage_max), (11, 11), "урон 6+10/2");
+    assert_eq!(der.crit_chance, 8, "крит-шанс стартового");
     assert_eq!(
         snap.char.skills[0].description, None,
         "M14/F17: сервер без description → None (обратная совместимость)"
     );
     assert_eq!(
-        snap.char.equip.get("staff"),
+        snap.char.skills[0].group.as_deref(),
+        Some("weapon"),
+        "M15/F28: группа навыка из контента"
+    );
+    assert_eq!(
+        snap.char.profile.as_deref(),
+        Some("mage"),
+        "M17/F30b: класс"
+    );
+    assert_eq!(
+        snap.char.equip.get("off_hand"),
         Some(&None),
         "пустой слот = null"
     );
@@ -339,7 +370,7 @@ fn event_payloads_round_trip() {
         amount: 7,
         crit: false,
         miss: false,
-        text: "Вы бьете волка на 7.".into(),
+        text: "Вы бьёте Волк руками **7**".into(),
         extra: Default::default(),
     };
     let v = serde_json::to_value(&hit).unwrap();

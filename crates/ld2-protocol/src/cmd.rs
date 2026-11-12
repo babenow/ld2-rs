@@ -60,7 +60,7 @@ pub struct CharList {}
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct CharCreate {
     pub name: String,
-    /// Стартовый профиль: Воин/Вор/Маг (список — capability сервера).
+    /// Стартовый профиль: Воин/Лучник/Маг (список — capability сервера).
     pub profile: String,
 }
 
@@ -141,6 +141,14 @@ pub struct ItemDrop {
     pub item_uid: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qty: Option<i64>,
+}
+
+/// M16/F29g: поменять местами два предмета рюкзака (перетаскивание)
+/// → ack `{}`; порядок — `items.sort_order`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ItemMove {
+    pub item_uid: String,
+    pub target_uid: String,
 }
 
 // ─── магия (ФР-09; D4: руна = мана + заряд) ──────────────────────────────────
@@ -399,6 +407,7 @@ impl_commands!(
     (ItemEquip, "cmd/item.equip", true),
     (ItemUnequip, "cmd/item.unequip", true),
     (ItemDrop, "cmd/item.drop", false),
+    (ItemMove, "cmd/item.move", false),
     (MagicScrollCast, "cmd/magic.scroll_cast", false),
     (MagicRuneCast, "cmd/magic.rune_cast", false),
     (SocketInsert, "cmd/socket.insert", false),

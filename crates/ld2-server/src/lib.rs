@@ -7,6 +7,7 @@
 
 pub mod app;
 pub mod auth;
+pub mod combat_log;
 pub mod config;
 pub mod content;
 pub mod db;
@@ -14,6 +15,7 @@ pub mod death;
 pub mod session;
 pub mod social;
 pub mod state;
+pub mod stats;
 pub mod systems;
 pub mod tick;
 pub mod time;

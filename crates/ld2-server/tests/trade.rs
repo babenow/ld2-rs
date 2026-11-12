@@ -85,6 +85,23 @@ async fn trade_open_requires_same_location() {
     assert_eq!(ack["error"]["code"], "E_TRADE_PARTNER_GONE");
 }
 
+/// F29a: кошелёк персонажа — сумма стаков монет (type=money).
+async fn money_of(db_url: &str, char_id: &str) -> i64 {
+    let cfg = common::test_config(db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    let gold: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(i.qty), 0) FROM items i \
+         JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = 'money'",
+    )
+    .bind(char_id)
+    .fetch_one(&pool)
+    .await
+    .expect("монеты");
+    pool.close().await;
+    gold
+}
+
 #[tokio::test]
 async fn trade_offer_lock_and_execute_transfers_items_and_gold() {
     let Some(db_url) = common::test_url() else {
@@ -94,7 +111,6 @@ async fn trade_offer_lock_and_execute_transfers_items_and_gold() {
     let ws = common::start_ws_server(&db_url).await;
     let (mut a, _, char_a) = in_world(&ws).await;
     let (mut b, _, char_b) = in_world(&ws).await;
-    let _ = char_a;
 
     // A даёт нож и 100 золота; B ничего (просто принимает).
     let knife = give(&mut a, "dagger_knife").await;
@@ -228,6 +244,11 @@ async fn trade_offer_lock_and_execute_transfers_items_and_gold() {
         !inv.iter().any(|i| i["uid"] == knife),
         "нож ушёл из A: {inv:?}"
     );
+
+    // F29a: монеты перешли стаками той же транзакцией
+    // (A: 100−50=50, B: +50).
+    assert_eq!(money_of(&db_url, &char_a).await, 50, "кошелёк A");
+    assert_eq!(money_of(&db_url, &char_b).await, 50, "кошелёк B");
 }
 
 #[tokio::test]

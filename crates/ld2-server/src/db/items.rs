@@ -4,6 +4,10 @@
 use serde_json::Value;
 use sqlx::PgPool;
 
+/// F29a (M16): деньги — предметы-монеты (тип контента; стак в
+/// инвентаре, лут с мобов, оплата покупок).
+pub const MONEY_TYPE: &str = "money";
+
 /// Инстанс предмета в инвентаре персонажа.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ItemRow {
@@ -31,13 +35,23 @@ pub struct ItemDefRow {
     pub qty: i32,
     /// Количество сокетов посоха (ADR-002) — ленивая инициализация.
     pub sockets: i32,
+    /// M17/F30b: слот предмета (main_hand/off_hand/head/…; ring/artifact —
+    /// псевдослоты пар); `None` — не экипируется.
+    pub slot: Option<String>,
+    /// M17/F30b: руки (2 — двуручник: занимает обе, блокирует левую).
+    pub hands: i32,
+    /// Навык оружия (skills.md §2.3; идёт в снапшот `extra["skill"]`).
+    pub skill: Option<String>,
+    /// M17/F30g: кулдаун использования/скорость атаки, с (контент,
+    /// дефолт 1.0).
+    pub cooldown_s: f64,
 }
 
 /// Инвентарь персонажа в порядке получения (стабильный порядок UI).
 pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
         "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items \
-         WHERE character_id = $1 ORDER BY created_at, uid",
+         WHERE character_id = $1 ORDER BY sort_order NULLS LAST, created_at, uid",
     )
     .bind(char_id)
     .fetch_all(pool)
@@ -47,7 +61,8 @@ pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sql
 /// Определение предмета; `None` — нет в сиде.
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
-        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets \
+        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
+                slot, hands, skill, cooldown_s \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)
@@ -99,7 +114,9 @@ pub async fn insert(
     qty: i64,
 ) -> Result<ItemRow, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3) \
+        "INSERT INTO items (character_id, def_id, qty, sort_order) \
+         VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
+         FROM items WHERE character_id = $1), 0)) \
          RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
     )
     .bind(char_id)
@@ -186,7 +203,9 @@ pub async fn take_loot_tx(
         return Ok(None); // tx откатывается при дропе
     }
     let row = sqlx::query_as::<_, ItemRow>(
-        "INSERT INTO items (character_id, def_id, qty) VALUES ($1, $2, $3) \
+        "INSERT INTO items (character_id, def_id, qty, sort_order) \
+         VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
+         FROM items WHERE character_id = $1), 0)) \
          RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
     )
     .bind(char_id)
@@ -330,4 +349,149 @@ pub async fn find_any(pool: &PgPool, uid: &str) -> Result<Option<ItemRow>, sqlx:
     .bind(uid)
     .fetch_optional(pool)
     .await
+}
+
+/// F29a: выдать `qty` в существующий стак `def_id` (самый старый)
+/// либо новым стаком — монеты при подборе/начислении не съедают
+/// слоты. `true` — добавлено в существий стак (клиенту патч `qty`).
+pub async fn grant_stacking(
+    pool: &PgPool,
+    char_id: &str,
+    def_id: &str,
+    qty: i64,
+) -> Result<(ItemRow, bool), sqlx::Error> {
+    let existing: Option<(String, i32)> = sqlx::query_as(
+        "SELECT uid, qty FROM items WHERE character_id = $1 AND def_id = $2 \
+         ORDER BY created_at, uid LIMIT 1",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_optional(pool)
+    .await?;
+    if let Some((uid, cur)) = existing {
+        let new_qty = i64::from(cur) + qty;
+        sqlx::query("UPDATE items SET qty = $2 WHERE uid = $1")
+            .bind(&uid)
+            .bind(new_qty)
+            .execute(pool)
+            .await?;
+        let row = find(pool, &uid, char_id)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)?;
+        return Ok((row, true));
+    }
+    Ok((insert(pool, char_id, def_id, qty).await?, false))
+}
+
+/// F29a: выдать `qty` предметов первого определения типа `item_type`
+/// (`/scenario gold`, награды): `None` — такого типа нет в контенте.
+pub async fn grant_stacking_by_type(
+    pool: &PgPool,
+    char_id: &str,
+    item_type: &str,
+    qty: i64,
+) -> Result<Option<(ItemRow, bool)>, sqlx::Error> {
+    let def_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM item_defs WHERE item_type = $1 ORDER BY id LIMIT 1")
+            .bind(item_type)
+            .fetch_optional(pool)
+            .await?;
+    match def_id {
+        Some(def_id) => grant_stacking(pool, char_id, &def_id, qty).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// F29a: списать `need` монет со счётом стаков (пустые удаляются) —
+/// `(uid, новое qty | None = стак удалён)` для `evt/item/state`/
+/// `evt/item/removed`. `None` — не хватает (ничего не списано);
+/// баланс проверяется здесь же — вызывающий не теряет монеты.
+pub async fn consume_money(
+    pool: &PgPool,
+    char_id: &str,
+    need: i64,
+) -> Result<Option<Vec<(String, Option<i64>)>>, sqlx::Error> {
+    if need <= 0 {
+        return Ok(Some(Vec::new()));
+    }
+    if count_by_type(pool, char_id, MONEY_TYPE).await? < need {
+        return Ok(None);
+    }
+    let rows: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT i.uid, i.qty FROM items i \
+         JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = $2 \
+         ORDER BY i.created_at, i.uid",
+    )
+    .bind(char_id)
+    .bind(MONEY_TYPE)
+    .fetch_all(pool)
+    .await?;
+    let mut left = need;
+    let mut changes = Vec::new();
+    for (uid, qty) in rows {
+        if left <= 0 {
+            break;
+        }
+        let take = i64::from(qty).min(left);
+        left -= take;
+        let rest = qty - take as i32;
+        if rest <= 0 {
+            sqlx::query("DELETE FROM items WHERE uid = $1")
+                .bind(&uid)
+                .execute(pool)
+                .await?;
+            changes.push((uid, None));
+        } else {
+            set_qty(pool, &uid, i64::from(rest)).await?;
+            changes.push((uid, Some(i64::from(rest))));
+        }
+    }
+    Ok(Some(changes))
+}
+
+/// M16/F29g: поменять местами порядок двух предметов (перетаскивание
+/// в рюкзаке); оба должны принадлежать персонажу. `false` — предмета
+/// нет (ничего не изменено).
+pub async fn swap_order(
+    pool: &PgPool,
+    char_id: &str,
+    a: &str,
+    b: &str,
+) -> Result<bool, sqlx::Error> {
+    if a == b {
+        return Ok(true);
+    }
+    let mut tx = pool.begin().await?;
+    let rows: Vec<(String, Option<i32>)> = sqlx::query_as(
+        "SELECT uid, sort_order FROM items \
+         WHERE character_id = $1 AND uid = ANY($2) FOR UPDATE",
+    )
+    .bind(char_id)
+    .bind(vec![a.to_string(), b.to_string()])
+    .fetch_all(&mut *tx)
+    .await?;
+    if rows.len() != 2 {
+        return Ok(false); // tx откатывается
+    }
+    let so = |uid: &str| {
+        rows.iter()
+            .find(|(u, _)| u.as_str() == uid)
+            .and_then(|(_, s)| *s)
+    };
+    let (so_a, so_b) = (so(a), so(b));
+    sqlx::query("UPDATE items SET sort_order = $2 WHERE character_id = $1 AND uid = $3")
+        .bind(char_id)
+        .bind(so_b)
+        .bind(a)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE items SET sort_order = $2 WHERE character_id = $1 AND uid = $3")
+        .bind(char_id)
+        .bind(so_a)
+        .bind(b)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
 }

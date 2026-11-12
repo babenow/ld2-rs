@@ -20,8 +20,9 @@ use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
+use super::sheet::rarity_label;
 use super::social::show_party;
-use super::{btn, hex_to_u32, Click, LogTab, Root};
+use super::{btn, hex_to_u32, Click, LogTab, Root, INSCRIBE_MS};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -32,6 +33,23 @@ pub(crate) fn power_strike_open(skills: &[ld2_protocol::types::SkillSnapshot]) -
         .iter()
         .find(|s| s.id == "sword")
         .is_some_and(|s| s.rank >= 5)
+}
+
+/// M17/F30b: uid надетого посоха — слот `staff` удалён (посох теперь
+/// двуручное оружие правой руки), ищем по типу среди надетого.
+fn equipped_staff_uid(snap: &StateSnapshot) -> Option<String> {
+    let equipped: std::collections::HashSet<&str> = snap
+        .char
+        .equip
+        .values()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    snap.char
+        .inventory
+        .iter()
+        .find(|i| i.item_type == "staff" && equipped.contains(i.uid.as_str()))
+        .map(|i| i.uid.clone())
 }
 
 impl Root {
@@ -45,7 +63,7 @@ impl Root {
             .as_ref()
             .map(|s| s.magic.mana.rune_cost)
             .unwrap_or(0);
-        let staff_uid = snap.char.equip.get("staff").cloned().flatten()?;
+        let staff_uid = equipped_staff_uid(snap)?;
         let staff = snap.char.inventory.iter().find(|i| i.uid == staff_uid)?;
         staff
             .sockets
@@ -141,7 +159,6 @@ impl Root {
                     .min_w_0()
                     .child(self.left_column(cx, pal, &snap)),
             )
-            .child(div().flex().flex_col().min_w_0().child(self.sheet(cx, pal)))
             .child(
                 div()
                     .flex()
@@ -152,12 +169,17 @@ impl Root {
                     // Не выше остатка экрана: журнальный блок сжимается
                     // до своего min_h, а не выдавливает колонку наружу.
                     .min_h_0()
+                    // M15/F25: трекер квестов переехал из листа в центр —
+                    // остаётся видимым поверх игры (окно персонажа закрыто).
+                    .children(self.tracker_block(pal))
                     // M14/F2: описание локации — всегда первая строка.
                     .child(self.location_block(pal, &snap.location))
                     // Таргет — под описанием (перенос из левой колонки).
                     .child(self.target_block(cx, pal, &snap))
                     .children(self.notice_line(pal))
                     .child(self.entities_block(cx, pal, &snap.location))
+                    // M17/F30a: каст-бар инкрустации — внизу, над панелью.
+                    .children(self.inscribe_bar(pal, &snap))
                     .child(self.hotbar(cx, pal, &snap))
                     .child(self.exits_row(cx, pal, &snap.location))
                     .children((self.store.target.is_some()).then(|| {
@@ -214,15 +236,21 @@ impl Root {
             pal.success,
             pal,
         ));
+        // M18: ресурс по профилю — адреналин (красный), энергия
+        // (тёмно-жёлтый), мана (акцентный); длина бара — общая
+        // константа со шкалой здоровья.
+        let (resource_label, resource_color) = match snap.char.profile.as_deref() {
+            Some("warrior") => (t(lang, Key::RageLabel), 0xd1_3b_3b),
+            Some("archer") => (t(lang, Key::EnergyLabel), 0xb8_96_1e),
+            _ => (t(lang, Key::MpLabel), pal.accent),
+        };
         col = col.child(bar(
             snap.char.mp.cur as f32 / snap.char.mp.max.max(1) as f32,
             format!(
                 "{} {}/{}",
-                t(lang, Key::MpLabel),
-                snap.char.mp.cur,
-                snap.char.mp.max
+                resource_label, snap.char.mp.cur, snap.char.mp.max
             ),
-            pal.accent,
+            resource_color,
             pal,
         ));
         col = col.child(
@@ -669,7 +697,7 @@ impl Root {
         }
 
         // ── 4) Руны экипированного посоха: ×N зарядов (ФР-09) ──
-        if let Some(staff_uid) = snap.char.equip.get("staff").cloned().flatten() {
+        if let Some(staff_uid) = equipped_staff_uid(snap) {
             if let Some(staff) = snap.char.inventory.iter().find(|i| i.uid == staff_uid) {
                 for socket in staff.sockets.iter().flatten() {
                     let Some(rune) = &socket.rune else { continue };
@@ -684,8 +712,19 @@ impl Root {
                     } else if !mp_ok {
                         Some(OffReason::Req(t(lang, Key::NotEnoughMp).to_string()))
                     } else {
-                        let (ok, left) = ready(0);
-                        (!ok).then_some(OffReason::Cd(left))
+                        // M17/F30g: кулдаун самой руны (cooldown_s) +
+                        // глобальный — бар по полной длительности.
+                        let cd = rune
+                            .def_id
+                            .as_deref()
+                            .and_then(|d| self.store.item_cd_bar(d, now_ms));
+                        let own = cd.map(|(l, _)| l).unwrap_or(0);
+                        let (ok, left) = ready(own);
+                        if ok {
+                            None
+                        } else {
+                            Some(OffReason::Cd(left))
+                        }
                     };
                     match off {
                         None => {
@@ -717,10 +756,19 @@ impl Root {
                             ));
                         }
                         Some(OffReason::Cd(left)) => {
-                            row = row.child(cd_disabled(
+                            // M17/F30g: бар по полной длительности
+                            // предметного кулдауна (GCD — дефолт 1 с).
+                            let total = rune
+                                .def_id
+                                .as_deref()
+                                .and_then(|d| self.store.item_cd_bar(d, now_ms))
+                                .map(|(_, t)| t)
+                                .unwrap_or(1000);
+                            row = row.child(cd_bar_button(
                                 &format!("ld2-rune-off-{}", socket.index),
                                 label,
                                 left,
+                                total,
                                 lang,
                                 pal,
                             ));
@@ -740,7 +788,14 @@ impl Root {
             .collect();
         for item in consumables {
             let label = format!("{} ×{}", item.name, item.qty.unwrap_or(1));
-            let (ok, left) = ready(0);
+            // M17/F30g: собственный кулдаун предмета (cooldown_s,
+            // дефолт 1 с) + глобальный; кнопка с таймером и баром.
+            let cd = item
+                .def_id
+                .as_deref()
+                .and_then(|d| self.store.item_cd_bar(d, now_ms));
+            let own = cd.map(|(l, _)| l).unwrap_or(0);
+            let (ok, ready_left) = ready(own);
             if ok {
                 row = row.child(btn(
                     cx,
@@ -750,10 +805,12 @@ impl Root {
                     Click::UseItem(item.uid.clone()),
                 ));
             } else {
-                row = row.child(cd_disabled(
+                let (left, total) = cd.unwrap_or((ready_left, 1000));
+                row = row.child(cd_bar_button(
                     &format!("ld2-act-item-{}", item.uid),
                     label,
                     left,
+                    total,
                     lang,
                     pal,
                 ));
@@ -768,6 +825,65 @@ impl Root {
     /// Лог прокручивается свободно: приклеивание вниз только когда
     /// пользователь и так внизу ([`scroll_at_bottom`]); иначе новые
     /// строки копятся и показываются кнопкой «▼ N новых» в шапке.
+    /// M17/F30a: каст-бар инкрустации (3 с без отмены) — полоса над
+    /// панелью действий; анимация идёт по тику root (50 мс), исчезает
+    /// по завершении (отправка socket.insert — root::finish_inscribe).
+    fn inscribe_bar(&self, pal: &Palette, snap: &StateSnapshot) -> Option<Div> {
+        let (_, target_uid, ends) = self.cast_inscribe.as_ref()?;
+        let left = (ends - self.now_ms()).max(0);
+        let frac = 1.0 - left as f32 / INSCRIBE_MS as f32;
+        let target = snap
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == *target_uid)
+            .map(|i| i.name.clone())
+            .unwrap_or_default();
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_center()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .bg(rgb(pal.panel))
+                .border_1()
+                .border_color(rgb(pal.accent))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(format!(
+                            "{} — {}",
+                            t(self.lang, Key::InscribeCasting),
+                            target
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_grow_1()
+                        .h(px(10.0))
+                        .rounded_md()
+                        .bg(rgb(pal.border))
+                        .child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(frac.clamp(0.0, 1.0)))
+                                .rounded_md()
+                                .bg(rgb(pal.accent)),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(pal.muted))
+                        .child(format!("{:.1} с", left as f32 / 1000.0)),
+                ),
+        )
+    }
+
     fn journal_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let dark = pal.bg == crate::palette::palette("dark").bg;
@@ -852,11 +968,26 @@ impl Root {
                                     }
                                     kind => (log_color(kind, dark), false),
                                 };
-                                div()
+                                // M17/F30f: **...** — жирные сегменты
+                                // (слова заклинания и урон), §8.
+                                let text = entry.text.clone();
+                                let line = div()
                                     .text_size(px(log_font))
                                     .text_color(rgb(color))
-                                    .when(bold, |line| line.font_weight(gpui::FontWeight::BOLD))
-                                    .child(entry.text.clone())
+                                    .when(bold, |line| line.font_weight(gpui::FontWeight::BOLD));
+                                if text.contains("**") {
+                                    line.flex().flex_row().children(
+                                        split_bold(&text).into_iter().map(|(seg, is_bold)| {
+                                            div()
+                                                .when(is_bold, |d| {
+                                                    d.font_weight(gpui::FontWeight::BOLD)
+                                                })
+                                                .child(seg.to_string())
+                                        }),
+                                    )
+                                } else {
+                                    line.child(text)
+                                }
                             }),
                         )),
                 ),
@@ -898,13 +1029,27 @@ impl Root {
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::DeathLost)),
             )
-            .children(death.lost_items.iter().map(|item| {
-                div().child(format!(
-                    "• {} ({})",
-                    item.name,
-                    item.rarity.as_deref().unwrap_or("-")
-                ))
-            }))
+            // M18: список утраченного со скроллом (много предметов).
+            .child(
+                ScrollArea::new("ld2-death-scroll")
+                    .vertical()
+                    .max_h(px(300.0))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .children(death.lost_items.iter().map(|item| {
+                                // M16/F29e: редкость — на языке игрока.
+                                let rarity = item
+                                    .rarity
+                                    .as_deref()
+                                    .map(|r| rarity_label(lang, r))
+                                    .unwrap_or_else(|| "-".to_string());
+                                div().child(format!("• {} ({})", item.name, rarity))
+                            })),
+                    ),
+            )
             .child(
                 btn(
                     cx,
@@ -984,12 +1129,7 @@ impl Root {
                 }
             }
         }
-        if let Some(err) = self
-            .store
-            .world_error
-            .clone()
-            .or_else(|| self.store.sheet_error.clone())
-        {
+        if let Some(err) = self.store.world_error.clone() {
             col = col.child(div().text_color(rgb(pal.danger)).child(err));
         }
         col.child(btn(
@@ -1044,6 +1184,32 @@ impl Root {
 }
 
 /// Полоса-прогресс (паритет egui ProgressBar).
+/// M17/F30f: сегменты строки лога по маркерам `**...**` —
+/// (текст, жирный). Пробелы остаются в исходных сегментах.
+fn split_bold(text: &str) -> Vec<(&str, bool)> {
+    let mut out: Vec<(&str, bool)> = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("**") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("**") else {
+            break; // незакрытый маркер — хвост как есть
+        };
+        if start > 0 {
+            out.push((&rest[..start], false));
+        }
+        out.push((&after[..end], true));
+        rest = &after[end + 2..];
+    }
+    if !rest.is_empty() {
+        out.push((rest, false));
+    }
+    out
+}
+
+/// M18: ширина шкалы — общая для здоровья и ресурса (одинаковые
+/// прогрессбары в левой колонке).
+const BAR_WIDTH: f32 = 140.0;
+
 fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
     div()
         .flex()
@@ -1052,7 +1218,7 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
         .gap_2()
         .child(
             div()
-                .w(px(140.0))
+                .w(px(BAR_WIDTH))
                 .h(px(10.0))
                 .rounded_md()
                 .bg(rgb(pal.border))
@@ -1119,6 +1285,41 @@ fn cd_disabled(
     )
 }
 
+/// M17/F30g: кнопка в предметном кулдауне — таймер на кнопке и
+/// анимированный прогрессбар под ней (остаток от полной длительности;
+/// анимация — тик 50 мс через cd_active в root).
+fn cd_bar_button(
+    id: &str,
+    label: String,
+    left_ms: i64,
+    total_ms: i64,
+    lang: ld2_core::l10n::Lang,
+    pal: &Palette,
+) -> Div {
+    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    let short = tf(lang, Key::HotbarCdShort, &[("{s}", &secs.to_string())]);
+    let frac = (left_ms as f32 / total_ms.max(1) as f32).clamp(0.0, 1.0);
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(action_disabled(
+            id,
+            format!("{label} · {short}"),
+            cooldown_reason(lang, left_ms),
+            pal,
+        ))
+        .child(
+            div().h(px(3.0)).rounded_md().bg(rgb(pal.border)).child(
+                div()
+                    .h_full()
+                    .w(gpui::relative(frac))
+                    .rounded_md()
+                    .bg(rgb(pal.accent)),
+            ),
+        )
+}
+
 /// Цвет severity (палитра §7.4, локальная копия — egui-версия возвращает Color32).
 fn severity_rgb(severity: Severity) -> u32 {
     match severity {
@@ -1175,5 +1376,34 @@ fn entity_tooltip(entity: &Entity) -> String {
         format!("{}{hp}", entity.name)
     } else {
         format!("{}{hp} · {tags}", entity.name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M17/F30f: маркеры **...** → сегменты; незакрытый не ломает строку.
+    #[test]
+    fn split_bold_marks_segments() {
+        assert_eq!(
+            split_bold("Bbnf: **Farta Lussen**, вы бьёте Волк струёй пламени **10**"),
+            vec![
+                ("Bbnf: ", false),
+                ("Farta Lussen", true),
+                (", вы бьёте Волк струёй пламени ", false),
+                ("10", true),
+            ]
+        );
+        assert_eq!(
+            split_bold("обычная строка"),
+            vec![("обычная строка", false)]
+        );
+        let open = split_bold("хвост **без пары");
+        assert_eq!(
+            open,
+            vec![("хвост **без пары", false)],
+            "незакрытый — как есть"
+        );
     }
 }

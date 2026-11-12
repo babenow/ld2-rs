@@ -6,8 +6,8 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, App, Context, Div, EmptyView, Entity, Focusable, Hsla,
-    MouseButton, Render, ScrollHandle, SharedString, Window, WindowControlArea,
+    div, prelude::*, px, rgb, rgba, AnyElement, App, Context, Div, EmptyView, Entity, Focusable,
+    Hsla, MouseButton, Render, ScrollHandle, SharedString, Window, WindowControlArea,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -15,6 +15,7 @@ use ld2_core::store::{local_epoch, local_epoch_ms, Act, AppStore, Effect, Screen
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
 use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove};
 
+mod backpack;
 mod chars;
 mod chat;
 mod game;
@@ -24,10 +25,10 @@ mod social;
 
 use crate::palette::{palette, Palette};
 use ely::buttons::IconButton;
-use ely::feedback::{Toast, ToastViewport, Toaster};
+use ely::feedback::{Toast, Toaster};
 use ely::forms::{
-    hex, parse_hex, Choice, ColorPicker, HotkeyInput, Input, InputEvent, PasswordInput, Slider,
-    Switch, TextInput,
+    hex, parse_hex, Checkbox, Choice, ColorPicker, HotkeyInput, Input, InputEvent, PasswordInput,
+    Slider, Switch, TextInput,
 };
 use ely::layout::ScrollArea;
 use ely::navigation::Tabs;
@@ -51,6 +52,62 @@ pub(crate) enum LogTab {
 /// M14/F15: перетаскивание окна за TitleBar (payload drag gpui).
 #[derive(Debug)]
 struct TitlebarDrag;
+
+/// M16/F29b: перетаскивание карточки всплывающего окна (персонаж/
+/// рюкзак) за шапку — общий payload drag оболочки `popup_window`.
+#[derive(Debug)]
+struct PopupDrag;
+
+/// M16/F29b: изменение размера карточки всплывающего окна (уголок).
+#[derive(Debug)]
+struct PopupResize;
+
+/// M16/F29b: какое всплывающее окно рисуем: оболочка берёт
+/// геометрию/флаги из `PopupState` по этому виду.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PopupKind {
+    Character,
+    Backpack,
+}
+
+impl PopupKind {
+    /// Суффикс id виджетов карточки (уникальность gpui-виджетов).
+    fn id(self) -> &'static str {
+        match self {
+            PopupKind::Character => "ld2-char",
+            PopupKind::Backpack => "ld2-bp",
+        }
+    }
+}
+
+/// M16/F29b: состояние всплывающего окна — геометрия drag/resize и
+/// флаг «жест начат на scrim» (M15/F25e: закрыть может только
+/// полный клик, целиком прошедший по scrim).
+#[derive(Debug)]
+struct PopupState {
+    /// Окно открыто (рендер дополнительно гейтится `Screen::Game`).
+    open: bool,
+    /// Размер карточки (px): (ширина, высота).
+    size: (f32, f32),
+    /// Смещение от центра (px) — drag.
+    delta: (f32, f32),
+    /// Смещение указателя в шапке в момент захвата (drag).
+    drag_offset: Option<(f32, f32)>,
+    /// Якорь resize — (курсор_x, курсор_y, w, h, delta_x, delta_y).
+    resize_anchor: Option<(f32, f32, f32, f32, f32, f32)>,
+}
+
+impl PopupState {
+    fn new(size: (f32, f32)) -> Self {
+        Self {
+            open: false,
+            size,
+            delta: (0.0, 0.0),
+            drag_offset: None,
+            resize_anchor: None,
+        }
+    }
+}
 
 /// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +133,10 @@ pub(crate) enum Click {
     /// M14/F8: выбор языка в настройках («ru»/«en»).
     Lang(&'static str),
     ToggleSettings,
+    /// M15/F25: открыть/закрыть окно персонажа (кнопка в шапке).
+    ToggleCharacter,
+    /// M16/F29b: открыть/закрыть окно рюкзака (кнопка в шапке).
+    ToggleInventory,
     Theme(&'static str),
     ChatLimit(i64),
     /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
@@ -121,6 +182,9 @@ enum ExitKind {
 
 /// M14/F16: длина таймера выхода, мс.
 const EXIT_DELAY_MS: i64 = 20_000;
+/// M17/F30a: длительность каст-бара инкрустации, мс (спека: 3 с,
+/// без отмены — движение/урон не прерывают).
+pub(crate) const INSCRIBE_MS: i64 = 3_000;
 
 /// Инициализация корневого view (всё, что создаётся вне gpui-контекста).
 pub struct Shell {
@@ -131,6 +195,9 @@ pub struct Shell {
     pub transport: TransportHandle,
     pub ingress: mpsc::UnboundedReceiver<IngressEvent>,
     pub update_rx: std::sync::mpsc::Receiver<String>,
+    /// M16/F29j: запомненный пароль из keyring для предзаполнения
+    /// поля на экране входа (читается в main.rs, один раз при старте).
+    pub prefill_password: Option<String>,
 }
 
 use tokio::sync::mpsc;
@@ -146,6 +213,16 @@ pub struct Root {
     update_available: Option<String>,
     login_input: Option<Entity<TextInput>>,
     password_input: Option<Entity<TextInput>>,
+    /// M17/F30a: активный каст инкрустации (uid руны, uid оружия,
+    /// epoch-мс завершения); без отмены — идёт до конца.
+    cast_inscribe: Option<(String, String, i64)>,
+    /// M16/F29j: пароль последней отправки входа/регистрации — живёт
+    /// до успешного `PersistSession` и там же уходит в keyring
+    /// (или стирается, если галочка выключена).
+    pending_password: Option<String>,
+    /// M16/F29j: предзаполнение пароля из keyring — отдаётся полю
+    /// в `init_inputs` (один раз при старте, `take()`).
+    prefill_password: Option<String>,
     /// Поля диалога регистрации (M13.3, D35): живут только в UI-состоянии,
     /// в store/логи не попадают.
     register_open: bool,
@@ -156,6 +233,25 @@ pub struct Root {
     reg_password2: Option<Entity<TextInput>>,
     host_input: Option<Entity<TextInput>>,
     settings_open: bool,
+    /// M16/F29b: окно персонажа — оверлей поверх игрового экрана
+    /// (геометрия/флаги жестов — в `char_popup`).
+    char_popup: PopupState,
+    /// M16/F29b: окно рюкзака — может быть открыто одновременно с
+    /// персонажем (общий scrim группы окон).
+    backpack_popup: PopupState,
+    /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
+    /// всплывающих окон — закрытие по mouse-up только для настоящего
+    /// «клика мимо» (M15/F25e).
+    popup_scrim_down: bool,
+    /// M16/F29b: владелец текущего жеста drag/resize — `DragMoveEvent`
+    /// с общим payload-типом получают ВСЕ открытые окна, двигаться/
+    /// ресайзиться может только владелец (иначе окна едут вместе).
+    drag_owner: Option<PopupKind>,
+    /// M16/F29f: вьюпорт кэшируется в render — базовый размер окна
+    /// клампится под экран при открытии (в обработчиках нет Window).
+    viewport: (f32, f32),
+    /// M16/F29b: активная вкладка рюкзака (персистентна в config).
+    backpack_tab: backpack::BackpackTab,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
     exit_timer: Option<(ExitKind, i64)>,
     /// M14/F17: открытая карточка навыка — id из снапшота.
@@ -166,6 +262,11 @@ pub struct Root {
     guild_input: Option<Entity<TextInput>>,
     /// Открытая вкладка листа (ФР-19: персистентна в config).
     sheet_tab: sheet::SheetTab,
+    /// M16/F29d: запрос контекстного меню экипировки — (слот, номер,
+    /// точка клика); номер растёт, чтобы Ely переоткрыл меню.
+    equip_menu: Option<(String, u64, gpui::Point<gpui::Pixels>)>,
+    /// M16/F29g: то же для контекстного меню предмета рюкзака (uid).
+    bp_menu: Option<(String, u64, gpui::Point<gpui::Pixels>)>,
     /// M10.5: чат — ввод, фильтр, активный канал.
     chat_input: Option<Entity<TextInput>>,
     chat_filter: Option<Entity<TextInput>>,
@@ -189,6 +290,10 @@ pub struct Root {
     /// M14/F3: обычная прокрутка вкладок листа «Навыки»/«Профессии».
     skills_scroll: ScrollHandle,
     professions_scroll: ScrollHandle,
+    /// M16/F29b: прокрутка тела окна рюкзака (сетка предметов).
+    backpack_scroll: ScrollHandle,
+    /// M15/F26: прокрутка вкладки «Параметры» (16 строк).
+    params_scroll: ScrollHandle,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
     log_tab: LogTab,
     /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
@@ -212,6 +317,94 @@ pub struct Root {
     delete_target: Option<(String, String)>,
 }
 
+/// M15/F25i: поле ввода, чей фокус блокирует хоткеи на экране:
+/// (экран, имя поля для теста, доступ к полю Root).
+struct TypingField {
+    screen: Screen,
+    /// Имя поля — только для теста покрытия (в рендере не читается).
+    #[allow(dead_code)]
+    name: &'static str,
+    get: fn(&Root) -> &Option<Entity<TextInput>>,
+}
+
+/// M15/F25i: поля ввода по экранам — источник истины
+/// `Root::typing_focused` (тест покрывает все TextInput Root): на
+/// экране проверяются только его поля — после смены экрана фокус
+/// формально остаётся на неотрисованном поле (пароль на Login →
+/// Game), и все хоткеи «залипали».
+const TYPING_FIELDS: &[TypingField] = &[
+    TypingField {
+        screen: Screen::Login,
+        name: "login",
+        get: |r| &r.login_input,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "password",
+        get: |r| &r.password_input,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "reg_login",
+        get: |r| &r.reg_login,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "reg_email",
+        get: |r| &r.reg_email,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "reg_password",
+        get: |r| &r.reg_password,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "reg_password2",
+        get: |r| &r.reg_password2,
+    },
+    TypingField {
+        screen: Screen::Login,
+        name: "host",
+        get: |r| &r.host_input,
+    },
+    TypingField {
+        screen: Screen::Characters,
+        name: "create_name",
+        get: |r| &r.create_name,
+    },
+    TypingField {
+        screen: Screen::Characters,
+        name: "delete_name",
+        get: |r| &r.delete_name,
+    },
+    TypingField {
+        screen: Screen::Characters,
+        name: "host",
+        get: |r| &r.host_input,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "chat",
+        get: |r| &r.chat_input,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "chat_filter",
+        get: |r| &r.chat_filter,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "guild",
+        get: |r| &r.guild_input,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "host",
+        get: |r| &r.host_input,
+    },
+];
+
 impl Root {
     pub fn new(cx: &mut Context<'_, Self>, shell: Shell) -> Self {
         let sheet_tab = sheet::SheetTab::parse(&shell.config.sheet_tab);
@@ -227,6 +420,9 @@ impl Root {
             update_available: None,
             login_input: None,
             password_input: None,
+            cast_inscribe: None,
+            pending_password: None,
+            prefill_password: shell.prefill_password,
             register_open: false,
             register_submitted: false,
             reg_login: None,
@@ -235,11 +431,24 @@ impl Root {
             reg_password2: None,
             host_input: None,
             settings_open: false,
+            char_popup: PopupState::new((760.0, 560.0)),
+            // Рюкзак со сдвигом: при открытии обоих окон видны обе
+            // шапки (дальше позиция перетаскивается).
+            backpack_popup: PopupState {
+                delta: (40.0, 40.0),
+                ..PopupState::new((760.0, 560.0))
+            },
+            backpack_tab: backpack::BackpackTab::default(),
+            popup_scrim_down: false,
+            drag_owner: None,
+            viewport: (0.0, 0.0),
             exit_timer: None,
             skill_info: None,
             first_frame: true,
             guild_input: None,
             sheet_tab,
+            equip_menu: None,
+            bp_menu: None,
             chat_input: None,
             chat_filter: None,
             chat_channel: "location".into(),
@@ -254,6 +463,8 @@ impl Root {
             chat_scroll: ScrollHandle::new(),
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
+            backpack_scroll: ScrollHandle::new(),
+            params_scroll: ScrollHandle::new(),
             log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
@@ -323,6 +534,16 @@ impl Root {
             }
         }
 
+        // M17/F30a: каст-бар инкрустации (3 с, без отмены) — по
+        // завершении отправляем socket.insert в первый свободный сокет.
+        let inscribe_active = self.cast_inscribe.is_some();
+        if let Some((rune_uid, target_uid, ends)) = self.cast_inscribe.clone() {
+            if self.now_ms() >= ends {
+                self.cast_inscribe = None;
+                self.finish_inscribe(rune_uid, target_uid);
+            }
+        }
+
         // M11.4: новый notice → всплывающий тост Ely (текст в экране
         // остаётся до замены — на время жизни тоста возможен дубль).
         if let Some(notice) = self.store.notice.clone() {
@@ -345,17 +566,25 @@ impl Root {
                 .store
                 .combat_cooldowns
                 .values()
-                .any(|until_s| until_s.saturating_mul(1000) > now_ms);
+                .any(|until_s| until_s.saturating_mul(1000) > now_ms)
+            // M17/F30g: анимация прогресс-баров предметных кнопок.
+            || self
+                .store
+                .item_cooldowns
+                .values()
+                .any(|(until_ms, _)| *until_ms > now_ms);
 
-        if had_events || cd_active || exit_active {
+        if had_events || cd_active || exit_active || inscribe_active {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
-        Duration::from_millis(if had_events || cd_active || exit_active {
-            50
-        } else {
-            200
-        })
+        Duration::from_millis(
+            if had_events || cd_active || exit_active || inscribe_active {
+                50
+            } else {
+                200
+            },
+        )
     }
 
     fn exec_effects(&mut self, effects: Vec<Effect>) {
@@ -372,6 +601,25 @@ impl Root {
                         ld2_core::secrets::set_token(&self.config.host, &login, &refresh_token)
                     {
                         tracing::warn!("keyring: не удалось сохранить токен: {e}");
+                    }
+                    // M16/F29j: запомненный пароль — только в keyring.
+                    // Стэш пуст при resume (вход по токену) — старую
+                    // запись не трогаем; выключенная галочка её стирает.
+                    let pending = self.pending_password.take();
+                    if self.config.remember_password {
+                        if let Some(pw) = pending {
+                            if let Err(e) =
+                                ld2_core::secrets::set_password(&self.config.host, &login, &pw)
+                            {
+                                tracing::warn!("keyring: не удалось сохранить пароль: {e}");
+                            }
+                        }
+                    } else if pending.is_some() {
+                        if let Err(e) =
+                            ld2_core::secrets::delete_password(&self.config.host, &login)
+                        {
+                            tracing::warn!("keyring: не удалось удалить пароль: {e}");
+                        }
                     }
                     self.config.last_login = Some(login);
                     if let Err(e) = self.config_store.save(&self.config) {
@@ -410,6 +658,9 @@ impl Root {
             self.store.login_error = Some(t(self.lang, Key::ErrFillFields).to_string());
             return;
         }
+        // M16/F29j: пароль до move в cmd — для keyring при успешном
+        // входе (PersistSession).
+        self.pending_password = Some(password.clone());
         let cmd = AuthLogin {
             login: login.clone(),
             password,
@@ -418,6 +669,39 @@ impl Root {
             Ok(_) => self.store.on_login_sent(&login),
             Err(e) => self.store.login_error = Some(format!("нет связи: {e}")),
         }
+    }
+
+    /// M17/F30a: начало каста инкрустации — окно закрывается, полоса
+    /// идёт 3 с без отмены; повторный каст во время активного не стартует.
+    pub(crate) fn start_inscribe(&mut self, rune_uid: String, target_uid: String) {
+        if self.cast_inscribe.is_some() {
+            return;
+        }
+        self.store.close_inscribe();
+        self.cast_inscribe = Some((rune_uid, target_uid, self.now_ms() + INSCRIBE_MS));
+    }
+
+    /// M17/F30a: каст завершён — cmd/socket.insert в первый свободный
+    /// сокет (индекс по свежему снапшоту; сервер валидирует — занятый
+    /// слот/нет сокетов → тост через notice).
+    fn finish_inscribe(&mut self, rune_uid: String, target_uid: String) {
+        let index = self
+            .store
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.char.inventory.iter().find(|i| i.uid == target_uid))
+            .and_then(|item| item.sockets.as_ref())
+            .and_then(|sockets| sockets.iter().position(|s| s.rune.is_none()));
+        let Some(index) = index else {
+            self.store.notice = Some(t(self.lang, Key::InscribeNoWeapons).to_string());
+            return;
+        };
+        let cmd = ld2_protocol::cmd::SocketInsert {
+            staff_uid: target_uid,
+            socket_index: index as u32,
+            rune_uid,
+        };
+        self.send_cmd(&cmd, Act::Socket);
     }
 
     fn logout(&mut self) {
@@ -478,7 +762,14 @@ impl Root {
             cx,
             t(lang, Key::FieldPassword).to_string(),
             true,
-            None,
+            // M16/F29j: при включённой галочке «Запомнить пароль»
+            // пароль уже введён (чтение keyring — в main.rs, один
+            // раз при старте).
+            if self.config.remember_password {
+                self.prefill_password.take()
+            } else {
+                None
+            },
         ));
         self.host_input = Some(mk(window, cx, host.clone(), false, Some(host)));
         self.guild_input = Some(mk(window, cx, "…".into(), false, None));
@@ -570,25 +861,14 @@ impl Root {
         .detach();
     }
 
-    /// Есть ли фокус в любом текстовом поле (навигация не должна
-    /// срабатывать при наборе текста).
+    /// Есть ли фокус в текстовом поле **текущего экрана** (навигация
+    /// не должна срабатывать при наборе текста).
     pub(crate) fn typing_focused(&self, window: &Window, cx: &gpui::App) -> bool {
-        [
-            &self.login_input,
-            &self.password_input,
-            &self.reg_login,
-            &self.reg_email,
-            &self.reg_password,
-            &self.reg_password2,
-            &self.host_input,
-            &self.guild_input,
-            &self.chat_input,
-            &self.chat_filter,
-            &self.delete_name,
-        ]
-        .iter()
-        .filter_map(|input| input.as_ref())
-        .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+        TYPING_FIELDS
+            .iter()
+            .filter(|f| f.screen == self.store.screen)
+            .filter_map(|f| (f.get)(self).as_ref())
+            .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
     }
 
     /// Обработка глобального нажатия: навигация/цикл целей по хоткеям
@@ -616,6 +896,42 @@ impl Root {
         }
         if keystroke_matches(&self.config.hotkeys.cycle_target, ks) {
             self.cycle_target();
+            cx.notify();
+            return;
+        }
+        // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
+        // настроек/диалога выхода (они ловят Esc сами).
+        if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
+            if self.backpack_popup.open {
+                self.backpack_popup.open = false;
+                cx.notify();
+                return;
+            }
+            if self.char_popup.open {
+                self.char_popup.open = false;
+                cx.notify();
+                return;
+            }
+        }
+        // M15/F25: хоткей окна персонажа (кнопка в шапке дублирует);
+        // M16/F29b: окна открываются одновременно (общий scrim).
+        if keystroke_matches(&self.config.hotkeys.open_character, ks) {
+            if self.char_popup.open {
+                self.char_popup.open = false;
+            } else {
+                // M16/F29d: базовый размер + первая вкладка.
+                self.open_popup(PopupKind::Character);
+            }
+            cx.notify();
+            return;
+        }
+        // M16/F29b: хоткей рюкзака (кнопка в шапке дублирует).
+        if keystroke_matches(&self.config.hotkeys.open_backpack, ks) {
+            if self.backpack_popup.open {
+                self.backpack_popup.open = false;
+            } else {
+                self.open_popup(PopupKind::Backpack);
+            }
             cx.notify();
             return;
         }
@@ -743,6 +1059,162 @@ impl Root {
         until_s.saturating_mul(1000) - now_ms
     }
 
+    /// M16/F29b: состояние всплывающего окна по виду — оболочка
+    /// `popup_window` и её жесты работают через этот доступ.
+    fn popup_mut(&mut self, kind: PopupKind) -> &mut PopupState {
+        match kind {
+            PopupKind::Character => &mut self.char_popup,
+            PopupKind::Backpack => &mut self.backpack_popup,
+        }
+    }
+
+    /// M16/F29b: чтение состояния всплывающего окна.
+    fn popup(&self, kind: PopupKind) -> &PopupState {
+        match kind {
+            PopupKind::Character => &self.char_popup,
+            PopupKind::Backpack => &self.backpack_popup,
+        }
+    }
+
+    /// M16/F29f: открытие окна — базовый размер (персонаж **выше**:
+    /// 760×760; рюкзак 760×560), по центру с клампом под вьюпорт
+    /// (drag/resize живут до закрытия) и первая вкладка.
+    fn open_popup(&mut self, kind: PopupKind) {
+        let (tw, th) = match kind {
+            PopupKind::Character => (760.0, 760.0),
+            PopupKind::Backpack => (760.0, 560.0),
+        };
+        let (vw, vh) = self.viewport;
+        let (w, h) = if vw > 0.0 && vh > 0.0 {
+            clamp_char_size(tw, th, vw, vh)
+        } else {
+            (tw, th)
+        };
+        let delta = match kind {
+            PopupKind::Character => (0.0, 0.0),
+            PopupKind::Backpack => (40.0, 40.0),
+        };
+        let st = self.popup_mut(kind);
+        st.open = true;
+        st.size = (w, h);
+        st.delta = delta;
+        st.drag_offset = None;
+        st.resize_anchor = None;
+        match kind {
+            PopupKind::Character => self.sheet_tab = sheet::SheetTab::Params,
+            PopupKind::Backpack => self.backpack_tab = backpack::BackpackTab::default(),
+        }
+    }
+
+    /// M16/F29d: запрос контекстного меню экипировки (левый/правый
+    /// клик по предмету) — номер растёт, чтобы Ely переоткрыл меню.
+    fn bump_equip_menu(
+        &mut self,
+        slot: String,
+        at: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let n = self.equip_menu.as_ref().map(|(_, n, _)| *n).unwrap_or(0) + 1;
+        self.equip_menu = Some((slot, n, at));
+        cx.notify();
+    }
+
+    /// M16/F29g: запрос контекстного меню предмета рюкзака (левый и
+    /// правый клик) — номер растёт, чтобы Ely переоткрыл меню.
+    fn bump_bp_menu(
+        &mut self,
+        uid: String,
+        at: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let n = self.bp_menu.as_ref().map(|(_, n, _)| *n).unwrap_or(0) + 1;
+        self.bp_menu = Some((uid, n, at));
+        cx.notify();
+    }
+
+    /// M16/F29h: системные уведомления — стеком вверху по центру.
+    /// Тайминг и жизнь тостов — у Toaster (ely-стек показывает их
+    /// внизу справа и не позиционируется — здесь только отрисовка).
+    fn toast_stack(&self, window: &Window, cx: &Context<'_, Self>, pal: &Palette) -> Div {
+        let toasts = self.toaster.read(cx).shown();
+        if toasts.is_empty() {
+            return div();
+        }
+        let width = 420.0f32;
+        let left = ((f32::from(window.viewport_size().width) - width) / 2.0).max(8.0);
+        div()
+            .absolute()
+            .left(px(left))
+            .top(px(16.0))
+            .w(px(width))
+            // Клики по уведомлению не проходят сквозь него (occlude).
+            .occlude()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(toasts.into_iter().map(|(title, _)| {
+                div()
+                    .px_4()
+                    .py_2()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .border_1()
+                    .border_color(rgb(pal.accent))
+                    .text_size(px(13.0))
+                    .text_center()
+                    .child(title.to_string())
+            }))
+    }
+
+    /// M16/F29b: общий scrim группы всплывающих окон — окна могут
+    /// быть открыты одновременно (персонаж + рюкзак), поэтому scrim
+    /// один на всех и лежит ПОД карточками; клик мимо закрывает
+    /// верхнее открытое окно (рюкзак, затем персонаж).
+    fn popup_scrim(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
+        if !self.char_popup.open && !self.backpack_popup.open {
+            return None;
+        }
+        Some(
+            div()
+                .id("ld2-popup-scrim-layer")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(
+                    div()
+                        .id("ld2-popup-scrim")
+                        .size_full()
+                        .bg(rgba(0x99000000))
+                        // M15/F25e: запоминаем, что жест начат на scrim.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|root, _, _, _| {
+                                root.popup_scrim_down = true;
+                            }),
+                        )
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|root, _, _, cx| {
+                                let close =
+                                    scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
+                                root.popup_scrim_down = false;
+                                if close {
+                                    // Верхнее окно: рюкзак рисуется поверх.
+                                    if root.backpack_popup.open {
+                                        root.backpack_popup.open = false;
+                                    } else if root.char_popup.open {
+                                        root.char_popup.open = false;
+                                    }
+                                    cx.notify();
+                                }
+                            }),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn save_config(&mut self) {
         if let Err(e) = self.config_store.save(&self.config) {
             tracing::warn!("не удалось сохранить конфиг: {e:#}");
@@ -772,6 +1244,24 @@ impl Root {
                 if let Some(input) = self.host_input.clone() {
                     input.update(cx, |i, cx| i.set_text(host.clone(), cx));
                 }
+            }
+            Click::ToggleCharacter => {
+                if self.char_popup.open {
+                    self.char_popup.open = false;
+                } else {
+                    // M16/F29d: базовый размер + первая вкладка.
+                    self.open_popup(PopupKind::Character);
+                }
+                cx.notify();
+            }
+            // M16/F29b: окно рюкзака (открывается вместе с персонажем).
+            Click::ToggleInventory => {
+                if self.backpack_popup.open {
+                    self.backpack_popup.open = false;
+                } else {
+                    self.open_popup(PopupKind::Backpack);
+                }
+                cx.notify();
             }
             Click::Theme(theme) => {
                 self.config.theme = theme.to_string();
@@ -1073,21 +1563,57 @@ impl Root {
                         // безопасная, красное, если небезопасная (pvp).
                         let pvp = flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
                         let name_color = if pvp { pal.danger } else { pal.success };
-                        let mut row = div().flex().flex_row().items_center().gap_1().child(
+                        // M15/F25: локация в 2 строки — 1) название,
+                        // 2) тип локации (бейджи Safe/PvP…).
+                        let name_row = div().flex().flex_row().items_center().gap_1().child(
                             div()
                                 .text_size(px(12.0))
                                 .text_color(rgb(name_color))
                                 .child(format!("· {name}")),
                         );
+                        let mut badges_row = div().flex().flex_row().items_center().gap_1();
                         for (tone, token) in location_badges(&flags) {
                             let color = match tone {
                                 BadgeTone::Warn => pal.warn,
                                 BadgeTone::Success => pal.success,
                                 BadgeTone::Muted => pal.muted,
                             };
-                            row = row.child(badge(badge_label(lang, &token), color, pal));
+                            badges_row =
+                                badges_row.child(badge(badge_label(lang, &token), color, pal));
                         }
-                        row
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(name_row)
+                            .child(badges_row)
+                    }))
+                    // M15/F25: разделитель и кнопка окна персонажа рядом
+                    // с локацией (только где есть снапшот — в мире).
+                    .children(
+                        self.store
+                            .snapshot
+                            .as_ref()
+                            .map(|_| div().w(px(1.0)).h(px(20.0)).bg(rgb(pal.border))),
+                    )
+                    .children(self.store.snapshot.as_ref().map(|_| {
+                        btn(
+                            cx,
+                            t(lang, Key::BtnCharacter),
+                            pal.panel,
+                            pal.text,
+                            Click::ToggleCharacter,
+                        )
+                    }))
+                    // M16/F29b: кнопка рюкзака рядом с «Персонаж».
+                    .children(self.store.snapshot.as_ref().map(|_| {
+                        btn(
+                            cx,
+                            t(lang, Key::SheetInventory),
+                            pal.panel,
+                            pal.text,
+                            Click::ToggleInventory,
+                        )
                     })),
             )
             .child(
@@ -1158,6 +1684,25 @@ impl Root {
                     .w(px(320.0))
                     .child(PasswordInput::new(self.ti(&self.password_input))),
             )
+            // M16/F29j: «запомнить пароль» — пароль живёт только в
+            // keyring; флаг — в конфиге (сохраняется сразу).
+            .child({
+                let me = cx.entity();
+                let on = self.config.remember_password;
+                div().w(px(320.0)).child(
+                    Checkbox::new("ld2-login-remember", on)
+                        .label(t(lang, Key::RememberPassword))
+                        .on_change(move |on, _, acx| {
+                            me.update(acx, |root, cx| {
+                                root.config.remember_password = on;
+                                if let Err(e) = root.config_store.save(&root.config) {
+                                    tracing::warn!("не удалось сохранить конфиг: {e:#}");
+                                }
+                                cx.notify();
+                            })
+                        }),
+                )
+            })
             // M14/F21: предупреждения Caps/раскладка — под полями ввода.
             .children(caps_on.then(|| {
                 div()
@@ -1559,6 +2104,32 @@ fn host_os() -> gpui::OperatingSystem {
     }
 }
 
+/// M15/F25e: закрыть окно по mouse-up на scrim можно, только если
+/// жест **начался** на scrim (настоящий «клик мимо») и это не
+/// завершение перетаскивания/resize (gpui ещё держит active_drag).
+pub(crate) fn scrim_closes_on_up(scrim_down: bool, has_active_drag: bool) -> bool {
+    scrim_down && !has_active_drag
+}
+
+/// M15/F25d: верхний левый угол карточки окна персонажа — центр
+/// вьюпорта + смещение drag (absolute-позиционирование как в F14:
+/// без марджинов, «половинных» сдвигов центрирования нет).
+pub(crate) fn char_card_origin(vw: f32, vh: f32, w: f32, h: f32, delta: (f32, f32)) -> (f32, f32) {
+    (
+        ((vw - w) / 2.0).max(0.0) + delta.0,
+        ((vh - h) / 2.0).max(0.0) + delta.1,
+    )
+}
+
+/// M15/F25c: кламп размера карточки окна персонажа — min 560×400,
+/// max = вьюпорт − 40 px (но не уже min).
+pub(crate) fn clamp_char_size(w: f32, h: f32, vw: f32, vh: f32) -> (f32, f32) {
+    (
+        w.clamp(560.0, (vw - 40.0).max(560.0)),
+        h.clamp(400.0, (vh - 40.0).max(400.0)),
+    )
+}
+
 /// Нажатие → спецификация (`alt+up`) для записи в config (ФР-19).
 fn spec_from_keystroke(ks: &gpui::Keystroke) -> Option<String> {
     let name = ks.key.to_lowercase();
@@ -1595,10 +2166,70 @@ fn keystroke_matches(spec: &str, ks: &gpui::Keystroke) -> bool {
                 && want.modifiers.shift == ks.modifiers.shift
                 && want.modifiers.platform == ks.modifiers.platform
                 && want.modifiers.function == ks.modifiers.function
-                && want.key.eq_ignore_ascii_case(&ks.key)
+                // M15: одна и та же физическая клавиша на латинице и
+                // ЙЦУКЕН («c» на русской раскладке приходит как «с» —
+                // charactersIgnoringModifiers отдаёт символ раскладки).
+                && (want.key.eq_ignore_ascii_case(&ks.key)
+                    || keys_physically_equal(&want.key, &ks.key))
         }
         Err(_) => false,
     }
+}
+
+/// M15: раскладки QWERTY ↔ ЙЦУКЕН (26 букв; одиночные символы хоткеев).
+const QWERTY_CYRILLIC: [(char, char); 26] = [
+    ('q', 'й'),
+    ('w', 'ц'),
+    ('e', 'у'),
+    ('r', 'к'),
+    ('t', 'е'),
+    ('y', 'н'),
+    ('u', 'г'),
+    ('i', 'ш'),
+    ('o', 'щ'),
+    ('p', 'з'),
+    ('a', 'ф'),
+    ('s', 'ы'),
+    ('d', 'в'),
+    ('f', 'а'),
+    ('g', 'п'),
+    ('h', 'р'),
+    ('j', 'о'),
+    ('k', 'л'),
+    ('l', 'д'),
+    ('z', 'я'),
+    ('x', 'ч'),
+    ('c', 'с'),
+    ('v', 'м'),
+    ('b', 'и'),
+    ('n', 'т'),
+    ('m', 'ь'),
+];
+
+/// M15: приводит одиночный символ к «физическому» виду — кириллица
+/// ЙЦУКЕН → латиница QWERTY, регистр не важен; прочие символы — как есть.
+fn physical_key_char(ch: char) -> char {
+    let lower = ch.to_ascii_lowercase();
+    if lower.is_ascii_alphabetic() {
+        return lower;
+    }
+    QWERTY_CYRILLIC
+        .iter()
+        .find(|(_, cyr)| *cyr == lower)
+        .map(|(lat, _)| *lat)
+        .unwrap_or(lower)
+}
+
+/// M15: совпадение одиночных клавиш с учётом раскладки: «c» ↔ «с».
+fn keys_physically_equal(want: &str, got: &str) -> bool {
+    let (mut w, mut g) = (want.chars(), got.chars());
+    let (Some(w1), Some(g1), None) = (w.next(), g.next(), w.next()) else {
+        return false;
+    };
+    if g.next().is_some() {
+        return false;
+    }
+    physical_key_char(w1) == physical_key_char(g1)
 }
 
 /// Строка настройки: подпись слева, контролы справа.
@@ -1646,7 +2277,7 @@ struct HotkeyRowSpec {
 
 /// Все ремаппингуемые действия: навигация/цикл (ФР-19) + боевые
 /// панели (M14/F4, цифры 1–6 — Esc занят диалогами).
-const HOTKEY_ROWS: [HotkeyRowSpec; 11] = [
+const HOTKEY_ROWS: [HotkeyRowSpec; 13] = [
     HotkeyRowSpec {
         id: "ld2-hk-nav-up",
         label: Key::HkNavUp,
@@ -1712,6 +2343,18 @@ const HOTKEY_ROWS: [HotkeyRowSpec; 11] = [
         label: Key::HkConsumable,
         get: |hk| hk.action_consumable.as_str(),
         set: |hk, v| hk.action_consumable = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-character",
+        label: Key::HkOpenCharacter,
+        get: |hk| hk.open_character.as_str(),
+        set: |hk, v| hk.open_character = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-backpack",
+        label: Key::HkOpenBackpack,
+        get: |hk| hk.open_backpack.as_str(),
+        set: |hk, v| hk.open_backpack = v,
     },
 ];
 
@@ -2304,7 +2947,8 @@ impl Root {
             | ld2_core::store::Dialog::Trade => self.social_dialog(cx, pal),
             ld2_core::store::Dialog::Item
             | ld2_core::store::Dialog::Upgrade
-            | ld2_core::store::Dialog::Socket => self.sheet_dialog(cx, pal),
+            | ld2_core::store::Dialog::Socket
+            | ld2_core::store::Dialog::Inscribe => self.sheet_dialog(cx, pal),
             ld2_core::store::Dialog::Create | ld2_core::store::Dialog::Delete => {
                 self.chars_dialog(cx, pal)
             }
@@ -2319,6 +2963,10 @@ impl Render for Root {
         cx: &mut Context<'_, Self>,
     ) -> impl gpui::IntoElement {
         let pal = palette(&self.config.theme);
+        // M16/F29f: вьюпорт кэшируется — базовый размер окна
+        // клампится под экран при открытии (в обработчиках нет Window).
+        let vp = window.viewport_size();
+        self.viewport = (f32::from(vp.width), f32::from(vp.height));
         // Автофокус поля логина на первом кадре (экран входа).
         if self.first_frame {
             self.first_frame = false;
@@ -2356,12 +3004,26 @@ impl Render for Root {
             .when_some(self.skill_info_dialog(cx, &pal), |d, dialog| {
                 d.child(dialog)
             })
+            // M16/F29b: общий scrim всплывающих окон — под карточками
+            // (персонаж и рюкзак могут быть открыты одновременно).
+            .when_some(self.popup_scrim(cx), |d, layer| d.child(layer))
+            // M15/F25b: окно персонажа — всплывающий диалог;
+            // игровые диалоги/настройки/выход рисуются позже — выше.
+            .when_some(self.character_dialog(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M16/F29b: окно рюкзака (открывается вместе с персонажем).
+            .when_some(self.backpack_dialog(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
             .when_some(self.exit_dialog(cx, &pal), |d, dialog| d.child(dialog))
-            // M11.4: всплывающие тосты (notice → Ely Toast).
-            .child(ToastViewport::new("ld2-toasts", &self.toaster))
+            // M16/F29h: системные уведомления — вверху по центру
+            // (ely ToastViewport показывает внизу справа и не
+            // позиционируется — заменён; тайминг у Toaster).
+            .child(self.toast_stack(window, cx, &pal))
     }
 }
 
@@ -2387,11 +3049,15 @@ mod tests {
         }
     }
 
-    /// M14/F4: панель действий настраивается на 11 строк — у каждой
+    /// M14/F4: панель действий настраивается на 13 строк — у каждой
     /// свой id и дефолт из конфига; сеттер пишет только своё поле.
     #[test]
     fn hotkey_rows_cover_nav_and_six_actions() {
-        assert_eq!(HOTKEY_ROWS.len(), 11, "навигация/цикл + 6 действий");
+        assert_eq!(
+            HOTKEY_ROWS.len(),
+            13,
+            "навигация/цикл + 6 действий + окна персонажа и рюкзака"
+        );
         let ids: std::collections::HashSet<_> = HOTKEY_ROWS.iter().map(|r| r.id).collect();
         assert_eq!(ids.len(), HOTKEY_ROWS.len(), "id строк уникальны");
 
@@ -2404,6 +3070,8 @@ mod tests {
         assert_eq!((HOTKEY_ROWS[8].get)(&hk), "4", "побег (не Esc: диалоги)");
         assert_eq!((HOTKEY_ROWS[9].get)(&hk), "5", "руна");
         assert_eq!((HOTKEY_ROWS[10].get)(&hk), "6", "расходник");
+        assert_eq!((HOTKEY_ROWS[11].get)(&hk), "c", "окно персонажа (M15/F25)");
+        assert_eq!((HOTKEY_ROWS[12].get)(&hk), "i", "окно рюкзака (M16/F29b)");
 
         // Сеттер переписывает только своё поле.
         let mut hk = Hotkeys::default();
@@ -2411,6 +3079,131 @@ mod tests {
         assert_eq!(hk.action_attack, "f5");
         assert_eq!(hk.action_flee, "4", "остальные не тронуты");
         assert_eq!((HOTKEY_ROWS[5].get)(&hk), "f5");
+    }
+
+    /// M15/F25e: жест с шапки (drag) не закрывает окно по завершении.
+    #[test]
+    fn scrim_close_requires_gesture_started_on_scrim() {
+        assert!(
+            scrim_closes_on_up(true, false),
+            "настоящий клик мимо (down+up на scrim) закрывает"
+        );
+        assert!(
+            !scrim_closes_on_up(false, false),
+            "жест начат не на scrim → не закрываем"
+        );
+        assert!(
+            !scrim_closes_on_up(true, true),
+            "завершение перетаскивания (active_drag) не закрывает"
+        );
+    }
+
+    /// M15/F25d: позиция карточки — центр + смещение, без половинности.
+    #[test]
+    fn char_card_origin_centers_and_offsets() {
+        assert_eq!(
+            char_card_origin(1200.0, 800.0, 760.0, 560.0, (0.0, 0.0)),
+            (220.0, 120.0),
+            "по центру"
+        );
+        assert_eq!(
+            char_card_origin(1200.0, 800.0, 760.0, 560.0, (50.0, -30.0)),
+            (270.0, 90.0),
+            "смещение от центра"
+        );
+        assert_eq!(
+            char_card_origin(400.0, 300.0, 760.0, 560.0, (0.0, 0.0)),
+            (0.0, 0.0),
+            "карточка больше вьюпорта → в угол"
+        );
+    }
+
+    /// M15/F25c: кламп размера карточки окна персонажа.
+    #[test]
+    fn char_size_clamps_to_min_and_viewport() {
+        assert_eq!(
+            clamp_char_size(100.0, 100.0, 1200.0, 800.0),
+            (560.0, 400.0),
+            "min"
+        );
+        assert_eq!(
+            clamp_char_size(760.0, 560.0, 1200.0, 800.0),
+            (760.0, 560.0),
+            "норма"
+        );
+        assert_eq!(
+            clamp_char_size(5000.0, 5000.0, 1200.0, 800.0),
+            (1160.0, 760.0),
+            "max = вьюпорт − 40"
+        );
+        assert_eq!(
+            clamp_char_size(900.0, 700.0, 500.0, 300.0),
+            (560.0, 400.0),
+            "вьюпорт меньше min → min"
+        );
+    }
+
+    /// M15: хоткей «c» работает на латинице И на русской раскладке
+    /// (система отдаёт символ раскладки: «с»).
+    #[test]
+    fn hotkey_matches_across_layouts() {
+        let en = gpui::Keystroke::parse_with_os("c", host_os()).expect("спек парсится");
+        assert!(keystroke_matches("c", &en), "латиница ↔ латиница");
+
+        let mut ru = en.clone();
+        ru.key = "с".into();
+        assert!(keystroke_matches("c", &ru), "спек «c» ← нажатие на русской");
+
+        // Многосимвольные спеки и «соседние» клавиши не ломаются.
+        let tab = gpui::Keystroke::parse_with_os("tab", host_os()).expect("tab");
+        assert!(keystroke_matches("tab", &tab));
+        assert!(!keys_physically_equal("tab", "t"));
+        assert!(!keys_physically_equal("c", "x"), "чужая клавиша");
+    }
+
+    /// M15/F25i: `TYPING_FIELDS` покрывает все TextInput Root, а экран
+    /// игры — только его собственные поля: залипший фокус пароля после
+    /// Login → Game не блокирует хоткеи.
+    #[test]
+    fn typing_fields_cover_every_input_and_gate_game() {
+        const ALL: [&str; 12] = [
+            "login",
+            "password",
+            "reg_login",
+            "reg_email",
+            "reg_password",
+            "reg_password2",
+            "host",
+            "guild",
+            "chat",
+            "chat_filter",
+            "delete_name",
+            "create_name",
+        ];
+        for field in TYPING_FIELDS {
+            assert!(
+                ALL.contains(&field.name),
+                "неизвестное поле {:?} на экране {:?}",
+                field.name,
+                field.screen
+            );
+        }
+        for name in ALL {
+            assert!(
+                TYPING_FIELDS.iter().any(|f| f.name == name),
+                "поле {name} не проверяется ни на одном экране"
+            );
+        }
+        let game: Vec<&str> = TYPING_FIELDS
+            .iter()
+            .filter(|f| f.screen == Screen::Game)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(
+            game,
+            ["chat", "chat_filter", "guild", "host"],
+            "игровой экран проверяет только свои поля"
+        );
     }
 
     /// M14/F4: гейт «Мощного удара» — владение мечом 5 (skills.md §4).
@@ -2421,6 +3214,7 @@ mod tests {
             id: id.to_string(),
             name: None,
             description: None,
+            group: None,
             rank,
             xp: 0,
             xp_to_next: 120,

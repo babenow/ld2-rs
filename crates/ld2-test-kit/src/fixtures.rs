@@ -34,7 +34,7 @@ pub const CHAR_SLOT_LIMIT: u32 = 8;
 pub const UPGRADE_MAX: u32 = 9;
 
 /// Профили персонажей (D3, ADR-003).
-pub const PROFILES: &[&str] = &["warrior", "rogue", "mage"];
+pub const PROFILES: &[&str] = &["warrior", "archer", "mage"];
 
 /// `evt/session.start` — дословно по protocol.md §5 (лимит слотов — параметр).
 pub fn session_config(char_slot_limit: u32) -> SessionConfig {
@@ -156,10 +156,20 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
             slots: 40,
             equip_slots: vec![
                 "head".into(),
+                "shoulders".into(),
+                "bracers".into(),
+                "gloves".into(),
                 "body".into(),
-                "main_hand".into(),
-                "staff".into(),
+                "legs".into(),
                 "feet".into(),
+                "cloak".into(),
+                "ring1".into(),
+                "ring2".into(),
+                "amulet".into(),
+                "main_hand".into(),
+                "off_hand".into(),
+                "artifact1".into(),
+                "artifact2".into(),
             ],
         },
         upgrade: UpgradeConfig {
@@ -301,12 +311,15 @@ pub fn staff_item() -> ItemSnapshot {
     stats.insert("dmg".into(), json!("3..5"));
     ItemSnapshot {
         uid: "i_17".into(),
+        def_id: None,
         item_type: "staff".into(),
         name: "Ясеневый посох".into(),
         rarity: "rare".into(),
         upgrade: 2,
         stats,
         requires: None,
+        slot: Some("main_hand".into()),
+        hands: Some(2),
         sockets: Some(vec![
             Socket {
                 index: 0,
@@ -315,6 +328,8 @@ pub fn staff_item() -> ItemSnapshot {
                     spell: "fire_dart".into(),
                     charges: 7,
                     max: 10,
+                    damage: None,
+                    def_id: None,
                 }),
             },
             Socket {
@@ -333,12 +348,15 @@ pub fn scroll_item() -> ItemSnapshot {
     stats.insert("spell".into(), json!("fireball"));
     ItemSnapshot {
         uid: "s_1".into(),
+        def_id: None,
         item_type: "scroll".into(),
         name: "Свиток огненного шара".into(),
         rarity: "common".into(),
         upgrade: 0,
         stats,
         requires: None,
+        slot: None,
+        hands: None,
         sockets: None,
         qty: Some(1),
         gold_value: Some(30),
@@ -354,12 +372,15 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
     stats.insert("max".into(), json!(5));
     ItemSnapshot {
         uid: uid.to_string(),
+        def_id: None,
         item_type: "rune".into(),
         name: "Руна льда".into(),
         rarity: "common".into(),
         upgrade: 0,
         stats,
         requires: None,
+        slot: None,
+        hands: None,
         sockets: None,
         qty: Some(1),
         gold_value: Some(20),
@@ -374,6 +395,7 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
         .enumerate()
         .map(|(i, ty)| ItemSnapshot {
             uid: format!("m_{}", i + 1),
+            def_id: None,
             item_type: (*ty).into(),
             name: if *ty == "ingot_iron" {
                 "Железный слиток"
@@ -385,6 +407,8 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
             upgrade: 0,
             stats: Default::default(),
             requires: None,
+            slot: None,
+            hands: None,
             sockets: None,
             qty: Some(3),
             gold_value: Some(5),
@@ -397,6 +421,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
     CharacterState {
         id: id.into(),
         name: name.into(),
+        profile: Some("warrior".into()),
         attrs: BTreeMap::from([("str".to_string(), 14i64), ("int".to_string(), 9i64)]),
         skills: vec![
             SkillSnapshot {
@@ -406,6 +431,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
                 // rank 5 — открывает активку «Мощный удар» (skills.md §4);
                 // порог формулы §2.2: round(120 · 1.32^5) = 1471.
                 rank: 5,
+                group: Some("weapon".into()),
                 xp: 612,
                 xp_to_next: 1471,
             },
@@ -414,6 +440,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
                 name: Some("Аркана".into()),
                 description: None,
                 rank: 1,
+                group: Some("magic".into()),
                 xp: 40,
                 xp_to_next: 480,
             },
@@ -428,7 +455,14 @@ pub fn character(id: &str, name: &str) -> CharacterState {
         hp: Hp { cur: 42, max: 60 },
         mp: Mp { cur: 45, max: 60 },
         xp_pool: 120,
-        equip: BTreeMap::from([("staff".to_string(), Some("i_17".to_string()))]),
+        // M15/F24: уровень и шкала опыта (образец: 1 уровень, порог 100).
+        level: Some(1),
+        total_xp: Some(60),
+        xp_in_level: Some(60),
+        xp_to_next: Some(100),
+        // M15/F26: сервер без вкладки «Параметры» → None (заглушка).
+        derived: None,
+        equip: BTreeMap::from([("main_hand".to_string(), Some("i_17".to_string()))]),
         inventory: vec![
             staff_item(),
             scroll_item(),

@@ -14,7 +14,7 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
         return;
     };
     let ws = common::start_ws_server(&db_url).await;
-    let (mut c, _login, _char_id) = in_world(&ws).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
 
     // В лес — к волку (агрессивный, hp 18, урон сервера 6 → 3 удара).
     let ack = {
@@ -61,8 +61,10 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "осмотр трупа: {ack}");
     let loot = ack["payload"]["loot"].as_array().expect("лут трупа");
-    assert_eq!(loot.len(), 1, "drops волка: {loot:?}");
+    assert_eq!(loot.len(), 2, "drops волка: {loot:?}");
     assert_eq!(loot[0]["name"], "Зелье лечения");
+    // F29a: монеты падают с моба обычным предметом (слот 2).
+    assert_eq!(loot[1]["name"], "Золотая монета", "монеты лутом");
     let seq = c
         .send(
             "cmd/item.use",
@@ -72,6 +74,43 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     assert_eq!(c.ack(seq).await["result"], "ok", "взятие лута трупа");
     let added = c.wait_event("evt/item/added").await;
     assert_eq!(added["payload"]["item"]["name"], "Зелье лечения");
+    let seq = c
+        .send(
+            "cmd/item.use",
+            json!({ "item_uid": loot[1]["uid"].as_str().expect("uid") }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "взятие монет");
+    let added = c.wait_event("evt/item/added").await;
+    assert_eq!(added["payload"]["item"]["name"], "Золотая монета");
+    assert_eq!(added["payload"]["item"]["qty"], 10, "стак монет из def");
+
+    // M15/F24: общий опыт и шкала уровня в свежем снапшоте (26 XP).
+    let seq = c
+        .send("cmd/char.select", json!({ "char_id": char_id }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "перевыбор персонажа");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let ch = &snap["payload"]["char"];
+    assert!(
+        ch["inventory"]
+            .as_array()
+            .expect("инвентарь")
+            .iter()
+            .any(|i| i["type"] == "money" && i["qty"] == 10),
+        "F29a: монеты в инвентаре: {}",
+        ch["inventory"]
+    );
+    assert_eq!(ch["total_xp"], 26, "total_xp = XP убийства: {ch}");
+    assert_eq!(ch["level"], 1, "26 < 200 → уровень 1");
+    assert_eq!(ch["xp_in_level"], 26, "прогресс в уровне");
+    assert_eq!(ch["xp_to_next"], 100, "порог 1-го уровня: 50+50+0");
+
+    // M15/F26: производные параметры в том же снапшоте.
+    let der = ch["derived"].as_object().expect("derived в снапшоте");
+    assert_eq!(der["accuracy"], 80, "75 + dex(10)/2");
+    assert_eq!(der["damage_min"], 11, "база 6 + str/2");
+    assert_eq!(der["armor"], 0, "без брони в стартовой экипировке");
 }
 
 #[tokio::test]
@@ -110,6 +149,37 @@ async fn combat_stop_ends_battle() {
     assert_eq!(ack["error"]["code"], "E_NOT_IN_LOCATION", "нет боя: {ack}");
 }
 
+/// M17/F30f: авто-атака тика — строка с «чем бьёт» (оружие не
+/// экипировано → «руками») и жирным уроном; кастеру — «Вы бьёте».
+#[tokio::test]
+async fn auto_attack_log_line_has_hits_as() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "атака");
+
+    let hit = c
+        .wait(|v| v["type"] == "evt/combat/hit" && v["payload"]["source"] == char_id)
+        .await;
+    let text = hit["payload"]["text"].as_str().expect("текст удара");
+    assert!(text.starts_with("Вы бьёте"), "обращение кастеру: {text}");
+    assert!(text.contains("руками"), "чем бьёт (без оружия): {text}");
+    assert!(
+        text.contains(&format!("**{}**", hit["payload"]["amount"])),
+        "урон жирный: {text}"
+    );
+}
+
 /// Ранг навыка напрямую в БД (гейт `power_strike`: владение мечом 5).
 async fn set_skill_rank(db_url: &str, char_id: &str, skill: &str, rank: i32) {
     let cfg = common::test_config(db_url, |_| {});
@@ -126,6 +196,53 @@ async fn set_skill_rank(db_url: &str, char_id: &str, skill: &str, rank: i32) {
     .await
     .expect("ранг");
     pool.close().await;
+}
+
+/// M17/F30e: ресурс персонажа напрямую в БД — ярость перед ударом
+/// (активные навыки воина стоят ресурс класса, конфиг `cost`).
+async fn set_resource(db_url: &str, char_id: &str, cur: i32, max: i32) {
+    let cfg = common::test_config(db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    ld2_server::db::characters::set_resource(&pool, char_id, cur, max)
+        .await
+        .expect("ресурс");
+    pool.close().await;
+}
+
+/// M17/F30e: активная способность стоит ресурс класса — ярости
+/// нет (0 < cost) → E_NOT_ENOUGH_MP «не хватает ярости».
+#[tokio::test]
+async fn skill_use_requires_class_resource() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+    set_skill_rank(&db_url, &char_id, "sword", 5).await;
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    // Ярости нет: старт воина — 0 (M17/F30e), cost power_strike = 25.
+    let seq = c
+        .send(
+            "cmd/skill.use",
+            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NOT_ENOUGH_MP",
+        "гейт ресурса: {ack}"
+    );
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("ярости"),
+        "текст про ресурс класса: {ack}"
+    );
 }
 
 /// `cmd/skill.use` (§4, M14): гейт навыка, урон ×1.8, серверный кулдаун
@@ -155,6 +272,8 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
 
     // 2) Ранг есть → удар проходит: урон 6 × 1.8 = 10.8 → 11 (§4).
     set_skill_rank(&db_url, &char_id, "sword", 5).await;
+    // M17/F30e: удар стоит25 ярости — даём ресурс (старт — 0).
+    set_resource(&db_url, &char_id, 100, 100).await;
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
@@ -232,6 +351,8 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     let ws = format!("ws://{addr}/ws");
     let (mut c, _login, char_id) = in_world(&ws).await;
     set_skill_rank(&db_url, &char_id, "sword", 5).await;
+    // M17/F30e: удар стоит25 ярости — даём ресурс (старт — 0).
+    set_resource(&db_url, &char_id, 100, 100).await;
 
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))
@@ -249,6 +370,10 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     c.wait_event("evt/combat/cooldown").await;
     let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
     assert_eq!(hit["payload"]["amount"], 11, "урон: {hit}");
+    // M17/F30f: в логе имя способности (не id) и жирный урон.
+    let text = hit["payload"]["text"].as_str().unwrap_or_default();
+    assert!(text.contains("«Удар мощью»"), "имя скилла: {text}");
+    assert!(text.contains("**−11**"), "жирный урон: {text}");
 
     // Кулдаун 0.5 с → до 1 с в гранулярности epoch-секунд; ждём с запасом.
     tokio::time::sleep(std::time::Duration::from_millis(1300)).await;

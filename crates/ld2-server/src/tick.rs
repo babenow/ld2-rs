@@ -79,6 +79,13 @@ async fn tick_once(state: &SharedState) {
         let death_events = apply_mob_hit(state, hit).await;
         send_all(state, &death_events);
     }
+    // M17/F30e: ярость воина за нанесённый урон — патч mp адресату.
+    for (char_id, amount) in &plan.char_hits {
+        if let Some((addr, text)) = apply_rage_dealt(state, char_id, *amount).await {
+            let world = state.world.lock().expect("мир");
+            world.send_to_char(&addr, text);
+        }
+    }
     // 3) XP убийств — в БД и событием (D27); квесты-«убийства» (ФР-12).
     for work in &plan.xp {
         if let Some(text) = grant_kill_xp(state, work).await {
@@ -131,6 +138,9 @@ struct Plan {
     events: Vec<(String, String)>,
     mob_hits: Vec<MobHit>,
     xp: Vec<KillXp>,
+    /// M17/F30e: нанесённый персонажами урон → прирост ярости (БД
+    /// применяется в `tick_once`, у плана нет доступа к БД).
+    char_hits: Vec<(String, i64)>,
 }
 
 fn plan_combat(
@@ -147,7 +157,9 @@ fn plan_combat(
         if now_ms < next_at {
             continue;
         }
-        world.set_next_attack(&char_id, now_ms + attack_interval_ms);
+        // M17/F30g: период атаки — cooldown_s оружия, иначе конфиг.
+        let interval = world.char_attack_ms(&char_id).unwrap_or(attack_interval_ms);
+        world.set_next_attack(&char_id, now_ms + interval);
 
         let target_alive_in_loc = world.mob_location(&target).is_some_and(|l| l == loc);
         if !target_alive_in_loc {
@@ -174,6 +186,8 @@ fn plan_combat(
             );
             continue;
         };
+        // M17/F30e: нанесённый урон → ярость (применяется в tick_once).
+        plan.char_hits.push((char_id.clone(), cfg.base_damage));
         let mob_name = world
             .mob(&target)
             .map(|m| m.name.clone())
@@ -181,23 +195,50 @@ fn plan_combat(
         let mob_max = world.mob_max_hp(&target);
         let source_name = world.char_name(&char_id).unwrap_or_default();
 
+        // M17/F30f: строка удара — «вы» атакующему, имя — наблюдателям;
+        // «чем бьёт» — кэш экипированного оружия в мире.
+        let hits_as = world.char_hits_as(&char_id);
+        let mk_hit = |text: String| CombatHit {
+            source: char_id.clone(),
+            source_name: source_name.clone(),
+            target: target.clone(),
+            target_name: mob_name.clone(),
+            kind: CombatKind::Melee,
+            amount: cfg.base_damage,
+            crit: false,
+            miss: false,
+            text,
+            extra: Default::default(),
+        };
         push_event(
             &mut plan,
             &char_id,
             "evt/combat/hit",
-            &CombatHit {
-                source: char_id.clone(),
-                source_name,
-                target: target.clone(),
-                target_name: mob_name.clone(),
-                kind: CombatKind::Melee,
-                amount: cfg.base_damage,
-                crit: false,
-                miss: false,
-                text: format!("Вы бьёте {mob_name}: {}", cfg.base_damage),
-                extra: Default::default(),
-            },
+            &mk_hit(crate::combat_log::melee_hit_text(
+                &source_name,
+                &mob_name,
+                hits_as,
+                cfg.base_damage,
+                true,
+            )),
         );
+        for addr in world.chars_in_location(&loc) {
+            if addr == char_id {
+                continue;
+            }
+            push_event(
+                &mut plan,
+                &addr,
+                "evt/combat/hit",
+                &mk_hit(crate::combat_log::melee_hit_text(
+                    &source_name,
+                    &mob_name,
+                    hits_as,
+                    cfg.base_damage,
+                    false,
+                )),
+            );
+        }
         push_event(
             &mut plan,
             &char_id,
@@ -263,7 +304,7 @@ fn plan_combat(
                 amount,
                 crit: false,
                 miss: false,
-                text: format!("{mob_name} бьёт вас: {amount}"),
+                text: format!("{mob_name} бьёт вас: **{amount}**"),
                 extra: Default::default(),
             },
         );
@@ -352,6 +393,43 @@ fn event_text<T: serde::Serialize>(ty: &str, payload: &T) -> String {
 }
 
 /// Урон моба персонажу (БД, D27): урон → `evt/char/stats`; 0 hp → общий
+/// M17/F30e: прирост ярости воина за нанесённый урон — БД + патч mp
+/// адресату; не-воин/без изменений → `None`.
+async fn apply_rage_dealt(
+    state: &SharedState,
+    char_id: &str,
+    damage: i64,
+) -> Option<(String, String)> {
+    let row = crate::db::characters::get(&state.pool, char_id)
+        .await
+        .ok()
+        .flatten()?;
+    let res = &state.config.gameplay.resource;
+    let profile = row.profile.as_str();
+    let gain = crate::systems::rage_gain(res, profile, damage);
+    if gain <= 0 {
+        return None;
+    }
+    let max = crate::systems::resource_max(profile, res, i64::from(row.mp_max));
+    let cur = i64::from(row.mp_cur).min(max);
+    let new = (cur + gain).min(max);
+    if new <= cur {
+        return None;
+    }
+    if let Err(e) = crate::db::characters::set_mp(&state.pool, char_id, new as i32).await {
+        warn!("ярость (нанесённый урон {char_id}): {e}");
+        return None;
+    }
+    let mut patch = serde_json::Map::new();
+    patch.insert("mp".into(), json!({ "cur": new, "max": max }));
+    let text = crate::session::event_text(
+        "evt/char/stats",
+        None,
+        serde_json::to_value(CharStats { patch }).unwrap_or_default(),
+    );
+    Some((char_id.to_string(), text))
+}
+
 /// поток смерти ФР-06 + синхронизация позиции в мире.
 async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String)> {
     let pool = &state.pool;
@@ -380,6 +458,21 @@ async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String
     }
     let mut patch = serde_json::Map::new();
     patch.insert("hp".into(), json!({ "cur": new_hp, "max": row.hp_max }));
+    // M17/F30e: ярость воина за полученный урон — в тот же патч mp.
+    if row.profile == "warrior" {
+        let res = &state.config.gameplay.resource;
+        let max = crate::systems::resource_max("warrior", res, i64::from(row.mp_max));
+        let cur = i64::from(row.mp_cur).min(max);
+        let new = (cur + crate::systems::rage_gain(res, "warrior", hit.amount)).min(max);
+        if new > cur {
+            match crate::db::characters::set_mp(pool, &hit.char_id, new as i32).await {
+                Ok(()) => {
+                    patch.insert("mp".into(), json!({ "cur": new, "max": max }));
+                }
+                Err(e) => warn!("ярость (полученный урон {}): {e}", hit.char_id),
+            }
+        }
+    }
     let text = crate::session::event_text(
         "evt/char/stats",
         None,
@@ -434,6 +527,15 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         _ => return None,
     };
 
+    // M15/F24: общий опыт растёт при каждом убийстве — даже когда
+    // навык на гейте и его XP не изменился.
+    if work.amount > 0 {
+        if let Err(e) = crate::db::characters::add_total_xp(pool, &work.char_id, work.amount).await
+        {
+            warn!("тик (total_xp {}): {e}", work.char_id);
+        }
+    }
+
     let (new_xp, new_rank) =
         crate::systems::apply_kill_xp(xp, rank, work.amount, &state.config.skills, max_attr);
     if new_xp == xp && new_rank == rank {
@@ -460,11 +562,10 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
     ))
 }
 
-/// Мана-реген раз в секунту (skills.md §2.4, конфиг `[gameplay.magic.mana]`):
-/// вне боя — полный бар за `regen_out_s`, в бою — `regen_in_pct` %/с.
-/// Дробная мана округляется вверх — v1-допущение (отклонение M12.5b).
+/// Ресурс-шаг раз в секунду (M17/F30e; мана — skills.md §2.4):
+/// мана — прежняя модель, **ярость** воина падает вне боя (в бою не
+/// трогаем), **энергия** лучника растёт всегда; дробь — вверх (M12.5b).
 async fn regen_step(state: &SharedState) {
-    let mana = &state.config.gameplay.magic.mana;
     let online: Vec<String> = {
         let world = state.world.lock().expect("мир");
         world.online_chars()
@@ -481,24 +582,22 @@ async fn regen_step(state: &SharedState) {
             Ok(Some(row)) => row,
             _ => continue,
         };
-        let max = i64::from(row.mp_max);
-        let cur = i64::from(row.mp_cur);
-        if cur >= max {
-            continue; // полная мана — молчим (без шума каждый тик)
-        }
-        let delta = if in_combat {
-            (f64::from(row.mp_max) * mana.regen_in_pct_s / 100.0)
-                .ceil()
-                .max(1.0) as i64
-        } else {
-            (f64::from(row.mp_max) / (mana.regen_out_s.max(1) as f64))
-                .ceil()
-                .max(1.0) as i64
+        // M17/F30e: ресурс по профилю — шаг из systems (None — молчим).
+        let profile = row.profile.as_str();
+        let max = crate::systems::resource_max(
+            profile,
+            &state.config.gameplay.resource,
+            i64::from(row.mp_max),
+        );
+        let Some(new) = crate::systems::resource_step(
+            profile,
+            i64::from(row.mp_cur),
+            max,
+            in_combat,
+            &state.config,
+        ) else {
+            continue; // без изменений — без шума каждый тик
         };
-        let new = (cur + delta).min(max);
-        if new <= cur {
-            continue;
-        }
         if let Err(e) = crate::db::characters::set_mp(&state.pool, char_id, new as i32).await {
             warn!("реген (mp {}): {e}", char_id);
             continue;

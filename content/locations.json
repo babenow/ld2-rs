@@ -123,7 +123,8 @@
           "aggro": true,
           "difficulty": 3,
           "drops": [
-            "potion_heal"
+            "potion_heal",
+            "gold_coin"
           ]
         },
         {

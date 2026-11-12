@@ -87,8 +87,14 @@ pub struct GameplaySection {
     pub magic: MagicSection,
     /// Профессии и крафт (skills.md §8, M12.6).
     pub professions: ProfessionsSection,
+    /// M15/F24: уровень персонажа (окно персонажа).
+    pub level: LevelSection,
     /// Максимум участников группы (ФР-14, M12.7b).
     pub party_max_members: u32,
+    /// M17/F30e: ресурсы по классам (WoW); секция опциональна —
+    /// без неё действуют дефолты (обратная совместимость конфигов).
+    #[serde(default)]
+    pub resource: ResourceSection,
 }
 
 /// Значение capability-флага §5: булево или строка (`upgrade.rules`).
@@ -172,6 +178,37 @@ pub struct ManaSection {
     pub rune_cost: u32,
 }
 
+/// M17/F30e: ресурсы по классам как в WoW (`[gameplay.resource]`) —
+/// воин: ярость (копится за урон, падает вне боя), лучник: энергия
+/// (тратится активными навыками, восстанавливается всегда), маг:
+/// мана (`[gameplay.magic.mana]`, без изменений).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceSection {
+    /// Максимум ярости (воин).
+    pub rage_max: u32,
+    /// Максимум энергии (лучник).
+    pub energy_max: u32,
+    /// Доля урона (нанесённого и полученного) → ярость.
+    pub rage_gain_pct: f64,
+    /// Падение ярости вне боя, ед/сек.
+    pub rage_decay_s: f64,
+    /// Восстановление энергии, ед/сек (в бою и вне).
+    pub energy_regen_s: f64,
+}
+
+impl Default for ResourceSection {
+    fn default() -> Self {
+        Self {
+            rage_max: 100,
+            energy_max: 100,
+            rage_gain_pct: 0.15,
+            rage_decay_s: 5.0,
+            energy_regen_s: 20.0,
+        }
+    }
+}
+
 /// Баланс профессий (skills.md §8 `[professions]`, D25 — из конфига).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -234,6 +271,10 @@ pub struct ActiveSkill {
     /// Требуемый ранг `req_skill`.
     #[serde(default)]
     pub req_rank: u32,
+    /// M17/F30e: стоимость в ресурсе класса — ярость/энергия/мана
+    /// (0 — бесплатно, дефолт старых конфигов).
+    #[serde(default)]
+    pub cost: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -253,6 +294,23 @@ pub struct CombatSection {
     pub base_damage: i64,
     /// Шанс успешного побега (`cmd/combat.flee`), `0..=1`.
     pub flee_chance: f64,
+}
+
+/// M15/F24: уровень персонажа — квадратичная кривая опыта за
+/// убийства: `XP = round(A×level² + B×level + C)` — опыт перехода
+/// `level → level+1`. Роли (уточнение пользователя 2026-11-09):
+/// A — рост на высоких уровнях, B — темп в начале, C — смещение.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LevelSection {
+    /// Коэффициент A квадрата (≥ 0; дефолт 50).
+    pub a: f64,
+    /// Коэффициент B линейной слагаемой (≥ 0; дефолт 50).
+    pub b: f64,
+    /// Коэффициент C — базовое смещение (≥ 0; дефолт 0).
+    pub c: f64,
+    /// Потолок: опыт копится без роста уровня (зерно навыков).
+    pub max_level: u32,
 }
 
 /// Ошибка загрузки/валидации конфига. Всегда указывает путь к файлу, а
@@ -402,6 +460,24 @@ impl Config {
             ));
         }
 
+        // M15/F24: квадратичная кривая XP = round(A×level²+B×level+C).
+        let lv = &self.gameplay.level;
+        if !lv.a.is_finite() || lv.a < 0.0 || !lv.b.is_finite() || lv.b < 0.0 {
+            out.push("gameplay.level.a/b: должны быть конечными и ≥ 0".into());
+        }
+        if !lv.c.is_finite() || lv.c < 0.0 {
+            out.push("gameplay.level.c: должен быть конечным и ≥ 0".into());
+        }
+        if lv.a + lv.b + lv.c < 1.0 {
+            out.push(format!(
+                "gameplay.level: XP(1) = a+b+c должен быть ≥ 1 (получено: {})",
+                lv.a + lv.b + lv.c
+            ));
+        }
+        if lv.max_level < 1 {
+            out.push("gameplay.level.max_level: должен быть ≥ 1".into());
+        }
+
         if self.gameplay.magic.rune_recharge.trim().is_empty() {
             out.push("gameplay.magic.rune_recharge: не должно быть пустым".into());
         }
@@ -459,6 +535,22 @@ impl Config {
         }
         if self.skills.kill_xp_base < 0 || self.skills.kill_xp_per_difficulty < 0 {
             out.push("skills.kill_xp_*: не может быть отрицательным".into());
+        }
+        // M17/F30e: параметры ресурсов по классам — конечные и положительные.
+        {
+            let res = &self.gameplay.resource;
+            if res.rage_max == 0 || res.energy_max == 0 {
+                out.push("gameplay.resource: rage_max/energy_max должны быть > 0".into());
+            }
+            if !res.rage_gain_pct.is_finite() || !(0.0..=1.0).contains(&res.rage_gain_pct) {
+                out.push("gameplay.resource.rage_gain_pct: должен быть в [0, 1]".into());
+            }
+            if !res.rage_decay_s.is_finite() || res.rage_decay_s <= 0.0 {
+                out.push("gameplay.resource.rage_decay_s: должен быть > 0".into());
+            }
+            if !res.energy_regen_s.is_finite() || res.energy_regen_s <= 0.0 {
+                out.push("gameplay.resource.energy_regen_s: должен быть > 0".into());
+            }
         }
         for (id, act) in &self.skills.active {
             if !act.cooldown_s.is_finite() || act.cooldown_s <= 0.0 {

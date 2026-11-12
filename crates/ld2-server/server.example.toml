@@ -40,6 +40,13 @@ attack_interval_s = 1.0     # период атак в бою, с
 base_damage = 6             # базовый урон персонажа (v1)
 flee_chance = 0.5           # шанс cmd/combat.flee, 0..=1
 
+[gameplay.level]            # M15/F24: уровень персонажа (окно персонажа)
+# XP = round(A×level² + B×level + C) — опыт перехода level → level+1
+a = 50.0                    # рост на высоких уровнях
+b = 50.0                    # темп в начале
+c = 0.0                     # базовое смещение (XP(1) = 100)
+max_level = 60
+
 [gameplay.features]        # → §5 features; неизвестные ключи разрешены
 "loot.roll" = false
 "respawn.inn" = true
@@ -79,7 +86,7 @@ channels = ["system", "location", "global", "party", "guild", "whisper"]
 
 [gameplay.inventory]
 slots = 40
-equip_slots = ["head", "body", "main_hand", "staff", "feet"]
+equip_slots = ["head", "shoulders", "bracers", "gloves", "body", "legs", "feet", "cloak", "ring1", "ring2", "amulet", "main_hand", "off_hand", "artifact1", "artifact2"]
 
 [gameplay.upgrade]
 max_level = 9
@@ -120,9 +127,17 @@ kill_xp_base = 8
 kill_xp_per_difficulty = 6
 
 # M14: активные способности cmd/skill.use (skills.md §4; D25)
+[gameplay.resource]
+rage_max = 100        # M17/F30e: максимум ярости (воин)
+energy_max = 100      # максимум энергии (лучник)
+rage_gain_pct = 0.15  # доля урона (в/из) → ярость
+rage_decay_s = 5.0    # падение вне боя, ед/сек
+energy_regen_s = 20.0 # восстановление энергии, ед/сек
+
 [skills.active.power_strike]
 cooldown_s = 8        # §4: кулдаун «Мощного удара»
 damage_mult = 1.8     # §4: ×1.8 урона
+cost = 25             # M17/F30e: цена в ресурсе класса
 req_skill = "sword"   # открывается: владение мечом 5
 req_rank = 5
 

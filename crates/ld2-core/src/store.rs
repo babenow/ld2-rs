@@ -172,8 +172,6 @@ pub struct AppStore {
     pub select_error: Option<String>,
     /// Ошибки действий мира (move/attack/examine), ФР-03.
     pub world_error: Option<String>,
-    /// Ошибки действий листа/инвентаря (invest/equip/…), ФР-04/ФР-07.
-    pub sheet_error: Option<String>,
     /// Модалка смерти (ФР-06): закрывается только подтверждением.
     pub death: Option<ld2_protocol::evt::CharDeath>,
     /// Описание предмета (ФР-07 «показать описание»).
@@ -182,12 +180,17 @@ pub struct AppStore {
     pub upgrade: Option<UpgradeView>,
     /// Открытая инкрустация (ФР-09): uid посоха.
     pub socketing: Option<String>,
+    /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
+    pub inscribe: Option<String>,
     /// Смещение часов сервера (evt/time.sync): server = local + offset.
     pub time_offset: i64,
     /// Выбранная цель (ФР-05): клик по строке / Tab.
     pub target: Option<String>,
     /// Кулдауны активных навыков: skill_id → until epoch (ФР-05).
     pub combat_cooldowns: BTreeMap<String, i64>,
+    /// M17/F30g: кулдауны предметов `item:<def_id>` → (until мс,
+    /// полная длительность мс) — таймер и прогресс-бар кнопок hotbar.
+    pub item_cooldowns: BTreeMap<String, (i64, i64)>,
     /// Глобальный кулдаун боевых действий (M14/F4): epoch **мс**, до
     /// которого заблокированы кнопки панели — клиентская блокировка
     /// 1 с (сервер не меняется; приоритет — max(основной, глобальный)).
@@ -278,6 +281,8 @@ pub enum Dialog {
     Item,
     Upgrade,
     Socket,
+    /// M17/F30a: выбор оружия под инкрустацию руны/самоцвета.
+    Inscribe,
     Create,
     Delete,
 }
@@ -285,8 +290,9 @@ pub enum Dialog {
 impl AppStore {
     /// Активный диалог (M11.2): экран персонажей — создание/удаление;
     /// игра — смерть > осмотр > лут > группа > гильдия > сделка > предмет >
-    /// улучшение > инкрустация; вне игры/персонажей — None. `create_open` и
-    /// `delete_open` — флаги UI (Root), остальное — состояние store.
+    /// улучшение > инкрустация > выбор цели инкрустации (M17/F30a);
+    /// вне игры/персонажей — None. `create_open` и `delete_open` —
+    /// флаги UI (Root), остальное — состояние store.
     pub fn active_dialog(&self, create_open: bool, delete_open: bool) -> Option<Dialog> {
         match self.screen {
             Screen::Characters => {
@@ -317,6 +323,9 @@ impl AppStore {
                     Some(Dialog::Upgrade)
                 } else if self.socketing.is_some() {
                     Some(Dialog::Socket)
+                } else if self.inscribe.is_some() {
+                    // M17/F30a: окно «Куда инкрустировать…».
+                    Some(Dialog::Inscribe)
                 } else {
                     None
                 }
@@ -367,11 +376,12 @@ impl AppStore {
             create_error: None,
             select_error: None,
             world_error: None,
-            sheet_error: None,
             death: None,
             item_detail: None,
             upgrade: None,
             socketing: None,
+            inscribe: None,
+            item_cooldowns: BTreeMap::new(),
             time_offset: 0,
             target: None,
             combat_cooldowns: BTreeMap::new(),
@@ -488,17 +498,20 @@ impl AppStore {
                     self.notice = Some(msg);
                 }
                 Act::Move | Act::Attack | Act::Examine => self.world_error = Some(msg),
+                // M16/F29h: ошибки листа — системные уведомления
+                // (тосты), как и весь прочий фидбек.
                 Act::Invest
                 | Act::Equip
                 | Act::Unequip
                 | Act::Drop
                 | Act::Preview
                 | Act::Upgrade
-                | Act::Socket => self.sheet_error = Some(msg),
+                | Act::Socket
+                | Act::CrimeLog
+                | Act::Learn
+                | Act::Craft
+                | Act::Quest => self.notice = Some(msg),
                 Act::Cast => self.world_error = Some(msg),
-                Act::CrimeLog | Act::Learn | Act::Craft | Act::Quest => {
-                    self.sheet_error = Some(msg)
-                }
                 // Лимиты чата (E_RATE_LIMITED §9) и права (E_PERMISSION,
                 // M14/F19) — тостом.
                 Act::Chat | Act::ChatDelete => self.notice = Some(msg),
@@ -633,7 +646,6 @@ impl AppStore {
                         }
                     }
                 }
-                self.sheet_error = None;
             }
             Act::Preview => {
                 if let (Some(upgrade), Some(payload)) =
@@ -643,10 +655,18 @@ impl AppStore {
                 }
             }
             Act::Socket => {
-                // §7: ack извлекаемого несёт {staff, rune}, вставки — {staff}.
+                // §7: ack извлекаемого несёт {staff, rune}, вставки — {staff};
+                // M18/F32: цель надета — ack дополнен `char` (бонусы
+                // самоцвета/урон руны вступили в силу сразу).
                 if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
                 {
-                    apply_item_patch(&mut snap.char, payload);
+                    if let Ok(ch) = serde_json::from_value::<ld2_protocol::types::CharacterState>(
+                        payload["char"].clone(),
+                    ) {
+                        snap.char = ch;
+                    } else {
+                        apply_item_patch(&mut snap.char, payload);
+                    }
                 }
             }
             Act::Create => {
@@ -696,6 +716,15 @@ impl AppStore {
                     return vec![];
                 };
                 if let Some(skill) = cd.skill_id {
+                    // M17/F30g: предметные кулдауны — с полной
+                    // длительностью для прогресс-бара кнопки.
+                    if skill.starts_with("item:") {
+                        if let Some(total) = cd.duration_ms {
+                            self.item_cooldowns
+                                .insert(skill, (cd.until_epoch * 1000, total));
+                            return vec![];
+                        }
+                    }
                     self.combat_cooldowns.insert(skill, cd.until_epoch);
                 }
                 vec![]
@@ -992,16 +1021,11 @@ impl AppStore {
             }
             "evt/char/death" => {
                 // ФР-06: сводка утраченного — модалка, закрывается подтверждением.
+                // M18: в журнал НЕ выводим — утраченное видно в самой
+                // модалке (полный список, со скроллом).
                 let Ok(death) = serde_json::from_value::<CharDeath>(payload) else {
                     return vec![];
                 };
-                self.push_log(
-                    LogKind::Crime,
-                    format!(
-                        "ВЫ ПОГИБЛИ — утрачено предметов: {}",
-                        death.lost_items.len()
-                    ),
-                );
                 self.death = Some(death);
                 self.target = None;
                 vec![Effect::Notify(NotifyKind::Death)]
@@ -1437,8 +1461,22 @@ impl AppStore {
 
     /// Отправка команды листа/инвентаря (ФР-04/ФР-07).
     pub fn on_sheet_sent(&mut self, act: Act) {
-        self.sheet_error = None;
         self.pending = Some(act);
+    }
+
+    /// M16/F29g: локальный обмен позициями предметов в сетке рюкзака
+    /// (после cmd/item.move — порядок сервера подхватится при resync).
+    pub fn swap_inventory(&mut self, a: &str, b: &str) {
+        let Some(snap) = self.snapshot.as_mut() else {
+            return;
+        };
+        let Some(i) = snap.char.inventory.iter().position(|i| i.uid == a) else {
+            return;
+        };
+        let Some(j) = snap.char.inventory.iter().position(|i| i.uid == b) else {
+            return;
+        };
+        snap.char.inventory.swap(i, j);
     }
 
     /// Подтверждение смерти (ФР-06): окно «Вы погибли» закрывается
@@ -1449,7 +1487,6 @@ impl AppStore {
 
     /// Открыть модалку улучшения (ФР-10); превью придёт от сервера.
     pub fn open_upgrade(&mut self, item_uid: String, item_name: String) {
-        self.sheet_error = None;
         self.upgrade = Some(UpgradeView {
             item_uid,
             item_name,
@@ -1463,12 +1500,20 @@ impl AppStore {
 
     /// Открыть инкрустацию посоха (ФР-09).
     pub fn open_socketing(&mut self, staff_uid: String) {
-        self.sheet_error = None;
         self.socketing = Some(staff_uid);
     }
 
     pub fn close_socketing(&mut self) {
         self.socketing = None;
+    }
+
+    /// M17/F30a: открыть список оружия под инкрустацию руны.
+    pub fn open_inscribe(&mut self, rune_uid: String) {
+        self.inscribe = Some(rune_uid);
+    }
+
+    pub fn close_inscribe(&mut self) {
+        self.inscribe = None;
     }
 
     /// Выбор цели кликом по строке сущности (ФР-05).
@@ -1490,6 +1535,14 @@ impl AppStore {
     }
 
     /// Остаток глобального кулдауна, мс (≥0).
+    /// M17/F30g: остаток и полная длительность кулдауна предмета
+    /// (`item:<def_id>`); `None` — кулдауна нет.
+    pub fn item_cd_bar(&self, def_id: &str, now_ms: i64) -> Option<(i64, i64)> {
+        let (until, total) = self.item_cooldowns.get(&format!("item:{def_id}"))?;
+        let left = (*until - now_ms).max(0);
+        (left > 0).then_some((left, *total))
+    }
+
     pub fn global_cooldown_left(&self, now_ms: i64) -> i64 {
         (self.global_cooldown_until - now_ms).max(0)
     }
@@ -1562,7 +1615,6 @@ impl AppStore {
         self.create_error = None;
         self.select_error = None;
         self.world_error = None;
-        self.sheet_error = None;
         self.death = None;
         self.item_detail = None;
         self.entity_detail = None;
@@ -1634,7 +1686,6 @@ impl AppStore {
         self.snapshot = None;
         self.select_error = None;
         self.world_error = None;
-        self.sheet_error = None;
         self.entity_detail = None;
         self.item_detail = None;
         self.death = None;
@@ -1835,26 +1886,27 @@ pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&s
     }
 }
 
-/// Профиль персонажа (D3: Воин/Вор/Маг — wire-значения для `char.create`).
-/// Общий для обоих клиентов (D12).
+/// Профиль персонажа (D3: Воин/Лучник/Маг — wire-значения для
+/// `char.create`; M17/F30b: «Вор» → «Лучник»). Общий для обоих
+/// клиентов (D12).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Profile {
     #[default]
     Warrior,
-    Rogue,
+    Archer,
     Mage,
 }
 
 impl Profile {
     pub fn all() -> [Profile; 3] {
-        [Profile::Warrior, Profile::Rogue, Profile::Mage]
+        [Profile::Warrior, Profile::Archer, Profile::Mage]
     }
 
     /// Wire-значение `cmd/char.create.profile`.
     pub fn value(self) -> &'static str {
         match self {
             Profile::Warrior => "warrior",
-            Profile::Rogue => "rogue",
+            Profile::Archer => "archer",
             Profile::Mage => "mage",
         }
     }
@@ -1864,7 +1916,7 @@ impl Profile {
         use crate::l10n::Key;
         match self {
             Profile::Warrior => Key::ProfileWarrior,
-            Profile::Rogue => Key::ProfileRogue,
+            Profile::Archer => Key::ProfileArcher,
             Profile::Mage => Key::ProfileMage,
         }
     }
@@ -2009,6 +2061,10 @@ mod tests {
         s.item_detail = None;
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Socket));
         s.socketing = None;
+        // M17/F30a: выбор цели инкрустации — отдельный диалог.
+        s.inscribe = Some("rune_1".into());
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Inscribe));
+        s.inscribe = None;
         assert_eq!(s.active_dialog(false, false), None);
     }
 
@@ -2943,9 +2999,11 @@ mod tests {
         ));
         let death = store.death.as_ref().expect("модалка смерти");
         assert_eq!(death.lost_items.len(), 2, "сводка утраченного (ФР-06)");
-        let last = store.log.back().expect("лог");
-        assert_eq!(last.kind, LogKind::Crime);
-        assert!(last.text.contains("ВЫ ПОГИБЛИ"));
+        // M18: строки утраты в журнале больше нет — только модалка.
+        assert!(
+            store.log.iter().all(|e| !e.text.contains("ВЫ ПОГИБЛИ")),
+            "в журнале нет строки о гибели"
+        );
 
         // Закрыть можно только подтверждением.
         store.confirm_death();
@@ -2964,7 +3022,7 @@ mod tests {
             .iter()
             .any(|i| i.uid == "i_17"));
         assert_eq!(
-            store.snapshot.as_ref().unwrap().char.equip.get("staff"),
+            store.snapshot.as_ref().unwrap().char.equip.get("main_hand"),
             Some(&Some("i_17".to_string()))
         );
 
@@ -2978,7 +3036,7 @@ mod tests {
             "предмет убран из инвентаря"
         );
         assert!(
-            snap.char.equip.get("staff").is_none_or(|v| v.is_none()),
+            snap.char.equip.get("main_hand").is_none_or(|v| v.is_none()),
             "слот экипировки освобождён"
         );
     }
@@ -3035,16 +3093,16 @@ mod tests {
             Some(&Some("loot_m_3".to_string())),
             "экипировка применена из ack (нет событий на смену слота)"
         );
-        assert!(store.sheet_error.is_none() && store.pending.is_none());
+        assert!(store.notice.is_none() && store.pending.is_none());
     }
 
     #[test]
-    fn equip_ack_error_goes_to_sheet_error() {
+    fn equip_ack_error_goes_to_notice() {
         let mut store = in_game();
         store.on_sheet_sent(Act::Equip);
         let ack = ld2_protocol::Ack::error(12, None, &ErrorCode::ItemGone, "предмета нет");
         store.apply(IngressEvent::Ack(ack));
-        assert_eq!(store.sheet_error.as_deref(), Some("предмета нет"));
+        assert_eq!(store.notice.as_deref(), Some("предмета нет"));
         assert!(store.world_error.is_none(), "ошибки листа не в мире");
     }
 
@@ -3158,6 +3216,8 @@ mod tests {
         // Патч целым предметом (сокеты после инкрустации).
         let mut full = fixtures::staff_item();
         full.sockets.as_mut().unwrap()[1].rune = Some(ld2_protocol::types::RuneInfo {
+            damage: None,
+            def_id: None,
             name: "Руна льда".into(),
             spell: "ice_shard".into(),
             charges: 5,
@@ -3217,7 +3277,31 @@ mod tests {
             snap.char.inventory.iter().any(|i| i.uid == "rune_i_17_0"),
             "руна в инвентаре"
         );
-        assert!(store.sheet_error.is_none());
+        assert!(store.notice.is_none());
+    }
+
+    /// M18/F32: ack с `char` (цель была надета) применяет атрибуты —
+    /// бонус самоцвета виден сразу, без переодевания.
+    #[test]
+    fn socket_ack_with_char_applies_attrs() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Socket);
+        let mut ch = fixtures::character("c1", "Ким");
+        ch.attrs.insert("str".into(), 13);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            23,
+            Some(1021),
+            &serde_json::json!({ "staff": fixtures::staff_item(), "char": ch }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let snap = store.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snap.char.attrs.get("str"),
+            Some(&13i64),
+            "бонус самоцвета применён из `char` ack"
+        );
+        assert!(store.notice.is_none());
     }
 
     #[test]
@@ -3227,7 +3311,7 @@ mod tests {
         let ack = ld2_protocol::Ack::error(23, None, &ErrorCode::NotEnoughMp, "не хватает маны");
         store.apply(IngressEvent::Ack(ack));
         assert_eq!(store.world_error.as_deref(), Some("не хватает маны"));
-        assert!(store.sheet_error.is_none(), "каст — не лист");
+        assert!(store.notice.is_none(), "каст — не лист");
     }
 
     // ─── M6: время, цель, кулдауны, статусы ─────────────────────────────────
@@ -3283,6 +3367,38 @@ mod tests {
             serde_json::json!({ "skill_id": "power_strike", "until_epoch": 123 }),
         ));
         assert_eq!(store.combat_cooldowns.get("power_strike"), Some(&123));
+    }
+
+    /// M17/F30g: бар кулдауна предмета — остаток и полная
+    /// длительность; истёкшая запись и чужой предмет — None.
+    #[test]
+    fn item_cd_bar_reports_left_and_total() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/combat/cooldown",
+            serde_json::json!({
+                "skill_id": "item:potion_heal",
+                "until_epoch": 123,
+                "duration_ms": 1000
+            }),
+        ));
+        assert_eq!(
+            store.item_cd_bar("potion_heal", 122_000),
+            Some((1_000, 1_000)),
+            "остаток и полная длительность"
+        );
+        assert_eq!(store.item_cd_bar("potion_heal", 124_000), None, "истёк");
+        assert_eq!(store.item_cd_bar("rune_fire", 122_000), None, "нет записи");
+        // Без duration (старый сервер) — fallback в combat_cooldowns.
+        store.apply(evt(
+            "evt/combat/cooldown",
+            serde_json::json!({ "skill_id": "item:scroll_frost", "until_epoch": 200 }),
+        ));
+        assert_eq!(
+            store.item_cd_bar("scroll_frost", 100_000),
+            None,
+            "без duration — бара нет"
+        );
     }
 
     #[test]

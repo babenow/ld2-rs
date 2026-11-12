@@ -176,7 +176,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "chat": { "server_history": 200,
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
-  "inventory": { "slots": 40, "equip_slots": ["head","body","main_hand","staff","feet"] },
+  "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
@@ -188,8 +188,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ```
 
 `profile` в `characters[]` — опционально (аддитивно, ADR-005): класс из
-`char.create` (`warrior`/`rogue`/`mage`) для цвета ника на экране выбора;
-сервер без поля валиден — клиент рисует нейтрально.
+`char.create` (`warrior`/`archer`/`mage` — M17/F30b: «Вор» → «Лучник»)
+для цвета ника на экране выбора; сервер без поля валиден — клиент
+рисует нейтрально.
 
 - `kinds` — расширяемый список видов статусов; клиент рендерит любые `kind` через title/severity, незнакомые — generic.
 - `min_client` (string|null) — если не `null` и версия приложения меньше → экран «Требуется обновление», вход блокируется.
@@ -207,7 +208,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 // Hp
 { "cur": 42, "max": 60 }
 
-// Mp — ресурс заклинаний (D4): каст руны тратит ману и заряд; свиток — без маны
+// Mp — ресурс класса (D4; M17/F30e): у мага — мана (каст руны тратит
+// ману и заряд), у воина — ярость (растёт от урона, падает вне боя),
+// у лучника — энергия (тратится активными навыками, +20/сек)
 { "cur": 45, "max": 60 }
 
 // Entity (строка в location.entities)
@@ -227,13 +230,16 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "exits": [ Exit ], "entities": [ Entity ] }
 
 // ItemSnapshot
-{ "uid": "i_17", "type": "staff",            // weapon|armor|staff|potion|scroll|rune|material|quest
+{ "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest
   "name": "Ясеневый посох", "rarity": "rare",
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },
   "requires": { "attr": { "int": 12 }, "profession": null, "level": null },
-  "sockets": [ { "index": 0, "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10 } },
+  "sockets": [ { "index": 0, "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
                { "index": 1, "rune": null } ],
+  "slot": "main_hand", "hands": 2,         // M17/F30b: слот предмета (ring/artifact —
+                                            // псевдослоты пар) и руки (2 — двуручник)
+  "def_id": "dagger_knife",              // M17/F30g: ключ кулдауна использования
   "qty": 1, "gold_value": 120 }
 
 // SkillSnapshot
@@ -263,7 +269,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `auth.logout` | `{}` | `{}` | + | выход |
 | `session.refresh` | `{}` | `{access_token, expires_in_s}` | + | ротация токена |
 | `char.list` | `{}` | `{characters[]}` | + | список персонажей |
-| `char.create` | `{name, profile}` | `{character}` | − | создание (profile: Воин/Вор/Маг, список — capability сервера) |
+| `char.create` | `{name, profile}` | `{character}` | − | создание (profile: Воин/Лучник/Маг, список — capability сервера) |
 | `char.select` | `{char_id}` | `{}` (→ `evt/state/snapshot`) | + | вход в мир |
 | `char.delete` | `{char_id}` | `{}` | − | удаление |
 | `char.xp_invest` | `{skill_id, points}` | `{pool_left}` | − | вложить очки опыта в навык |
@@ -274,14 +280,15 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `combat.stop` | `{}` | `{}` | + | выйти из боя |
 | `combat.flee` | `{}` | `{}` | − | попытка сбежать |
 | `skill.use` | `{skill_id, target_id?}` | `{}` | − | активный навык |
-| `item.use` | `{item_uid, target_id?}` | `{}` | − | зелье/свиток-прочее |
-| `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть |
+| `item.use` | `{item_uid, target_id?}` | `{}` | − | зелье/свиток-прочее (M17/F30g: кулдаун `cooldown_s`, дефолт 1 с → `E_COOLDOWN`) |
+| `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
+| `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны посоха |
-| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff}` | − | инкрустация |
-| `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune}` | − | извлечение |
+| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) |
+| `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune, char?}` | − | извлечение (цель надета — ack несёт `char`, M18/F32) |
 | `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после» |
 | `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение |
 | `craft.list` | `{}` | `{professions[]}` | + | мои профессии: id/ранг/xp |
@@ -345,8 +352,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ### Бой и магия
 | Событие | Payload | Назначение |
 |---|---|---|
-| `evt/combat/hit` | `{ source, source_name, target, target_name, kind, amount, crit, miss, text }` | удар; `kind` = melee\|skill\|rune\|scroll; `text` — серверный, рендерится как есть |
-| `evt/combat/cooldown` | `{ skill_id?, until_epoch }` | блокировка действия |
+| `evt/combat/hit` | `{ source, source_name, target, target_name, kind, amount, crit, miss, text }` | удар; `kind` = melee\|skill\|rune\|scroll; `text` — серверный, рендерится как есть; M17/F30f: `**…**` — жирные сегменты (слова заклинания и урон), кастеру — «вы», наблюдателям — имя |
+| `evt/combat/cooldown` | `{ skill_id?, until_epoch, duration_ms? }` | блокировка действия; `item:<def_id>` + `duration_ms` — кулдаун предмета (M17/F30g, прогресс-бар кнопки) |
 | `evt/combat/end` | `{ reason }` | конец боя |
 | `evt/magic/cast` | `{ by, by_name, spell, what: "scroll"\|"rune", target?, charges_left?, mp_left?, ok }` | каст (свой/чужой); `charges_left` — заряды руны, `mp_left` — остаток маны |
 
@@ -489,7 +496,7 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 ← { "v":1, "type":"ack", "seq":4, "state_version":1339, "result":"ok" }
 ← { "v":1, "type":"evt/combat/hit", "ts":"…", "state_version":1339, "payload":
     { "source":"c1","source_name":"Ким","target":"m_3","target_name":"Волк","kind":"melee",
-      "amount":7,"crit":false,"miss":false,"text":"Вы бьете волка на 7." } }
+      "amount":7,"crit":false,"miss":false,"text":"Вы бьёте Волк руками **7**" } }
 ```
 
 ### 12.3 Мародёрство → статус

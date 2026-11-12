@@ -20,6 +20,7 @@ pub mod logging;
 pub mod notify;
 pub mod register;
 pub mod secrets;
+pub mod spells;
 pub mod store;
 pub mod transport;
 pub mod update_check;
