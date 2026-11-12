@@ -167,6 +167,53 @@ async fn set_skill_rank(db_url: &str, char_id: &str, skill: &str, rank: i32) {
     pool.close().await;
 }
 
+/// M17/F30e: ресурс персонажа напрямую в БД — ярость перед ударом
+/// (активные навыки воина стоят ресурс класса, конфиг `cost`).
+async fn set_resource(db_url: &str, char_id: &str, cur: i32, max: i32) {
+    let cfg = common::test_config(db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    ld2_server::db::characters::set_resource(&pool, char_id, cur, max)
+        .await
+        .expect("ресурс");
+    pool.close().await;
+}
+
+/// M17/F30e: активная способность стоит ресурс класса — ярости
+/// нет (0 < cost) → E_NOT_ENOUGH_MP «не хватает ярости».
+#[tokio::test]
+async fn skill_use_requires_class_resource() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+    set_skill_rank(&db_url, &char_id, "sword", 5).await;
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    // Ярости нет: старт воина — 0 (M17/F30e), cost power_strike = 25.
+    let seq = c
+        .send(
+            "cmd/skill.use",
+            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NOT_ENOUGH_MP",
+        "гейт ресурса: {ack}"
+    );
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("ярости"),
+        "текст про ресурс класса: {ack}"
+    );
+}
+
 /// `cmd/skill.use` (§4, M14): гейт навыка, урон ×1.8, серверный кулдаун
 /// `E_COOLDOWN` + `retry_after_s`, ошибки цели.
 #[tokio::test]
@@ -194,6 +241,8 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
 
     // 2) Ранг есть → удар проходит: урон 6 × 1.8 = 10.8 → 11 (§4).
     set_skill_rank(&db_url, &char_id, "sword", 5).await;
+    // M17/F30e: удар стоит25 ярости — даём ресурс (старт — 0).
+    set_resource(&db_url, &char_id, 100, 100).await;
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
@@ -271,6 +320,8 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     let ws = format!("ws://{addr}/ws");
     let (mut c, _login, char_id) = in_world(&ws).await;
     set_skill_rank(&db_url, &char_id, "sword", 5).await;
+    // M17/F30e: удар стоит25 ярости — даём ресурс (старт — 0).
+    set_resource(&db_url, &char_id, 100, 100).await;
 
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))

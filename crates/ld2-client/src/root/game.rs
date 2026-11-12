@@ -236,13 +236,17 @@ impl Root {
             pal.success,
             pal,
         ));
+        // M17/F30e: ресурс по профилю — ярость/энергия/мана.
+        let resource_label = match snap.char.profile.as_deref() {
+            Some("warrior") => t(lang, Key::RageLabel),
+            Some("archer") => t(lang, Key::EnergyLabel),
+            _ => t(lang, Key::MpLabel),
+        };
         col = col.child(bar(
             snap.char.mp.cur as f32 / snap.char.mp.max.max(1) as f32,
             format!(
                 "{} {}/{}",
-                t(lang, Key::MpLabel),
-                snap.char.mp.cur,
-                snap.char.mp.max
+                resource_label, snap.char.mp.cur, snap.char.mp.max
             ),
             pal.accent,
             pal,

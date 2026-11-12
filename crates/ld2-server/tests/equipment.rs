@@ -127,6 +127,37 @@ async fn mage_only_staff_archer_only_bows() {
     assert!(err_msg(&ack).contains("лучник носит только луки"), "{ack}");
 }
 
+/// M17/F30e: ресурс по профилю в снапшоте (WoW): воин — ярость с
+/// нуля (максимум 100), лучник — полная энергия (100).
+#[tokio::test]
+async fn resource_bar_by_profile() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+
+    let (mut c, _login, _char) = in_world_profile(&ws, "warrior").await;
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "resync воина");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let mp = &snap["payload"]["char"]["mp"];
+    assert_eq!(mp["max"], 100, "максимум ярости из конфига: {mp}");
+    assert_eq!(mp["cur"], 0, "ярость стартует с нуля: {mp}");
+
+    let (mut c, _login, _char) = in_world_profile(&ws, "archer").await;
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "resync лучника");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let mp = &snap["payload"]["char"]["mp"];
+    assert_eq!(mp["max"], 100, "максимум энергии: {mp}");
+    assert_eq!(mp["cur"], 100, "энергия полная на старте: {mp}");
+}
+
 #[tokio::test]
 async fn paired_slots_and_slot_match() {
     let Some(db_url) = common::test_url() else {

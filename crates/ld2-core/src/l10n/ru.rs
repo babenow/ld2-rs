@@ -379,6 +379,8 @@ pub(super) fn t(key: Key) -> &'static str {
         BpTabTool => "Инструменты",
         BpTabOther => "Прочее",
         BpTabArtifact => "Артефакты",
+        RageLabel => "Ярость",
+        EnergyLabel => "Энергия",
         MenuInscribe => "Инкрустировать",
         InscribePick => "Куда инкрустировать…",
         InscribeCasting => "Инкрустация",

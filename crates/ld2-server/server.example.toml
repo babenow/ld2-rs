@@ -127,9 +127,17 @@ kill_xp_base = 8
 kill_xp_per_difficulty = 6
 
 # M14: активные способности cmd/skill.use (skills.md §4; D25)
+[gameplay.resource]
+rage_max = 100        # M17/F30e: максимум ярости (воин)
+energy_max = 100      # максимум энергии (лучник)
+rage_gain_pct = 0.15  # доля урона (в/из) → ярость
+rage_decay_s = 5.0    # падение вне боя, ед/сек
+energy_regen_s = 20.0 # восстановление энергии, ед/сек
+
 [skills.active.power_strike]
 cooldown_s = 8        # §4: кулдаун «Мощного удара»
 damage_mult = 1.8     # §4: ×1.8 урона
+cost = 25             # M17/F30e: цена в ресурсе класса
 req_skill = "sword"   # открывается: владение мечом 5
 req_rank = 5
 
