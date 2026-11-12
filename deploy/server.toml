@@ -82,7 +82,7 @@ channels = ["system", "location", "global", "party", "guild", "whisper"]
 
 [gameplay.inventory]
 slots = 40
-equip_slots = ["head", "body", "main_hand", "staff", "feet"]
+equip_slots = ["head", "shoulders", "bracers", "gloves", "body", "legs", "feet", "cloak", "ring1", "ring2", "amulet", "main_hand", "off_hand", "artifact1", "artifact2"]
 
 [gameplay.upgrade]
 max_level = 9

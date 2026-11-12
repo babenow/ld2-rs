@@ -35,6 +35,13 @@ pub struct ItemDefRow {
     pub qty: i32,
     /// Количество сокетов посоха (ADR-002) — ленивая инициализация.
     pub sockets: i32,
+    /// M17/F30b: слот предмета (main_hand/off_hand/head/…; ring/artifact —
+    /// псевдослоты пар); `None` — не экипируется.
+    pub slot: Option<String>,
+    /// M17/F30b: руки (2 — двуручник: занимает обе, блокирует левую).
+    pub hands: i32,
+    /// Навык оружия (skills.md §2.3; идёт в снапшот `extra["skill"]`).
+    pub skill: Option<String>,
 }
 
 /// Инвентарь персонажа в порядке получения (стабильный порядок UI).
@@ -51,7 +58,8 @@ pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sql
 /// Определение предмета; `None` — нет в сиде.
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
-        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets \
+        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
+                slot, hands, skill \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)

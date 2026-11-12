@@ -86,7 +86,7 @@ pub enum Key {
     NameTooShort,
     ProfileLabel,
     ProfileWarrior,
-    ProfileRogue,
+    ProfileArcher,
     ProfileMage,
     ProfileHint,
     DeleteTitle,
@@ -386,6 +386,19 @@ pub enum Key {
     SlotMainHand,
     SlotStaff,
     SlotFeet,
+    // M17/F30b: новые слоты и блокировка левой руки
+    SlotShoulders,
+    SlotBracers,
+    SlotGloves,
+    SlotLegs,
+    SlotCloak,
+    SlotRing1,
+    SlotRing2,
+    SlotAmulet,
+    SlotOffHand,
+    SlotArtifact1,
+    SlotArtifact2,
+    SlotBlocked,
     ItemTypeWeapon,
     ItemTypeStaff,
     ItemTypePotion,
@@ -400,6 +413,9 @@ pub enum Key {
     ItemTypeFlask,
     ItemTypeChisel,
     ItemTypeQuill,
+    // M17/F30b: новые типы предметов
+    ItemTypeShield,
+    ItemTypeArtifact,
     // M16/F29d: группа «Атака» вкладки «Параметры»
     ParGroupAttack,
     // M16/F29b: окно рюкзака и его хоткей
@@ -410,6 +426,8 @@ pub enum Key {
     BpTabMaterial,
     BpTabTool,
     BpTabOther,
+    // M17/F30b: вкладка артефактов рюкзака
+    BpTabArtifact,
     BpCurrencies,
     HkOpenBackpack,
 }
@@ -541,7 +559,7 @@ mod tests {
         Key::NameTooShort,
         Key::ProfileLabel,
         Key::ProfileWarrior,
-        Key::ProfileRogue,
+        Key::ProfileArcher,
         Key::ProfileMage,
         Key::ProfileHint,
         Key::DeleteTitle,
@@ -809,6 +827,19 @@ mod tests {
         Key::SlotMainHand,
         Key::SlotStaff,
         Key::SlotFeet,
+        // M17/F30b: новые слоты и блокировка левой руки
+        Key::SlotShoulders,
+        Key::SlotBracers,
+        Key::SlotGloves,
+        Key::SlotLegs,
+        Key::SlotCloak,
+        Key::SlotRing1,
+        Key::SlotRing2,
+        Key::SlotAmulet,
+        Key::SlotOffHand,
+        Key::SlotArtifact1,
+        Key::SlotArtifact2,
+        Key::SlotBlocked,
         Key::ItemTypeWeapon,
         Key::ItemTypeStaff,
         Key::ItemTypePotion,
@@ -823,6 +854,9 @@ mod tests {
         Key::ItemTypeFlask,
         Key::ItemTypeChisel,
         Key::ItemTypeQuill,
+        // M17/F30b: новые типы предметов
+        Key::ItemTypeShield,
+        Key::ItemTypeArtifact,
         // M16/F29d: группа «Атака» вкладки «Параметры»
         Key::ParGroupAttack,
         // M16/F29b: окно рюкзака и его хоткей
@@ -833,6 +867,8 @@ mod tests {
         Key::BpTabMaterial,
         Key::BpTabTool,
         Key::BpTabOther,
+        // M17/F30b: вкладка артефактов
+        Key::BpTabArtifact,
         Key::BpCurrencies,
         Key::HkOpenBackpack,
     ];

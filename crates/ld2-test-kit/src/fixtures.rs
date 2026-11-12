@@ -34,7 +34,7 @@ pub const CHAR_SLOT_LIMIT: u32 = 8;
 pub const UPGRADE_MAX: u32 = 9;
 
 /// Профили персонажей (D3, ADR-003).
-pub const PROFILES: &[&str] = &["warrior", "rogue", "mage"];
+pub const PROFILES: &[&str] = &["warrior", "archer", "mage"];
 
 /// `evt/session.start` — дословно по protocol.md §5 (лимит слотов — параметр).
 pub fn session_config(char_slot_limit: u32) -> SessionConfig {
@@ -156,10 +156,20 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
             slots: 40,
             equip_slots: vec![
                 "head".into(),
+                "shoulders".into(),
+                "bracers".into(),
+                "gloves".into(),
                 "body".into(),
-                "main_hand".into(),
-                "staff".into(),
+                "legs".into(),
                 "feet".into(),
+                "cloak".into(),
+                "ring1".into(),
+                "ring2".into(),
+                "amulet".into(),
+                "main_hand".into(),
+                "off_hand".into(),
+                "artifact1".into(),
+                "artifact2".into(),
             ],
         },
         upgrade: UpgradeConfig {
@@ -307,6 +317,8 @@ pub fn staff_item() -> ItemSnapshot {
         upgrade: 2,
         stats,
         requires: None,
+        slot: Some("main_hand".into()),
+        hands: Some(2),
         sockets: Some(vec![
             Socket {
                 index: 0,
@@ -339,6 +351,8 @@ pub fn scroll_item() -> ItemSnapshot {
         upgrade: 0,
         stats,
         requires: None,
+        slot: None,
+        hands: None,
         sockets: None,
         qty: Some(1),
         gold_value: Some(30),
@@ -360,6 +374,8 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
         upgrade: 0,
         stats,
         requires: None,
+        slot: None,
+        hands: None,
         sockets: None,
         qty: Some(1),
         gold_value: Some(20),
@@ -385,6 +401,8 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
             upgrade: 0,
             stats: Default::default(),
             requires: None,
+            slot: None,
+            hands: None,
             sockets: None,
             qty: Some(3),
             gold_value: Some(5),
@@ -397,6 +415,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
     CharacterState {
         id: id.into(),
         name: name.into(),
+        profile: Some("warrior".into()),
         attrs: BTreeMap::from([("str".to_string(), 14i64), ("int".to_string(), 9i64)]),
         skills: vec![
             SkillSnapshot {
@@ -437,7 +456,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
         xp_to_next: Some(100),
         // M15/F26: сервер без вкладки «Параметры» → None (заглушка).
         derived: None,
-        equip: BTreeMap::from([("staff".to_string(), Some("i_17".to_string()))]),
+        equip: BTreeMap::from([("main_hand".to_string(), Some("i_17".to_string()))]),
         inventory: vec![
             staff_item(),
             scroll_item(),

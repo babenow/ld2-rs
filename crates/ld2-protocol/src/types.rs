@@ -130,6 +130,14 @@ pub struct ItemSnapshot {
     /// Только для предметов со сокетами (посохи).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sockets: Option<Vec<Socket>>,
+    /// M17/F30b: слот предмета (main_hand/off_hand/head/…; ring/artifact —
+    /// псевдослоты пар); `None` — не экипируется (открытая строка §6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
+    /// M17/F30b: руки (2 — двуручное: занимает обе руки и блокирует
+    /// левую); `None` → 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hands: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qty: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -333,6 +341,10 @@ pub struct CharacterState {
     /// (`None` — сервер без M15, вкладка покажет заглушку).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub derived: Option<DerivedParams>,
+    /// M17/F30b: класс персонажа (`warrior`/`archer`/`mage`) —
+    /// правила экипировки и ресурс боя (F30e); аддитивно §6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     #[serde(default)]
     pub equip: EquipMap,
     #[serde(default)]

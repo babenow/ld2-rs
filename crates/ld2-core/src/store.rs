@@ -1844,26 +1844,27 @@ pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&s
     }
 }
 
-/// Профиль персонажа (D3: Воин/Вор/Маг — wire-значения для `char.create`).
-/// Общий для обоих клиентов (D12).
+/// Профиль персонажа (D3: Воин/Лучник/Маг — wire-значения для
+/// `char.create`; M17/F30b: «Вор» → «Лучник»). Общий для обоих
+/// клиентов (D12).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Profile {
     #[default]
     Warrior,
-    Rogue,
+    Archer,
     Mage,
 }
 
 impl Profile {
     pub fn all() -> [Profile; 3] {
-        [Profile::Warrior, Profile::Rogue, Profile::Mage]
+        [Profile::Warrior, Profile::Archer, Profile::Mage]
     }
 
     /// Wire-значение `cmd/char.create.profile`.
     pub fn value(self) -> &'static str {
         match self {
             Profile::Warrior => "warrior",
-            Profile::Rogue => "rogue",
+            Profile::Archer => "archer",
             Profile::Mage => "mage",
         }
     }
@@ -1873,7 +1874,7 @@ impl Profile {
         use crate::l10n::Key;
         match self {
             Profile::Warrior => Key::ProfileWarrior,
-            Profile::Rogue => Key::ProfileRogue,
+            Profile::Archer => Key::ProfileArcher,
             Profile::Mage => Key::ProfileMage,
         }
     }
@@ -2973,7 +2974,7 @@ mod tests {
             .iter()
             .any(|i| i.uid == "i_17"));
         assert_eq!(
-            store.snapshot.as_ref().unwrap().char.equip.get("staff"),
+            store.snapshot.as_ref().unwrap().char.equip.get("main_hand"),
             Some(&Some("i_17".to_string()))
         );
 
@@ -2987,7 +2988,7 @@ mod tests {
             "предмет убран из инвентаря"
         );
         assert!(
-            snap.char.equip.get("staff").is_none_or(|v| v.is_none()),
+            snap.char.equip.get("main_hand").is_none_or(|v| v.is_none()),
             "слот экипировки освобождён"
         );
     }

@@ -488,20 +488,21 @@ impl Root {
     }
 }
 
-/// Цвет ника по классу (D19/ADR-005): warrior/rogue/mage; светлая тема —
-/// затемнение; без profile — нейтральный.
+/// Цвет ника по классу (D19/ADR-005): warrior/archer/mage (M17/F30b:
+/// «Вор» → «Лучник»); светлая тема — затемнение; без profile —
+/// нейтральный.
 fn class_color(profile: Option<&str>, dark: bool) -> u32 {
     if !dark {
         return match profile {
             Some("warrior") => 0xa1_34_39,
-            Some("rogue") => 0x4c_7a_2f,
+            Some("archer") => 0x4c_7a_2f,
             Some("mage") => 0x2e_65_b8,
             _ => 0x5a_5e_66,
         };
     }
     match profile {
         Some("warrior") => 0xe0_6c_75,
-        Some("rogue") => 0x98_c3_79,
+        Some("archer") => 0x98_c3_79,
         Some("mage") => 0x61_af_ef,
         _ => 0xab_b2_bf,
     }

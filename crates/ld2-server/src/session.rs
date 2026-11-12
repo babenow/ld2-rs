@@ -1218,6 +1218,9 @@ impl Session {
         Ok(CharacterState {
             id: row.id.clone(),
             name: row.name.clone(),
+            // M17/F30b: класс для правил экипировки на клиенте (F30e —
+            // ресурс боя).
+            profile: Some(row.profile.clone()),
             attrs,
             skills,
             // Изученные профессии (§6, M12.6).
@@ -2122,6 +2125,60 @@ impl Session {
                 }
             }
         }
+        // M17/F30b: слот↔предмет (парные ring/artifact — по
+        // псевдослоту); без слота предмет не экипируется.
+        match def.slot.as_deref() {
+            None => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::ItemGone,
+                    "предмет не экипируется",
+                )];
+            }
+            Some(req) => {
+                let ok = req == cmd.slot
+                    || (req == "ring" && (cmd.slot == "ring1" || cmd.slot == "ring2"))
+                    || (req == "artifact" && (cmd.slot == "artifact1" || cmd.slot == "artifact2"));
+                if !ok {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::ItemGone,
+                        format!("«{}» не надевается в этот слот", def.name),
+                    )];
+                }
+            }
+        }
+        // M17/F30b: правила классов для оружия/щитов/посоха.
+        if matches!(def.item_type.as_str(), "weapon" | "staff" | "shield") {
+            let profile = self.char.as_ref().and_then(|c| c.profile.clone());
+            let is_bow = def.skill.as_deref() == Some("bow");
+            let gate = match profile.as_deref() {
+                Some("mage") if def.item_type != "staff" => Some("маг носит только посох"),
+                Some("archer") if !is_bow => Some("лучник носит только луки"),
+                Some("warrior") if def.item_type == "staff" => Some("воин не носит посох"),
+                Some("warrior") if is_bow => Some("воин не носит луки"),
+                _ => None,
+            };
+            if let Some(msg) = gate {
+                return vec![Self::err(seq, ErrorCode::ItemGone, msg)];
+            }
+        }
+        // M17/F30b: левая рука закрыта, пока в правой двуручник.
+        if cmd.slot == "off_hand" {
+            if let Ok(Some(main)) =
+                db::items::find_equipped_in_slot(&pool, &char_id, "main_hand").await
+            {
+                if let Ok(Some(main_def)) = db::items::def(&pool, &main.def_id).await {
+                    if main_def.hands >= 2 {
+                        return vec![Self::err(
+                            seq,
+                            ErrorCode::ItemGone,
+                            "левая рука занята двуручным оружием",
+                        )];
+                    }
+                }
+            }
+        }
         // Переэкипка: прежний предмет слота снимается (без события —
         // клиент получает полный `char` в ack, §7).
         match db::items::find_equipped_in_slot(&pool, &char_id, &cmd.slot).await {
@@ -2140,6 +2197,23 @@ impl Session {
         if let Err(e) = db::items::set_equipped(&pool, &item.uid, Some(&cmd.slot)).await {
             warn!("item.equip (надевание): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        // M17/F30b: двуручник в правой руке блокирует левую — щит
+        // автоматически снимается (как в WoW при смене на двуручное).
+        if cmd.slot == "main_hand" && def.hands >= 2 {
+            match db::items::find_equipped_in_slot(&pool, &char_id, "off_hand").await {
+                Ok(Some(prev)) => {
+                    if let Err(e) = db::items::set_equipped(&pool, &prev.uid, None).await {
+                        warn!("item.equip (снятие левой руки): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warn!("item.equip (левая рука): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
         }
         let char_state = match self.reload_char(seq, &char_id).await {
             Ok(state) => state,
@@ -2618,19 +2692,26 @@ impl Session {
 
         // (def_id, qty, улучшение +N, слот): экипировка — уникальные
         // инстансы, расходники/материалы — в существующие стаки.
-        let grants: [(&str, i64, i32, Option<&str>); 13] = [
+        // M17/F30b: экипировка по новым слотам (12 из 15 — ring2 и
+        // артефакты остаются пустыми для смоука).
+        let grants: [(&str, i64, i32, Option<&str>); 18] = [
             ("sword_knight", 1, 3, Some("main_hand")),
-            ("staff_apprentice", 1, 1, Some("staff")),
+            ("shield_wood", 1, 1, Some("off_hand")),
             ("helmet_leather", 1, 2, Some("head")),
+            ("shoulders_leather", 1, 1, Some("shoulders")),
+            ("bracers_leather", 1, 1, Some("bracers")),
+            ("gloves_cloth", 1, 2, Some("gloves")),
             ("armor_bronze", 1, 4, Some("body")),
+            ("greaves_iron", 1, 3, Some("legs")),
             ("boots_traveler", 1, 5, Some("feet")),
+            ("cloak_traveler", 1, 2, Some("cloak")),
+            ("ring_silver", 1, 1, Some("ring1")),
+            ("amulet_talisman", 1, 1, Some("amulet")),
+            ("staff_apprentice", 1, 1, None),
             ("potion_heal", 3, 0, None),
             ("rune_fire", 2, 0, None),
             ("scroll_frost", 1, 0, None),
             ("herb", 5, 0, None),
-            ("wood_oak", 3, 0, None),
-            ("parchment", 2, 0, None),
-            ("ink", 2, 0, None),
             ("tool_quill", 1, 0, None),
         ];
         for (def_id, qty, upgrade, slot) in grants {
@@ -2638,7 +2719,7 @@ impl Session {
                 warn!("scenario kit: нет определения {def_id} — пропуск");
                 continue;
             };
-            let row = if let Some(slot) = slot {
+            let mut row = if let Some(slot) = slot {
                 // Слот занят — прежний предмет снимается (паритет
                 // cmd/item.equip).
                 if let Ok(Some(prev)) = db::items::find_equipped_in_slot(pool, &char_id, slot).await
@@ -2654,10 +2735,6 @@ impl Session {
                     let _ = db::items::set_upgrade(pool, &row.uid, upgrade).await;
                 }
                 let _ = db::items::set_equipped(pool, &row.uid, Some(slot)).await;
-                if def.item_type == "staff" && def.sockets > 0 {
-                    row.sockets = Self::empty_sockets(def.sockets);
-                    let _ = db::items::set_sockets(pool, &row.uid, row.sockets.clone()).await;
-                }
                 row
             } else {
                 match db::items::grant_stacking(pool, &char_id, def_id, qty).await {
@@ -2668,6 +2745,15 @@ impl Session {
                     }
                 }
             };
+            // Посох в рюкзаке тоже должен иметь пустые сокеты (окно
+            // инкрустации открывается по предмету, без экипировки).
+            if def.item_type == "staff"
+                && def.sockets > 0
+                && row.sockets.as_array().is_none_or(|a| a.is_empty())
+            {
+                row.sockets = Self::empty_sockets(def.sockets);
+                let _ = db::items::set_sockets(pool, &row.uid, row.sockets.clone()).await;
+            }
             let item = item_snapshot(&row, &def);
             outs.push(out_event(
                 "evt/item/added",
@@ -5972,7 +6058,17 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
         },
         qty: Some(i64::from(item.qty)),
         gold_value: Some(i64::from(def.gold_value)),
-        extra: Default::default(),
+        slot: def.slot.clone(),
+        hands: Some(def.hands),
+        // M17/F30b: навык оружия в снапшот — включает вклад навыка в
+        // производные характеристики (stats.rs, док модуля).
+        extra: {
+            let mut m = serde_json::Map::new();
+            if let Some(skill) = &def.skill {
+                m.insert("skill".into(), serde_json::Value::String(skill.clone()));
+            }
+            m
+        },
     }
 }
 
@@ -6040,9 +6136,9 @@ fn attr_genitive(id: &str) -> &str {
     }
 }
 
-/// Стартовые профили `char.create` (ADR-003: Воин/Вор/Маг) — тройка v1;
-/// расширение списка — capability сервера (§7).
-const PROFILES: &[&str] = &["warrior", "rogue", "mage"];
+/// Стартовые профили `char.create` (ADR-003: Воин/Лучник/Маг — M17/F30b
+/// «Вор» переименован в «Лучник»); расширение списка — capability (§7).
+const PROFILES: &[&str] = &["warrior", "archer", "mage"];
 
 /// Ack → текст конверта (§2.2).
 fn out_ack(ack: Ack) -> Out {

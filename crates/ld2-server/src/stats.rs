@@ -177,6 +177,8 @@ mod tests {
 
     fn item(stats: serde_json::Value, extra: serde_json::Value) -> ItemSnapshot {
         ItemSnapshot {
+            slot: None,
+            hands: None,
             uid: "t1".into(),
             item_type: "weapon".into(),
             name: "Т".into(),
