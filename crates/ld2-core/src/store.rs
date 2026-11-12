@@ -281,6 +281,8 @@ pub enum Dialog {
     Item,
     Upgrade,
     Socket,
+    /// M17/F30a: выбор оружия под инкрустацию руны/самоцвета.
+    Inscribe,
     Create,
     Delete,
 }
@@ -288,8 +290,9 @@ pub enum Dialog {
 impl AppStore {
     /// Активный диалог (M11.2): экран персонажей — создание/удаление;
     /// игра — смерть > осмотр > лут > группа > гильдия > сделка > предмет >
-    /// улучшение > инкрустация; вне игры/персонажей — None. `create_open` и
-    /// `delete_open` — флаги UI (Root), остальное — состояние store.
+    /// улучшение > инкрустация > выбор цели инкрустации (M17/F30a);
+    /// вне игры/персонажей — None. `create_open` и `delete_open` —
+    /// флаги UI (Root), остальное — состояние store.
     pub fn active_dialog(&self, create_open: bool, delete_open: bool) -> Option<Dialog> {
         match self.screen {
             Screen::Characters => {
@@ -320,6 +323,9 @@ impl AppStore {
                     Some(Dialog::Upgrade)
                 } else if self.socketing.is_some() {
                     Some(Dialog::Socket)
+                } else if self.inscribe.is_some() {
+                    // M17/F30a: окно «Куда инкрустировать…».
+                    Some(Dialog::Inscribe)
                 } else {
                     None
                 }
@@ -2047,6 +2053,10 @@ mod tests {
         s.item_detail = None;
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Socket));
         s.socketing = None;
+        // M17/F30a: выбор цели инкрустации — отдельный диалог.
+        s.inscribe = Some("rune_1".into());
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Inscribe));
+        s.inscribe = None;
         assert_eq!(s.active_dialog(false, false), None);
     }
 
