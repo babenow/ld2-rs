@@ -22,7 +22,7 @@ use ely::primitives::{IconName, Tooltip};
 
 use super::sheet::rarity_label;
 use super::social::show_party;
-use super::{btn, hex_to_u32, Click, LogTab, Root};
+use super::{btn, hex_to_u32, Click, LogTab, Root, INSCRIBE_MS};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -178,6 +178,8 @@ impl Root {
                     .child(self.target_block(cx, pal, &snap))
                     .children(self.notice_line(pal))
                     .child(self.entities_block(cx, pal, &snap.location))
+                    // M17/F30a: каст-бар инкрустации — внизу, над панелью.
+                    .children(self.inscribe_bar(pal, &snap))
                     .child(self.hotbar(cx, pal, &snap))
                     .child(self.exits_row(cx, pal, &snap.location))
                     .children((self.store.target.is_some()).then(|| {
@@ -788,6 +790,65 @@ impl Root {
     /// Лог прокручивается свободно: приклеивание вниз только когда
     /// пользователь и так внизу ([`scroll_at_bottom`]); иначе новые
     /// строки копятся и показываются кнопкой «▼ N новых» в шапке.
+    /// M17/F30a: каст-бар инкрустации (3 с без отмены) — полоса над
+    /// панелью действий; анимация идёт по тику root (50 мс), исчезает
+    /// по завершении (отправка socket.insert — root::finish_inscribe).
+    fn inscribe_bar(&self, pal: &Palette, snap: &StateSnapshot) -> Option<Div> {
+        let (_, target_uid, ends) = self.cast_inscribe.as_ref()?;
+        let left = (ends - self.now_ms()).max(0);
+        let frac = 1.0 - left as f32 / INSCRIBE_MS as f32;
+        let target = snap
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == *target_uid)
+            .map(|i| i.name.clone())
+            .unwrap_or_default();
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_center()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .bg(rgb(pal.panel))
+                .border_1()
+                .border_color(rgb(pal.accent))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(format!(
+                            "{} — {}",
+                            t(self.lang, Key::InscribeCasting),
+                            target
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_grow_1()
+                        .h(px(10.0))
+                        .rounded_md()
+                        .bg(rgb(pal.border))
+                        .child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(frac.clamp(0.0, 1.0)))
+                                .rounded_md()
+                                .bg(rgb(pal.accent)),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(pal.muted))
+                        .child(format!("{:.1} с", left as f32 / 1000.0)),
+                ),
+        )
+    }
+
     fn journal_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let dark = pal.bg == crate::palette::palette("dark").bg;

@@ -375,6 +375,10 @@ pub(super) fn t(key: Key) -> &'static str {
         BpTabTool => "Tools",
         BpTabOther => "Other",
         BpTabArtifact => "Artifacts",
+        MenuInscribe => "Inscribe",
+        InscribePick => "Inscribe into…",
+        InscribeCasting => "Inscribing",
+        InscribeNoWeapons => "No item with a free socket",
         BpCurrencies => "Currencies",
         HkOpenBackpack => "Open backpack",
     }

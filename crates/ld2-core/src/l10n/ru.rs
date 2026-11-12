@@ -375,6 +375,10 @@ pub(super) fn t(key: Key) -> &'static str {
         BpTabTool => "Инструменты",
         BpTabOther => "Прочее",
         BpTabArtifact => "Артефакты",
+        MenuInscribe => "Инкрустировать",
+        InscribePick => "Куда инкрустировать…",
+        InscribeCasting => "Инкрустация",
+        InscribeNoWeapons => "Нет предмета со свободными сокетами",
         BpCurrencies => "Валюты",
         HkOpenBackpack => "Открыть рюкзак",
     }

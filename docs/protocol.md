@@ -233,7 +233,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },
   "requires": { "attr": { "int": 12 }, "profession": null, "level": null },
-  "sockets": [ { "index": 0, "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10 } },
+  "sockets": [ { "index": 0, "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
                { "index": 1, "rune": null } ],
   "slot": "main_hand", "hands": 2,         // M17/F30b: слот предмета (ring/artifact —
                                             // псевдослоты пар) и руки (2 — двуручник)
@@ -284,7 +284,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны посоха |
-| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff}` | − | инкрустация |
+| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff}` | − | инкрустация (любой предмет с сокетами; `staff_uid` — uid предмета-мишени; M17/F30a) |
 | `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune}` | − | извлечение |
 | `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после» |
 | `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение |

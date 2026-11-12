@@ -122,7 +122,7 @@ const SNAPSHOT_JSON: &str = r#"{
     "inventory": [ { "uid": "i_17", "type": "staff", "name": "Ясеневый посох",
                      "rarity": "rare", "upgrade": 2, "stats": {},
                      "sockets": [ { "index": 0, "rune": { "name": "Руна огня",
-                       "spell": "fire_dart", "charges": 7, "max": 10 } },
+                       "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
                                   { "index": 1, "rune": null } ] } ],
     "crime": { "statuses": [ { "kind": "murderer", "severity": "high",
                                "expires_at": 1762150000 } ] },

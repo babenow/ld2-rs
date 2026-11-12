@@ -327,6 +327,7 @@ pub fn staff_item() -> ItemSnapshot {
                     spell: "fire_dart".into(),
                     charges: 7,
                     max: 10,
+                    damage: None,
                 }),
             },
             Socket {

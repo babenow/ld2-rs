@@ -23,6 +23,63 @@ async fn give(c: &mut ld2_test_kit::WsClient, def_id: &str) -> String {
         .to_string()
 }
 
+/// M17/F30a: меч принимает руны (инкрустация/извлечение, damage в
+/// сокете), но каст руны остаётся привилегией посоха.
+#[tokio::test]
+async fn sword_takes_runes_but_cannot_cast() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    let sword = give(&mut c, "sword_knight").await; // sockets: 1 (контент)
+    let rune = give(&mut c, "rune_fire").await;
+
+    // Инкрустация в меч — паритет с посохом; damage пишется в сокет.
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": sword, "socket_index": 0, "rune_uid": rune }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "инкрустация в меч: {ack}");
+    assert_eq!(
+        ack["payload"]["staff"]["sockets"][0]["rune"]["damage"], 12,
+        "damage руны в сокете: {ack}"
+    );
+    let removed = c.wait_event("evt/item/removed").await;
+    assert_eq!(removed["payload"]["uid"], rune, "руна израсходована");
+
+    // Каст из меча — отказ: только посох (E_NO_RUNE_SLOT).
+    let seq = c
+        .send(
+            "cmd/magic.rune_cast",
+            json!({ "staff_uid": sword, "socket_index": 0 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_NO_RUNE_SLOT", "каст с меча: {ack}");
+
+    // Извлечение обратно — руна возвращается в ack (без item/added:
+    // клиент применяет её из payload, см. store::socket_ack).
+    let seq = c
+        .send(
+            "cmd/socket.extract",
+            json!({ "staff_uid": sword, "socket_index": 0 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "извлечение из меча: {ack}");
+    assert_eq!(ack["payload"]["rune"]["name"], "Руна огня", "{ack}");
+    assert_eq!(
+        ack["payload"]["rune"]["qty"], 1,
+        "руна вернулась (новый инстанс)"
+    );
+}
+
 #[tokio::test]
 async fn socket_insert_cast_extract_flow() {
     let Some(db_url) = common::test_url() else {

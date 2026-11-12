@@ -101,6 +101,10 @@ pub struct RuneInfo {
     pub spell: String,
     pub charges: i32,
     pub max: i32,
+    /// M17/F30a: +урон руны в оружии (аддитивно §6: `None` — у
+    /// сервера без поля).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub damage: Option<i64>,
 }
 
 /// Сокет посоха: `rune: null` — свободный (`◈◈○` в UI, ФР-09).

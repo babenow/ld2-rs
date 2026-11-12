@@ -41,6 +41,19 @@ fn rank(skills: &[SkillSnapshot], id: &str) -> i64 {
         .unwrap_or(0)
 }
 
+/// M17/F30a: суммарный `damage` рун в сокетах снаряжённого **оружия**
+/// — руна в мече даёт +урон. У посохов руна — заклинание (каст), в
+/// физический урон не идёт; самоцветы брони — отдельный бонус (F30c).
+fn socketed_rune_damage(equipped: &[ItemSnapshot]) -> i64 {
+    equipped
+        .iter()
+        .filter(|i| i.item_type == "weapon")
+        .flat_map(|i| i.sockets.iter().flatten())
+        .filter_map(|s| s.rune.as_ref())
+        .filter_map(|r| r.damage)
+        .sum()
+}
+
 /// `stats.dmg = "min..max"` снаряжённого оружия; иначе боевая база
 /// конфига (в снапшоте оружие может отсутствовать — стартовый кулак).
 fn weapon_damage(equipped: &[ItemSnapshot], base: i64) -> (i64, i64) {
@@ -71,6 +84,9 @@ pub fn derive(
     base_damage: i64,
 ) -> DerivedParams {
     let (w_min, w_max) = weapon_damage(equipped, base_damage);
+    // M17/F30a: +урон рун, инкрустированных в оружие.
+    let rune_bonus = socketed_rune_damage(equipped);
+    let (w_min, w_max) = (w_min + rune_bonus, w_max + rune_bonus);
     let (strg, dex, vit, int) = (
         attr(attrs, "str"),
         attr(attrs, "dex"),
@@ -248,6 +264,38 @@ mod tests {
         assert_eq!(d.block_chance, 4, "block +2%/ранг");
         assert_eq!(d.magic_dispel, 9, "int/2 + m_dispel 4");
         assert_eq!(d.magic_crit_chance, 9, "5 + 3 + arcana/2");
+    }
+
+    /// M17/F30a: руна в сокете оружия даёт +урон в «Параметрах»;
+    /// посох с руной — заклинание, физический бонус не получает.
+    #[test]
+    fn socketed_rune_adds_weapon_damage() {
+        use ld2_protocol::types::{RuneInfo, Socket};
+        let rune = |damage: i64| {
+            Some(vec![Socket {
+                index: 0,
+                rune: Some(RuneInfo {
+                    name: "Руна огня".into(),
+                    spell: "fire_dart".into(),
+                    charges: 7,
+                    max: 10,
+                    damage: Some(damage),
+                }),
+            }])
+        };
+        // Меч 6..9 + руна +10: (6+10+5 str) / (9+10+5).
+        let mut sword = item(serde_json::json!({"dmg": "6..9"}), serde_json::json!({}));
+        sword.sockets = rune(10);
+        let d = derive(&attrs10(), &[], &[sword], 6);
+        assert_eq!((d.damage_min, d.damage_max), (21, 24), "+урон руны");
+
+        // Посох (база 6, без dmg) с той же руной — без бонуса:
+        // руна посоха работает через каст.
+        let mut staff = item(serde_json::json!({"magic": 6}), serde_json::json!({}));
+        staff.item_type = "staff".into();
+        staff.sockets = rune(10);
+        let d = derive(&attrs10(), &[], &[staff], 6);
+        assert_eq!((d.damage_min, d.damage_max), (11, 11), "посох без бонуса");
     }
 
     /// M15/F26: парсер dmg, кривые строки и клампы шансов.
