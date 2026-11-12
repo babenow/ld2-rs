@@ -357,6 +357,8 @@ pub enum Key {
     BpTabAll,
     // M16/F29f: вкладка «Броня» рюкзака
     BpTabArmor,
+    // M16/F29j: чекбокс «Запомнить пароль» на экране входа
+    RememberPassword,
     // M16/F29e: переводы характеристик, редкостей, слотов и типов
     StatDamage,
     StatHeal,
@@ -773,6 +775,8 @@ mod tests {
         Key::BpTabAll,
         // M16/F29f: вкладка «Броня» рюкзака
         Key::BpTabArmor,
+        // M16/F29j: чекбокс «Запомнить пароль» на экране входа
+        Key::RememberPassword,
         // M16/F29e: переводы характеристик, редкостей, слотов и типов
         Key::StatDamage,
         Key::StatHeal,

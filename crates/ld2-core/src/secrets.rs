@@ -27,24 +27,52 @@ pub fn delete_token(host: &str, login: &str) -> keyring::Result<()> {
     entry.delete_credential()
 }
 
-/// Чтение токена с таймаутом: зависший диалог доступа macOS не должен
-/// блокировать запуск приложения (инциденты M4/M5). Общий для обоих
-/// клиентов (D12).
-pub fn get_token_with_timeout(
+// ─── M16/F29j: «запомнить пароль» — отдельная запись от токена ──────────────
+
+const PASSWORD_SERVICE: &str = "ld2.client.password";
+
+pub fn set_password(host: &str, login: &str, password: &str) -> keyring::Result<()> {
+    let entry = keyring::Entry::new(PASSWORD_SERVICE, &entry_key(host, login))?;
+    entry.set_password(password)
+}
+
+pub fn get_password(host: &str, login: &str) -> keyring::Result<String> {
+    let entry = keyring::Entry::new(PASSWORD_SERVICE, &entry_key(host, login))?;
+    entry.get_password()
+}
+
+/// Удалить запомненный пароль; отсутствие записи — не ошибка.
+pub fn delete_password(host: &str, login: &str) -> keyring::Result<()> {
+    let entry = keyring::Entry::new(PASSWORD_SERVICE, &entry_key(host, login))?;
+    match entry.delete_credential() {
+        Err(keyring::Error::NoEntry) => Ok(()),
+        other => other,
+    }
+}
+
+/// Чтение записи с таймаутом: зависший диалог доступа macOS не должен
+/// блокировать запуск приложения (инциденты M4/M5). Общий для токена
+/// и запомненного пароля (D12).
+fn get_with_timeout(
+    service: &str,
     host: &str,
     login: &str,
     timeout: std::time::Duration,
 ) -> Option<String> {
     let (tx, rx) = std::sync::mpsc::channel();
+    let service = service.to_string();
     let host = host.to_string();
     let login = login.to_string();
     std::thread::spawn(move || {
-        let _ = tx.send(get_token(&host, &login));
+        let _ = tx.send(
+            keyring::Entry::new(&service, &entry_key(&host, &login))
+                .and_then(|entry| entry.get_password()),
+        );
     });
     match rx.recv_timeout(timeout) {
-        Ok(Ok(token)) => Some(token),
+        Ok(Ok(secret)) => Some(secret),
         Ok(Err(keyring::Error::NoEntry)) => {
-            tracing::debug!("keyring: токена нет — нужен вход");
+            tracing::debug!("keyring: записи нет — нужен вход");
             None
         }
         Ok(Err(e)) => {
@@ -53,12 +81,30 @@ pub fn get_token_with_timeout(
         }
         Err(_) => {
             tracing::warn!(
-                "keyring: нет ответа за {timeout:?} — стартую без resume \
+                "keyring: нет ответа за {timeout:?} — стартую без чтения \
                  (диалог доступа macOS отложен)"
             );
             None
         }
     }
+}
+
+/// Чтение токена с таймаутом (D12).
+pub fn get_token_with_timeout(
+    host: &str,
+    login: &str,
+    timeout: std::time::Duration,
+) -> Option<String> {
+    get_with_timeout(SERVICE, host, login, timeout)
+}
+
+/// Чтение запомненного пароля с таймаутом (M16/F29j, паритет токена).
+pub fn get_password_with_timeout(
+    host: &str,
+    login: &str,
+    timeout: std::time::Duration,
+) -> Option<String> {
+    get_with_timeout(PASSWORD_SERVICE, host, login, timeout)
 }
 
 #[cfg(test)]
@@ -82,6 +128,14 @@ mod tests {
                 assert!(
                     get_token(host, &login).is_err(),
                     "после удаления чтение должно падать"
+                );
+                // M16/F29j: запомненный пароль — отдельная запись.
+                set_password(host, &login, "pw-123").expect("запись пароля");
+                assert_eq!(get_password(host, &login).expect("чтение пароля"), "pw-123");
+                delete_password(host, &login).expect("удаление пароля");
+                assert!(
+                    get_password(host, &login).is_err(),
+                    "пароль удалён — чтение падает"
                 );
                 tracing::info!("keyring smoke: ok");
             }
