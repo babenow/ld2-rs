@@ -2947,7 +2947,8 @@ impl Root {
             | ld2_core::store::Dialog::Trade => self.social_dialog(cx, pal),
             ld2_core::store::Dialog::Item
             | ld2_core::store::Dialog::Upgrade
-            | ld2_core::store::Dialog::Socket => self.sheet_dialog(cx, pal),
+            | ld2_core::store::Dialog::Socket
+            | ld2_core::store::Dialog::Inscribe => self.sheet_dialog(cx, pal),
             ld2_core::store::Dialog::Create | ld2_core::store::Dialog::Delete => {
                 self.chars_dialog(cx, pal)
             }
