@@ -3074,6 +3074,20 @@ impl Session {
                 "в сокет идут руны и самоцветы",
             )];
         }
+        // M18/F32: руны — только в оружие (weapon/staff), самоцветы —
+        // только в броню (armor); окна клиента фильтруют список целей,
+        // сервер — истина (§7).
+        let target_ok = match rune_def.item_type.as_str() {
+            "gem" => staff_def.item_type == "armor",
+            _ => matches!(staff_def.item_type.as_str(), "weapon" | "staff"),
+        };
+        if !target_ok {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoRuneSlot,
+                "руны вставляются только в оружие, самоцветы — только в броню",
+            )];
+        }
 
         // Ленивая инициализация: пустой массив → слоты по определению.
         let mut sockets: Vec<Value> =
@@ -3158,7 +3172,9 @@ impl Session {
             ));
         }
 
-        // ack `{staff}` (§7): посох с новыми сокетами.
+        // ack `{staff, char?}` (§7): посох с новыми сокетами; M18/F32:
+        // цель надета → бонусы (самоцвет/урон руны) уже в силу — несём
+        // свежий `char` (паритет с `item.equip`).
         let staff_row = match db::items::find(pool, &staff.uid, &char_id).await {
             Ok(Some(row)) => row,
             Ok(None) => staff,
@@ -3167,10 +3183,22 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
-        let mut result = vec![Self::ack_payload(
-            seq,
-            &serde_json::json!({ "staff": item_snapshot(&staff_row, &staff_def) }),
-        )];
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "staff".into(),
+            serde_json::to_value(item_snapshot(&staff_row, &staff_def)).unwrap_or(Value::Null),
+        );
+        if staff_row.equipped_slot.is_some() {
+            let char_state = match self.reload_char(seq, &char_id).await {
+                Ok(state) => state,
+                Err(out) => return vec![out],
+            };
+            payload.insert(
+                "char".into(),
+                serde_json::to_value(char_state).unwrap_or(Value::Null),
+            );
+        }
+        let mut result = vec![Self::ack_payload(seq, &Value::Object(payload))];
         result.extend(outs);
         result
     }
@@ -3266,13 +3294,28 @@ impl Session {
             Ok(Some(row)) => row,
             _ => staff,
         };
-        vec![Self::ack_payload(
-            seq,
-            &serde_json::json!({
-                "staff": item_snapshot(&staff_row, &staff_def),
-                "rune": item_snapshot(&rune_row, &rune_def),
-            }),
-        )]
+        // M18/F32: цель надета → извлечение сразу меняет бонусы —
+        // ack дополнен `char` (паритет с `socket.insert`).
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "staff".into(),
+            serde_json::to_value(item_snapshot(&staff_row, &staff_def)).unwrap_or(Value::Null),
+        );
+        payload.insert(
+            "rune".into(),
+            serde_json::to_value(item_snapshot(&rune_row, &rune_def)).unwrap_or(Value::Null),
+        );
+        if staff_row.equipped_slot.is_some() {
+            let char_state = match self.reload_char(seq, &char_id).await {
+                Ok(state) => state,
+                Err(out) => return vec![out],
+            };
+            payload.insert(
+                "char".into(),
+                serde_json::to_value(char_state).unwrap_or(Value::Null),
+            );
+        }
+        vec![Self::ack_payload(seq, &Value::Object(payload))]
     }
 
     /// `cmd/magic.rune_cast` (§7, D4): мана + заряд руны → урон цели

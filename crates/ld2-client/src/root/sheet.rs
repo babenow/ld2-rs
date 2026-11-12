@@ -131,6 +131,18 @@ const LEARN_CATALOG: [(&str, Key); 7] = [
     ("hunter", Key::ProfHunter),
 ];
 
+/// M18/F32: типы целей инкрустации — руна идёт только в оружие
+/// (`weapon`/`staff`), самоцвет (`gem`) — только в броню (`armor`).
+/// Общая для окна «Куда инкрустировать…» и окна сокетов; сервер
+/// проверяет то же правило (`socket.insert`, истина §7).
+pub(crate) fn inscribe_target_allowed(insert_type: &str, target_type: &str) -> bool {
+    match insert_type {
+        "gem" => target_type == "armor",
+        "rune" => matches!(target_type, "weapon" | "staff"),
+        _ => false,
+    }
+}
+
 impl Root {
     /// M11.2: диалоги листа (ФР-07/09/10): предмет/улучшение/инкрустация.
     pub(crate) fn sheet_dialog(
@@ -199,7 +211,19 @@ impl Root {
         };
         let mut col = div().flex().flex_col().gap_1();
         let mut found = false;
+        // M18/F32: тип вставки — сам выбранный предмет (rune|gem).
+        let insert_type = snap
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == rune_uid)
+            .map(|i| i.item_type.clone())
+            .unwrap_or_default();
         for item in &snap.char.inventory {
+            // M18/F32: руна → оружие/посох, самоцвет → броня.
+            if !inscribe_target_allowed(&insert_type, &item.item_type) {
+                continue;
+            }
             let Some(sockets) = item.sockets.as_ref() else {
                 continue;
             };
@@ -2168,12 +2192,18 @@ impl Root {
             self.store.close_socketing();
             return div().size_full();
         };
+        // M18/F32: от оружия/посоха — только руны, от брони — только
+        // самоцветы; у цели иного типа вставлять нечего.
+        let insert_type = match staff.item_type.as_str() {
+            "weapon" | "staff" => "rune",
+            "armor" => "gem",
+            _ => "",
+        };
         let runes: Vec<ItemSnapshot> = snap
             .char
             .inventory
             .iter()
-            // M17/F30c: в сокет идут руны и самоцветы.
-            .filter(|i| matches!(i.item_type.as_str(), "rune" | "gem"))
+            .filter(|i| inscribe_target_allowed(insert_type, &i.item_type))
             .cloned()
             .collect();
 
@@ -2513,6 +2543,27 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M18/F32: руна идёт только в оружие (weapon/staff), самоцвет —
+    /// только в броню (armor); неизвестный тип вставки — ничего.
+    #[test]
+    fn inscribe_target_allowed_by_insert_type() {
+        assert!(inscribe_target_allowed("rune", "weapon"));
+        assert!(inscribe_target_allowed("rune", "staff"));
+        assert!(!inscribe_target_allowed("rune", "armor"), "руна в броню");
+        assert!(!inscribe_target_allowed("rune", "shield"));
+        assert!(inscribe_target_allowed("gem", "armor"));
+        assert!(
+            !inscribe_target_allowed("gem", "weapon"),
+            "самоцвет в оружие"
+        );
+        assert!(!inscribe_target_allowed("gem", "staff"));
+        assert!(!inscribe_target_allowed("", "weapon"), "нет типа вставки");
+        assert!(
+            !inscribe_target_allowed("potion", "weapon"),
+            "не инкрустация"
+        );
+    }
 
     /// M16/F29e: лейблы переводят контент и падают на сырое значение
     /// для открытых строк (новый тип/слот/статс/школа).

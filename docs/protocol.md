@@ -287,8 +287,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны посоха |
-| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff}` | − | инкрустация (любой предмет с сокетами; `staff_uid` — uid предмета-мишени; M17/F30a) |
-| `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune}` | − | извлечение |
+| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) |
+| `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune, char?}` | − | извлечение (цель надета — ack несёт `char`, M18/F32) |
 | `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после» |
 | `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение |
 | `craft.list` | `{}` | `{professions[]}` | + | мои профессии: id/ранг/xp |

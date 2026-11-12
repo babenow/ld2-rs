@@ -387,7 +387,7 @@ pub(super) fn t(key: Key) -> &'static str {
         MenuInscribe => "Инкрустировать",
         InscribePick => "Куда инкрустировать…",
         InscribeCasting => "Инкрустация",
-        InscribeNoWeapons => "Нет предмета со свободными сокетами",
+        InscribeNoWeapons => "Нет подходящего предмета со свободными сокетами",
         BpCurrencies => "Валюты",
         HkOpenBackpack => "Открыть рюкзак",
     }

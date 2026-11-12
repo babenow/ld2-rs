@@ -71,6 +71,98 @@ async fn gem_in_armor_boosts_attrs_when_equipped() {
     );
 }
 
+/// M18/F32: руны — только в оружие, самоцветы — только в броню
+/// (отказ `E_NO_RUNE_SLOT`); вставка/извлечение в **надетой** броне
+/// сразу меняет атрибуты — ack несёт `char` (бонус без переодевания).
+#[tokio::test]
+async fn rune_weapon_gem_armor_only_and_equipped_attrs() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    let armor = give(&mut c, "armor_bronze").await; // sockets: 1
+    let sword = give(&mut c, "sword_knight").await; // sockets: 1
+    let rune = give(&mut c, "rune_fire").await;
+    let gem = give(&mut c, "gem_str").await; // +3 str
+
+    // Руна в броню — отказ.
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": armor, "socket_index": 0, "rune_uid": rune }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NO_RUNE_SLOT",
+        "руна в броню: {ack}"
+    );
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("оружие"),
+        "текст отказа: {ack}"
+    );
+
+    // Самоцвет в оружие — отказ.
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": sword, "socket_index": 0, "rune_uid": gem }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NO_RUNE_SLOT",
+        "самоцвет в оружие: {ack}"
+    );
+
+    // Надели броню → вставили самоцвет → ack несёт `char` с бонусом (10+3).
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": armor, "slot": "body" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "надевание");
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": armor, "socket_index": 0, "rune_uid": gem }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "самоцвет в надетой броне: {ack}");
+    assert_eq!(
+        ack["payload"]["char"]["attrs"]["str"], 13,
+        "бонус сразу в ack: {ack}"
+    );
+
+    // Извлечение — бонус снят (тот же `char` в ack).
+    let seq = c
+        .send(
+            "cmd/socket.extract",
+            json!({ "staff_uid": armor, "socket_index": 0 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "извлечение: {ack}");
+    assert_eq!(
+        ack["payload"]["char"]["attrs"]["str"], 10,
+        "бонус снят: {ack}"
+    );
+    assert!(
+        ack["payload"]["char"]["inventory"]
+            .as_array()
+            .is_some_and(|inv| inv.iter().any(|i| i["def_id"] == "gem_str")),
+        "самоцвет вернулся в инвентарь: {ack}"
+    );
+}
+
 /// M17/F30a: меч принимает руны (инкрустация/извлечение, damage в
 /// сокете), но каст руны остаётся привилегией посоха.
 #[tokio::test]
