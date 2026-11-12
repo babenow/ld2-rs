@@ -655,10 +655,18 @@ impl AppStore {
                 }
             }
             Act::Socket => {
-                // §7: ack извлекаемого несёт {staff, rune}, вставки — {staff}.
+                // §7: ack извлекаемого несёт {staff, rune}, вставки — {staff};
+                // M18/F32: цель надета — ack дополнен `char` (бонусы
+                // самоцвета/урон руны вступили в силу сразу).
                 if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
                 {
-                    apply_item_patch(&mut snap.char, payload);
+                    if let Ok(ch) = serde_json::from_value::<ld2_protocol::types::CharacterState>(
+                        payload["char"].clone(),
+                    ) {
+                        snap.char = ch;
+                    } else {
+                        apply_item_patch(&mut snap.char, payload);
+                    }
                 }
             }
             Act::Create => {
@@ -3268,6 +3276,30 @@ mod tests {
         assert!(
             snap.char.inventory.iter().any(|i| i.uid == "rune_i_17_0"),
             "руна в инвентаре"
+        );
+        assert!(store.notice.is_none());
+    }
+
+    /// M18/F32: ack с `char` (цель была надета) применяет атрибуты —
+    /// бонус самоцвета виден сразу, без переодевания.
+    #[test]
+    fn socket_ack_with_char_applies_attrs() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Socket);
+        let mut ch = fixtures::character("c1", "Ким");
+        ch.attrs.insert("str".into(), 13);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            23,
+            Some(1021),
+            &serde_json::json!({ "staff": fixtures::staff_item(), "char": ch }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let snap = store.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snap.char.attrs.get("str"),
+            Some(&13i64),
+            "бонус самоцвета применён из `char` ack"
         );
         assert!(store.notice.is_none());
     }

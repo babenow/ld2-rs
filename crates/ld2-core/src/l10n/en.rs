@@ -387,7 +387,7 @@ pub(super) fn t(key: Key) -> &'static str {
         MenuInscribe => "Inscribe",
         InscribePick => "Inscribe into…",
         InscribeCasting => "Inscribing",
-        InscribeNoWeapons => "No item with a free socket",
+        InscribeNoWeapons => "No matching item with a free socket",
         BpCurrencies => "Currencies",
         HkOpenBackpack => "Open backpack",
     }
