@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::in_world;
+use common::{in_world, in_world_profile};
 use serde_json::json;
 
 /// Выдать предмет dev-сценарием → uid из `evt/item/added`.
@@ -135,7 +135,7 @@ async fn socket_insert_cast_extract_flow() {
         return;
     };
     let ws = common::start_ws_server(&db_url).await;
-    let (mut c, _login, _char) = in_world(&ws).await;
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
 
     let staff_uid = give(&mut c, "staff_apprentice").await;
     let rune_uid = give(&mut c, "rune_fire").await;
@@ -232,7 +232,7 @@ async fn rune_cast_stops_without_charges() {
         })
         .await
     );
-    let (mut c, _login, _char) = in_world(&ws).await;
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
 
     let staff_uid = give(&mut c, "staff_apprentice").await;
     let rune_uid = give(&mut c, "rune_fire").await;
@@ -282,7 +282,7 @@ async fn rune_cast_requires_mana() {
         })
         .await
     );
-    let (mut c, _login, _char) = in_world(&ws).await;
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
 
     let staff_uid = give(&mut c, "staff_apprentice").await;
     let rune_uid = give(&mut c, "rune_fire").await;
@@ -402,7 +402,7 @@ async fn mana_regen_out_of_combat() {
         })
         .await
     );
-    let (mut c, _login, _char) = in_world(&ws).await;
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
 
     let staff_uid = give(&mut c, "staff_apprentice").await;
     let rune_uid = give(&mut c, "rune_fire").await;

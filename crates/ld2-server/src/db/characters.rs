@@ -129,6 +129,22 @@ pub async fn set_mp(pool: &PgPool, char_id: &str, mp_cur: i32) -> Result<(), sql
     Ok(())
 }
 
+/// M17/F30e: ресурс персонажа (cur/max) — старт по профилю и боевые
+/// изменения (ярость/энергия используют те же колонки mp_*).
+pub async fn set_resource(
+    pool: &PgPool,
+    char_id: &str,
+    cur: i32,
+    max: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE characters SET mp_cur = $2, mp_max = $3 WHERE id = $1")
+        .bind(char_id)
+        .bind(cur)
+        .bind(max)
+        .execute(pool)
+        .await
+        .map(|_| ())
+}
 /// Респаун (смерть, ФР-06): hp полное + позиция = спавн + бамп версии
 /// одним UPDATE (D27) → `(hp_cur, hp_max, state_version)`.
 pub async fn respawn(

@@ -586,6 +586,20 @@ impl Session {
         }
         match db::characters::create(pool, account_id, &cmd.name, &cmd.profile).await {
             Ok(Some(row)) => {
+                // M17/F30e: стартовый ресурс по профилю (WoW): воин —
+                // ярость с нуля, лучник — полная энергия; мана (маг) —
+                // дефолт колонок.
+                let res = &self.state.config.gameplay.resource;
+                let resource = match cmd.profile.as_str() {
+                    "warrior" => Some((0, res.rage_max as i32)),
+                    "archer" => Some((res.energy_max as i32, res.energy_max as i32)),
+                    _ => None,
+                };
+                if let Some((cur, max)) = resource {
+                    if let Err(e) = db::characters::set_resource(pool, &row.id, cur, max).await {
+                        warn!("char.create (ресурс): {e}");
+                    }
+                }
                 let character = self.summary_for(&row).await;
                 vec![Self::ack_payload(
                     seq,
@@ -1269,9 +1283,17 @@ impl Session {
                 cur: i64::from(row.hp_cur),
                 max: i64::from(row.hp_max),
             },
-            mp: Mp {
-                cur: i64::from(row.mp_cur),
-                max: i64::from(row.mp_max),
+            // M17/F30e: ресурс по профилю — ярость/энергия/мана.
+            mp: {
+                let max = crate::systems::resource_max(
+                    row.profile.as_str(),
+                    &self.state.config.gameplay.resource,
+                    i64::from(row.mp_max),
+                );
+                Mp {
+                    cur: i64::from(row.mp_cur).clamp(0, max),
+                    max,
+                }
             },
             xp_pool: row.xp_pool,
             level: Some(level),
@@ -1509,10 +1531,49 @@ impl Session {
             }
         }
 
+        // M17/F30e: ресурс класса — стоимость активной способности
+        // (ярость воина / энергия лучника / мана мага; 0 — бесплатно)
+        // и профиль для прироста ярости за урон.
+        let Some(crow) = (match db::characters::get(pool, &char_id).await {
+            Ok(row) => row,
+            Err(e) => {
+                warn!("skill.use (ресурс): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
+        };
+        let profile = crow.profile.as_str();
+        let res_cfg = &self.state.config.gameplay.resource;
+        let res_max = crate::systems::resource_max(profile, res_cfg, i64::from(crow.mp_max));
+        let mut res_cur = i64::from(crow.mp_cur).min(res_max);
+        let mut resource_spent = false;
+        if active.cost > 0 {
+            let cost = i64::from(active.cost);
+            if res_cur < cost {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::NotEnoughMp,
+                    format!(
+                        "не хватает {}: {res_cur} < {cost}",
+                        crate::systems::resource_name(profile)
+                    ),
+                )];
+            }
+            res_cur -= cost;
+            if let Err(e) = db::characters::set_mp(pool, &char_id, res_cur as i32).await {
+                warn!("skill.use (списание ресурса): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            resource_spent = true;
+        }
+
         // Урон: base_damage × множитель способности (§4: ×1.8).
         let damage = ((self.state.config.gameplay.combat.base_damage as f64) * active.damage_mult)
             .round()
             .max(1.0) as i64;
+        // M17/F30e: ярость воина за нанесённый урон (15 % — конфиг).
+        let rage = crate::systems::rage_gain(res_cfg, profile, damage);
 
         // Кулдаун фиксируем ДО удара (защита от двойного нажатия в одном тике).
         let until = now_s + active.cooldown_s.ceil() as i64;
@@ -1541,13 +1602,28 @@ impl Session {
             })
             .unwrap_or_default(),
         ));
+        // M17/F30e: списанный ресурс — сразу клиенту (патч mp).
+        if resource_spent {
+            let mut patch = serde_json::Map::new();
+            patch.insert(
+                "mp".into(),
+                serde_json::json!({ "cur": res_cur, "max": res_max }),
+            );
+            mine.push(out_event(
+                "evt/char/stats",
+                None,
+                serde_json::to_value(CharStats { patch }).unwrap_or_default(),
+            ));
+        }
 
         // Урон цели: hit/hp → при смерти: despawn/труп/бой окончен + XP.
         let mut others: Vec<(String, String)> = Vec::new();
         let mut xp_work: Option<crate::tick::KillXp> = None;
+        let mut hit_done = false;
         {
             let mut world = self.state.world.lock().expect("мир");
             if let Some(hp) = world.damage_mob(target, damage) {
+                hit_done = true;
                 let mob_name = world
                     .mob(target)
                     .map(|m| m.name.clone())
@@ -1590,6 +1666,28 @@ impl Session {
                         &char_id,
                         skills_cfg,
                     );
+                }
+            }
+        }
+        // M17/F30e: прирост ярости за нанесённый урон (воин) — после
+        // удара, с патчем клиенту.
+        if rage > 0 && hit_done {
+            let new_rage = (res_cur + rage).min(res_max);
+            if new_rage > res_cur {
+                match db::characters::set_mp(pool, &char_id, new_rage as i32).await {
+                    Ok(()) => {
+                        let mut patch = serde_json::Map::new();
+                        patch.insert(
+                            "mp".into(),
+                            serde_json::json!({ "cur": new_rage, "max": res_max }),
+                        );
+                        mine.push(out_event(
+                            "evt/char/stats",
+                            None,
+                            serde_json::to_value(CharStats { patch }).unwrap_or_default(),
+                        ));
+                    }
+                    Err(e) => warn!("skill.use (ярость {char_id}): {e}"),
                 }
             }
         }
