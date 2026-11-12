@@ -6244,7 +6244,17 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
             let sockets: Vec<Socket> =
                 serde_json::from_value(item.sockets.clone()).unwrap_or_default();
             if sockets.is_empty() {
-                None
+                // M18/F31: предмет с сокетами показывает их даже до
+                // первой вставки — окно инкрустации и список целей
+                // видят всё оружие/броню с сокетами (ленивая форма).
+                if def.sockets > 0 {
+                    let list: Vec<serde_json::Value> = (0..def.sockets.max(0))
+                        .map(|i| serde_json::json!({ "index": i, "rune": null }))
+                        .collect();
+                    serde_json::from_value(serde_json::Value::Array(list)).ok()
+                } else {
+                    None
+                }
             } else {
                 Some(sockets)
             }
