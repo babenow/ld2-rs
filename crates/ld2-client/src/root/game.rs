@@ -710,8 +710,19 @@ impl Root {
                     } else if !mp_ok {
                         Some(OffReason::Req(t(lang, Key::NotEnoughMp).to_string()))
                     } else {
-                        let (ok, left) = ready(0);
-                        (!ok).then_some(OffReason::Cd(left))
+                        // M17/F30g: кулдаун самой руны (cooldown_s) +
+                        // глобальный — бар по полной длительности.
+                        let cd = rune
+                            .def_id
+                            .as_deref()
+                            .and_then(|d| self.store.item_cd_bar(d, now_ms));
+                        let own = cd.map(|(l, _)| l).unwrap_or(0);
+                        let (ok, left) = ready(own);
+                        if ok {
+                            None
+                        } else {
+                            Some(OffReason::Cd(left))
+                        }
                     };
                     match off {
                         None => {
@@ -743,10 +754,19 @@ impl Root {
                             ));
                         }
                         Some(OffReason::Cd(left)) => {
-                            row = row.child(cd_disabled(
+                            // M17/F30g: бар по полной длительности
+                            // предметного кулдауна (GCD — дефолт 1 с).
+                            let total = rune
+                                .def_id
+                                .as_deref()
+                                .and_then(|d| self.store.item_cd_bar(d, now_ms))
+                                .map(|(_, t)| t)
+                                .unwrap_or(1000);
+                            row = row.child(cd_bar_button(
                                 &format!("ld2-rune-off-{}", socket.index),
                                 label,
                                 left,
+                                total,
                                 lang,
                                 pal,
                             ));
@@ -766,7 +786,14 @@ impl Root {
             .collect();
         for item in consumables {
             let label = format!("{} ×{}", item.name, item.qty.unwrap_or(1));
-            let (ok, left) = ready(0);
+            // M17/F30g: собственный кулдаун предмета (cooldown_s,
+            // дефолт 1 с) + глобальный; кнопка с таймером и баром.
+            let cd = item
+                .def_id
+                .as_deref()
+                .and_then(|d| self.store.item_cd_bar(d, now_ms));
+            let own = cd.map(|(l, _)| l).unwrap_or(0);
+            let (ok, ready_left) = ready(own);
             if ok {
                 row = row.child(btn(
                     cx,
@@ -776,10 +803,12 @@ impl Root {
                     Click::UseItem(item.uid.clone()),
                 ));
             } else {
-                row = row.child(cd_disabled(
+                let (left, total) = cd.unwrap_or((ready_left, 1000));
+                row = row.child(cd_bar_button(
                     &format!("ld2-act-item-{}", item.uid),
                     label,
                     left,
+                    total,
                     lang,
                     pal,
                 ));
@@ -1236,6 +1265,41 @@ fn cd_disabled(
         cooldown_reason(lang, left_ms),
         pal,
     )
+}
+
+/// M17/F30g: кнопка в предметном кулдауне — таймер на кнопке и
+/// анимированный прогрессбар под ней (остаток от полной длительности;
+/// анимация — тик 50 мс через cd_active в root).
+fn cd_bar_button(
+    id: &str,
+    label: String,
+    left_ms: i64,
+    total_ms: i64,
+    lang: ld2_core::l10n::Lang,
+    pal: &Palette,
+) -> Div {
+    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    let short = tf(lang, Key::HotbarCdShort, &[("{s}", &secs.to_string())]);
+    let frac = (left_ms as f32 / total_ms.max(1) as f32).clamp(0.0, 1.0);
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(action_disabled(
+            id,
+            format!("{label} · {short}"),
+            cooldown_reason(lang, left_ms),
+            pal,
+        ))
+        .child(
+            div().h(px(3.0)).rounded_md().bg(rgb(pal.border)).child(
+                div()
+                    .h_full()
+                    .w(gpui::relative(frac))
+                    .rounded_md()
+                    .bg(rgb(pal.accent)),
+            ),
+        )
 }
 
 /// Цвет severity (палитра §7.4, локальная копия — egui-версия возвращает Color32).

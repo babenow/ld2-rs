@@ -195,6 +195,7 @@ mod tests {
         ItemSnapshot {
             slot: None,
             hands: None,
+            def_id: None,
             uid: "t1".into(),
             item_type: "weapon".into(),
             name: "Т".into(),
@@ -280,6 +281,7 @@ mod tests {
                     charges: 7,
                     max: 10,
                     damage: Some(damage),
+                    def_id: None,
                 }),
             }])
         };

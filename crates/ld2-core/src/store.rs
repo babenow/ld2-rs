@@ -188,6 +188,9 @@ pub struct AppStore {
     pub target: Option<String>,
     /// Кулдауны активных навыков: skill_id → until epoch (ФР-05).
     pub combat_cooldowns: BTreeMap<String, i64>,
+    /// M17/F30g: кулдауны предметов `item:<def_id>` → (until мс,
+    /// полная длительность мс) — таймер и прогресс-бар кнопок hotbar.
+    pub item_cooldowns: BTreeMap<String, (i64, i64)>,
     /// Глобальный кулдаун боевых действий (M14/F4): epoch **мс**, до
     /// которого заблокированы кнопки панели — клиентская блокировка
     /// 1 с (сервер не меняется; приоритет — max(основной, глобальный)).
@@ -372,6 +375,7 @@ impl AppStore {
             upgrade: None,
             socketing: None,
             inscribe: None,
+            item_cooldowns: BTreeMap::new(),
             time_offset: 0,
             target: None,
             combat_cooldowns: BTreeMap::new(),
@@ -698,6 +702,15 @@ impl AppStore {
                     return vec![];
                 };
                 if let Some(skill) = cd.skill_id {
+                    // M17/F30g: предметные кулдауны — с полной
+                    // длительностью для прогресс-бара кнопки.
+                    if skill.starts_with("item:") {
+                        if let Some(total) = cd.duration_ms {
+                            self.item_cooldowns
+                                .insert(skill, (cd.until_epoch * 1000, total));
+                            return vec![];
+                        }
+                    }
                     self.combat_cooldowns.insert(skill, cd.until_epoch);
                 }
                 vec![]
@@ -1513,6 +1526,14 @@ impl AppStore {
     }
 
     /// Остаток глобального кулдауна, мс (≥0).
+    /// M17/F30g: остаток и полная длительность кулдауна предмета
+    /// (`item:<def_id>`); `None` — кулдауна нет.
+    pub fn item_cd_bar(&self, def_id: &str, now_ms: i64) -> Option<(i64, i64)> {
+        let (until, total) = self.item_cooldowns.get(&format!("item:{def_id}"))?;
+        let left = (*until - now_ms).max(0);
+        (left > 0).then_some((left, *total))
+    }
+
     pub fn global_cooldown_left(&self, now_ms: i64) -> i64 {
         (self.global_cooldown_until - now_ms).max(0)
     }
@@ -3181,6 +3202,7 @@ mod tests {
         let mut full = fixtures::staff_item();
         full.sockets.as_mut().unwrap()[1].rune = Some(ld2_protocol::types::RuneInfo {
             damage: None,
+            def_id: None,
             name: "Руна льда".into(),
             spell: "ice_shard".into(),
             charges: 5,
@@ -3306,6 +3328,38 @@ mod tests {
             serde_json::json!({ "skill_id": "power_strike", "until_epoch": 123 }),
         ));
         assert_eq!(store.combat_cooldowns.get("power_strike"), Some(&123));
+    }
+
+    /// M17/F30g: бар кулдауна предмета — остаток и полная
+    /// длительность; истёкшая запись и чужой предмет — None.
+    #[test]
+    fn item_cd_bar_reports_left_and_total() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/combat/cooldown",
+            serde_json::json!({
+                "skill_id": "item:potion_heal",
+                "until_epoch": 123,
+                "duration_ms": 1000
+            }),
+        ));
+        assert_eq!(
+            store.item_cd_bar("potion_heal", 122_000),
+            Some((1_000, 1_000)),
+            "остаток и полная длительность"
+        );
+        assert_eq!(store.item_cd_bar("potion_heal", 124_000), None, "истёк");
+        assert_eq!(store.item_cd_bar("rune_fire", 122_000), None, "нет записи");
+        // Без duration (старый сервер) — fallback в combat_cooldowns.
+        store.apply(evt(
+            "evt/combat/cooldown",
+            serde_json::json!({ "skill_id": "item:scroll_frost", "until_epoch": 200 }),
+        ));
+        assert_eq!(
+            store.item_cd_bar("scroll_frost", 100_000),
+            None,
+            "без duration — бара нет"
+        );
     }
 
     #[test]

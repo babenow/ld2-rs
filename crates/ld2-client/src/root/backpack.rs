@@ -443,6 +443,7 @@ mod tests {
         let item = |name: &str, item_type: &str, qty: i64| ItemSnapshot {
             slot: None,
             hands: None,
+            def_id: None,
             uid: format!("i_{name}_{qty}"),
             item_type: item_type.into(),
             name: name.into(),

@@ -566,7 +566,13 @@ impl Root {
                 .store
                 .combat_cooldowns
                 .values()
-                .any(|until_s| until_s.saturating_mul(1000) > now_ms);
+                .any(|until_s| until_s.saturating_mul(1000) > now_ms)
+            // M17/F30g: анимация прогресс-баров предметных кнопок.
+            || self
+                .store
+                .item_cooldowns
+                .values()
+                .any(|(until_ms, _)| *until_ms > now_ms);
 
         if had_events || cd_active || exit_active || inscribe_active {
             // gpui перерисовывается только по notify (аналог request_repaint).
