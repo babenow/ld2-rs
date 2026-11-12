@@ -364,6 +364,10 @@ pub(super) fn t(key: Key) -> &'static str {
         ItemTypeQuill => "Quill",
         ItemTypeShield => "Shield",
         ItemTypeArtifact => "Artifact",
+        ItemTypeGem => "Gem",
+        BpTabGem => "Gems",
+        StatAttr => "Attribute",
+        StatValue => "Bonus",
         // M16/F29d: params tab group
         ParGroupAttack => "Attack",
         // M16/F29b: backpack window

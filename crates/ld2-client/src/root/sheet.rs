@@ -1194,8 +1194,9 @@ impl Root {
             this.send_cmd(&cmd, Act::Drop);
         }));
 
-        // M17/F30a: инкрустация руны — окно выбора оружия + каст-бар.
-        if item.item_type == "rune" {
+        // M17/F30a/F30c: инкрустация руны ИЛИ самоцвета — окно
+        // выбора предмета + каст-бар.
+        if matches!(item.item_type.as_str(), "rune" | "gem") {
             let uid = item.uid.clone();
             menu = menu.item(menu_item(
                 cx,
@@ -1972,6 +1973,9 @@ impl Root {
                     .unwrap_or_else(|| value.to_string());
                 let value = if key == "school" {
                     school_label(lang, &raw)
+                } else if key == "attr" {
+                    // M17/F30c: значение самоцвета — «str» → «Сила».
+                    attr_label(lang, &raw)
                 } else {
                     raw
                 };
@@ -1981,10 +1985,13 @@ impl Root {
         if let Some(sockets) = detail["sockets"].as_array() {
             for socket in sockets {
                 if let Some(rune) = socket["rune"].as_object() {
-                    col = col.child(div().child(format!(
-                        "◈ {}: {}/{}",
-                        rune["name"], rune["charges"], rune["max"]
-                    )));
+                    // M17/F30c: самоцвет — без зарядов (заряды у рун).
+                    let label = if rune["spell"].as_str().is_some_and(|s| s.is_empty()) {
+                        format!("◈ {}", rune["name"])
+                    } else {
+                        format!("◈ {}: {}/{}", rune["name"], rune["charges"], rune["max"])
+                    };
+                    col = col.child(div().child(label));
                 } else {
                     col = col.child(div().text_color(rgb(pal.muted)).child("○ —"));
                 }
@@ -2157,7 +2164,8 @@ impl Root {
             .char
             .inventory
             .iter()
-            .filter(|i| i.item_type == "rune")
+            // M17/F30c: в сокет идут руны и самоцветы.
+            .filter(|i| matches!(i.item_type.as_str(), "rune" | "gem"))
             .cloned()
             .collect();
 
@@ -2172,9 +2180,13 @@ impl Root {
             match &socket.rune {
                 Some(rune) => {
                     let index = socket.index;
-                    row = row.child(
-                        div().child(format!("{} ({}/{})", rune.name, rune.charges, rune.max)),
-                    );
+                    // M17/F30c: самоцвет — без зарядов (заряды у рун).
+                    let text = if rune.spell.is_empty() {
+                        rune.name.clone()
+                    } else {
+                        format!("{} ({}/{})", rune.name, rune.charges, rune.max)
+                    };
+                    row = row.child(div().child(text));
                     let suid = staff.uid.clone();
                     row = row.child(act_btn(
                         cx,
@@ -2396,6 +2408,7 @@ pub(crate) fn type_label(lang: Lang, item_type: &str) -> String {
         "quill" => t(lang, Key::ItemTypeQuill),
         "shield" => t(lang, Key::ItemTypeShield),
         "artifact" => t(lang, Key::ItemTypeArtifact),
+        "gem" => t(lang, Key::ItemTypeGem),
         other => other,
     }
     .to_string()
@@ -2413,6 +2426,8 @@ pub(crate) fn stat_label(lang: Lang, stat: &str) -> String {
         "school" => t(lang, Key::StatSchool),
         "charges" => t(lang, Key::StatCharges),
         "max" => t(lang, Key::StatMax),
+        "attr" => t(lang, Key::StatAttr),
+        "value" => t(lang, Key::StatValue),
         other => other,
     }
     .to_string()

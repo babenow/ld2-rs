@@ -45,12 +45,14 @@ pub(crate) enum BackpackTab {
     Other,
     /// M17/F30b: артефакты (artifact) — 2 слота особых предметов.
     Artifact,
+    /// M17/F30c: самоцветы (gem) — вставляются в броню.
+    Gem,
     /// Валюты (money) — за них можно покупать.
     Currencies,
 }
 
 impl BackpackTab {
-    pub(crate) fn all() -> [(BackpackTab, Key); 10] {
+    pub(crate) fn all() -> [(BackpackTab, Key); 11] {
         [
             (BackpackTab::All, Key::BpTabAll),
             (BackpackTab::Weapon, Key::BpTabWeapon),
@@ -61,6 +63,7 @@ impl BackpackTab {
             (BackpackTab::Tool, Key::BpTabTool),
             (BackpackTab::Other, Key::BpTabOther),
             (BackpackTab::Artifact, Key::BpTabArtifact),
+            (BackpackTab::Gem, Key::BpTabGem),
             (BackpackTab::Currencies, Key::BpCurrencies),
         ]
     }
@@ -76,6 +79,7 @@ impl BackpackTab {
             BackpackTab::Tool => IconName::Wrench,
             BackpackTab::Other => IconName::Package,
             BackpackTab::Artifact => IconName::Sparkles,
+            BackpackTab::Gem => IconName::Hexagon,
             BackpackTab::Currencies => IconName::Wallet,
         }
     }
@@ -91,6 +95,7 @@ impl BackpackTab {
             BackpackTab::Tool => "tool",
             BackpackTab::Other => "other",
             BackpackTab::Artifact => "artifact",
+            BackpackTab::Gem => "gem",
             BackpackTab::Currencies => "currencies",
         }
     }
@@ -105,6 +110,7 @@ impl BackpackTab {
             "tool" => BackpackTab::Tool,
             "other" => BackpackTab::Other,
             "artifact" => BackpackTab::Artifact,
+            "gem" => BackpackTab::Gem,
             "currencies" => BackpackTab::Currencies,
             _ => BackpackTab::Weapon,
         }
@@ -130,6 +136,7 @@ fn tab_for_type(item_type: &str) -> BackpackTab {
         "money" => BackpackTab::Currencies,
         "armor" | "shield" => BackpackTab::Armor,
         "artifact" => BackpackTab::Artifact,
+        "gem" => BackpackTab::Gem,
         _ => BackpackTab::Other,
     }
 }
@@ -421,6 +428,11 @@ mod tests {
             tab_for_type("artifact"),
             BackpackTab::Artifact,
             "артефакты — своей вкладкой"
+        );
+        assert_eq!(
+            tab_for_type("gem"),
+            BackpackTab::Gem,
+            "самоцветы — своей вкладкой"
         );
     }
 

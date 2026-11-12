@@ -228,7 +228,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "exits": [ Exit ], "entities": [ Entity ] }
 
 // ItemSnapshot
-{ "uid": "i_17", "type": "staff",            // weapon|armor|staff|potion|scroll|rune|material|quest
+{ "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest
   "name": "Ясеневый посох", "rarity": "rare",
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },

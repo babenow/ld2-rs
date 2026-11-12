@@ -364,6 +364,10 @@ pub(super) fn t(key: Key) -> &'static str {
         ItemTypeQuill => "Перо",
         ItemTypeShield => "Щит",
         ItemTypeArtifact => "Артефакт",
+        ItemTypeGem => "Самоцвет",
+        BpTabGem => "Самоцветы",
+        StatAttr => "Характеристика",
+        StatValue => "Бонус",
         // M16/F29d: группа вкладки «Параметры»
         ParGroupAttack => "Атака",
         // M16/F29b: окно рюкзака

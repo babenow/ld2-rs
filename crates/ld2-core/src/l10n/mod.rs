@@ -416,6 +416,11 @@ pub enum Key {
     // M17/F30b: новые типы предметов
     ItemTypeShield,
     ItemTypeArtifact,
+    // M17/F30c: самоцветы и их статы
+    ItemTypeGem,
+    BpTabGem,
+    StatAttr,
+    StatValue,
     // M16/F29d: группа «Атака» вкладки «Параметры»
     ParGroupAttack,
     // M16/F29b: окно рюкзака и его хоткей
@@ -862,6 +867,11 @@ mod tests {
         // M17/F30b: новые типы предметов
         Key::ItemTypeShield,
         Key::ItemTypeArtifact,
+        // M17/F30c: самоцветы и их статы
+        Key::ItemTypeGem,
+        Key::BpTabGem,
+        Key::StatAttr,
+        Key::StatValue,
         // M16/F29d: группа «Атака» вкладки «Параметры»
         Key::ParGroupAttack,
         // M16/F29b: окно рюкзака и его хоткей
