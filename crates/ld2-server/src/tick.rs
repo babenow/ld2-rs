@@ -193,23 +193,50 @@ fn plan_combat(
         let mob_max = world.mob_max_hp(&target);
         let source_name = world.char_name(&char_id).unwrap_or_default();
 
+        // M17/F30f: строка удара — «вы» атакующему, имя — наблюдателям;
+        // «чем бьёт» — кэш экипированного оружия в мире.
+        let hits_as = world.char_hits_as(&char_id);
+        let mk_hit = |text: String| CombatHit {
+            source: char_id.clone(),
+            source_name: source_name.clone(),
+            target: target.clone(),
+            target_name: mob_name.clone(),
+            kind: CombatKind::Melee,
+            amount: cfg.base_damage,
+            crit: false,
+            miss: false,
+            text,
+            extra: Default::default(),
+        };
         push_event(
             &mut plan,
             &char_id,
             "evt/combat/hit",
-            &CombatHit {
-                source: char_id.clone(),
-                source_name,
-                target: target.clone(),
-                target_name: mob_name.clone(),
-                kind: CombatKind::Melee,
-                amount: cfg.base_damage,
-                crit: false,
-                miss: false,
-                text: format!("Вы бьёте {mob_name}: {}", cfg.base_damage),
-                extra: Default::default(),
-            },
+            &mk_hit(crate::combat_log::melee_hit_text(
+                &source_name,
+                &mob_name,
+                hits_as,
+                cfg.base_damage,
+                true,
+            )),
         );
+        for addr in world.chars_in_location(&loc) {
+            if addr == char_id {
+                continue;
+            }
+            push_event(
+                &mut plan,
+                &addr,
+                "evt/combat/hit",
+                &mk_hit(crate::combat_log::melee_hit_text(
+                    &source_name,
+                    &mob_name,
+                    hits_as,
+                    cfg.base_damage,
+                    false,
+                )),
+            );
+        }
         push_event(
             &mut plan,
             &char_id,
@@ -275,7 +302,7 @@ fn plan_combat(
                 amount,
                 crit: false,
                 miss: false,
-                text: format!("{mob_name} бьёт вас: {amount}"),
+                text: format!("{mob_name} бьёт вас: **{amount}**"),
                 extra: Default::default(),
             },
         );

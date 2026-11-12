@@ -353,6 +353,12 @@ async fn scroll_cast_needs_target_and_kills() {
         })
         .await;
     assert_eq!(hit["payload"]["target"], "m_3", "урон волку: {hit}");
+    // M17/F30f: слова заклинания и «чем бьёт» — в строке кастера,
+    // магические слова жирные.
+    let text = hit["payload"]["text"].as_str().unwrap_or_default();
+    assert!(text.contains("**Neris Vael**"), "слова жирные: {text}");
+    assert!(text.contains("ледяной стрелой"), "чем бьёт: {text}");
+    assert!(text.contains("вы бьёте"), "кастер-формат: {text}");
     let hp = c
         .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
         .await;

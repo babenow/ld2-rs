@@ -102,10 +102,25 @@ pub struct World {
     char_loc: HashMap<String, String>,
     /// (char_id, skill_id) → до какого момента кулдаун (epoch-с, §4/M14).
     ability_cd: HashMap<(String, String), i64>,
+    /// M17/F30f: чем бьёт персонаж (экипированное оружие) — синхронный
+    /// доступ из plan_combat; обновляется при входе и смене оружия.
+    char_hits: HashMap<String, &'static str>,
     corpse_seq: u64,
 }
 
 impl World {
+    /// M17/F30f: чем бьёт персонаж — творительный из экипированного
+    /// оружия; без данных (до входа) — кулаки.
+    pub fn char_hits_as(&self, char_id: &str) -> &'static str {
+        self.char_hits.get(char_id).copied().unwrap_or("руками")
+    }
+
+    /// M17/F30f: обновить «чем бьёт» (вызывается на входе в мир и при
+    /// экипировке/снятии оружия).
+    pub fn set_char_hits_as(&mut self, char_id: &str, hits_as: &'static str) {
+        self.char_hits.insert(char_id.to_string(), hits_as);
+    }
+
     /// Загрузить живых мобов из сида (вызывается после content-сида).
     pub fn seed_mobs(&mut self, rows: &[(String, serde_json::Value)]) {
         for (location_id, entities) in rows {

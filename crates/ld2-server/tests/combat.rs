@@ -149,6 +149,37 @@ async fn combat_stop_ends_battle() {
     assert_eq!(ack["error"]["code"], "E_NOT_IN_LOCATION", "нет боя: {ack}");
 }
 
+/// M17/F30f: авто-атака тика — строка с «чем бьёт» (оружие не
+/// экипировано → «руками») и жирным уроном; кастеру — «Вы бьёте».
+#[tokio::test]
+async fn auto_attack_log_line_has_hits_as() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "атака");
+
+    let hit = c
+        .wait(|v| v["type"] == "evt/combat/hit" && v["payload"]["source"] == char_id)
+        .await;
+    let text = hit["payload"]["text"].as_str().expect("текст удара");
+    assert!(text.starts_with("Вы бьёте"), "обращение кастеру: {text}");
+    assert!(text.contains("руками"), "чем бьёт (без оружия): {text}");
+    assert!(
+        text.contains(&format!("**{}**", hit["payload"]["amount"])),
+        "урон жирный: {text}"
+    );
+}
+
 /// Ранг навыка напрямую в БД (гейт `power_strike`: владение мечом 5).
 async fn set_skill_rank(db_url: &str, char_id: &str, skill: &str, rank: i32) {
     let cfg = common::test_config(db_url, |_| {});
@@ -339,6 +370,10 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     c.wait_event("evt/combat/cooldown").await;
     let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
     assert_eq!(hit["payload"]["amount"], 11, "урон: {hit}");
+    // M17/F30f: в логе имя способности (не id) и жирный урон.
+    let text = hit["payload"]["text"].as_str().unwrap_or_default();
+    assert!(text.contains("«Удар мощью»"), "имя скилла: {text}");
+    assert!(text.contains("**−11**"), "жирный урон: {text}");
 
     // Кулдаун 0.5 с → до 1 с в гранулярности epoch-секунд; ждём с запасом.
     tokio::time::sleep(std::time::Duration::from_millis(1300)).await;

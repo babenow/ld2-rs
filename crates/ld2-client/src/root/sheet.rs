@@ -1976,6 +1976,11 @@ impl Root {
                 } else if key == "attr" {
                     // M17/F30c: значение самоцвета — «str» → «Сила».
                     attr_label(lang, &raw)
+                } else if key == "spell" {
+                    // M17/F30f: id заклинания → название (без storm_bolt).
+                    ld2_core::spells::spell_key(&raw)
+                        .map(|k| t(lang, k).to_string())
+                        .unwrap_or(raw)
                 } else {
                     raw
                 };
