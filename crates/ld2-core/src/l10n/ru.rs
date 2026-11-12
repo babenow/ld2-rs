@@ -382,7 +382,7 @@ pub(super) fn t(key: Key) -> &'static str {
         SpellFireDart => "Струя пламени",
         SpellFrostBolt => "Ледяя стрела",
         SpellStormBolt => "Удар шторма",
-        RageLabel => "Ярость",
+        RageLabel => "Адреналин",
         EnergyLabel => "Энергия",
         MenuInscribe => "Инкрустировать",
         InscribePick => "Куда инкрустировать…",

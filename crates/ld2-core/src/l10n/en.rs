@@ -382,7 +382,7 @@ pub(super) fn t(key: Key) -> &'static str {
         SpellFireDart => "Flame Dart",
         SpellFrostBolt => "Frostbolt",
         SpellStormBolt => "Stormbolt",
-        RageLabel => "Rage",
+        RageLabel => "Adrenaline",
         EnergyLabel => "Energy",
         MenuInscribe => "Inscribe",
         InscribePick => "Inscribe into…",

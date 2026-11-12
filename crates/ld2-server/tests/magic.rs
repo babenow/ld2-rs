@@ -84,6 +84,23 @@ async fn sword_takes_runes_but_cannot_cast() {
 
     let sword = give(&mut c, "sword_knight").await; // sockets: 1 (контент)
     let rune = give(&mut c, "rune_fire").await;
+    // M18/F31: сокеты видны в снапшоте до первой вставки — меч
+    // попадает в список целей инкрустации (окно их отфильтровывает).
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "resync");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let item = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь")
+        .iter()
+        .find(|i| i["uid"] == sword)
+        .expect("меч в инвентаре")
+        .clone();
+    let socks = item["sockets"].as_array().expect("сокеты меча");
+    assert_eq!(socks.len(), 1, "сокет до вставки: {item}");
+    assert!(socks[0]["rune"].is_null(), "сокет свободен: {item}");
 
     // Инкрустация в меч — паритет с посохом; damage пишется в сокет.
     let seq = c
