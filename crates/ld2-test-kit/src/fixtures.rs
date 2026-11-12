@@ -311,6 +311,7 @@ pub fn staff_item() -> ItemSnapshot {
     stats.insert("dmg".into(), json!("3..5"));
     ItemSnapshot {
         uid: "i_17".into(),
+        def_id: None,
         item_type: "staff".into(),
         name: "Ясеневый посох".into(),
         rarity: "rare".into(),
@@ -328,6 +329,7 @@ pub fn staff_item() -> ItemSnapshot {
                     charges: 7,
                     max: 10,
                     damage: None,
+                    def_id: None,
                 }),
             },
             Socket {
@@ -346,6 +348,7 @@ pub fn scroll_item() -> ItemSnapshot {
     stats.insert("spell".into(), json!("fireball"));
     ItemSnapshot {
         uid: "s_1".into(),
+        def_id: None,
         item_type: "scroll".into(),
         name: "Свиток огненного шара".into(),
         rarity: "common".into(),
@@ -369,6 +372,7 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
     stats.insert("max".into(), json!(5));
     ItemSnapshot {
         uid: uid.to_string(),
+        def_id: None,
         item_type: "rune".into(),
         name: "Руна льда".into(),
         rarity: "common".into(),
@@ -391,6 +395,7 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
         .enumerate()
         .map(|(i, ty)| ItemSnapshot {
             uid: format!("m_{}", i + 1),
+            def_id: None,
             item_type: (*ty).into(),
             name: if *ty == "ingot_iron" {
                 "Железный слиток"

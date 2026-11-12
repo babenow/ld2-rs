@@ -105,6 +105,9 @@ pub struct World {
     /// M17/F30f: чем бьёт персонаж (экипированное оружие) — синхронный
     /// доступ из plan_combat; обновляется при входе и смене оружия.
     char_hits: HashMap<String, &'static str>,
+    /// M17/F30g: период атаки персонажа, мс — из `cooldown_s`
+    /// оружия в правой руке; `None` → конфиг `combat.attack_interval_s`.
+    char_attack: HashMap<String, i64>,
     corpse_seq: u64,
 }
 
@@ -119,6 +122,24 @@ impl World {
     /// экипировке/снятии оружия).
     pub fn set_char_hits_as(&mut self, char_id: &str, hits_as: &'static str) {
         self.char_hits.insert(char_id.to_string(), hits_as);
+    }
+
+    /// M17/F30g: период атаки из `cooldown_s` оружия; `None` — снять
+    /// значение (нет оружия → конфиг).
+    pub fn set_char_attack_ms(&mut self, char_id: &str, ms: Option<i64>) {
+        match ms {
+            Some(ms) => {
+                self.char_attack.insert(char_id.to_string(), ms);
+            }
+            None => {
+                self.char_attack.remove(char_id);
+            }
+        }
+    }
+
+    /// M17/F30g: текущий период атаки, мс (`None` — из конфига).
+    pub fn char_attack_ms(&self, char_id: &str) -> Option<i64> {
+        self.char_attack.get(char_id).copied()
     }
 
     /// Загрузить живых мобов из сида (вызывается после content-сида).
@@ -432,5 +453,22 @@ impl World {
         self.combat
             .get(char_id)
             .map(|c| (c.target_id.clone(), c.location_id.clone()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M17/F30g: период атаки — из cooldown_s оружия; снятие оружия
+    /// убирает значение (в plan берётся конфиг).
+    #[test]
+    fn char_attack_ms_set_get_and_clear() {
+        let mut world = World::default();
+        assert_eq!(world.char_attack_ms("c1"), None, "до входа — конфиг");
+        world.set_char_attack_ms("c1", Some(1_500));
+        assert_eq!(world.char_attack_ms("c1"), Some(1_500));
+        world.set_char_attack_ms("c1", None);
+        assert_eq!(world.char_attack_ms("c1"), None, "оружие снято");
     }
 }

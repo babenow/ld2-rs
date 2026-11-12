@@ -157,7 +157,9 @@ fn plan_combat(
         if now_ms < next_at {
             continue;
         }
-        world.set_next_attack(&char_id, now_ms + attack_interval_ms);
+        // M17/F30g: период атаки — cooldown_s оружия, иначе конфиг.
+        let interval = world.char_attack_ms(&char_id).unwrap_or(attack_interval_ms);
+        world.set_next_attack(&char_id, now_ms + interval);
 
         let target_alive_in_loc = world.mob_location(&target).is_some_and(|l| l == loc);
         if !target_alive_in_loc {

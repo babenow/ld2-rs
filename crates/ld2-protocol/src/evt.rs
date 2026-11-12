@@ -230,6 +230,10 @@ pub struct CombatCooldown {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_id: Option<String>,
     pub until_epoch: i64,
+    /// M17/F30g: полная длительность кулдауна, мс — для прогресс-бара
+    /// клиента (`None` — старый сервер, без бара).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

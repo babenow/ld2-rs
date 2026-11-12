@@ -239,6 +239,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
                { "index": 1, "rune": null } ],
   "slot": "main_hand", "hands": 2,         // M17/F30b: слот предмета (ring/artifact —
                                             // псевдослоты пар) и руки (2 — двуручник)
+  "def_id": "dagger_knife",              // M17/F30g: ключ кулдауна использования
   "qty": 1, "gold_value": 120 }
 
 // SkillSnapshot
@@ -279,7 +280,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `combat.stop` | `{}` | `{}` | + | выйти из боя |
 | `combat.flee` | `{}` | `{}` | − | попытка сбежать |
 | `skill.use` | `{skill_id, target_id?}` | `{}` | − | активный навык |
-| `item.use` | `{item_uid, target_id?}` | `{}` | − | зелье/свиток-прочее |
+| `item.use` | `{item_uid, target_id?}` | `{}` | − | зелье/свиток-прочее (M17/F30g: кулдаун `cooldown_s`, дефолт 1 с → `E_COOLDOWN`) |
 | `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
@@ -352,7 +353,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | Событие | Payload | Назначение |
 |---|---|---|
 | `evt/combat/hit` | `{ source, source_name, target, target_name, kind, amount, crit, miss, text }` | удар; `kind` = melee\|skill\|rune\|scroll; `text` — серверный, рендерится как есть; M17/F30f: `**…**` — жирные сегменты (слова заклинания и урон), кастеру — «вы», наблюдателям — имя |
-| `evt/combat/cooldown` | `{ skill_id?, until_epoch }` | блокировка действия |
+| `evt/combat/cooldown` | `{ skill_id?, until_epoch, duration_ms? }` | блокировка действия; `item:<def_id>` + `duration_ms` — кулдаун предмета (M17/F30g, прогресс-бар кнопки) |
 | `evt/combat/end` | `{ reason }` | конец боя |
 | `evt/magic/cast` | `{ by, by_name, spell, what: "scroll"\|"rune", target?, charges_left?, mp_left?, ok }` | каст (свой/чужой); `charges_left` — заряды руны, `mp_left` — остаток маны |
 

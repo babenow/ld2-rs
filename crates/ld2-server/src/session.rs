@@ -1605,6 +1605,8 @@ impl Session {
             serde_json::to_value(CombatCooldown {
                 skill_id: Some(cmd.skill_id.clone()),
                 until_epoch: until,
+                // M17/F30g: полная длительность — прогресс-бар клиента.
+                duration_ms: Some((active.cooldown_s * 1000.0).round() as i64),
             })
             .unwrap_or_default(),
         ));
@@ -1944,6 +1946,10 @@ impl Session {
                 "нет определения предмета",
             )];
         };
+        // M17/F30g: кулдаун предмета (cooldown_s, дефолт 1 с).
+        if let Some(err) = self.item_cd_gate(seq, &char_id, &def).await {
+            return vec![err];
+        }
         // Зелье: heal из stats (открытый объект §6).
         if def.item_type == "potion" {
             if let Some(heal) = def.stats.get("heal").and_then(|v| v.as_i64()) {
@@ -2006,6 +2012,8 @@ impl Session {
                     None,
                     serde_json::to_value(CharStats { patch }).unwrap_or_default(),
                 ));
+                // M17/F30g: кулдаун использования → таймер кнопки.
+                outs.push(self.item_cd_started(&char_id, &def));
                 return outs;
             }
         }
@@ -3341,6 +3349,10 @@ impl Session {
                 "у предмета нет сокетов",
             )];
         }
+        // M17/F30g: кулдаун каста руны (cooldown_s, дефолт 1 с).
+        if let Some(err) = self.item_cd_gate(seq, &char_id, &rune_def).await {
+            return vec![err];
+        }
 
         // Мана (D4: каст тратит ману И заряд).
         let cost = i64::from(self.state.config.gameplay.magic.mana.rune_cost);
@@ -3536,6 +3548,8 @@ impl Session {
                 world.send_to_char(&addr, text);
             }
         }
+        // M17/F30g: кулдаун каста → таймер кнопки.
+        mine.push(self.item_cd_started(&char_id, &rune_def));
         mine
     }
 
@@ -3578,6 +3592,10 @@ impl Session {
         };
         if scroll_def.item_type != "scroll" {
             return vec![Self::err(seq, ErrorCode::ItemGone, "это не свиток")];
+        }
+        // M17/F30g: кулдаун каста свитка (cooldown_s, дефолт 1 с).
+        if let Some(err) = self.item_cd_gate(seq, &char_id, &scroll_def).await {
+            return vec![err];
         }
 
         let location = self.current_location(&char_id).await;
@@ -3775,6 +3793,8 @@ impl Session {
                 }
             }
         }
+        // M17/F30g: кулдаун каста → таймер кнопки.
+        mine.push(self.item_cd_started(&char_id, &scroll_def));
         mine
     }
 
@@ -6231,6 +6251,8 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
         },
         qty: Some(i64::from(item.qty)),
         gold_value: Some(i64::from(def.gold_value)),
+        // M17/F30g: определение — ключ кулдауна использования.
+        def_id: Some(item.def_id.clone()),
         slot: def.slot.clone(),
         hands: Some(def.hands),
         // M17/F30b: навык оружия в снапшот — включает вклад навыка в
@@ -6314,19 +6336,71 @@ impl Session {
     /// оружию (main_hand); без него — «руками». Вызывается при входе
     /// в мир и после экипировки/снятия.
     async fn refresh_char_hits_as(&self, char_id: &str) {
-        let hits = match db::items::find_equipped_in_slot(&self.state.pool, char_id, "main_hand")
+        let main = db::items::find_equipped_in_slot(&self.state.pool, char_id, "main_hand")
             .await
-        {
-            Ok(Some(item)) => match db::items::def(&self.state.pool, &item.def_id).await {
-                Ok(Some(def)) => {
-                    crate::combat_log::weapon_hits_as(def.skill.as_deref(), def.item_type.as_str())
-                }
-                _ => "руками",
-            },
-            _ => "руками",
+            .ok()
+            .flatten();
+        let def = match &main {
+            Some(item) => db::items::def(&self.state.pool, &item.def_id)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
         };
+        let hits = def
+            .as_ref()
+            .map(|d| crate::combat_log::weapon_hits_as(d.skill.as_deref(), d.item_type.as_str()))
+            .unwrap_or("руками");
+        // M17/F30g: скорость атаки — cooldown_s оружия (нет оружия —
+        // значение снимается, в plan берётся конфиг).
+        let attack_ms = def
+            .as_ref()
+            .map(|d| (d.cooldown_s.max(0.001) * 1000.0).round() as i64);
         let mut world = self.state.world.lock().expect("мир");
         world.set_char_hits_as(char_id, hits);
+        world.set_char_attack_ms(char_id, attack_ms);
+    }
+
+    /// M17/F30g: гейт кулдауна предмета (cooldown_s, дефолт 1 с) —
+    /// активный кулдаун → `Some(E_COOLDOWN + retry_after_s)`.
+    async fn item_cd_gate(
+        &self,
+        seq: u32,
+        char_id: &str,
+        def: &db::items::ItemDefRow,
+    ) -> Option<Out> {
+        let key = format!("item:{}", def.id);
+        let left = {
+            let world = self.state.world.lock().expect("мир");
+            world.ability_cooldown_left(char_id, &key, crate::time::now_epoch())
+        };
+        let left = left?;
+        let mut ack = Ack::error(seq, None, &ErrorCode::Cooldown, "предмет перезаряжается");
+        if let Some(err) = ack.error.as_mut() {
+            err.retry_after_s = Some(left.max(1) as u64);
+        }
+        Some(out_ack(ack))
+    }
+
+    /// M17/F30g: зафиксировать кулдаун предмета → событие клиенту
+    /// (таймер + прогресс-бар кнопки).
+    fn item_cd_started(&self, char_id: &str, def: &db::items::ItemDefRow) -> Out {
+        let cd = def.cooldown_s.max(0.001);
+        let until = crate::time::now_epoch() + cd.ceil() as i64;
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.set_ability_cooldown(char_id, &format!("item:{}", def.id), until);
+        }
+        out_event(
+            "evt/combat/cooldown",
+            None,
+            serde_json::to_value(CombatCooldown {
+                skill_id: Some(format!("item:{}", def.id)),
+                until_epoch: until,
+                duration_ms: Some((cd * 1000.0).round() as i64),
+            })
+            .unwrap_or_default(),
+        )
     }
 }
 

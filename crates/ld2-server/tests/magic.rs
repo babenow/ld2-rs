@@ -245,6 +245,10 @@ async fn rune_cast_stops_without_charges() {
     assert_eq!(c.ack(seq).await["result"], "ok");
 
     for i in 0..7 {
+        // M17/F30g: кулдаун руны (cooldown_s,1 с) между кастами.
+        if i > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        }
         let seq = c
             .send(
                 "cmd/magic.rune_cast",
@@ -364,7 +368,9 @@ async fn scroll_cast_needs_target_and_kills() {
         .await;
     assert_eq!(hp["payload"]["hp"]["cur"], 9, "18 − 9: {hp}");
 
-    // Второй каст добивает: труп + XP в школу `frost`.
+    // Второй каст добивает: труп + XP в школу `frost`; M17/F30g:
+    // кулдаун свитка (1 с) между кастами одного определения.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let seq = c
         .send(
             "cmd/magic.scroll_cast",
@@ -420,8 +426,13 @@ async fn mana_regen_out_of_combat() {
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
 
-    // 2 каста × 30 маны → 0 (бар 60).
+    // 2 каста × 30 маны; M17/F30g: между кастами кулдаун руны (1 с),
+    // пауза — окно регена (вне боя +10/с при regen_out_s=6), поэтому
+    // точное mp_left второго каста зависит от фазы реген-тика.
     for i in 0..2 {
+        if i > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        }
         let seq = c
             .send(
                 "cmd/magic.rune_cast",
@@ -431,20 +442,17 @@ async fn mana_regen_out_of_combat() {
         let ack = c.ack(seq).await;
         assert_eq!(ack["result"], "ok", "каст #{i}: {ack}");
         let cast = c.wait_event("evt/magic/cast").await;
-        assert_eq!(
-            cast["payload"]["mp_left"],
-            60 - 30 * (i + 1),
-            "расход маны D4: {cast}"
-        );
+        if i == 0 {
+            assert_eq!(cast["payload"]["mp_left"], 30, "расход маны D4: {cast}");
+        } else {
+            // Списано 30 — бар ниже цены каста (гейт пустого бара
+            // покрыт в rune_cast_requires_mana).
+            assert!(
+                cast["payload"]["mp_left"].as_i64().unwrap_or(60) < 30,
+                "бар ниже цены каста: {cast}"
+            );
+        }
     }
-    let seq = c
-        .send(
-            "cmd/magic.rune_cast",
-            json!({ "staff_uid": staff_uid, "socket_index": 0 }),
-        )
-        .await;
-    let ack = c.ack(seq).await;
-    assert_eq!(ack["error"]["code"], "E_NOT_ENOUGH_MP", "бар пуст: {ack}");
 
     // Реген по тику (§2.4): бар поднимается до цены каста (~3 с при 10/с).
     let stats = c
@@ -456,6 +464,7 @@ async fn mana_regen_out_of_combat() {
     let mp = stats["payload"]["patch"]["mp"]["cur"].as_i64().expect("mp");
     assert!(mp >= 30, "реген поднял бар хотя бы до цены каста: {mp}");
 
+    // Кулдаун руны (M17/F30g) давно истёк — каст после регена проходит.
     let seq = c
         .send(
             "cmd/magic.rune_cast",
@@ -464,6 +473,45 @@ async fn mana_regen_out_of_combat() {
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "каст после регена: {ack}");
+}
+
+/// M17/F30g: кулдаун предмета из контента (cooldown_s, дефолт 1 с) —
+/// повторное использование зелья сразу → E_COOLDOWN + retry_after_s,
+/// после паузы — снова можно.
+#[tokio::test]
+async fn item_use_has_cooldown_from_content() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // Первое зелье съедается; кулдаун общий для всех зелий одного
+    // определения — проверяем на втором экземпляре.
+    let potion = give(&mut c, "potion_heal").await;
+    let potion2 = give(&mut c, "potion_heal").await;
+    let seq = c.send("cmd/item.use", json!({ "item_uid": potion })).await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "первое использование: {ack}");
+
+    // Сразу повторно другим экземпляром — кулдаун предмета.
+    let seq = c.send("cmd/item.use", json!({ "item_uid": potion2 })).await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_COOLDOWN",
+        "повтор в кулдауне: {ack}"
+    );
+    assert!(
+        ack["error"]["retry_after_s"].as_u64().unwrap_or(0) >= 1,
+        "retry_after от кулдауна: {ack}"
+    );
+
+    // Кулдаун истёк (дефолт 1 с) — снова можно.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let seq = c.send("cmd/item.use", json!({ "item_uid": potion2 })).await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "после кулдауна: {ack}");
 }
 
 /// Сокеты и заряды переживают перезапуск сервера (персистентны в БД, D27).

@@ -17,6 +17,7 @@
       "sockets": 1,
       "rarity": "rare",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "dmg": "6..9"
       },
@@ -155,6 +156,7 @@
       "sockets": 3,
       "rarity": "epic",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "dmg": "10..16"
       },
@@ -169,6 +171,7 @@
       "name": "Посох архимага",
       "rarity": "epic",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "magic": 6
       },
@@ -207,6 +210,7 @@
       "name": "Руна мороза",
       "rarity": "uncommon",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "spell": "frost_bolt",
         "damage": 10,
@@ -222,6 +226,7 @@
       "name": "Руна шторма",
       "rarity": "uncommon",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "spell": "storm_bolt",
         "damage": 14,
@@ -237,6 +242,7 @@
       "name": "Охотничий лук",
       "rarity": "common",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "dmg": "4..7"
       },
@@ -251,6 +257,7 @@
       "name": "Длинный лук",
       "rarity": "rare",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "dmg": "7..11"
       },
@@ -265,6 +272,7 @@
       "name": "Двуручный меч",
       "rarity": "rare",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "dmg": "9..15"
       },
@@ -279,6 +287,7 @@
       "name": "Боевой молот",
       "rarity": "uncommon",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "dmg": "11..16"
       },
@@ -293,6 +302,7 @@
       "name": "Секира",
       "rarity": "uncommon",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "dmg": "10..14"
       },
@@ -584,6 +594,7 @@
       "name": "Кинжал",
       "rarity": "common",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "dmg": "2..4"
       },
@@ -596,6 +607,7 @@
       "name": "Зелье лечения",
       "rarity": "common",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "heal": 30
       },
@@ -610,6 +622,7 @@
       "name": "Посох подмастерья",
       "rarity": "common",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "magic": 2
       },
@@ -622,6 +635,7 @@
       "name": "Руна огня",
       "rarity": "uncommon",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "spell": "fire_dart",
         "damage": 12,
@@ -637,6 +651,7 @@
       "name": "Свиток мороза",
       "rarity": "common",
       "upgrade": 0,
+      "cooldown_s": 1.0,
       "stats": {
         "spell": "frost_bolt",
         "damage": 9,

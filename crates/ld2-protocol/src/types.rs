@@ -105,6 +105,9 @@ pub struct RuneInfo {
     /// сервера без поля).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub damage: Option<i64>,
+    /// M17/F30g: определение руны — ключ кулдауна каста на клиенте.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub def_id: Option<String>,
 }
 
 /// Сокет посоха: `rune: null` — свободный (`◈◈○` в UI, ФР-09).
@@ -134,6 +137,10 @@ pub struct ItemSnapshot {
     /// Только для предметов со сокетами (посохи).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sockets: Option<Vec<Socket>>,
+    /// M17/F30g: определение предмета — ключ кулдауна использования
+    /// на клиенте (аддитивно §6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub def_id: Option<String>,
     /// M17/F30b: слот предмета (main_hand/off_hand/head/…; ring/artifact —
     /// псевдослоты пар); `None` — не экипируется (открытая строка §6).
     #[serde(default, skip_serializing_if = "Option::is_none")]
