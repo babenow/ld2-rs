@@ -1007,16 +1007,11 @@ impl AppStore {
             }
             "evt/char/death" => {
                 // ФР-06: сводка утраченного — модалка, закрывается подтверждением.
+                // M18: в журнал НЕ выводим — утраченное видно в самой
+                // модалке (полный список, со скроллом).
                 let Ok(death) = serde_json::from_value::<CharDeath>(payload) else {
                     return vec![];
                 };
-                self.push_log(
-                    LogKind::Crime,
-                    format!(
-                        "ВЫ ПОГИБЛИ — утрачено предметов: {}",
-                        death.lost_items.len()
-                    ),
-                );
                 self.death = Some(death);
                 self.target = None;
                 vec![Effect::Notify(NotifyKind::Death)]
@@ -2986,9 +2981,11 @@ mod tests {
         ));
         let death = store.death.as_ref().expect("модалка смерти");
         assert_eq!(death.lost_items.len(), 2, "сводка утраченного (ФР-06)");
-        let last = store.log.back().expect("лог");
-        assert_eq!(last.kind, LogKind::Crime);
-        assert!(last.text.contains("ВЫ ПОГИБЛИ"));
+        // M18: строки утраты в журнале больше нет — только модалка.
+        assert!(
+            store.log.iter().all(|e| !e.text.contains("ВЫ ПОГИБЛИ")),
+            "в журнале нет строки о гибели"
+        );
 
         // Закрыть можно только подтверждением.
         store.confirm_death();

@@ -236,11 +236,13 @@ impl Root {
             pal.success,
             pal,
         ));
-        // M17/F30e: ресурс по профилю — ярость/энергия/мана.
-        let resource_label = match snap.char.profile.as_deref() {
-            Some("warrior") => t(lang, Key::RageLabel),
-            Some("archer") => t(lang, Key::EnergyLabel),
-            _ => t(lang, Key::MpLabel),
+        // M18: ресурс по профилю — адреналин (красный), энергия
+        // (тёмно-жёлтый), мана (акцентный); длина бара — общая
+        // константа со шкалой здоровья.
+        let (resource_label, resource_color) = match snap.char.profile.as_deref() {
+            Some("warrior") => (t(lang, Key::RageLabel), 0xd1_3b_3b),
+            Some("archer") => (t(lang, Key::EnergyLabel), 0xb8_96_1e),
+            _ => (t(lang, Key::MpLabel), pal.accent),
         };
         col = col.child(bar(
             snap.char.mp.cur as f32 / snap.char.mp.max.max(1) as f32,
@@ -248,7 +250,7 @@ impl Root {
                 "{} {}/{}",
                 resource_label, snap.char.mp.cur, snap.char.mp.max
             ),
-            pal.accent,
+            resource_color,
             pal,
         ));
         col = col.child(
@@ -1027,15 +1029,27 @@ impl Root {
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::DeathLost)),
             )
-            .children(death.lost_items.iter().map(|item| {
-                // M16/F29e: редкость — на языке игрока.
-                let rarity = item
-                    .rarity
-                    .as_deref()
-                    .map(|r| rarity_label(lang, r))
-                    .unwrap_or_else(|| "-".to_string());
-                div().child(format!("• {} ({})", item.name, rarity))
-            }))
+            // M18: список утраченного со скроллом (много предметов).
+            .child(
+                ScrollArea::new("ld2-death-scroll")
+                    .vertical()
+                    .max_h(px(300.0))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .children(death.lost_items.iter().map(|item| {
+                                // M16/F29e: редкость — на языке игрока.
+                                let rarity = item
+                                    .rarity
+                                    .as_deref()
+                                    .map(|r| rarity_label(lang, r))
+                                    .unwrap_or_else(|| "-".to_string());
+                                div().child(format!("• {} ({})", item.name, rarity))
+                            })),
+                    ),
+            )
             .child(
                 btn(
                     cx,
@@ -1192,6 +1206,10 @@ fn split_bold(text: &str) -> Vec<(&str, bool)> {
     out
 }
 
+/// M18: ширина шкалы — общая для здоровья и ресурса (одинаковые
+/// прогрессбары в левой колонке).
+const BAR_WIDTH: f32 = 140.0;
+
 fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
     div()
         .flex()
@@ -1200,7 +1218,7 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
         .gap_2()
         .child(
             div()
-                .w(px(140.0))
+                .w(px(BAR_WIDTH))
                 .h(px(10.0))
                 .rounded_md()
                 .bg(rgb(pal.border))

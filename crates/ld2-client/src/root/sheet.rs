@@ -578,16 +578,14 @@ impl Root {
     }
 
     /// M15/F25: левая колонка окна — шкала опыта, экипировка,
-    /// разделитель, атрибуты, разделитель, статусы со временем
-    /// (+ журнал нарушений) — по спеке пользователя; скроллится.
+    /// разделитель, статусы со временем (+ журнал нарушений);
+    /// M18: атрибуты перенесены во вкладку «Навыки».
     fn character_left_column(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         // M16/F29f: справа запас под скроллбар — цифры значений не
         // налазили на индикатор прокрутки.
         let mut col = div().flex().flex_col().gap_2().pr(px(16.0));
         col = col.child(self.character_xp_block(pal));
         col = col.child(self.equip_block(cx, pal));
-        col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
-        col = col.child(self.attrs_block(pal));
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
         col = col.child(self.statuses_block(cx, pal));
         div()
@@ -861,13 +859,18 @@ impl Root {
                 .child(t(lang, Key::Loading));
         };
         let pool = snap.char.xp_pool;
-        let mut col = div().flex().flex_col().gap_2().child(
-            div().font_weight(gpui::FontWeight::BOLD).child(format!(
+        // M18: атрибуты сверху, черта-разделитель, затем навыки.
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(self.attrs_block(pal))
+            .child(div().h(px(1.0)).bg(rgb(pal.border)))
+            .child(div().font_weight(gpui::FontWeight::BOLD).child(format!(
                 "{}: {}",
                 t(lang, Key::XpPoolLabel),
                 pool
-            )),
-        );
+            )));
         // M15/F28: навыки по группам GDD §3 (A–F) — заголовок группы,
         // если в снапшоте есть хоть один её навык.
         for (gid, key) in SKILL_GROUPS {
