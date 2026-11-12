@@ -2117,7 +2117,7 @@ impl Session {
                     return vec![Self::err(
                         seq,
                         ErrorCode::RequirementAttr,
-                        format!("не хватает {attr}: {have} < {need}"),
+                        format!("не хватает {}: {have} < {need}", attr_genitive(attr)),
                     )];
                 }
             }
@@ -6025,6 +6025,18 @@ fn location_snapshot(location_id: &str) -> LocationSnapshot {
         exits: Vec::new(),
         entities: Vec::new(),
         extra: Default::default(),
+    }
+}
+
+/// M17/F30d: родительный падеж основных характеристик для ошибок
+/// требований (локализация сервера — русская, §8).
+fn attr_genitive(id: &str) -> &str {
+    match id {
+        "str" => "силы",
+        "dex" => "ловкости",
+        "vit" => "стойкости",
+        "int" => "интеллекта",
+        other => other,
     }
 }
 

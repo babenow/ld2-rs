@@ -120,6 +120,11 @@ pub enum Key {
     // M4: лист/инвентарь/смерть (ФР-04, ФР-06, ФР-07)
     SheetSkills,
     SheetAttrs,
+    // M17/F30d: основные характеристики (харизма убрана)
+    AttrStr,
+    AttrDex,
+    AttrVit,
+    AttrInt,
     SheetInventory,
     MaxLabel,
     EquipLabel,
@@ -568,6 +573,11 @@ mod tests {
         Key::CorpsePlayerHint,
         Key::SheetSkills,
         Key::SheetAttrs,
+        // M17/F30d: основные характеристики (харизма убрана)
+        Key::AttrStr,
+        Key::AttrDex,
+        Key::AttrVit,
+        Key::AttrInt,
         Key::SheetInventory,
         Key::MaxLabel,
         Key::EquipLabel,

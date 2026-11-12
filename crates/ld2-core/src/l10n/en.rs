@@ -86,6 +86,10 @@ pub(super) fn t(key: Key) -> &'static str {
         // M4: sheet/inventory/death
         SheetSkills => "Skills",
         SheetAttrs => "Attributes",
+        AttrStr => "Strength",
+        AttrDex => "Agility",
+        AttrVit => "Vitality",
+        AttrInt => "Intellect",
         SheetInventory => "Inventory",
         MaxLabel => "max",
         EquipLabel => "Equipment",

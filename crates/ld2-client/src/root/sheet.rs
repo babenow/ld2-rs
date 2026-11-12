@@ -954,7 +954,11 @@ impl Root {
                     .px_2()
                     .rounded_md()
                     .bg(rgb(pal.panel))
-                    .child(div().text_color(rgb(pal.muted)).child(key.clone()))
+                    .child(
+                        div()
+                            .text_color(rgb(pal.muted))
+                            .child(attr_label(lang, key)),
+                    )
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
@@ -2239,6 +2243,19 @@ pub(crate) fn rarity_label(lang: Lang, rarity: &str) -> String {
     .to_string()
 }
 
+/// M17/F30d: имя основной характеристики (l10n; харизма убрана,
+/// неизвестный ключ — как есть).
+pub(crate) fn attr_label(lang: Lang, key: &str) -> String {
+    match key {
+        "str" => t(lang, Key::AttrStr),
+        "dex" => t(lang, Key::AttrDex),
+        "vit" => t(lang, Key::AttrVit),
+        "int" => t(lang, Key::AttrInt),
+        other => other,
+    }
+    .to_string()
+}
+
 /// M16/F29e: слот экипировки (конфиг открытый — fallback сырой).
 pub(crate) fn slot_label(lang: Lang, slot: &str) -> String {
     match slot {
@@ -2372,6 +2389,21 @@ mod tests {
         assert_eq!(school_label(ru, "fire"), "Огонь");
         assert_eq!(school_label(ru, "storm"), "Шторм");
         assert_eq!(school_label(ru, "necro"), "necro", "fallback");
+    }
+
+    /// M17/F30d: основные характеристики переведены; харизма (cha)
+    /// убрана — неизвестный ключ падает на сырое значение.
+    #[test]
+    fn attr_labels_translate_and_fall_back() {
+        let ru = Lang::Ru;
+        let en = Lang::En;
+        assert_eq!(attr_label(ru, "str"), "Сила");
+        assert_eq!(attr_label(ru, "dex"), "Ловкость");
+        assert_eq!(attr_label(ru, "vit"), "Стойкость");
+        assert_eq!(attr_label(ru, "int"), "Интеллект");
+        assert_eq!(attr_label(en, "str"), "Strength");
+        assert_eq!(attr_label(en, "int"), "Intellect");
+        assert_eq!(attr_label(ru, "cha"), "cha", "харизма убрана");
     }
 
     /// M15/F28: группы — в порядке GDD §3, иды уникальны.
