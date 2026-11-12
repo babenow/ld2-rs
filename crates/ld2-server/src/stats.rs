@@ -157,7 +157,7 @@ mod tests {
     use super::*;
 
     fn attrs10() -> BTreeMap<String, i64> {
-        ["str", "dex", "vit", "int", "cha"]
+        ["str", "dex", "vit", "int"]
             .iter()
             .map(|k| (k.to_string(), 10i64))
             .collect()

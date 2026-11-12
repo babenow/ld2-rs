@@ -86,6 +86,10 @@ pub(super) fn t(key: Key) -> &'static str {
         // M4: лист/инвентарь/смерть
         SheetSkills => "Навыки",
         SheetAttrs => "Атрибуты",
+        AttrStr => "Сила",
+        AttrDex => "Ловкость",
+        AttrVit => "Стойкость",
+        AttrInt => "Интеллект",
         SheetInventory => "Инвентарь",
         MaxLabel => "макс",
         EquipLabel => "Экипировка",
