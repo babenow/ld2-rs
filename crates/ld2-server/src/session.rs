@@ -1150,7 +1150,7 @@ impl Session {
         row: &db::characters::CharacterRow,
     ) -> Result<CharacterState, sqlx::Error> {
         let pool = &self.state.pool;
-        let attrs: BTreeMap<String, i64> =
+        let mut attrs: BTreeMap<String, i64> =
             serde_json::from_value(row.attrs.clone()).unwrap_or_default();
 
         let mut learned = HashMap::new();
@@ -1184,6 +1184,9 @@ impl Session {
             .map(|slot| (slot.clone(), None))
             .collect();
         let mut inventory = Vec::new();
+        // M17/F30c: raw-сокеты надетой брони — из них считаются
+        // бонусы самоцветов (правило контента, вручную).
+        let mut armor_sockets: Vec<Value> = Vec::new();
         for item in db::items::inventory(pool, &row.id).await? {
             let Some(def) = db::items::def(pool, &item.def_id).await? else {
                 warn!("нет определения {} для предмета {}", item.def_id, item.uid);
@@ -1191,8 +1194,36 @@ impl Session {
             };
             if let Some(slot) = &item.equipped_slot {
                 equip.insert(slot.clone(), Some(item.uid.clone()));
+                if def.item_type == "armor" {
+                    armor_sockets.push(item.sockets.clone());
+                }
             }
             inventory.push(item_snapshot(&item, &def));
+        }
+        // M17/F30c: самоцветы в сокетах надетой брони улучшают
+        // основные характеристики — бонус в снапшот-attrs (виден в
+        // «Атрибутах»/«Параметрах», участвует в требованиях и гейтах).
+        for sockets_json in &armor_sockets {
+            let sockets: Vec<Value> =
+                serde_json::from_value(sockets_json.clone()).unwrap_or_default();
+            for socket in sockets {
+                let Some(gem_id) = socket.get("def_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Ok(Some(gem)) = db::items::def(pool, gem_id).await else {
+                    continue;
+                };
+                if gem.item_type != "gem" {
+                    continue;
+                }
+                let (Some(attr), Some(value)) = (
+                    gem.stats.get("attr").and_then(|v| v.as_str()),
+                    gem.stats.get("value").and_then(|v| v.as_i64()),
+                ) else {
+                    continue;
+                };
+                *attrs.entry(attr.to_string()).or_insert(0) += value;
+            }
         }
 
         // M15/F24: уровень и шкала опыта (окно персонажа).
@@ -2913,8 +2944,13 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
         };
-        if rune_def.item_type != "rune" {
-            return vec![Self::err(seq, ErrorCode::NoRuneSlot, "это не руна")];
+        // M17/F30c: в сокет идут руны и самоцветы (броня).
+        if !matches!(rune_def.item_type.as_str(), "rune" | "gem") {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoRuneSlot,
+                "в сокет идут руны и самоцветы",
+            )];
         }
 
         // Ленивая инициализация: пустой массив → слоты по определению.

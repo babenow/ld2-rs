@@ -23,6 +23,54 @@ async fn give(c: &mut ld2_test_kit::WsClient, def_id: &str) -> String {
         .to_string()
 }
 
+/// M17/F30c: самоцвет в надетой броне улучшает основную
+/// характеристику (снапшот-attrs с бонусом); снятие — бонус пропадает.
+#[tokio::test]
+async fn gem_in_armor_boosts_attrs_when_equipped() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    let armor = give(&mut c, "armor_bronze").await; // sockets: 1 (ручной сокет)
+    let gem = give(&mut c, "gem_str").await; // +3 к силе (ручной бонус)
+
+    // Вставка самоцвета в ненадетую броню — без эффекта на attrs.
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": armor, "socket_index": 0, "rune_uid": gem }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "самоцвет в броне: {ack}");
+
+    // Надели — сила выросла (10 + 3).
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": armor, "slot": "body" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "надевание: {ack}");
+    assert_eq!(
+        ack["payload"]["char"]["attrs"]["str"], 13,
+        "бонус самоцвета в снапшоте: {ack}"
+    );
+
+    // Сняли — бонуса нет.
+    let seq = c.send("cmd/item.unequip", json!({ "slot": "body" })).await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "снятие: {ack}");
+    assert_eq!(
+        ack["payload"]["char"]["attrs"]["str"], 10,
+        "бонус пропал: {ack}"
+    );
+}
+
 /// M17/F30a: меч принимает руны (инкрустация/извлечение, damage в
 /// сокете), но каст руны остаётся привилегией посоха.
 #[tokio::test]
