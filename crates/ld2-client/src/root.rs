@@ -2770,6 +2770,7 @@ pub(crate) fn act_btn(
         .bg(rgb(bg))
         .text_color(rgb(fg))
         .hover(move |s| s.bg(rgb(bg)))
+        .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
         .child(label.into())
         .on_mouse_up(
             MouseButton::Left,
@@ -2802,6 +2803,7 @@ pub(crate) fn act_btn_hover(
         .bg(rgb(bg))
         .text_color(rgb(fg))
         .hover(move |s| s.bg(rgb(hover_bg)))
+        .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
         .child(label.into())
         .on_mouse_up(
             MouseButton::Left,
@@ -2832,6 +2834,7 @@ fn btn_hover(
         .bg(rgb(bg))
         .text_color(rgb(fg))
         .hover(move |s| s.bg(rgb(hover_bg)))
+        .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
         .child(label)
         .on_mouse_up(
             MouseButton::Left,

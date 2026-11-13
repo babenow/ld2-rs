@@ -274,6 +274,7 @@ impl Root {
                     .bg(rgb(pal.panel))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(pal.selection)))
+                    .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(snapshot) = &detail {
                             this.store.item_detail = serde_json::to_value(snapshot).ok();
@@ -892,6 +893,7 @@ impl Root {
             .border_color(rgb(pal.border))
             .cursor_pointer()
             .hover(move |s| s.bg(rgb(pal.selection)))
+            .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener({
