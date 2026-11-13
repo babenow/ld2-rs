@@ -314,6 +314,7 @@ impl Root {
                 .border_color(rgb(pal.border))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(pal.selection)))
+                .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
                 .child(
                     div()
                         .text_color(rgb(rarity_color(&item.rarity, pal)))
