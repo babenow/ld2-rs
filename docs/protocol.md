@@ -510,7 +510,7 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 ← { "v":1, "type":"ack", "seq":4, "state_version":1339, "result":"ok" }
 ← { "v":1, "type":"evt/combat/hit", "ts":"…", "state_version":1339, "payload":
     { "source":"c1","source_name":"Ким","target":"m_3","target_name":"Волк","kind":"melee",
-      "amount":7,"crit":false,"miss":false,"text":"Вы бьёте Волк руками **7**" } }
+      "amount":7,"crit":false,"miss":false,"text":"Вы по Волк руками **7**" } }
 ```
 
 ### 12.3 Мародёрство → статус

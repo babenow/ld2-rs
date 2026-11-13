@@ -471,7 +471,7 @@ async fn scroll_cast_needs_target_and_kills() {
     let text = hit["payload"]["text"].as_str().unwrap_or_default();
     assert!(text.contains("**Neris Vael**"), "слова жирные: {text}");
     assert!(text.contains("ледяной стрелой"), "чем бьёт: {text}");
-    assert!(text.contains("вы бьёте"), "кастер-формат: {text}");
+    assert!(text.contains("вы по"), "кастер-формат (M18/F48): {text}");
     let hp = c
         .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
         .await;

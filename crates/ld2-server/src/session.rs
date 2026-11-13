@@ -7377,10 +7377,15 @@ impl Session {
                 .flatten(),
             None => None,
         };
-        let hits = def
-            .as_ref()
-            .map(|d| crate::combat_log::weapon_hits_as(d.skill.as_deref(), d.item_type.as_str()))
-            .unwrap_or("руками");
+        let hits = def.as_ref().map(|d| {
+            // M18/F48: творительный из контента (`hits_as`); без него —
+            // фолбэк по навыку/типу (старый контент и «руками»).
+            d.hits_as.clone().unwrap_or_else(|| {
+                crate::combat_log::weapon_hits_as(d.skill.as_deref(), d.item_type.as_str())
+                    .to_string()
+            })
+        });
+        let hits = hits.as_deref().unwrap_or("руками");
         // M17/F30g: скорость атаки — cooldown_s оружия (нет оружия —
         // значение снимается, в plan берётся конфиг).
         let attack_ms = def

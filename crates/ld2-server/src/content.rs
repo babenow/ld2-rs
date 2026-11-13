@@ -108,6 +108,11 @@ pub struct ContentItemDef {
     /// M18/F47: бонусы предмета (ADR-010) — атрибут/параметр/навык.
     #[serde(default)]
     pub bonuses: Vec<ItemBonus>,
+    /// M18/F48: «чем бьёт» — творительный для строки лога («мечем»,
+    /// «секирой», «из лука»); `None` → фолбэк по навыку/типу
+    /// ([`crate::combat_log::weapon_hits_as`]).
+    #[serde(default)]
+    pub hits_as: Option<String>,
 }
 
 /// Профессия из `professions.json` (skills.md §5.1: первичная/вторичная).
@@ -355,14 +360,15 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         let stats = serde_json::Value::Object(item.stats.clone());
         let requires = serde_json::to_value(&item.requires).unwrap_or(serde_json::Value::Null);
         sqlx::query(
-            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, slot, hands, cooldown_s, bonuses) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
+            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, slot, hands, cooldown_s, bonuses, hits_as) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
              ON CONFLICT (id) DO UPDATE SET \
                item_type = EXCLUDED.item_type, name = EXCLUDED.name, rarity = EXCLUDED.rarity, \
                upgrade = EXCLUDED.upgrade, stats = EXCLUDED.stats, requires = EXCLUDED.requires, \
                gold_value = EXCLUDED.gold_value, qty = EXCLUDED.qty, skill = EXCLUDED.skill, \
                sockets = EXCLUDED.sockets, slot = EXCLUDED.slot, hands = EXCLUDED.hands, \
-               cooldown_s = EXCLUDED.cooldown_s, bonuses = EXCLUDED.bonuses",
+               cooldown_s = EXCLUDED.cooldown_s, bonuses = EXCLUDED.bonuses, \
+               hits_as = EXCLUDED.hits_as",
         )
         .bind(&item.id)
         .bind(&item.item_type)
@@ -379,6 +385,7 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         .bind(item.hands.unwrap_or(1))
         .bind(item.cooldown_s.unwrap_or(1.0))
         .bind(serde_json::to_value(&item.bonuses).unwrap_or(serde_json::Value::Null))
+        .bind(&item.hits_as)
         .execute(&mut *tx)
         .await?;
     }
@@ -933,6 +940,30 @@ mod tests {
                         item.id
                     );
                 }
+            }
+
+            // M18/F48: «чем бьёт» — опционально (фолбэк по навыку), но
+            // если задан: непустой и только у оружия/посоха (бой бьёт
+            // только main_hand-оружие).
+            if let Some(hits) = &item.hits_as {
+                assert!(
+                    !hits.trim().is_empty(),
+                    "hits_as не должен быть пустым: {}",
+                    item.id
+                );
+                assert_eq!(
+                    hits.trim(),
+                    hits,
+                    "hits_as с пробелами по краям: {:?} у {}",
+                    hits,
+                    item.id
+                );
+                assert!(
+                    matches!(item.item_type.as_str(), "weapon" | "staff"),
+                    "hits_as имеет смысл только у weapon/staff, но задан у {} (type={})",
+                    item.id,
+                    item.item_type
+                );
             }
         }
     }

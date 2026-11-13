@@ -1989,11 +1989,11 @@ mod tests {
     #[test]
     fn split_bold_marks_segments() {
         assert_eq!(
-            split_bold("Bbnf: **Farta Lussen**, вы бьёте Волк струёй пламени **10**"),
+            split_bold("Bbnf: **Farta Lussen**, вы по Волк струёй пламени **10**"),
             vec![
                 ("Bbnf: ", false),
                 ("Farta Lussen", true),
-                (", вы бьёте Волк струёй пламени ", false),
+                (", вы по Волк струёй пламени ", false),
                 ("10", true),
             ]
         );

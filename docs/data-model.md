@@ -35,6 +35,7 @@
 | `hands` | int? | «две руки» для оружия |
 | `skill` | str? | нужный навык (гейт использования) |
 | `cooldown_s` | float? | кулдаун использования (дефолт 1 с) |
+| `hits_as` | str? | **«чем бьёт»** (M18/F48): творительный для строки лога (`мечем`, `секирой`, `из лука`); только у `weapon`/`staff`; `null` → фолбэк по навыку/типу |
 
 ### 1.2 `skills.json` → навыки (30, сид в `skills`)
 
@@ -127,7 +128,7 @@ npcs[{ id, markup,                        # наценка торговца
 | Таблица | Ключевые поля |
 |---|---|
 | `items` | `uid`, `def_id → item_defs`, `qty`, `upgrade`, `equipped_slot`, `sockets jsonb`, `sort_order`, **`bonuses jsonb`** (бонусы инстанса — задел под источники в игре: кузница/награды) |
-| `item_defs` | сид контента: `id`, `item_type`, `name`, `rarity`, `upgrade`, `stats jsonb`, `requires jsonb`, `gold_value`, `qty`, `skill`, `sockets`, `slot`, `hands`, `cooldown_s`, **`bonuses jsonb`** (контент-бонусы) |
+| `item_defs` | сид контента: `id`, `item_type`, `name`, `rarity`, `upgrade`, `stats jsonb`, `requires jsonb`, `gold_value`, `qty`, `skill`, `sockets`, `slot`, `hands`, `cooldown_s`, **`bonuses jsonb`** (контент-бонусы), **`hits_as text`** («чем бьёт», M18/F48) |
 | `character_skills` | `(character_id, skill_id)`, **`xp`** (шкала копится использованием), **`rank`** (заученный; **эффективный ранг** = `rank` + бонусы `kind=skill` надетых предметов — считается при построении снапшота, в БД не пишется) |
 | `character_professions` | `(character_id, profession_id)`, `xp`, `rank` |
 | `character_quests` | `(character_id, quest_id)`, `state`, `progress jsonb` |

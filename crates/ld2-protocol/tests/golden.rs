@@ -384,7 +384,7 @@ fn event_payloads_round_trip() {
         amount: 7,
         crit: false,
         miss: false,
-        text: "Вы бьёте Волк руками **7**".into(),
+        text: "Вы по Волк руками **7**".into(),
         extra: Default::default(),
     };
     let v = serde_json::to_value(&hit).unwrap();

@@ -102,9 +102,10 @@ pub struct World {
     char_loc: HashMap<String, String>,
     /// (char_id, skill_id) → до какого момента кулдаун (epoch-с, §4/M14).
     ability_cd: HashMap<(String, String), i64>,
-    /// M17/F30f: чем бьёт персонаж (экипированное оружие) — синхронный
+    /// M18/F48: чем бьёт персонаж (экипированное оружие) — синхронный
     /// доступ из plan_combat; обновляется при входе и смене оружия.
-    char_hits: HashMap<String, &'static str>,
+    /// `String`: творительный теперь может прийти из контента (`hits_as`).
+    char_hits: HashMap<String, String>,
     /// M17/F30g: период атаки персонажа, мс — из `cooldown_s`
     /// оружия в правой руке; `None` → конфиг `combat.attack_interval_s`.
     char_attack: HashMap<String, i64>,
@@ -114,14 +115,18 @@ pub struct World {
 impl World {
     /// M17/F30f: чем бьёт персонаж — творительный из экипированного
     /// оружия; без данных (до входа) — кулаки.
-    pub fn char_hits_as(&self, char_id: &str) -> &'static str {
-        self.char_hits.get(char_id).copied().unwrap_or("руками")
+    pub fn char_hits_as(&self, char_id: &str) -> &str {
+        self.char_hits
+            .get(char_id)
+            .map(String::as_str)
+            .unwrap_or("руками")
     }
 
     /// M17/F30f: обновить «чем бьёт» (вызывается на входе в мир и при
     /// экипировке/снятии оружия).
-    pub fn set_char_hits_as(&mut self, char_id: &str, hits_as: &'static str) {
-        self.char_hits.insert(char_id.to_string(), hits_as);
+    pub fn set_char_hits_as(&mut self, char_id: &str, hits_as: &str) {
+        self.char_hits
+            .insert(char_id.to_string(), hits_as.to_string());
     }
 
     /// M17/F30g: период атаки из `cooldown_s` оружия; `None` — снять

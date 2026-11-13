@@ -22,7 +22,8 @@
         "dmg": "6..9"
       },
       "gold_value": 180,
-      "skill": "sword"
+      "skill": "sword",
+      "hits_as": "мечем"
     },
     {
       "id": "helmet_leather",
@@ -161,7 +162,8 @@
         "dmg": "10..16"
       },
       "gold_value": 900,
-      "skill": "sword"
+      "skill": "sword",
+      "hits_as": "мечем"
     },
     {
       "id": "staff_archmage",
@@ -176,7 +178,8 @@
         "magic": 6
       },
       "gold_value": 850,
-      "sockets": 3
+      "sockets": 3,
+      "hits_as": "посохом"
     },
     {
       "id": "helm_champion",
@@ -249,7 +252,8 @@
       "gold_value": 60,
       "skill": "bow",
       "slot": "main_hand",
-      "hands": 2
+      "hands": 2,
+      "hits_as": "из лука"
     },
     {
       "id": "bow_long",
@@ -264,7 +268,8 @@
       "gold_value": 260,
       "skill": "bow",
       "slot": "main_hand",
-      "hands": 2
+      "hands": 2,
+      "hits_as": "из лука"
     },
     {
       "id": "twohand_sword",
@@ -279,7 +284,8 @@
       "gold_value": 320,
       "skill": "twohand",
       "slot": "main_hand",
-      "hands": 2
+      "hands": 2,
+      "hits_as": "двуручным мечем"
     },
     {
       "id": "drakkar_axe",
@@ -302,7 +308,8 @@
       "skill": "twohand",
       "slot": "main_hand",
       "hands": 2,
-      "sockets": 4
+      "sockets": 4,
+      "hits_as": "топором"
     },
     {
       "id": "hammer_battle",
@@ -317,7 +324,8 @@
       "gold_value": 210,
       "skill": "twohand",
       "slot": "main_hand",
-      "hands": 2
+      "hands": 2,
+      "hits_as": "молотом"
     },
     {
       "id": "axe_war",
@@ -332,7 +340,8 @@
       "gold_value": 190,
       "skill": "axe",
       "slot": "main_hand",
-      "hands": 2
+      "hands": 2,
+      "hits_as": "секирой"
     },
     {
       "id": "shield_wood",
@@ -622,7 +631,8 @@
         "dmg": "2..4"
       },
       "gold_value": 35,
-      "skill": "dagger"
+      "skill": "dagger",
+      "hits_as": "кинжалом"
     },
     {
       "id": "potion_heal",
@@ -650,7 +660,8 @@
         "magic": 2
       },
       "gold_value": 60,
-      "sockets": 2
+      "sockets": 2,
+      "hits_as": "посохом"
     },
     {
       "id": "rune_fire",

@@ -49,6 +49,9 @@ pub struct ItemDefRow {
     pub cooldown_s: f64,
     /// M18/F47: бонусы из контента (ADR-010); `NULL` — их нет.
     pub bonuses: Option<Value>,
+    /// M18/F48: «чем бьёт» из контента (творительный для лога);
+    /// `NULL` → фолбэк по навыку/типу.
+    pub hits_as: Option<String>,
 }
 
 /// Инвентарь персонажа в порядке получения (стабильный порядок UI).
@@ -66,7 +69,7 @@ pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sql
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
         "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
-                slot, hands, skill, cooldown_s, bonuses \
+                slot, hands, skill, cooldown_s, bonuses, hits_as \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)
