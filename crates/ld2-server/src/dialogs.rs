@@ -21,13 +21,11 @@ pub struct DialogsRoot {
     pub npcs: Vec<DialogNpc>,
 }
 
-/// Диалог одного NPC: приветствие, корень ветки и строки с условиями.
+/// Диалог одного NPC: корень ветки и строки с условиями (M18/F42:
+/// поле `greeting` убрано — ADR-008).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct DialogNpc {
     pub id: String,
-    /// Шаблон приветствия (`{name}` → имя персонажа).
-    #[serde(default)]
-    pub greeting: String,
     /// M18/F37: корень ветки диалога; без поля — первая строка списка.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
@@ -181,6 +179,34 @@ pub fn render(text: &str, name: &str) -> String {
     text.replace("{name}", name)
 }
 
+/// M18/F42: жёсткие условия видимости строки (гейт `quest` → условия
+/// `when`) — без учёта кулдауна `every_s`. Скрытая условием строка
+/// недостижима в любом случае; кулдаун же влияет только на активность
+/// ответа (ADR-008).
+fn conditions_ok(line: &DialogLine, ctx: &LineCtx) -> bool {
+    if let Some(quest) = &line.quest {
+        if !ctx.available_quests.contains(quest) {
+            return false;
+        }
+    }
+    if let Some(when) = &line.when {
+        if !when_ok(when, ctx) {
+            return false;
+        }
+    }
+    true
+}
+
+/// M18/F42: остаток окна `every_s` строки в секундах — `Some`, пока
+/// строка скрыта кулдауном (ответ на неё показывается неактивным с
+/// таймером, ADR-008).
+pub fn cooldown_left(line: &DialogLine, now: i64, shown: &HashMap<String, i64>) -> Option<u64> {
+    let every = line.every_s? as i64;
+    let at = *shown.get(&line.id)?;
+    let left = every.saturating_sub(now.saturating_sub(at));
+    (left > 0).then_some(left as u64)
+}
+
 /// Чистая функция видимости одной строки: `None` — скрыта (гейт
 /// `quest` → условия `when` → окно `every_s`), `Some(true)` — показать
 /// и **отметить показ** (открытие окна `every_s` — только при входе в
@@ -191,15 +217,8 @@ pub fn line_visible(
     now: i64,
     shown: &HashMap<String, i64>,
 ) -> Option<bool> {
-    if let Some(quest) = &line.quest {
-        if !ctx.available_quests.contains(quest) {
-            return None;
-        }
-    }
-    if let Some(when) = &line.when {
-        if !when_ok(when, ctx) {
-            return None;
-        }
+    if !conditions_ok(line, ctx) {
+        return None;
     }
     if let Some(every) = line.every_s {
         match shown.get(&line.id) {
@@ -255,6 +274,10 @@ pub struct NodeView {
 pub struct ReplyView {
     pub id: String,
     pub text: String,
+    /// M18/F42: секунды до конца кулдауна целевой строки — ответ
+    /// показывается неактивным с таймером (ADR-008); `None` — активен.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_s: Option<u64>,
 }
 
 /// M18/F37: вход в узел (корень из `npc.talk` либо переход по ответу):
@@ -271,9 +294,10 @@ pub fn enter_node(
     let mark = line_visible(line, ctx, now, shown)?;
     let replies = visible_replies(line, npc, ctx, now, shown)
         .into_iter()
-        .map(|reply| ReplyView {
-            id: reply.id.clone(),
-            text: render(&reply.text, ctx.name),
+        .map(|visible| ReplyView {
+            id: visible.reply.id.clone(),
+            text: render(&visible.reply.text, ctx.name),
+            wait_s: visible.wait_s,
         })
         .collect();
     Some((
@@ -287,8 +311,19 @@ pub fn enter_node(
     ))
 }
 
-/// Видимые ответы строки — условия ответа (AND) **и**
-/// видимость целевой строки (пик, без отметки `every_s`: в узел ещё не
+/// M18/F42: ответ, видимый персонажу: сама реплика + остаток кулдауна
+/// её целевой строки (`wait_s`, ADR-008).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibleReply<'a> {
+    pub reply: &'a DialogReply,
+    /// Секунды до конца кулдауна; `None` — ответ активен.
+    pub wait_s: Option<u64>,
+}
+
+/// Видимые ответы строки — условия ответа (AND) **и** судьба целевой
+/// строки: скрытая **условием/квестом** — ответ не показывается вовсе;
+/// скрытая **кулдауном `every_s`** — показывается с `wait_s` (неактивной,
+/// ADR-008). Пик видимости отметку `every_s` не ставит (в узел ещё не
 /// входили — метка ставится только при входе). Ответ без `next` (конец
 /// диалога) разрешён всегда.
 pub fn visible_replies<'a>(
@@ -297,20 +332,33 @@ pub fn visible_replies<'a>(
     ctx: &LineCtx,
     now: i64,
     shown: &HashMap<String, i64>,
-) -> Vec<&'a DialogReply> {
+) -> Vec<VisibleReply<'a>> {
     line.replies
         .iter()
-        .filter(|reply| {
+        .filter_map(|reply| {
             if !reply_allowed(reply, ctx) {
-                return false;
+                return None;
             }
-            match &reply.next {
-                None => true,
-                Some(next_id) => npc
-                    .lines
-                    .iter()
-                    .find(|target| &target.id == next_id)
-                    .is_some_and(|target| line_visible(target, ctx, now, shown).is_some()),
+            let Some(next_id) = &reply.next else {
+                return Some(VisibleReply {
+                    reply,
+                    wait_s: None,
+                });
+            };
+            let target = npc.lines.iter().find(|target| &target.id == next_id)?;
+            if !conditions_ok(target, ctx) {
+                return None;
+            }
+            if line_visible(target, ctx, now, shown).is_some() {
+                Some(VisibleReply {
+                    reply,
+                    wait_s: None,
+                })
+            } else {
+                cooldown_left(target, now, shown).map(|wait_s| VisibleReply {
+                    reply,
+                    wait_s: Some(wait_s),
+                })
             }
         })
         .collect()
@@ -374,7 +422,6 @@ mod tests {
     fn npc() -> DialogNpc {
         serde_json::from_value(serde_json::json!({
             "id": "npc_elder",
-            "greeting": "Привет, {name}!",
             "lines": [
                 { "id": "l_plain", "text": "Просто реплика" },
                 { "id": "l_female", "text": "Для женщин", "when": { "gender": "female" } },
@@ -548,7 +595,6 @@ mod tests {
     fn node_and_replies_walk_the_tree() {
         let npc: DialogNpc = serde_json::from_value(serde_json::json!({
             "id": "npc_elder",
-            "greeting": "Привет, {name}!",
             "root": "l_hello",
             "lines": [
                 { "id": "l_hello", "text": "Как дела, {name}?", "replies": [
@@ -605,14 +651,25 @@ mod tests {
             "в окне скрыт"
         );
 
-        // Прямой вызов visible_replies (корень) — цель l_errand скрыта
-        // (метка в shown) → ветка r_work исчезла, конец r_bye остался.
+        // Прямой вызов visible_replies (корень): цель l_errand в окне
+        // every_s — M18/F42 ответ r_work остаётся, но неактивный
+        // (wait_s > 0, ADR-008); условные ветки скрыты.
         let root = npc.lines.iter().find(|l| l.id == "l_hello").unwrap();
-        let ids: Vec<&str> = visible_replies(root, &npc, &ctx, now, &shown)
+        let replies = visible_replies(root, &npc, &ctx, now, &shown);
+        let ids: Vec<&str> = replies.iter().map(|r| r.reply.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["r_work", "r_pack", "r_bye"],
+            "r_work виден с таймером: {ids:?}"
+        );
+        let wait = replies
             .iter()
-            .map(|r| r.id.as_str())
-            .collect();
-        assert_eq!(ids, ["r_pack", "r_bye"], "r_pack — есть зелье: {ids:?}");
+            .find(|r| r.reply.id == "r_work")
+            .and_then(|r| r.wait_s);
+        assert!(
+            wait.is_some_and(|s| s > 0 && s <= 1800),
+            "остаток кулдауна: {wait:?}"
+        );
 
         // Несуществующий узел → None.
         assert!(enter_node(&npc, "l_nope", &ctx, now, &shown).is_none());
@@ -628,5 +685,25 @@ mod tests {
         let lines = visible_lines(&n, &ctx, 1_000_000, &HashMap::new());
         let line = lines.iter().find(|l| l.id == "l_quest").expect("видна");
         assert_eq!(line.quest.as_deref(), Some("q_wolf_hunt"));
+    }
+
+    /// M18/F42/ADR-008: `wait_s` сериализуется только когда ответ на
+    /// кулдауне — у активной реплики поля нет (совместимость §11.2).
+    #[test]
+    fn reply_wait_s_serializes_only_when_set() {
+        let active = ReplyView {
+            id: "r_a".into(),
+            text: "А".into(),
+            wait_s: None,
+        };
+        let cooling = ReplyView {
+            id: "r_b".into(),
+            text: "Б".into(),
+            wait_s: Some(42),
+        };
+        let active: serde_json::Value = serde_json::to_value(active).unwrap();
+        let cooling: serde_json::Value = serde_json::to_value(cooling).unwrap();
+        assert!(active.get("wait_s").is_none(), "активная: {active}");
+        assert_eq!(cooling["wait_s"], 42, "на кулдауне: {cooling}");
     }
 }

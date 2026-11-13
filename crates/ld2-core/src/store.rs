@@ -290,12 +290,16 @@ pub struct NpcNode {
     pub replies: Vec<NpcReplyOption>,
 }
 
-/// M18/F37: ответ персонажа, видимый в текущем узле (`id` — ключ
+/// M18/F37/F42: ответ персонажа, видимый в текущем узле (`id` — ключ
 /// `cmd/npc.reply`).
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct NpcReplyOption {
     pub id: String,
     pub text: String,
+    /// M18/F42: секунды до конца кулдауна целевой строки — ответ
+    /// показывается неактивным с таймером (ADR-008); `None` — активен.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_s: Option<u64>,
 }
 
 /// M18/F37: строка транскрипта окна диалога — лента NPC ↔ персонаж.
@@ -345,15 +349,14 @@ pub struct NpcShopView {
     pub tabs: Vec<NpcShopTab>,
 }
 
-/// M18/F35/F37: открытое окно диалога NPC — payload ack `cmd/npc.talk`
-/// `{dialog: {id, name, greeting}, node, quests}`; транскрипт накапливает
-/// ленту (приветствие → узлы ↔ ответы персонажа).
+/// M18/F35/F37/F42: открытое окно диалога NPC — payload ack
+/// `cmd/npc.talk` `{dialog: {id, name}, node, quests, actions}`
+/// (`greeting` убран — ADR-008); транскрипт накапливает ленту
+/// (узлы ↔ ответы персонажа).
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct NpcDialogView {
     pub id: String,
     pub name: String,
-    #[serde(default)]
-    pub greeting: String,
     /// Текущий узел; `None` — диалог не начат/закончен.
     #[serde(default)]
     pub node: Option<NpcNode>,
@@ -374,8 +377,9 @@ pub struct NpcDialogView {
 }
 
 impl NpcDialogView {
-    /// Разбор payload ack (`None` — нет `dialog`; транскрипт —
-    /// приветствие + первый узел; `quests` без поля → пусто).
+    /// Разбор payload ack (`None` — нет `dialog`; лента — корневой узел,
+    /// `quests`/`actions` без поля → пусто; `greeting` больше нет —
+    /// ADR-008).
     pub fn from_payload(payload: &serde_json::Value) -> Option<Self> {
         let dialog = payload.get("dialog")?;
         let node = match payload.get("node") {
@@ -384,14 +388,7 @@ impl NpcDialogView {
             }
             _ => None,
         };
-        let greeting: String = dialog["greeting"].as_str().unwrap_or_default().into();
         let mut transcript = Vec::new();
-        if !greeting.is_empty() {
-            transcript.push(NpcTranscriptLine {
-                me: false,
-                text: greeting.clone(),
-            });
-        }
         if let Some(node) = &node {
             transcript.push(NpcTranscriptLine {
                 me: false,
@@ -401,7 +398,6 @@ impl NpcDialogView {
         Some(Self {
             id: dialog["id"].as_str()?.into(),
             name: dialog["name"].as_str()?.into(),
-            greeting,
             node,
             transcript,
             quests: serde_json::from_value(payload.get("quests")?.clone()).unwrap_or_default(),
@@ -3243,13 +3239,12 @@ mod tests {
             None,
             &serde_json::json!({
                 "dialog": {
-                    "id": "npc_elder", "name": "Староста",
-                    "greeting": "Привет, Ким!"
+                    "id": "npc_elder", "name": "Староста"
                 },
                 "node": {
                     "id": "l_hello", "text": "Как дела?",
                     "replies": [
-                        { "id": "r_work", "text": "Какая работа?" },
+                        { "id": "r_work", "text": "Какая работа?", "wait_s": 1740 },
                         { "id": "r_bye", "text": "Пока." }
                     ]
                 },
@@ -3261,14 +3256,16 @@ mod tests {
         store.apply(IngressEvent::Ack(ack));
         let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
         assert_eq!(dialog.name, "Староста");
-        assert_eq!(dialog.greeting, "Привет, Ким!");
-        // Транскрипт: приветствие + корневой узел.
-        assert_eq!(dialog.transcript.len(), 2, "лента: {dialog:?}");
-        assert!(!dialog.transcript[0].me && dialog.transcript[0].text == "Привет, Ким!");
-        assert!(!dialog.transcript[1].me && dialog.transcript[1].text == "Как дела?");
+        // Лента: корневой узел (`greeting` убран — ADR-008).
+        assert_eq!(dialog.transcript.len(), 1, "лента: {dialog:?}");
+        assert!(!dialog.transcript[0].me && dialog.transcript[0].text == "Как дела?");
         let node = dialog.node.as_ref().expect("узел");
         assert_eq!(node.id, "l_hello");
         assert_eq!(node.replies.len(), 2);
+        // M18/F42: `wait_s` парсится — реплика на кулдауне неактивна
+        // (ADR-008), без поля — активна.
+        assert_eq!(node.replies[0].wait_s, Some(1740), "таймер кулдауна");
+        assert_eq!(node.replies[1].wait_s, None, "активная реплика");
         assert_eq!(dialog.quests.len(), 1);
         assert_eq!(dialog.actions, vec!["quests", "train"], "actions из ack");
         assert_eq!(store.active_dialog(false, false), None, "попап вне модалок");
@@ -3290,8 +3287,8 @@ mod tests {
         .unwrap();
         store.apply(IngressEvent::Ack(ack));
         let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
-        assert_eq!(dialog.transcript.len(), 3, "лента растёт: {dialog:?}");
-        assert_eq!(dialog.transcript[2].text, "Отнеси весть!");
+        assert_eq!(dialog.transcript.len(), 2, "лента растёт: {dialog:?}");
+        assert_eq!(dialog.transcript[1].text, "Отнеси весть!");
         assert_eq!(
             dialog.node.as_ref().expect("узел").quest.as_deref(),
             Some("q1")
@@ -3340,8 +3337,7 @@ mod tests {
                 None,
                 &serde_json::json!({
                     "dialog": {
-                        "id": "npc_elder", "name": "Староста",
-                        "greeting": "Привет, Ким!"
+                        "id": "npc_elder", "name": "Староста"
                     },
                     "node": {
                         "id": "l_hello", "text": "Как дела?",
@@ -3354,10 +3350,10 @@ mod tests {
             .unwrap()
         };
 
-        // Первое открытие: приветствие + корневой узел.
+        // Первое открытие: корневой узел.
         store.on_world_sent(Act::NpcTalk);
         store.apply(IngressEvent::Ack(talk_ack(20)));
-        // Разговор пошёл дальше: ответ → третья строка ленты.
+        // Разговор пошёл дальше: ответ → вторая строка ленты.
         store.on_world_sent(Act::NpcReply);
         store.apply(IngressEvent::Ack(
             ld2_protocol::Ack::ok_with_payload(
@@ -3391,7 +3387,7 @@ mod tests {
         {
             let dialog = store.npc_dialog.as_mut().expect("диалог открыт");
             dialog.shop_currency = Some("gem_str".into());
-            assert_eq!(dialog.transcript.len(), 3, "лента разговора");
+            assert_eq!(dialog.transcript.len(), 2, "лента разговора");
             assert!(dialog.shop.is_some(), "магазин открыт");
         }
 
@@ -3399,8 +3395,8 @@ mod tests {
         store.on_world_sent(Act::NpcTalk);
         store.apply(IngressEvent::Ack(talk_ack(23)));
         let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
-        assert_eq!(dialog.transcript.len(), 2, "лента заново: {dialog:?}");
-        assert_eq!(dialog.transcript[0].text, "Привет, Ким!", "с приветствия");
+        assert_eq!(dialog.transcript.len(), 1, "лента заново: {dialog:?}");
+        assert_eq!(dialog.transcript[0].text, "Как дела?", "с корневой реплики");
         assert_eq!(dialog.node.as_ref().expect("корень").id, "l_hello");
         assert!(dialog.shop.is_none(), "магазин закрыт");
         assert!(dialog.shop_currency.is_none(), "валюта сброшена");
@@ -3413,7 +3409,7 @@ mod tests {
     fn shop_list_ack_opens_shop_panel() {
         let mut store = in_game();
         let talk = serde_json::json!({
-            "dialog": { "id": "npc_elder", "name": "Староста", "greeting": "Привет!" },
+            "dialog": { "id": "npc_elder", "name": "Староста" },
             "node": serde_json::Value::Null,
             "quests": []
         });

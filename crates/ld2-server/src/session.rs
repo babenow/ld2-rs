@@ -6175,10 +6175,11 @@ impl Session {
         Ok((available, quests, gives_quests))
     }
 
-    /// `cmd/npc.talk` (M18/F35/F37): NPC текущей локации → приветствие,
-    /// **корень ветки** (узел с видимыми ответами) и доступные квесты.
-    /// ack `{dialog: {id, name, greeting}, node: {...}|null, quests[]}`;
-    /// `node: null` — записи диалога нет (квесты отдаются).
+    /// `cmd/npc.talk` (M18/F35/F37): NPC текущей локации → **корень
+    /// ветки** (узел с видимыми ответами) и доступные квесты.
+    /// ack `{dialog: {id, name}, node: {...}|null, quests[], actions[]}`;
+    /// `node: null` — записи диалога нет (квесты отдаются). Поле
+    /// `greeting` убрано (M18/F42, ADR-008).
     async fn npc_talk(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
@@ -6227,20 +6228,18 @@ impl Session {
         };
         let now = crate::time::now_epoch();
         let ctx = context.line_ctx(&available);
-        let (greeting, node) = match self.state.dialogs.get(&entity.id) {
+        let node = match self.state.dialogs.get(&entity.id) {
             Some(def) => {
                 let root = def
                     .root
                     .clone()
                     .or_else(|| def.lines.first().map(|l| l.id.clone()))
                     .unwrap_or_default();
-                let greeting = crate::dialogs::render(&def.greeting, &context.name);
-                (
-                    greeting,
-                    crate::dialogs::enter_node(def, &root, &ctx, now, &shown),
-                )
+                // M18/F42: приветствие убрано (ADR-008) — окно открывается
+                // сразу с корневой репликой.
+                crate::dialogs::enter_node(def, &root, &ctx, now, &shown)
             }
-            None => (String::new(), None),
+            None => None,
         };
         if let Some((node, mark)) = &node {
             if *mark {
@@ -6260,7 +6259,6 @@ impl Session {
                 "dialog": {
                     "id": entity.id,
                     "name": entity.name,
-                    "greeting": greeting,
                 },
                 "node": node,
                 "quests": quests,

@@ -1355,6 +1355,27 @@ impl Root {
         // сервер отвечает новым узлом; без ответов диалог закончен).
         if let Some(node) = &dialog.node {
             for reply in &node.replies {
+                // M18/F42: ответ на кулдауне целевой строки —
+                // неактивная кнопка с таймером в скобках, клика нет
+                // (ADR-008).
+                if let Some(wait_s) = reply.wait_s {
+                    col = col.child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(pal.panel))
+                            .text_size(px(13.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format!(
+                                "— {} ({:02}:{:02})",
+                                reply.text,
+                                wait_s / 60,
+                                wait_s % 60
+                            )),
+                    );
+                    continue;
+                }
                 let label = format!("— {}", reply.text);
                 let entity_id = dialog.id.clone();
                 let node_id = node.id.clone();
