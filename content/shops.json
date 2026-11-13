@@ -1,0 +1,20 @@
+{
+  "npcs": [
+    {
+      "id": "npc_elder",
+      "markup": 1.15,
+      "currencies": [
+        {
+          "currency": "gold_coin",
+          "rate": 1.0,
+          "items": ["potion_heal", "rune_fire", "armor_bronze", "sword_knight"]
+        },
+        {
+          "currency": "gem_str",
+          "rate": 0.05,
+          "items": ["potion_heal", "rune_fire", "armor_bronze", "sword_knight"]
+        }
+      ]
+    }
+  ]
+}

@@ -99,6 +99,9 @@ pub struct GameplaySection {
     /// → §5 `quests.max_active`; секция опциональна (дефолт 10).
     #[serde(default)]
     pub quests: QuestsSection,
+    /// M18/F39: магазины NPC (наценки/скидки); опциональна.
+    #[serde(default)]
+    pub shop: ShopSection,
 }
 
 /// Лимиты квестов (M18/F36): `max_active` — взятых квестов (фазы
@@ -113,6 +116,32 @@ pub struct QuestsSection {
 impl Default for QuestsSection {
     fn default() -> Self {
         Self { max_active: 10 }
+    }
+}
+
+/// M18/F39: магазины NPC — цены считаются сервером (контент задаёт
+/// базу `gold_value` и наценку торговца): `server_markup` — множитель
+/// наценки сервера; `max_discount_bp` — потолок суммарной скидки
+/// (аккаунт + навыки); `skill_discounts` — навык → множитель скидки
+/// **за ранг** (haggle 0.02 = −2%/ранг). Секция опциональна.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShopSection {
+    pub server_markup: f64,
+    pub max_discount_bp: i64,
+    #[serde(default)]
+    pub skill_discounts: HashMap<String, f64>,
+}
+
+impl Default for ShopSection {
+    fn default() -> Self {
+        let mut skill_discounts = HashMap::new();
+        skill_discounts.insert("haggle".into(), 0.02);
+        Self {
+            server_markup: 1.0,
+            max_discount_bp: 5000,
+            skill_discounts,
+        }
     }
 }
 
@@ -459,6 +488,21 @@ impl Config {
         // [gameplay.quests] (M18/F36)
         if self.gameplay.quests.max_active == 0 {
             out.push("gameplay.quests.max_active: должен быть ≥ 1".into());
+        }
+
+        // [gameplay.shop] (M18/F39)
+        if self.gameplay.shop.server_markup < 1.0 {
+            out.push("gameplay.shop.server_markup: должен быть ≥ 1.0".into());
+        }
+        if !(0..=10_000).contains(&self.gameplay.shop.max_discount_bp) {
+            out.push("gameplay.shop.max_discount_bp: должен быть 0..=10000".into());
+        }
+        for (skill, per_rank) in &self.gameplay.shop.skill_discounts {
+            if *per_rank < 0.0 || *per_rank >= 1.0 {
+                out.push(format!(
+                    "gameplay.shop.skill_discounts.{skill}: должен быть 0.0..1.0"
+                ));
+            }
         }
 
         // [gameplay.professions] (M12.6)

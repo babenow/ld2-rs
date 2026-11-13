@@ -280,6 +280,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа |
 | `npc.talk` | `{entity_id}` | `{dialog: {id, name, greeting}, node, quests[]}` | + | диалог NPC: приветствие + **корень ветки** (`node`: `{id, text, quest?, replies[]}`; реплики с условиями; `null` — нет записи), доступные квесты (M18/F35, ветки F37) |
 | `npc.reply` | `{entity_id, node_id, reply_id}` | `{node: {...}\|null, quests[]}` | − | ответ персонажа — переход по ветке; `node: null` — конец диалога (M18/F37) |
+| `shop.list` | `{entity_id}` | `{shop: {tabs: [{currency, currency_name, items[]}]}}` | + | товары NPC с ценами (база `gold_value` × наценка сервера × наценка торговца × скидка; `actions` в `npc.talk` содержит `shop`) (M18/F39) |
+| `shop.buy` | `{entity_id, currency, def_id}` | `{}` | − | покупка: списание валюты (события) + выдача предмета; `E_NOT_ENOUGH_MONEY` / `E_INVENTORY_FULL` (M18/F39) |
 | `combat.attack` | `{target_id}` | `{}` | − | удар |
 | `combat.stop` | `{}` | `{}` | + | выйти из боя |
 | `combat.flee` | `{}` | `{}` | − | попытка сбежать |
@@ -412,6 +414,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_BAD_PROFILE` | неизвестный/недоступный `profile` в `char.create` |
 | `E_BAD_GENDER` | неизвестное значение `gender` в `char.create` (M18/F34: `male`\|`female`) |
 | `E_QUEST_LIMIT` | взятых квестов больше `quests.max_active` в `quest.accept` (M18/F36) |
+| `E_NOT_ENOUGH_MONEY` | не хватает валюты в `shop.buy` (M18/F39) |
 | `E_NOT_IN_LOCATION` | команда вне контекста локации |
 | `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `char.xp_invest`, M14) |
 | `E_EXIT_BLOCKED` | выход закрыт (завал, требование, правило) |

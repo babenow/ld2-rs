@@ -34,6 +34,15 @@ party_max_members = 4   # ФР-14: лимит состава группы
 [gameplay.quests]           # M18/F36: квесты → §5 quests.max_active
 max_active = 10             # лимит текущих (взятых) квестов на персонажа
 
+
+[gameplay.shop]            # M18/F39: магазины NPC (цены считаются сервером)
+server_markup = 1.0        # множитель наценки сервера (1.1 = +10%)
+max_discount_bp = 5000     # потолок суммарной скидки (bp: 5000 = −50%)
+
+# Навык → множитель скидки ЗА РАНГ (haggle 0.02 = −2%/ранг)
+[gameplay.shop.skill_discounts]
+haggle = 0.02
+
 [gameplay.combat]           # M12.5: тик-луп атак (D25)
 attack_interval_s = 1.0     # период атак в бою, с
 base_damage = 6             # базовый урон персонажа (v1)

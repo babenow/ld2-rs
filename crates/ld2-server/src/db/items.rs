@@ -402,6 +402,59 @@ pub async fn grant_stacking_by_type(
     }
 }
 
+/// M18/F39: списать `need` единиц `def_id` (валюта магазина) со счётом
+/// стаков — семантика `consume_money`: `None` — не хватает (ничего не
+/// списано); `(uid, новое qty | None = стак удалён)` для событий.
+pub async fn consume_by_def(
+    pool: &PgPool,
+    char_id: &str,
+    def_id: &str,
+    need: i64,
+) -> Result<Option<Vec<(String, Option<i64>)>>, sqlx::Error> {
+    if need <= 0 {
+        return Ok(Some(Vec::new()));
+    }
+    let have: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(qty), 0) FROM items WHERE character_id = $1 AND def_id = $2",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_one(pool)
+    .await?;
+    if have < need {
+        return Ok(None);
+    }
+    let rows: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT uid, qty FROM items WHERE character_id = $1 AND def_id = $2 \
+         ORDER BY created_at, uid",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_all(pool)
+    .await?;
+    let mut left = need;
+    let mut changes = Vec::new();
+    for (uid, qty) in rows {
+        if left <= 0 {
+            break;
+        }
+        let take = i64::from(qty).min(left);
+        left -= take;
+        let rest = qty - take as i32;
+        if rest <= 0 {
+            sqlx::query("DELETE FROM items WHERE uid = $1")
+                .bind(&uid)
+                .execute(pool)
+                .await?;
+            changes.push((uid, None));
+        } else {
+            set_qty(pool, &uid, i64::from(rest)).await?;
+            changes.push((uid, Some(i64::from(rest))));
+        }
+    }
+    Ok(Some(changes))
+}
+
 /// F29a: списать `need` монет со счётом стаков (пустые удаляются) —
 /// `(uid, новое qty | None = стак удалён)` для `evt/item/state`/
 /// `evt/item/removed`. `None` — не хватает (ничего не списано);

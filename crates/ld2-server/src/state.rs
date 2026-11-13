@@ -26,6 +26,8 @@ pub struct AppState {
     /// M18/F35: диалоги NPC в памяти (`content/dialogs.json`, при старте;
     /// без БД — в отличие от кулдаунов `every_s`).
     pub dialogs: std::collections::HashMap<String, crate::dialogs::DialogNpc>,
+    /// M18/F39: магазины NPC в памяти (`content/shops.json`, при старте).
+    pub shops: std::collections::HashMap<String, crate::shops::ShopNpc>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -38,6 +40,10 @@ impl AppState {
         let dialogs = crate::dialogs::load(&config.world.content_dir)
             .map_err(|e| tracing::warn!("диалоги NPC не загружены: {e}"))
             .unwrap_or_default();
+        // M18/F39: сломанный shops.json — warn + пусто (контент-тесты в CI).
+        let shops = crate::shops::load(&config.world.content_dir)
+            .map_err(|e| tracing::warn!("магазины NPC не загружены: {e}"))
+            .unwrap_or_default();
         Self {
             config: Arc::new(config),
             pool,
@@ -46,6 +52,7 @@ impl AppState {
             shutdown,
             social: Mutex::new(SocialState::default()),
             dialogs,
+            shops,
         }
     }
 

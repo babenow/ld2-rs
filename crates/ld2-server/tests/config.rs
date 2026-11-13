@@ -122,6 +122,24 @@ fn zero_quest_max_active_names_key() {
     );
 }
 
+/// M18/F39: наценка сервера меньше 1 — ошибка валидации.
+#[test]
+fn bad_shop_markup_names_key() {
+    assert_problem(
+        &edited("server_markup = 1.0", "server_markup = 0.5"),
+        "gameplay.shop.server_markup",
+    );
+}
+
+/// M18/F39: потолок скидки вне 0..=10000 — ошибка валидации.
+#[test]
+fn shop_max_discount_out_of_range_names_key() {
+    assert_problem(
+        &edited("max_discount_bp = 5000", "max_discount_bp = 20000"),
+        "gameplay.shop.max_discount_bp",
+    );
+}
+
 #[test]
 fn feature_wrong_type_names_key() {
     // строка вместо bool: untagged-парсинг проходит, ловит валидация

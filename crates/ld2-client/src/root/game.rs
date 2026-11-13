@@ -136,6 +136,147 @@ impl Root {
         None
     }
 
+    /// M18/F39: панель магазина внутри окна диалога: вкладки валют
+    /// торговца, баланс по активной валюте, товары с ценами (сервер
+    /// считает наценки/скидки), покупка цветом показывает нехватку
+    /// средств (сервер всё равно авторитет — `E_NOT_ENOUGH_MONEY`).
+    fn shop_view(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        dialog: &NpcDialogView,
+    ) -> Div {
+        let lang = self.lang;
+        let Some(shop) = dialog.shop.clone() else {
+            return div().size_full();
+        };
+        let active = dialog
+            .shop_currency
+            .as_deref()
+            .and_then(|currency| shop.tabs.iter().find(|tab| tab.currency == currency))
+            .or_else(|| shop.tabs.first());
+        let Some(tab) = active else {
+            return div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::ShopEmpty));
+        };
+
+        // Вкладки валют торговца.
+        let choices: Vec<Choice> = shop
+            .tabs
+            .iter()
+            .map(|tab| Choice::new(tab.currency.as_str(), tab.currency_name.clone()))
+            .collect();
+        let this = cx.entity();
+        let tabs = Tabs::new("ld2-shop-tabs", choices, tab.currency.as_str()).on_change(
+            move |value, _window, acx| {
+                let value = value.to_string();
+                this.update(acx, |root, cx| {
+                    if let Some(view) = root.store.npc_dialog.as_mut() {
+                        view.shop_currency = Some(value);
+                    }
+                    cx.notify();
+                });
+            },
+        );
+
+        // Баланс по активной валюте — из снапшота.
+        let balance: i64 = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|snap| {
+                snap.char
+                    .inventory
+                    .iter()
+                    .filter(|item| item.def_id.as_deref() == Some(tab.currency.as_str()))
+                    .map(|item| item.qty.unwrap_or(0))
+                    .sum()
+            })
+            .unwrap_or(0);
+
+        let mut col = div().flex().flex_col().gap_1();
+        col = col.child(tabs);
+        col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
+        col = col.child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(tf(lang, Key::ShopOwned, &[("n", &balance.to_string())])),
+        );
+        for item in &tab.items {
+            let afford = balance >= item.price;
+            let mut right = div().flex().flex_row().gap_2().items_center();
+            right = right.child(
+                div()
+                    .text_size(px(13.0))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(rgb(if afford { pal.text } else { pal.danger }))
+                    .child(format!("{}", item.price)),
+            );
+            let entity_id = dialog.id.clone();
+            let currency = tab.currency.clone();
+            let def_id = item.def_id.clone();
+            right = right.child(act_btn_hover(
+                cx,
+                t(lang, Key::BtnBuy),
+                pal.panel,
+                pal.selection,
+                if afford { pal.text } else { pal.danger },
+                move |this, cx| {
+                    let cmd = ld2_protocol::cmd::ShopBuy {
+                        entity_id: entity_id.clone(),
+                        currency: currency.clone(),
+                        def_id: def_id.clone(),
+                    };
+                    this.send_cmd(&cmd, Act::ShopBuy);
+                    let _ = cx;
+                },
+            ));
+            let mut left = div().flex().flex_row().gap_2().items_center();
+            left = left.child(div().text_size(px(13.0)).child(item.name.clone()));
+            if item.qty > 1 {
+                left = left.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(pal.muted))
+                        .child(format!("×{}", item.qty)),
+                );
+            }
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .px_1()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .child(left)
+                    .child(right),
+            );
+        }
+        // Назад — к транскрипту диалога (само окно остаётся).
+        col = col.child(act_btn_hover(
+            cx,
+            t(lang, Key::ShopBack),
+            pal.panel,
+            pal.selection,
+            pal.text,
+            |this, cx| {
+                if let Some(view) = this.store.npc_dialog.as_mut() {
+                    view.shop = None;
+                }
+                let _ = cx;
+            },
+        ));
+        col
+    }
+
     /// M18/F38: **окно диалога NPC как окно персонажа** — попап-шелл
     /// (`popup_window`: drag/resize, общий scrim, Esc/×; порядок слоёв —
     /// верхний в группе). Гейт — наличие `store.npc_dialog`; закрытие
@@ -148,7 +289,13 @@ impl Root {
     ) -> Option<AnyElement> {
         let dialog = self.store.npc_dialog.clone()?;
         let lang = self.lang;
-        let body = self.npc_dialog_view(cx, pal, &dialog);
+        // M18/F39: открытый магазин заменяет транскрипт («Назад» —
+        // возвращает к диалогу).
+        let body = if dialog.shop.is_some() {
+            self.shop_view(cx, pal, &dialog)
+        } else {
+            self.npc_dialog_view(cx, pal, &dialog)
+        };
 
         // Статус-бар: контекстные кнопки — только реально существующие
         // системы (M18/F38, решение: без заглушек).
@@ -164,6 +311,7 @@ impl Root {
             .border_t_1()
             .border_color(rgb(pal.border));
         let mut has_actions = false;
+        let shop_entity = dialog.id.clone();
         for action in &dialog.actions {
             match action.as_str() {
                 // NPC даёт квесты → окно квестов (не закрывая диалог).
@@ -179,6 +327,25 @@ impl Root {
                             if !this.quests_popup.open {
                                 this.open_popup(PopupKind::Quests);
                             }
+                            let _ = cx;
+                        },
+                    ));
+                }
+                // M18/F39: магазин → список товаров (ack рисует панель).
+                "shop" => {
+                    has_actions = true;
+                    let entity_id = shop_entity.clone();
+                    bar = bar.child(act_btn_hover(
+                        cx,
+                        t(lang, Key::BtnShop),
+                        pal.panel,
+                        pal.selection,
+                        pal.text,
+                        move |this, cx| {
+                            let cmd = ld2_protocol::cmd::ShopList {
+                                entity_id: entity_id.clone(),
+                            };
+                            this.send_cmd(&cmd, Act::ShopList);
                             let _ = cx;
                         },
                     ));

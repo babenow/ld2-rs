@@ -10,9 +10,9 @@ use ld2_protocol::cmd::{
     ChatDelete, ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
     GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip,
     ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcReply,
-    NpcTalk, PartyAccept, PartyInvite, PartyKick, SkillUse, SocketExtract, SocketInsert,
-    StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview,
-    UpgradeStart,
+    NpcTalk, PartyAccept, PartyInvite, PartyKick, ShopBuy, ShopList, SkillUse, SocketExtract,
+    SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold,
+    UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -162,6 +162,9 @@ impl Session {
             "cmd/npc.talk" => self.npc_talk(env, seq).await,
             // M18/F37: ответ персонажа — переход по ветке
             "cmd/npc.reply" => self.npc_reply(env, seq).await,
+            // M18/F39: магазин NPC
+            "cmd/shop.list" => self.shop_list(env, seq).await,
+            "cmd/shop.buy" => self.shop_buy(env, seq).await,
             "cmd/state.resync" => self.state_resync(env, seq).await,
             // бой (ФР-05, M12.5)
             "cmd/combat.attack" => self.combat_attack(env, seq).await,
@@ -6211,6 +6214,9 @@ impl Session {
         if entity.extra.contains_key("trainer") {
             actions.push("train");
         }
+        if self.state.shops.contains_key(&entity.id) {
+            actions.push("shop");
+        }
         let pool = &self.state.pool;
         let shown = match db::dialogs::shown_lines(pool, &char_id, &entity.id).await {
             Ok(map) => map,
@@ -6341,6 +6347,250 @@ impl Session {
             seq,
             &serde_json::json!({ "node": node, "quests": quests }),
         )]
+    }
+
+    // ── магазины NPC (M18/F39) ─────────────────────────────────────────────
+
+    /// Скидка персонажа в bp: аккаунт (премиум — SQL,
+    /// `accounts.shop_discount_bp`) + навыки из
+    /// `[gameplay.shop].skill_discounts` (множитель за ранг); потолок
+    /// применяет `shops::buy_price_gold`.
+    async fn shop_discount_bp(&self, char_id: &str, seq: u32) -> Result<i64, Out> {
+        let pool = &self.state.pool;
+        let account_id = self.account_id.expect("require_auth выше");
+        let account_bp = match db::accounts::shop_discount_bp(pool, account_id).await {
+            Ok(bp) => bp,
+            Err(e) => {
+                warn!("shop (скидка аккаунта): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        };
+        let mut ranks = std::collections::HashMap::new();
+        match db::skills::learned(pool, char_id).await {
+            Ok(rows) => {
+                for skill in rows {
+                    ranks.insert(skill.skill_id, i64::from(skill.rank));
+                }
+            }
+            Err(e) => {
+                warn!("shop (навыки): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        }
+        let skills_bp = crate::shops::skill_discount_bp(
+            &self.state.config.gameplay.shop.skill_discounts,
+            &ranks,
+        );
+        Ok(account_bp + skills_bp)
+    }
+
+    /// `cmd/shop.list` (M18/F39): товары NPC по валютным вкладкам с
+    /// ценами (база `gold_value` × наценка сервера × наценка торговца ×
+    /// скидка bp с потолком → конвертация `rate`).
+    /// ack `{shop: {tabs: [{currency, currency_name, items[]}]}}`.
+    async fn shop_list(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ShopList>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
+        };
+        let Some(shop) = self.state.shops.get(&entity.id).cloned() else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет магазина")];
+        };
+        let discount_bp = match self.shop_discount_bp(&char_id, seq).await {
+            Ok(bp) => bp,
+            Err(out) => return vec![out],
+        };
+        let cfg = &self.state.config.gameplay.shop;
+        let pool = &self.state.pool;
+
+        let mut tabs = Vec::new();
+        for currency in &shop.currencies {
+            let cur_def = match db::items::def(pool, &currency.currency).await {
+                Ok(Some(def)) => def,
+                Ok(None) => {
+                    warn!("shop.list (валюта {}): нет определения", currency.currency);
+                    continue;
+                }
+                Err(e) => {
+                    warn!("shop.list (валюта): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let mut items = Vec::new();
+            for item_id in &currency.items {
+                let Some(def) = (match db::items::def(pool, item_id).await {
+                    Ok(Some(def)) => Some(def),
+                    Ok(None) => None,
+                    Err(e) => {
+                        warn!("shop.list (товар {item_id}): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                }) else {
+                    warn!("shop.list (товар {item_id}): нет определения");
+                    continue;
+                };
+                let gold = crate::shops::buy_price_gold(
+                    i64::from(def.gold_value),
+                    cfg.server_markup,
+                    shop.markup,
+                    discount_bp,
+                    cfg.max_discount_bp,
+                );
+                items.push(serde_json::json!({
+                    "def_id": def.id,
+                    "name": def.name,
+                    "rarity": def.rarity,
+                    "price": crate::shops::price_in_currency(gold, currency.rate),
+                    "qty": i64::from(def.qty).max(1),
+                }));
+            }
+            tabs.push(serde_json::json!({
+                "currency": currency.currency,
+                "currency_name": cur_def.name,
+                "items": items,
+            }));
+        }
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "shop": { "tabs": tabs } }),
+        )]
+    }
+
+    /// `cmd/shop.buy` (M18/F39): покупка одной партии — списание
+    /// валюты (события стаков, паттерн F29a) + выдача товара
+    /// (стак → `evt/item/state`, новый стак → `evt/item/added`).
+    /// ack `{}` — изменения уходят событиями.
+    async fn shop_buy(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ShopBuy>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
+        };
+        let Some(shop) = self.state.shops.get(&entity.id).cloned() else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет магазина")];
+        };
+        let Some(tab) = shop.currencies.iter().find(|c| c.currency == cmd.currency) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет такой валюты")];
+        };
+        if !tab.items.contains(&cmd.def_id) {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет такого товара")];
+        }
+        let pool = &self.state.pool;
+        let currency_def = match db::items::def(pool, &cmd.currency).await {
+            Ok(Some(def)) => def,
+            _ => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "нет определения валюты",
+                )];
+            }
+        };
+        let item_def = match db::items::def(pool, &cmd.def_id).await {
+            Ok(Some(def)) => def,
+            _ => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "нет определения товара",
+                )];
+            }
+        };
+        let discount_bp = match self.shop_discount_bp(&char_id, seq).await {
+            Ok(bp) => bp,
+            Err(out) => return vec![out],
+        };
+        let cfg = &self.state.config.gameplay.shop;
+        let gold = crate::shops::buy_price_gold(
+            i64::from(item_def.gold_value),
+            cfg.server_markup,
+            shop.markup,
+            discount_bp,
+            cfg.max_discount_bp,
+        );
+        let price = crate::shops::price_in_currency(gold, tab.rate);
+
+        // Лимит слотов (паритет socket.extract: полный рюкзак — отказ).
+        if db::items::count(pool, &char_id).await.unwrap_or(i64::MAX)
+            >= i64::from(self.state.config.gameplay.inventory.slots)
+        {
+            return vec![Self::err(
+                seq,
+                ErrorCode::InventoryFull,
+                "инвентарь заполнен",
+            )];
+        }
+
+        // 1) Списание валюты (все проверки прошли; события — после ack).
+        let money_events =
+            match db::items::consume_by_def(pool, &char_id, &cmd.currency, price).await {
+                Ok(Some(changes)) => Self::money_events(changes),
+                Ok(None) => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::NotEnoughMoney,
+                        format!("не хватает {}: {price}", currency_def.name),
+                    )];
+                }
+                Err(e) => {
+                    warn!("shop.buy (валюта): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+
+        // 2) Выдача товара (партия = qty стака из контента).
+        let unit_qty = i64::from(item_def.qty).max(1);
+        let (row, stacked) =
+            match db::items::grant_stacking(pool, &char_id, &cmd.def_id, unit_qty).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    warn!("shop.buy (выдача): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        outs.extend(money_events);
+        if stacked {
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(row.qty));
+            outs.push(out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: row.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            ));
+        } else {
+            let item = item_snapshot(&row, &item_def);
+            outs.push(out_event(
+                "evt/item/added",
+                None,
+                serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+            ));
+        }
+        outs
     }
 
     // ── квесты (ФР-12, M12.6) ───────────────────────────────────────────────
