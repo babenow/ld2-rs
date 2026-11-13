@@ -68,6 +68,8 @@ pub enum ErrorCode {
     ProfessionLimit,
     /// M18/F36: взятых квестов больше `quests.max_active` (§5).
     QuestLimit,
+    /// M18/F39: не хватает валюты на покупку в магазине NPC.
+    NotEnoughMoney,
     StationRequired,
     ToolMissing,
     Ingredients,
@@ -120,6 +122,7 @@ impl ErrorCode {
             Self::RankCap => "E_RANK_CAP",
             Self::ProfessionLimit => "E_PROFESSION_LIMIT",
             Self::QuestLimit => "E_QUEST_LIMIT",
+            Self::NotEnoughMoney => "E_NOT_ENOUGH_MONEY",
             Self::StationRequired => "E_STATION_REQUIRED",
             Self::ToolMissing => "E_TOOL_MISSING",
             Self::Ingredients => "E_INGREDIENTS",
@@ -174,6 +177,7 @@ impl FromStr for ErrorCode {
             "E_RANK_CAP" => Self::RankCap,
             "E_PROFESSION_LIMIT" => Self::ProfessionLimit,
             "E_QUEST_LIMIT" => Self::QuestLimit,
+            "E_NOT_ENOUGH_MONEY" => Self::NotEnoughMoney,
             "E_STATION_REQUIRED" => Self::StationRequired,
             "E_TOOL_MISSING" => Self::ToolMissing,
             "E_INGREDIENTS" => Self::Ingredients,
@@ -227,6 +231,7 @@ mod tests {
         "E_RANK_CAP",
         "E_PROFESSION_LIMIT",
         "E_QUEST_LIMIT",
+        "E_NOT_ENOUGH_MONEY",
         "E_STATION_REQUIRED",
         "E_TOOL_MISSING",
         "E_INGREDIENTS",

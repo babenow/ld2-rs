@@ -402,5 +402,10 @@ pub(super) fn t(key: Key) -> &'static str {
         QuestsPick => "Select a quest on the left",
         DialogYou => "You",
         BtnTraining => "Training",
+        BtnShop => "Shop",
+        BtnBuy => "Buy",
+        ShopBack => "Back",
+        ShopOwned => "You have: {n}",
+        ShopEmpty => "No goods",
     }
 }

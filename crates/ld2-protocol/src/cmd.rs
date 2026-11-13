@@ -116,6 +116,22 @@ pub struct NpcReply {
     pub reply_id: String,
 }
 
+/// M18/F39: список товаров NPC — цены уже посчитаны сервером
+/// (наценки/скидки), по валютным вкладкам.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ShopList {
+    pub entity_id: String,
+}
+
+/// M18/F39: покупка у NPC: валюта (`def_id`) + товар (`def_id`),
+/// одна партия по цене вкладки.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ShopBuy {
+    pub entity_id: String,
+    pub currency: String,
+    pub def_id: String,
+}
+
 // ─── бой (ФР-05) ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -421,6 +437,8 @@ impl_commands!(
     (EntityInfo, "cmd/entity.info", true),
     (NpcTalk, "cmd/npc.talk", true),
     (NpcReply, "cmd/npc.reply", false),
+    (ShopList, "cmd/shop.list", true),
+    (ShopBuy, "cmd/shop.buy", false),
     (CombatAttack, "cmd/combat.attack", false),
     (CombatStop, "cmd/combat.stop", true),
     (CombatFlee, "cmd/combat.flee", false),

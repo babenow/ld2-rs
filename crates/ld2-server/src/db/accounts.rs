@@ -40,6 +40,15 @@ pub async fn role(pool: &PgPool, account_id: i64) -> Result<String, sqlx::Error>
         .await
 }
 
+/// M18/F39: скидка аккаунта в магазинах (bp; премиум — ручной SQL,
+/// 1000 = −10%). 0 — без скидки.
+pub async fn shop_discount_bp(pool: &PgPool, account_id: i64) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT shop_discount_bp FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(pool)
+        .await
+}
+
 /// Занят ли email (дешёвая проверка до argon2, D33).
 pub async fn email_exists(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM accounts WHERE email = $1)")

@@ -49,6 +49,10 @@ pub enum Act {
     NpcTalk,
     /// `npc.reply` → новый узел в `npc_dialog` (M18/F37).
     NpcReply,
+    /// `shop.list` → `npc_dialog.shop` (M18/F39).
+    ShopList,
+    /// `shop.buy` — изменения приходят событиями (M18/F39).
+    ShopBuy,
     /// `char.xp_invest` → `pool_left` в снапшоте.
     Invest,
     /// `item.equip`/`item.unequip` — ack несёт обновлённый `char` (§7).
@@ -302,6 +306,42 @@ pub struct NpcTranscriptLine {
     pub text: String,
 }
 
+/// M18/F39: товар магазина в цене активной валютной вкладки.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcShopItem {
+    pub def_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub rarity: String,
+    /// Цена за партию в единицах валюты вкладки.
+    pub price: i64,
+    /// Размер партии (qty из контента, ≥1).
+    #[serde(default = "shop_item_qty")]
+    pub qty: i64,
+}
+
+fn shop_item_qty() -> i64 {
+    1
+}
+
+/// M18/F39: валютная вкладка магазина.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcShopTab {
+    /// `def_id` валюты (для баланса и `cmd/shop.buy`).
+    pub currency: String,
+    pub currency_name: String,
+    #[serde(default)]
+    pub items: Vec<NpcShopItem>,
+}
+
+/// M18/F39: открытый магазин NPC (внутри окна диалога — очищается
+/// вместе с `npc_dialog` на всех путях закрытия).
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcShopView {
+    #[serde(default)]
+    pub tabs: Vec<NpcShopTab>,
+}
+
 /// M18/F35/F37: открытое окно диалога NPC — payload ack `cmd/npc.talk`
 /// `{dialog: {id, name, greeting}, node, quests}`; транскрипт накапливает
 /// ленту (приветствие → узлы ↔ ответы персонажа).
@@ -319,9 +359,15 @@ pub struct NpcDialogView {
     #[serde(default)]
     pub quests: Vec<ld2_protocol::types::QuestState>,
     /// M18/F38: контекстные кнопки статус-бара от сервера — только
-    /// реально существующие системы (`quests`/`train`).
+    /// реально существующие системы (`quests`/`train`/`shop`).
     #[serde(default)]
     pub actions: Vec<String>,
+    /// M18/F39: открытый магазин (по кнопке — `cmd/shop.list`).
+    #[serde(default)]
+    pub shop: Option<NpcShopView>,
+    /// M18/F39: активная валютная вкладка магазина.
+    #[serde(default)]
+    pub shop_currency: Option<String>,
 }
 
 impl NpcDialogView {
@@ -358,6 +404,8 @@ impl NpcDialogView {
             quests: serde_json::from_value(payload.get("quests")?.clone()).unwrap_or_default(),
             actions: serde_json::from_value(payload.get("actions").cloned().unwrap_or_default())
                 .unwrap_or_default(),
+            shop: None,
+            shop_currency: None,
         })
     }
 }
@@ -594,9 +642,13 @@ impl AppStore {
                     self.deleting_char = None;
                     self.notice = Some(msg);
                 }
-                Act::Move | Act::Attack | Act::Examine | Act::NpcTalk | Act::NpcReply => {
-                    self.world_error = Some(msg)
-                }
+                Act::Move
+                | Act::Attack
+                | Act::Examine
+                | Act::NpcTalk
+                | Act::NpcReply
+                | Act::ShopList
+                | Act::ShopBuy => self.world_error = Some(msg),
                 // M16/F29h: ошибки листа — системные уведомления
                 // (тосты), как и весь прочий фидбек.
                 Act::Invest
@@ -673,6 +725,8 @@ impl AppStore {
             | Act::Examine
             | Act::NpcTalk
             | Act::NpcReply
+            | Act::ShopList
+            | Act::ShopBuy
             | Act::Drop
             | Act::Upgrade
             | Act::Cast
@@ -788,6 +842,16 @@ impl AppStore {
             }
         }
 
+        // M18/F39: магазин — ack `{shop}` → панель внутри окна диалога.
+        if act == Act::ShopList {
+            if let (Some(dialog), Some(payload)) = (self.npc_dialog.as_mut(), ack.payload.as_ref())
+            {
+                if let Ok(shop) = serde_json::from_value::<NpcShopView>(payload["shop"].clone()) {
+                    dialog.shop_currency = shop.tabs.first().map(|tab| tab.currency.clone());
+                    dialog.shop = Some(shop);
+                }
+            }
+        }
         // M18/F35: диалог NPC — ack `{dialog, node, quests}` → окно (до
         // Examine: там payload перемещается).
         if act == Act::NpcTalk {
@@ -3240,6 +3304,46 @@ mod tests {
             "терминальный ответ закрыл диалог"
         );
         assert_eq!(store.active_dialog(false, false), None);
+    }
+
+    /// M18/F39: ack `shop.list` открывает панель магазина внутри окна
+    /// диалога (активная вкладка — первая).
+    #[test]
+    fn shop_list_ack_opens_shop_panel() {
+        let mut store = in_game();
+        let talk = serde_json::json!({
+            "dialog": { "id": "npc_elder", "name": "Староста", "greeting": "Привет!" },
+            "node": serde_json::Value::Null,
+            "quests": []
+        });
+        store.npc_dialog = NpcDialogView::from_payload(&talk);
+        store.on_world_sent(Act::ShopList);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            12,
+            None,
+            &serde_json::json!({
+                "shop": { "tabs": [
+                    { "currency": "gold_coin", "currency_name": "Золотая монета",
+                      "items": [ { "def_id": "potion_heal", "name": "Зелье лечения",
+                                   "rarity": "common", "price": 28, "qty": 1 } ] },
+                    { "currency": "gem_str", "currency_name": "Самоцвет силы", "items": [] }
+                ]}
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        let shop = dialog.shop.as_ref().expect("магазин открыт");
+        assert_eq!(shop.tabs.len(), 2);
+        assert_eq!(
+            dialog.shop_currency.as_deref(),
+            Some("gold_coin"),
+            "активна первая вкладка"
+        );
+        assert_eq!(shop.tabs[0].items[0].price, 28);
+        // Закрытие диалога чистит магазин (поля внутри вида).
+        store.npc_dialog = None;
+        assert!(store.npc_dialog.is_none());
     }
 
     #[test]

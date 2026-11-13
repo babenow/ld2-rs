@@ -705,4 +705,60 @@ mod tests {
             );
         }
     }
+
+    /// M18/F39: `shops.json` валиден — NPC существует (entity kind=npc
+    /// в локациях), валюты/товары из контента предметов, markup/rate > 0,
+    /// валюты уникальны, вкладки непусты.
+    #[test]
+    fn shops_content_is_valid() {
+        use std::collections::HashSet;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = load(&dir).expect("контент контента загружается");
+        let shops = crate::shops::load(&dir).expect("shops.json парсится");
+        assert!(!shops.is_empty(), "магазины NPC есть");
+
+        let item_ids: HashSet<&str> = content.items.iter().map(|i| i.id.as_str()).collect();
+        let mut npc_ids = HashSet::new();
+        for location in &content.locations {
+            for entity in &location.entities {
+                if entity.kind == ld2_protocol::types::EntityKind::Npc {
+                    npc_ids.insert(entity.id.as_str());
+                }
+            }
+        }
+
+        for (npc_id, shop) in &shops {
+            assert!(
+                npc_ids.contains(npc_id.as_str()),
+                "нет NPC {npc_id} в локациях"
+            );
+            assert!(shop.markup > 0.0, "markup > 0 у {npc_id}");
+            assert!(!shop.currencies.is_empty(), "валютные вкладки у {npc_id}");
+            let mut currencies = HashSet::new();
+            for tab in &shop.currencies {
+                assert!(
+                    currencies.insert(tab.currency.as_str()),
+                    "валюта дубль у {npc_id}"
+                );
+                assert!(
+                    item_ids.contains(tab.currency.as_str()),
+                    "нет предмета-валюты {} у {npc_id}",
+                    tab.currency
+                );
+                assert!(tab.rate > 0.0, "rate > 0 у {npc_id}");
+                assert!(
+                    !tab.items.is_empty(),
+                    "пустая вкладка {} у {npc_id}",
+                    tab.currency
+                );
+                for item in &tab.items {
+                    assert!(
+                        item_ids.contains(item.as_str()),
+                        "нет товара {item} у {npc_id}"
+                    );
+                }
+            }
+        }
+    }
 }

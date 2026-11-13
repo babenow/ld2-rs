@@ -464,6 +464,12 @@ pub enum Key {
     DialogYou,
     // M18/F38: кнопка «Обучение» в статус-баре диалога (тренер).
     BtnTraining,
+    // M18/F39: магазин NPC.
+    BtnShop,
+    BtnBuy,
+    ShopBack,
+    ShopOwned,
+    ShopEmpty,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -934,6 +940,11 @@ mod tests {
         Key::QuestsPick,
         Key::DialogYou,
         Key::BtnTraining,
+        Key::BtnShop,
+        Key::BtnBuy,
+        Key::ShopBack,
+        Key::ShopOwned,
+        Key::ShopEmpty,
     ];
 
     #[test]
