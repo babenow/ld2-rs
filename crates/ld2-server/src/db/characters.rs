@@ -209,3 +209,23 @@ pub async fn add_total_xp(pool: &PgPool, char_id: &str, amount: i64) -> Result<(
     .await?;
     Ok(())
 }
+
+/// M18/F45: **абсолютная** установка прогресса (общий опыт + пул) —
+/// dev-сценарий `/scenario test` (уровень 10 и пул 1000).
+pub async fn set_progress(
+    pool: &PgPool,
+    char_id: &str,
+    total_xp: i64,
+    xp_pool: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE characters SET total_xp = $2, xp_pool = $3 \
+         WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(char_id)
+    .bind(total_xp)
+    .bind(xp_pool)
+    .execute(pool)
+    .await?;
+    Ok(())
+}

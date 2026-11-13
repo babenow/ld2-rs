@@ -1303,6 +1303,23 @@ impl AppStore {
                             }
                         }
                     }
+                    // M18/F45: уровень/опыт/пул из dev-сценария `/scenario
+                    // test` — открытый patch (§11.2), без правки контракта.
+                    if let Some(v) = stats.patch.get("level").and_then(|v| v.as_u64()) {
+                        snap.char.level = Some(v as u32);
+                    }
+                    if let Some(v) = stats.patch.get("total_xp").and_then(|v| v.as_i64()) {
+                        snap.char.total_xp = Some(v);
+                    }
+                    if let Some(v) = stats.patch.get("xp_in_level").and_then(|v| v.as_i64()) {
+                        snap.char.xp_in_level = Some(v);
+                    }
+                    if let Some(v) = stats.patch.get("xp_to_next").and_then(|v| v.as_i64()) {
+                        snap.char.xp_to_next = Some(v);
+                    }
+                    if let Some(v) = stats.patch.get("xp_pool").and_then(|v| v.as_i64()) {
+                        snap.char.xp_pool = v;
+                    }
                 }
                 vec![]
             }
@@ -3667,6 +3684,32 @@ mod tests {
         let snap = store.snapshot.as_ref().unwrap();
         assert_eq!(snap.char.hp.cur, 60, "hp после респауна");
         assert_eq!(snap.char.mp.cur, 60, "mp после респауна");
+    }
+
+    /// M18/F45: dev-сценарий `/scenario test` шлёт уровень/опыт/пул
+    /// открытым patch (§11.2) — клиент применяет их к снапшоту.
+    #[test]
+    fn char_stats_patch_applies_level_and_pool() {
+        let mut store = in_game();
+        let (level_before, pool_before) = {
+            let ch = &store.snapshot.as_ref().unwrap().char;
+            (ch.level, ch.xp_pool)
+        };
+        store.apply(evt(
+            "evt/char/stats",
+            serde_json::json!({ "patch": {
+                "level": 10, "total_xp": 900, "xp_in_level": 0,
+                "xp_to_next": 1100, "xp_pool": 1000
+            }}),
+        ));
+        let snap = store.snapshot.as_ref().unwrap();
+        assert_eq!(snap.char.level, Some(10), "уровень из patch");
+        assert_eq!(snap.char.total_xp, Some(900), "total_xp из patch");
+        assert_eq!(snap.char.xp_in_level, Some(0), "xp_in_level из patch");
+        assert_eq!(snap.char.xp_to_next, Some(1100), "xp_to_next из patch");
+        assert_eq!(snap.char.xp_pool, 1000, "пул из patch");
+        assert_ne!(level_before, Some(10), "до patch уровень был иным");
+        assert_ne!(pool_before, 1000, "до patch пул был иным");
     }
 
     #[test]

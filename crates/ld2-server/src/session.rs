@@ -2964,6 +2964,12 @@ impl Session {
         if scenario == "kit" {
             return self.scenario_kit(seq).await;
         }
+        // `/scenario test` — M18/F45: тестовый рюкзак на 100 позиций
+        // (все определения контента по кругу) + разные валюты +
+        // прогресс (уровень 10, пул 1000); `kit` остаётся прежним.
+        if scenario == "test" {
+            return self.scenario_test(seq).await;
+        }
         // `/scenario skillxp <skill_id> [xp]` — M18/F44: заполнить шкалу
         // навыка (по умолчанию ровно до 100 %) — смоук обучения у
         // тренера без боя (гейт 100 %, ADR-009).
@@ -3269,6 +3275,199 @@ impl Session {
             Ok(None) => warn!("scenario kit: валюта не найдена в контенте"),
             Err(e) => warn!("scenario kit (монеты): {e}"),
         }
+        outs
+    }
+
+    /// `/scenario test` (M18/F45): тестовый рюкзак и прогресс для
+    /// Warrior/Archer/Mage. Выдаёт **100 позиций**: все определения
+    /// контента по кругу — экипировка инстансами (каждая единица своей
+    /// плиткой), расходники/материалы/валюты стаками (повтор круга
+    /// льётся в существующий стак — плитка не растёт; добирка до 100 —
+    /// инстансами). Плюс **разные валюты** (золото + `gem_str` — обе
+    /// валюты из `shops.json`) и **прогресс**: уровень 10 (`total_xp`
+    /// по кривой M15) и пул 1000. `kit` остаётся прежним.
+    async fn scenario_test(&mut self, seq: u32) -> Vec<Out> {
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+
+        let defs = match db::items::all_defs(pool).await {
+            Ok(defs) => defs,
+            Err(e) => {
+                warn!("scenario test (определения): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if defs.is_empty() {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "контент предметов пуст",
+            )];
+        }
+
+        // ── 100 позиций: круги по определениям (F45) ──
+        const TARGET: i64 = 100;
+        let mut tiles = db::items::count(pool, &char_id).await.unwrap_or(0);
+        let mut rounds = 0u32;
+        while tiles < TARGET && rounds < 20 {
+            rounds += 1;
+            for def in &defs {
+                if tiles >= TARGET {
+                    break;
+                }
+                if def.slot.is_some() {
+                    // Экипировка — инстанс: каждая единица отдельной
+                    // плиткой (стаков у неё по определению нет).
+                    let qty = i64::from(def.qty.max(1));
+                    let Ok(mut row) = db::items::insert(pool, &char_id, &def.id, qty).await else {
+                        warn!("scenario test (инстанс {}): пропуск", def.id);
+                        continue;
+                    };
+                    if def.sockets > 0 && row.sockets.as_array().is_none_or(|a| a.is_empty()) {
+                        row.sockets = Self::empty_sockets(def.sockets);
+                        if let Err(e) =
+                            db::items::set_sockets(pool, &row.uid, row.sockets.clone()).await
+                        {
+                            warn!("scenario test (сокеты {}): {e}", def.id);
+                        }
+                    }
+                    tiles += 1;
+                    outs.push(out_event(
+                        "evt/item/added",
+                        None,
+                        serde_json::to_value(ItemAdded {
+                            item: item_snapshot(&row, def),
+                        })
+                        .unwrap_or_default(),
+                    ));
+                } else {
+                    // Расходники/материалы/самоцветы/валюты — стак: повтор
+                    // круга льётся в существующий (`stacked`) — плитка не
+                    // растёт, и цикл добирается инстансами до TARGET.
+                    match db::items::grant_stacking(
+                        pool,
+                        &char_id,
+                        &def.id,
+                        i64::from(def.qty.max(1)),
+                    )
+                    .await
+                    {
+                        Ok((row, stacked)) => {
+                            let ev = if stacked {
+                                let mut patch = serde_json::Map::new();
+                                patch.insert("qty".into(), serde_json::json!(row.qty));
+                                out_event(
+                                    "evt/item/state",
+                                    None,
+                                    serde_json::to_value(ItemState {
+                                        uid: row.uid,
+                                        patch,
+                                    })
+                                    .unwrap_or_default(),
+                                )
+                            } else {
+                                tiles += 1;
+                                match db::items::def(pool, &row.def_id).await.ok().flatten() {
+                                    Some(def) => out_event(
+                                        "evt/item/added",
+                                        None,
+                                        serde_json::to_value(ItemAdded {
+                                            item: item_snapshot(&row, &def),
+                                        })
+                                        .unwrap_or_default(),
+                                    ),
+                                    None => {
+                                        warn!("scenario test: нет определения {}", row.def_id);
+                                        continue;
+                                    }
+                                }
+                            };
+                            outs.push(ev);
+                        }
+                        Err(e) => warn!("scenario test (стак {}): {e}", def.id),
+                    }
+                }
+            }
+        }
+        if tiles < TARGET {
+            warn!("scenario test: набрано {tiles} из {TARGET} позиций");
+        }
+
+        // ── Валюты (F45 «разные валюты»): shops.json принимает
+        // gold_coin и gem_str — начисляем обе сверх выданного круга
+        // (стаки уже существуют → только патч qty, позиций не прибавит).
+        for (label, def_id, amount) in [
+            ("золото", None, 1000i64),
+            ("самоцвет", Some("gem_str"), 100),
+        ] {
+            let granted: Result<Option<(db::items::ItemRow, bool)>, sqlx::Error> = match def_id {
+                None => {
+                    db::items::grant_stacking_by_type(pool, &char_id, db::items::MONEY_TYPE, amount)
+                        .await
+                }
+                Some(id) => db::items::grant_stacking(pool, &char_id, id, amount)
+                    .await
+                    .map(Some),
+            };
+            match granted {
+                Ok(Some((row, stacked))) => {
+                    let ev = if stacked {
+                        let mut patch = serde_json::Map::new();
+                        patch.insert("qty".into(), serde_json::json!(row.qty));
+                        out_event(
+                            "evt/item/state",
+                            None,
+                            serde_json::to_value(ItemState {
+                                uid: row.uid,
+                                patch,
+                            })
+                            .unwrap_or_default(),
+                        )
+                    } else {
+                        match db::items::def(pool, &row.def_id).await.ok().flatten() {
+                            Some(def) => out_event(
+                                "evt/item/added",
+                                None,
+                                serde_json::to_value(ItemAdded {
+                                    item: item_snapshot(&row, &def),
+                                })
+                                .unwrap_or_default(),
+                            ),
+                            None => continue,
+                        }
+                    };
+                    outs.push(ev);
+                }
+                Ok(None) => warn!("scenario test: валюта {label} не найдена в контенте"),
+                Err(e) => warn!("scenario test ({label}): {e}"),
+            }
+        }
+
+        // ── Прогресс (F45): уровень 10 + пул 1000 ──
+        let cfg = &self.state.config.gameplay.level;
+        let total_xp = crate::systems::total_xp_for_level(10, cfg);
+        if let Err(e) = db::characters::set_progress(pool, &char_id, total_xp, 1000).await {
+            warn!("scenario test (прогресс): {e}");
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        // Уровень/пул у клиента живут только в снапшоте — шлём патчем
+        // (открытый `patch` §11.2, без правки wire-контракта).
+        let (level, xp_in_level, xp_to_next) = crate::systems::level_for_total(total_xp, cfg);
+        let mut patch = serde_json::Map::new();
+        patch.insert("level".into(), serde_json::json!(level));
+        patch.insert("total_xp".into(), serde_json::json!(total_xp));
+        patch.insert("xp_in_level".into(), serde_json::json!(xp_in_level));
+        patch.insert("xp_to_next".into(), serde_json::json!(xp_to_next));
+        patch.insert("xp_pool".into(), serde_json::json!(1000i64));
+        outs.push(out_event(
+            "evt/char/stats",
+            None,
+            serde_json::to_value(CharStats { patch }).unwrap_or_default(),
+        ));
         outs
     }
 

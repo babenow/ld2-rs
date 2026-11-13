@@ -62,6 +62,18 @@ pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sql
     .await
 }
 
+/// M18/F45: **все** определения предметов в детерминированном порядке
+/// (`id`) — dev-сценарий `/scenario test` (100 позиций по кругу).
+pub async fn all_defs(pool: &PgPool) -> Result<Vec<ItemDefRow>, sqlx::Error> {
+    sqlx::query_as::<_, ItemDefRow>(
+        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
+                slot, hands, skill, cooldown_s, bonuses \
+         FROM item_defs ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// Определение предмета; `None` — нет в сиде.
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(

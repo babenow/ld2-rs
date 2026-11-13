@@ -35,6 +35,15 @@ pub fn level_for_total(total_xp: i64, cfg: &LevelSection) -> (u32, i64, i64) {
     }
 }
 
+/// M18/F45: общий опыт для достижения `level` — обратная функция к
+/// [`level_for_total`] (сумма порогов `1 → 2 … level−1 → level`).
+/// `level_for_total(total_xp_for_level(n), cfg) == (n, 0, …)` при
+/// `1 ≤ n ≤ max_level`; на потолке копится сверх — как и в бою.
+pub fn total_xp_for_level(level: u32, cfg: &LevelSection) -> i64 {
+    let cap = level.min(cfg.max_level.max(1));
+    (1..cap.max(1)).map(|l| level_xp_to_next(l, cfg)).sum()
+}
+
 /// Применить опыт убийства к навыку (skills.md §2.3): ранги растут, пока
 /// хватает гейтов атрибутов; на гейте/потолке XP копится в текущем ранге
 /// (гейты блокируют без ошибки — в отличие от вложения пула, §2.2).
@@ -280,6 +289,25 @@ mod tests {
         assert_eq!(next, 0, "на потолке шкалы нет");
         assert!(xp > 0, "опыт копится на потолке");
         assert_eq!(level_for_total(-5, &c), (1, 0, 100), "защита от минуса");
+    }
+
+    /// M18/F45: обратная функция — `total_xp_for_level(n)` даёт ровно
+    /// уровень `n` (round-trip с [`level_for_total`]).
+    #[test]
+    fn total_xp_for_level_round_trips() {
+        let c = level_cfg();
+        for level in [1u32, 2, 3, 10, 30, 60] {
+            let total = total_xp_for_level(level, &c);
+            let (got, in_level, _) = level_for_total(total, &c);
+            assert_eq!(got, level, "уровень для total_xp={total}");
+            assert_eq!(in_level, 0, "на границе уровня: {total}");
+        }
+        assert_eq!(total_xp_for_level(1, &c), 0, "1-й уровень — без опыта");
+        assert_eq!(
+            total_xp_for_level(999, &c),
+            total_xp_for_level(60, &c),
+            "выше потолка — как на max_level"
+        );
     }
 
     #[test]
