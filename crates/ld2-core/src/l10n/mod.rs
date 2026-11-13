@@ -462,6 +462,8 @@ pub enum Key {
     QuestsPick,
     // M18/F37: реплики персонажа в транскрипте диалога.
     DialogYou,
+    // M18/F38: кнопка «Обучение» в статус-баре диалога (тренер).
+    BtnTraining,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -931,6 +933,7 @@ mod tests {
         Key::QuestsStatusDone,
         Key::QuestsPick,
         Key::DialogYou,
+        Key::BtnTraining,
     ];
 
     #[test]

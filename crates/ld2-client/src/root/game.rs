@@ -7,7 +7,7 @@
 //! меню — инлайн под строкой (вместо попапа по курсору), тултипы не используются.
 
 use ely::overlays::Dialog;
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stateful};
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stateful, Window};
 use ld2_core::l10n::{format_duration, t, tf, Key};
 use ld2_core::store::{
     crime_kind_title, filter_active_statuses, local_epoch, Act, AppStore, LogKind, NpcDialogView,
@@ -25,7 +25,7 @@ use ely::primitives::{IconName, Tooltip};
 use super::quests::goals_summary;
 use super::sheet::rarity_label;
 use super::social::show_party;
-use super::{act_btn, btn, hex_to_u32, Click, LogTab, Root, INSCRIBE_MS};
+use super::{act_btn, act_btn_hover, btn, hex_to_u32, Click, LogTab, PopupKind, Root, INSCRIBE_MS};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -132,18 +132,90 @@ impl Root {
                     .into_any_element(),
             );
         }
-        // M18/F35: диалог NPC (после осмотра/луута — как в active_dialog).
-        if let Some(dialog) = self.store.npc_dialog.clone() {
-            let title = dialog.name.clone();
-            let body = self.npc_dialog_view(cx, pal, &dialog).into_any_element();
-            let close = self.dismiss(cx, |r| r.store.npc_dialog = None);
-            return Some(
-                Dialog::new("ld2-npc", title, close)
-                    .child(body)
-                    .into_any_element(),
-            );
-        }
+        // M18/F38: диалог NPC — попап-окно (см. npc_window), не модалка.
         None
+    }
+
+    /// M18/F38: **окно диалога NPC как окно персонажа** — попап-шелл
+    /// (`popup_window`: drag/resize, общий scrim, Esc/×; порядок слоёв —
+    /// верхний в группе). Гейт — наличие `store.npc_dialog`; закрытие
+    /// (Esc/scrim/×/терминальный ответ) чистит состояние в store.
+    pub(crate) fn npc_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let dialog = self.store.npc_dialog.clone()?;
+        let lang = self.lang;
+        let body = self.npc_dialog_view(cx, pal, &dialog);
+
+        // Статус-бар: контекстные кнопки — только реально существующие
+        // системы (M18/F38, решение: без заглушек).
+        let mut bar = div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .items_center()
+            .justify_end()
+            .px_3()
+            .py_2()
+            .bg(rgb(pal.selection))
+            .border_t_1()
+            .border_color(rgb(pal.border));
+        let mut has_actions = false;
+        for action in &dialog.actions {
+            match action.as_str() {
+                // NPC даёт квесты → окно квестов (не закрывая диалог).
+                "quests" => {
+                    has_actions = true;
+                    bar = bar.child(act_btn_hover(
+                        cx,
+                        t(lang, Key::QuestsTab),
+                        pal.panel,
+                        pal.selection,
+                        pal.text,
+                        |this, cx| {
+                            if !this.quests_popup.open {
+                                this.open_popup(PopupKind::Quests);
+                            }
+                            let _ = cx;
+                        },
+                    ));
+                }
+                // Тренер → окно персонажа, вкладка «Профессии»
+                // (обучение профессиям реально существует, F8).
+                "train" => {
+                    has_actions = true;
+                    bar = bar.child(act_btn_hover(
+                        cx,
+                        t(lang, Key::BtnTraining),
+                        pal.panel,
+                        pal.selection,
+                        pal.text,
+                        |this, cx| {
+                            if !this.char_popup.open {
+                                this.open_popup(PopupKind::Character);
+                            }
+                            this.sheet_tab = super::sheet::SheetTab::Professions;
+                            let _ = cx;
+                        },
+                    ));
+                }
+                _ => {}
+            }
+        }
+        let footer = has_actions.then_some(bar);
+
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Npc,
+            dialog.name.clone(),
+            body,
+            footer,
+        ))
     }
 
     pub(crate) fn game_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
@@ -1131,21 +1203,29 @@ impl Root {
                 let node_id = node.id.clone();
                 let reply_id = reply.id.clone();
                 let text = reply.text.clone();
-                col = col.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
-                    if let Some(view) = this.store.npc_dialog.as_mut() {
-                        view.transcript.push(ld2_core::store::NpcTranscriptLine {
-                            me: true,
-                            text: text.clone(),
-                        });
-                    }
-                    let cmd = ld2_protocol::cmd::NpcReply {
-                        entity_id: entity_id.clone(),
-                        node_id: node_id.clone(),
-                        reply_id: reply_id.clone(),
-                    };
-                    this.send_cmd(&cmd, Act::NpcReply);
-                    let _ = cx;
-                }));
+                // M18/F38: реплики персонажа подсвечиваются при наведении.
+                col = col.child(act_btn_hover(
+                    cx,
+                    label,
+                    pal.panel,
+                    pal.selection,
+                    pal.text,
+                    move |this, cx| {
+                        if let Some(view) = this.store.npc_dialog.as_mut() {
+                            view.transcript.push(ld2_core::store::NpcTranscriptLine {
+                                me: true,
+                                text: text.clone(),
+                            });
+                        }
+                        let cmd = ld2_protocol::cmd::NpcReply {
+                            entity_id: entity_id.clone(),
+                            node_id: node_id.clone(),
+                            reply_id: reply_id.clone(),
+                        };
+                        this.send_cmd(&cmd, Act::NpcReply);
+                        let _ = cx;
+                    },
+                ));
             }
         }
         if !dialog.quests.is_empty() {

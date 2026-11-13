@@ -109,6 +109,19 @@ async fn npc_dialog_walks_branches_and_gates_by_quests() {
     assert_eq!(node_id(&ack), Some("l_hello"), "корень ветки: {ack}");
     let text = ack["payload"]["node"]["text"].as_str().unwrap_or_default();
     assert!(!text.contains('{'), "текст узла отрендерен: {text}");
+    // M18/F38: контекстные кнопки статус-бара (реальные системы).
+    let actions: Vec<&str> = ack["payload"]["actions"]
+        .as_array()
+        .map(|values| values.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        actions.contains(&"quests"),
+        "NPC даёт квесты → кнопка «Квесты»: {actions:?}"
+    );
+    assert!(
+        actions.contains(&"train"),
+        "NPC — тренер → кнопка «Обучение»: {actions:?}"
+    );
     let replies = reply_ids(&ack);
     assert!(
         replies.contains(&"r_work".into()),

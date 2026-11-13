@@ -318,6 +318,10 @@ pub struct NpcDialogView {
     pub transcript: Vec<NpcTranscriptLine>,
     #[serde(default)]
     pub quests: Vec<ld2_protocol::types::QuestState>,
+    /// M18/F38: контекстные кнопки статус-бара от сервера — только
+    /// реально существующие системы (`quests`/`train`).
+    #[serde(default)]
+    pub actions: Vec<String>,
 }
 
 impl NpcDialogView {
@@ -352,6 +356,8 @@ impl NpcDialogView {
             node,
             transcript,
             quests: serde_json::from_value(payload.get("quests")?.clone()).unwrap_or_default(),
+            actions: serde_json::from_value(payload.get("actions").cloned().unwrap_or_default())
+                .unwrap_or_default(),
         })
     }
 }
@@ -372,8 +378,6 @@ pub enum Dialog {
     Socket,
     /// M17/F30a: выбор оружия под инкрустацию руны/самоцвета.
     Inscribe,
-    /// M18/F35: диалог NPC (поговорить/квесты).
-    NpcTalk,
     Create,
     Delete,
 }
@@ -417,10 +421,8 @@ impl AppStore {
                 } else if self.inscribe.is_some() {
                     // M17/F30a: окно «Куда инкрустировать…».
                     Some(Dialog::Inscribe)
-                } else if self.npc_dialog.is_some() {
-                    // M18/F35: диалог NPC — в конце цепочки.
-                    Some(Dialog::NpcTalk)
                 } else {
+                    // M18/F38: диалог NPC — попап (вне диспетчера модалок).
                     None
                 }
             }
@@ -796,26 +798,24 @@ impl AppStore {
         // M18/F37: ответ персонажа — новый узел (`node: null` — конец);
         // список квестов освежается (приняли/сдали между открытиями).
         if act == Act::NpcReply {
-            if let (Some(dialog), Some(payload)) = (self.npc_dialog.as_mut(), ack.payload.as_ref())
-            {
-                match payload.get("node") {
-                    Some(value) if !value.is_null() => {
-                        if let Ok(node) = serde_json::from_value::<NpcNode>(value.clone()) {
-                            dialog.transcript.push(NpcTranscriptLine {
-                                me: false,
-                                text: node.text.clone(),
-                            });
-                            dialog.node = Some(node);
+            if let Some(payload) = ack.payload.as_ref() {
+                let terminal = payload.get("node").is_none_or(|v| v.is_null());
+                if terminal {
+                    // M18/F38: конец диалога («Пока») — окно закрывается.
+                    self.npc_dialog = None;
+                } else if let Some(dialog) = self.npc_dialog.as_mut() {
+                    if let Ok(node) = serde_json::from_value::<NpcNode>(payload["node"].clone()) {
+                        dialog.transcript.push(NpcTranscriptLine {
+                            me: false,
+                            text: node.text.clone(),
+                        });
+                        dialog.node = Some(node);
+                        if let Ok(quests) = serde_json::from_value::<
+                            Vec<ld2_protocol::types::QuestState>,
+                        >(payload["quests"].clone())
+                        {
+                            dialog.quests = quests;
                         }
-                    }
-                    // Конец диалога: ответы исчезают, лента остаётся.
-                    _ => dialog.node = None,
-                }
-                if let Some(quests) = payload.get("quests") {
-                    if let Ok(quests) = serde_json::from_value::<Vec<ld2_protocol::types::QuestState>>(
-                        quests.clone(),
-                    ) {
-                        dialog.quests = quests;
                     }
                 }
             }
@@ -2240,10 +2240,10 @@ mod tests {
         s.inscribe = Some("rune_1".into());
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Inscribe));
         s.inscribe = None;
-        // M18/F35: диалог NPC — в конце цепочки (выше него — все
-        // остальные игровые окна).
+        // M18/F38: диалог NPC — попап: не участвует в диспетчере
+        // модалок (модалки смерти/осмотра/луута — выше по приоритету).
         s.npc_dialog = Some(NpcDialogView::default());
-        assert_eq!(s.active_dialog(false, false), Some(Dialog::NpcTalk));
+        assert_eq!(s.active_dialog(false, false), None);
         s.npc_dialog = None;
         assert_eq!(s.active_dialog(false, false), None);
     }
@@ -3167,7 +3167,8 @@ mod tests {
                         { "id": "r_bye", "text": "Пока." }
                     ]
                 },
-                "quests": [ { "id": "q1", "title": "Волчья беда", "state": "available" } ]
+                "quests": [ { "id": "q1", "title": "Волчья беда", "state": "available" } ],
+                "actions": [ "quests", "train" ]
             }),
         )
         .unwrap();
@@ -3183,7 +3184,8 @@ mod tests {
         assert_eq!(node.id, "l_hello");
         assert_eq!(node.replies.len(), 2);
         assert_eq!(dialog.quests.len(), 1);
-        assert_eq!(store.active_dialog(false, false), Some(Dialog::NpcTalk));
+        assert_eq!(dialog.actions, vec!["quests", "train"], "actions из ack");
+        assert_eq!(store.active_dialog(false, false), None, "попап вне модалок");
         assert!(store.pending.is_none());
 
         // M18/F37: ответ → новый узел в ленте, квесты освежены.
@@ -3224,7 +3226,7 @@ mod tests {
             "принятый квест убран из окна"
         );
 
-        // Конец диалога (node: null) — ответов нет, лента цела.
+        // M18/F38: конец диалога («Пока») — окно закрывается целиком.
         store.on_world_sent(Act::NpcReply);
         let ack = ld2_protocol::Ack::ok_with_payload(
             10,
@@ -3233,10 +3235,11 @@ mod tests {
         )
         .unwrap();
         store.apply(IngressEvent::Ack(ack));
-        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
-        assert!(dialog.node.is_none(), "узел закрыт");
-        assert_eq!(dialog.transcript.len(), 3, "лента сохранена");
-        assert!(dialog.quests.is_empty());
+        assert!(
+            store.npc_dialog.is_none(),
+            "терминальный ответ закрыл диалог"
+        );
+        assert_eq!(store.active_dialog(false, false), None);
     }
 
     #[test]

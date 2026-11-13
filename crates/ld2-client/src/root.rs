@@ -71,6 +71,8 @@ enum PopupKind {
     Backpack,
     /// M18/F36: окно квестов (2 вкладки: текущие/выполненные).
     Quests,
+    /// M18/F38: окно диалога NPC — как окно персонажа (попап).
+    Npc,
 }
 
 impl PopupKind {
@@ -80,6 +82,7 @@ impl PopupKind {
             PopupKind::Character => "ld2-char",
             PopupKind::Backpack => "ld2-bp",
             PopupKind::Quests => "ld2-quests",
+            PopupKind::Npc => "ld2-npc",
         }
     }
 }
@@ -97,6 +100,8 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
         PopupKind::Backpack => *bp_menu = None,
         // M18/F36: окно квестов контекстных меню не использует.
         PopupKind::Quests => {}
+        // M18/F38: окно диалога NPC тоже.
+        PopupKind::Npc => {}
     }
 }
 
@@ -265,6 +270,9 @@ pub struct Root {
     backpack_popup: PopupState,
     /// M18/F36: окно квестов — третий член группы окон (общий scrim).
     quests_popup: PopupState,
+    /// M18/F38: окно диалога NPC — геометрия (гейт рендера — наличие
+    /// `store.npc_dialog`, см. `npc_window`).
+    npc_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
     /// всплывающих окон — закрытие по mouse-up только для настоящего
     /// «клика мимо» (M15/F25e).
@@ -476,6 +484,11 @@ impl Root {
             quests_popup: PopupState {
                 delta: (-40.0, 40.0),
                 ..PopupState::new((800.0, 560.0))
+            },
+            // M18/F38: диалог NPC — правее и выше центра.
+            npc_popup: PopupState {
+                delta: (60.0, -40.0),
+                ..PopupState::new((640.0, 560.0))
             },
             backpack_tab: backpack::BackpackTab::default(),
             quests_tab: quests::QuestsTab::default(),
@@ -945,8 +958,16 @@ impl Root {
         // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
         // настроек/диалога выхода (они ловят Esc сами).
         if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
+            // M18/F38: диалог NPC — верхний слой группы окон.
+            if self.store.npc_dialog.is_some() {
+                self.store.npc_dialog = None;
+                self.npc_popup.open = false;
+                cx.notify();
+                return;
+            }
             // M18/F36: квесты рисуются поверх рюкзака — Esc закрывает
-            // верхнее (после рассуждений порядок: квесты → рюкзак → персонаж).
+            // верхнее (после рассуждений порядок: диалог → квесты →
+            // рюкзак → персонаж).
             if self.quests_popup.open {
                 self.quests_popup.open = false;
                 cx.notify();
@@ -1126,6 +1147,7 @@ impl Root {
             PopupKind::Character => &mut self.char_popup,
             PopupKind::Backpack => &mut self.backpack_popup,
             PopupKind::Quests => &mut self.quests_popup,
+            PopupKind::Npc => &mut self.npc_popup,
         }
     }
 
@@ -1135,6 +1157,7 @@ impl Root {
             PopupKind::Character => &self.char_popup,
             PopupKind::Backpack => &self.backpack_popup,
             PopupKind::Quests => &self.quests_popup,
+            PopupKind::Npc => &self.npc_popup,
         }
     }
 
@@ -1149,6 +1172,7 @@ impl Root {
             PopupKind::Character => (760.0, 760.0),
             PopupKind::Backpack => (760.0, 560.0),
             PopupKind::Quests => (800.0, 560.0),
+            PopupKind::Npc => (640.0, 560.0),
         };
         let (vw, vh) = self.viewport;
         let (w, h) = if vw > 0.0 && vh > 0.0 {
@@ -1160,6 +1184,7 @@ impl Root {
             PopupKind::Character => (0.0, 0.0),
             PopupKind::Backpack => (40.0, 40.0),
             PopupKind::Quests => (-40.0, 40.0),
+            PopupKind::Npc => (60.0, -40.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1174,6 +1199,8 @@ impl Root {
             // выбор квеста переживает закрытие — правая колонка
             // корректно откатывается на первой строке вкладки.
             PopupKind::Quests => self.quests_tab = quests::QuestsTab::default(),
+            // M18/F38: окно диалога открывает ack, не open_popup.
+            PopupKind::Npc => {}
         }
     }
 
@@ -1242,7 +1269,12 @@ impl Root {
     /// один на всех и лежит ПОД карточками; клик мимо закрывает
     /// верхнее открытое окно (рюкзак, затем персонаж).
     fn popup_scrim(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
-        if !self.char_popup.open && !self.backpack_popup.open && !self.quests_popup.open {
+        let npc_open = self.store.npc_dialog.is_some();
+        if !self.char_popup.open
+            && !self.backpack_popup.open
+            && !self.quests_popup.open
+            && !npc_open
+        {
             return None;
         }
         Some(
@@ -1271,9 +1303,12 @@ impl Root {
                                     scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
                                 root.popup_scrim_down = false;
                                 if close {
-                                    // Верхнее окно: квесты рисуются поверх
-                                    // рюкзака, рюкзак — поверх персонажа.
-                                    if root.quests_popup.open {
+                                    // Верхнее окно: диалог → квесты →
+                                    // рюкзак → персонаж.
+                                    if root.store.npc_dialog.is_some() {
+                                        root.store.npc_dialog = None;
+                                        root.npc_popup.open = false;
+                                    } else if root.quests_popup.open {
                                         root.quests_popup.open = false;
                                     } else if root.backpack_popup.open {
                                         root.backpack_popup.open = false;
@@ -2725,6 +2760,38 @@ pub(crate) fn act_btn(
         )
 }
 
+/// M18/F38: кнопка действия с **реальной** подсветкой наведения
+/// (в отличие от `act_btn`, где hover не меняет фон) — реплики
+/// персонажа в окне диалога.
+pub(crate) fn act_btn_hover(
+    cx: &mut Context<'_, Root>,
+    label: impl Into<SharedString>,
+    bg: u32,
+    hover_bg: u32,
+    fg: u32,
+    f: impl FnOnce(&mut Root, &mut Context<'_, Root>) + 'static,
+) -> Div {
+    let cell = RefCell::new(Some(f));
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .cursor_pointer()
+        .bg(rgb(bg))
+        .text_color(rgb(fg))
+        .hover(move |s| s.bg(rgb(hover_bg)))
+        .child(label.into())
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                if let Some(f) = cell.borrow_mut().take() {
+                    f(this, cx);
+                }
+                cx.notify();
+            }),
+        )
+}
+
 /// Кнопка с отдельным цветом наведения.
 fn btn_hover(
     cx: &mut Context<'_, Root>,
@@ -3048,8 +3115,7 @@ impl Root {
         match kind {
             ld2_core::store::Dialog::Death
             | ld2_core::store::Dialog::Examine
-            | ld2_core::store::Dialog::Loot
-            | ld2_core::store::Dialog::NpcTalk => self.game_dialog(cx, pal),
+            | ld2_core::store::Dialog::Loot => self.game_dialog(cx, pal),
             ld2_core::store::Dialog::PartyInvite
             | ld2_core::store::Dialog::GuildInvite
             | ld2_core::store::Dialog::Trade => self.social_dialog(cx, pal),
@@ -3129,6 +3195,9 @@ impl Render for Root {
             .when_some(self.quests_dialog(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
+            // M18/F38: окно диалога NPC — верхний слой группы попапов
+            // (модалки смерти/осмотра/луута рисуются позже — выше).
+            .when_some(self.npc_window(window, cx, &pal), |d, layer| d.child(layer))
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
