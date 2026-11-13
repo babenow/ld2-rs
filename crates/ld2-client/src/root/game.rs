@@ -1356,6 +1356,26 @@ impl Root {
         if let Some(node) = &dialog.node {
             let now_ms = self.now_ms();
             for reply in &node.replies {
+                // M18/F43: реплика-действие — открываем магазин вместо
+                // перехода по ветке (тот же флоу, что иконка в шапке).
+                if reply.action.as_deref() == Some("shop") {
+                    let entity_id = dialog.id.clone();
+                    col = col.child(act_btn_hover(
+                        cx,
+                        format!("— {}", reply.text),
+                        pal.panel,
+                        pal.selection,
+                        pal.text,
+                        move |this, cx| {
+                            let cmd = ld2_protocol::cmd::ShopList {
+                                entity_id: entity_id.clone(),
+                            };
+                            this.send_cmd(&cmd, Act::ShopList);
+                            let _ = cx;
+                        },
+                    ));
+                    continue;
+                }
                 // M18/F42: живой отсчёт таймера (ADR-008) — остаток по
                 // абсолютному дедлайну; ноль → окно истекло, реплика
                 // снова активна.

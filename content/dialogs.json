@@ -12,6 +12,7 @@
             { "id": "r_pack", "text": "Ты знаешь про целебные зелья?", "next": "l_pack" },
             { "id": "r_care", "text": "Мне опасно выходить в лес?", "next": "l_female" },
             { "id": "r_glory", "text": "Я уже настоящий воин?", "next": "l_veteran" },
+            { "id": "r_shop", "text": "Покажи свои товары.", "action": "shop" },
             { "id": "r_bye", "text": "Пока.", "next": null }
           ]
         },

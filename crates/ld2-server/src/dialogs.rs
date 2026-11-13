@@ -65,6 +65,10 @@ pub struct DialogReply {
     /// Условия видимости ответа (AND) — как у строк.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<DialogWhen>,
+    /// M18/F43: действие вместо перехода по ветке (`"shop"` — открыть
+    /// магазин NPC); контент валидируется тестом (у NPC есть магазин).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 /// Условия видимости строки (AND; незаданные ключи не проверяются).
@@ -278,6 +282,10 @@ pub struct ReplyView {
     /// показывается неактивным с таймером (ADR-008); `None` — активен.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_s: Option<u64>,
+    /// M18/F43: действие ответа (`"shop"`) — клиент шлёт `shop.list`
+    /// вместо `npc.reply`; `None` — обычный переход по ветке.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 /// M18/F37: вход в узел (корень из `npc.talk` либо переход по ответу):
@@ -298,6 +306,7 @@ pub fn enter_node(
             id: visible.reply.id.clone(),
             text: render(&visible.reply.text, ctx.name),
             wait_s: visible.wait_s,
+            action: visible.reply.action.clone(),
         })
         .collect();
     Some((
@@ -687,23 +696,38 @@ mod tests {
         assert_eq!(line.quest.as_deref(), Some("q_wolf_hunt"));
     }
 
-    /// M18/F42/ADR-008: `wait_s` сериализуется только когда ответ на
-    /// кулдауне — у активной реплики поля нет (совместимость §11.2).
+    /// M18/F42/F43: `wait_s` и `action` сериализуются только когда заданы —
+    /// у обычной активной реплики полей нет (совместимость §11.2).
     #[test]
     fn reply_wait_s_serializes_only_when_set() {
         let active = ReplyView {
             id: "r_a".into(),
             text: "А".into(),
             wait_s: None,
+            action: None,
         };
         let cooling = ReplyView {
             id: "r_b".into(),
             text: "Б".into(),
             wait_s: Some(42),
+            action: None,
+        };
+        let acting = ReplyView {
+            id: "r_s".into(),
+            text: "Покажи свои товары.".into(),
+            wait_s: None,
+            action: Some("shop".into()),
         };
         let active: serde_json::Value = serde_json::to_value(active).unwrap();
         let cooling: serde_json::Value = serde_json::to_value(cooling).unwrap();
+        let acting: serde_json::Value = serde_json::to_value(acting).unwrap();
         assert!(active.get("wait_s").is_none(), "активная: {active}");
+        assert!(active.get("action").is_none(), "обычная: {active}");
         assert_eq!(cooling["wait_s"], 42, "на кулдауне: {cooling}");
+        assert_eq!(acting["action"], "shop", "действие: {acting}");
+        assert!(
+            acting.get("wait_s").is_none(),
+            "действие без таймера: {acting}"
+        );
     }
 }

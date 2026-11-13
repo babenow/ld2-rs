@@ -130,6 +130,15 @@ async fn npc_dialog_walks_branches_and_gates_by_quests() {
         replies.contains(&"r_bye".into()),
         "прощание видно: {replies:?}"
     );
+    // M18/F43: реплика-действие несёт `action` — клиент откроет магазин
+    // вместо перехода по ветке.
+    let action = ack["payload"]["node"]["replies"]
+        .as_array()
+        .expect("реплики")
+        .iter()
+        .find(|reply| reply["id"] == "r_shop")
+        .and_then(|reply| reply["action"].as_str());
+    assert_eq!(action, Some("shop"), "реплика магазина: {ack}");
     assert!(
         !replies.contains(&"r_pack".into()),
         "зелья нет → ответа нет"
