@@ -373,7 +373,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/item/added` | `{ item: ItemSnapshot }` | предмет получен |
 | `evt/item/removed` | `{ uid, reason }` | потерян/израсходован (`reason` = consumed\|traded\|dropped\|lost_on_death) |
 | `evt/item/state` | `{ uid, patch }` | патч предмета (upgrade, sockets, qty) |
-| `evt/upgrade/result` | `{ uid, ok, new_upgrade?, item_destroyed?, cost {} }` | итог улучшения |
+| `evt/upgrade/result` | `{ uid, ok, new_upgrade?, item_destroyed?, cost {} }` | итог улучшения (лично инициатору — закрывает модалку) |
+| `evt/upgrade/broadcast` | `{ source, source_name, uid, ok, new_upgrade?, item_destroyed?, text }` | улучшение предмета — **всем в локации**, кроме инициатора (M18/F49); `text` — готовая строка лога: «{имя} улучшил(а) {предмет} до +N» / «{имя} провалил(а) улучшение …» |
 | `evt/craft/result` | `{ recipe_id, ok, made: [{uid, qty}], consumed [] }` | итог крафта |
 | `evt/craft/profession` | `{ profession: { id, rank, xp, xp_to_next } }` | профессия изучена/ранг повышен |
 | `evt/quest/progress` | `{ quest: QuestState }` | прогресс цели |
@@ -552,6 +553,9 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 ← { "v":1, "type":"evt/upgrade/result", "ts":"…", "state_version":1382, "payload":
     { "uid":"i_17","ok":true,"new_upgrade":3,"item_destroyed":false,
       "cost":{"gold":300,"materials":{"rune_dust":2}} } }
+← { "v":1, "type":"evt/upgrade/broadcast", "ts":"…", "state_version":1382, "payload":
+    { "source":"c1","source_name":"Ким","uid":"i_17","ok":true,"new_upgrade":3,
+      "text":"Ким улучшил Рыцарский меч до +3" } }   // остальным в локации; c1 не получает
 ← { "v":1, "type":"evt/item/state", "ts":"…", "state_version":1382,
     "payload": { "uid":"i_17","patch": { "upgrade":3 } } }
 ```

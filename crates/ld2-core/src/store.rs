@@ -11,7 +11,7 @@ use ld2_protocol::evt::{
     CharDeath, CharStats, CharXp, ChatMessage, CombatCooldown, CombatHit, CorpseCreated,
     CorpseLooted, CrimeAdded, CrimeRemoved, CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove,
     EntitySpawn, GuildLogEntry, ItemAdded, ItemRemoved, LocationChanged, MagicCast, StateSnapshot,
-    TimeSync as TimeSyncEvent,
+    TimeSync as TimeSyncEvent, UpgradeBroadcast,
 };
 use ld2_protocol::types::{
     CharacterSummary, CrimeLogEntry, CrimeStatus, GuildState, Hp, LocationSnapshot, PartyState,
@@ -1425,7 +1425,9 @@ impl AppStore {
                     .unwrap_or_else(|| result.uid.clone());
                 if result.ok {
                     let n = result.new_upgrade.unwrap_or_default();
-                    self.push_log(LogKind::Loot, format!("Улучшение: «{name}» → +{n}"));
+                    // M18/F49: формат «Вы улучшили [предмет] до [улучшение]»
+                    // (остальным в локации — broadcast с именем).
+                    self.push_log(LogKind::Loot, format!("Вы улучшили {name} до +{n}"));
                 } else if result.item_destroyed == Some(true) {
                     self.push_log(
                         LogKind::Crime,
@@ -1439,6 +1441,21 @@ impl AppStore {
                 }
                 self.upgrade = None;
                 vec![Effect::Notify(NotifyKind::Upgrade)]
+            }
+            "evt/upgrade/broadcast" => {
+                // M18/F49: улучшение чужого персонажа — строка в журнал
+                // (текст готов сервером: имя + пол + «до +N»/«провалил»).
+                let Ok(b) = serde_json::from_value::<UpgradeBroadcast>(payload) else {
+                    return vec![];
+                };
+                let kind = if b.ok || b.item_destroyed != Some(true) {
+                    LogKind::Loot
+                } else {
+                    // Разрушение предмета провалом — как у инициатора.
+                    LogKind::Crime
+                };
+                self.push_log(kind, b.text);
+                vec![]
             }
             "evt/quest/progress" | "evt/quest/updated" => {
                 #[derive(serde::Deserialize)]
@@ -3765,7 +3782,50 @@ mod tests {
         assert!(store.upgrade.is_none(), "модалка закрыта по результату");
         let last = store.log.back().expect("лог");
         assert_eq!(last.kind, LogKind::Loot);
+        // M18/F49: формат «Вы улучшили [предмет] до [улучшение]».
+        assert!(last.text.starts_with("Вы улучшили "), "{}", last.text);
         assert!(last.text.contains("+3"), "{}", last.text);
+    }
+
+    /// M18/F49: broadcast чужого улучшения — строка в журнал, модалка
+    /// инициатора НЕ затрагивается (в отличие от `evt/upgrade/result`).
+    #[test]
+    fn upgrade_broadcast_logs_line_without_touching_modal() {
+        let mut store = in_game();
+        // Открытая модалка улучшения — broadcast её закрывать не должен.
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+
+        store.apply(evt(
+            "evt/upgrade/broadcast",
+            serde_json::json!({
+                "source": "c2", "source_name": "Мира", "uid": "i_other",
+                "ok": true, "new_upgrade": 4,
+                "text": "Мира улучшила Рыцарский меч до +4"
+            }),
+        ));
+        let last = store.log.back().expect("лог");
+        assert_eq!(last.kind, LogKind::Loot);
+        assert_eq!(
+            last.text, "Мира улучшила Рыцарский меч до +4",
+            "текст сервера как есть"
+        );
+        assert!(
+            store.upgrade.is_some(),
+            "модалка своего улучшения не закрыта чужим broadcast"
+        );
+
+        // Провал с разрушением — как у инициатора, в журнал потерь.
+        store.apply(evt(
+            "evt/upgrade/broadcast",
+            serde_json::json!({
+                "source": "c2", "source_name": "Мира", "uid": "i_other",
+                "ok": false, "item_destroyed": true,
+                "text": "Мира провалила улучшение — «Кинжал» РАЗРУШЕН"
+            }),
+        ));
+        let last = store.log.back().expect("лог");
+        assert_eq!(last.kind, LogKind::Crime, "разрушение — Crime");
+        assert!(last.text.contains("РАЗРУШЕН"), "{}", last.text);
     }
 
     #[test]

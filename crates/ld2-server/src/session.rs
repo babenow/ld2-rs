@@ -18,7 +18,7 @@ use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
     CastSource, CharStats, CharXp, CombatCooldown, CombatHit, CombatKind, CraftProfession,
     CrimeAdded, EntityHp, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState, LocationChanged,
-    MagicCast, Pong, StateSnapshot, TimeSync, UpgradeResult,
+    MagicCast, Pong, StateSnapshot, TimeSync, UpgradeBroadcast, UpgradeResult,
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, EquipMap, Hp,
@@ -4388,10 +4388,30 @@ impl Session {
         );
         let cost_json = serde_json::json!({ "gold": cost });
 
+        // M18/F49: строка broadcast — «{имя} улучшил/улучшила …»; пол
+        // персонажа из снапшота (M18/F34). Глаголы — сразу, чтобы не
+        // тянуть borrow `self.char` через async-запросы ниже.
+        let female = self.char.as_ref().is_some_and(|c| c.gender == "female");
+        let caster_name = self
+            .char
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_default();
+        let up_verb = if female {
+            "улучшила"
+        } else {
+            "улучшил"
+        };
+        let fail_verb = if female {
+            "провалила"
+        } else {
+            "провалил"
+        };
         let mut outs = Vec::new();
         // F29a: оплата монетами — события списания до результата.
         outs.extend(money_events);
-        if success {
+        // M18/F49: broadcast-строка заполняется в обеих ветках.
+        let bcast = if success {
             let new_level = level + 1;
             if let Err(e) = db::items::set_upgrade(&pool, &item.uid, item.upgrade + 1).await {
                 warn!("upgrade.start (запись): {e}");
@@ -4420,6 +4440,16 @@ impl Session {
                 })
                 .unwrap_or_default(),
             ));
+            // M18/F49: строка успеха для остальных в локации.
+            Some(UpgradeBroadcast {
+                source: char_id.clone(),
+                source_name: caster_name.clone(),
+                uid: item.uid.clone(),
+                ok: true,
+                new_upgrade: Some(new_level as u32),
+                item_destroyed: Some(false),
+                text: format!("{caster_name} {up_verb} {} до +{new_level}", def.name),
+            })
         } else {
             let (new_upgrade, destroyed) = match rule {
                 crate::systems::UpgradeFailRule::Keep => (level, false),
@@ -4478,6 +4508,44 @@ impl Session {
                     serde_json::to_value(result).unwrap_or_default(),
                 ),
             );
+            // M18/F49: строка провала для остальных в локации (и
+            // разрушение предмета — тем же broadcast).
+            let text = if destroyed {
+                format!(
+                    "{caster_name} {fail_verb} улучшение — «{}» РАЗРУШЕН",
+                    def.name
+                )
+            } else {
+                format!("{caster_name} {fail_verb} улучшение «{}»", def.name)
+            };
+            Some(UpgradeBroadcast {
+                source: char_id.clone(),
+                source_name: caster_name.clone(),
+                uid: item.uid.clone(),
+                ok: false,
+                new_upgrade: if destroyed {
+                    None
+                } else {
+                    Some(new_upgrade as u32)
+                },
+                item_destroyed: Some(destroyed),
+                text,
+            })
+        };
+
+        // M18/F49: broadcast — всем в локации, кроме инициатора (ему
+        // личный `evt/upgrade/result` закрывает модалку и пишет
+        // «Вы улучшили …»). Текст готов сервером — клиент пишет как есть.
+        if let Some(bcast) = bcast {
+            let location = self.current_location(&char_id).await;
+            if let Some(text) = event_payload_text("evt/upgrade/broadcast", &bcast) {
+                let world = self.state.world.lock().expect("мир");
+                for addr in world.chars_in_location(&location) {
+                    if addr != char_id {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                }
+            }
         }
 
         // ack → события (§2.2).

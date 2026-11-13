@@ -392,6 +392,50 @@ fn event_payloads_round_trip() {
     assert_eq!(hit, back);
     assert_eq!(CombatHit::TYPE, "evt/combat/hit");
 
+    // M18/F49: broadcast улучшения (§12.2) — round-trip и wire-тип.
+    let up = ld2_protocol::evt::UpgradeBroadcast {
+        source: "c1".into(),
+        source_name: "Ким".into(),
+        uid: "i_17".into(),
+        ok: true,
+        new_upgrade: Some(3),
+        item_destroyed: Some(false),
+        text: "Ким улучшил Рыцарский меч до +3".into(),
+    };
+    let v = serde_json::to_value(&up).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({
+            "source": "c1", "source_name": "Ким", "uid": "i_17",
+            "ok": true, "new_upgrade": 3, "item_destroyed": false,
+            "text": "Ким улучшил Рыцарский меч до +3"
+        }),
+        "форма §12.2"
+    );
+    let back: ld2_protocol::evt::UpgradeBroadcast = serde_json::from_value(v).unwrap();
+    assert_eq!(up, back);
+    assert_eq!(
+        ld2_protocol::evt::UpgradeBroadcast::TYPE,
+        "evt/upgrade/broadcast"
+    );
+    // Провал: item_destroyed = true, без new_upgrade — поля опциональны.
+    let fail = ld2_protocol::evt::UpgradeBroadcast {
+        source: "c2".into(),
+        source_name: "Мира".into(),
+        uid: "i_18".into(),
+        ok: false,
+        new_upgrade: None,
+        item_destroyed: Some(true),
+        text: "Мира провалила улучшение — «Кинжал» РАЗРУШЕН".into(),
+    };
+    let v = serde_json::to_value(&fail).unwrap();
+    assert!(
+        v.get("new_upgrade").is_none(),
+        "None не сериализуется (skip_serializing_if)"
+    );
+    let back: ld2_protocol::evt::UpgradeBroadcast = serde_json::from_value(v).unwrap();
+    assert_eq!(fail, back);
+
     // Магия: D4 — заряды И мана
     let cast = MagicCast {
         by: "c1".into(),

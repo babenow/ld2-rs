@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::in_world;
+use common::{in_world, in_world_gender};
 use ld2_server::config::FeatureValue;
 use serde_json::json;
 
@@ -35,6 +35,100 @@ async fn give_gold(c: &mut ld2_test_kit::WsClient, amount: i64) {
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "gold {amount}: {ack}");
+}
+
+/// Свежий снапшот (state.resync) → имя персонажа для сверки broadcast.
+async fn char_name(c: &mut ld2_test_kit::WsClient) -> String {
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "resync");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    snap["payload"]["char"]["name"]
+        .as_str()
+        .expect("имя персонажа")
+        .to_string()
+}
+
+/// Выдать предмет + золото и провести улучшение до успеха (шанс 1.0).
+async fn upgrade_once(c: &mut ld2_test_kit::WsClient, def_id: &str) {
+    let uid = give(c, def_id).await;
+    give_gold(c, 1000).await;
+    let seq = c
+        .send("cmd/upgrade.preview", json!({ "item_uid": uid }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "превью: {ack}");
+    let preview_id = ack["payload"]["preview_id"]
+        .as_str()
+        .expect("preview_id")
+        .to_string();
+    let seq = c
+        .send(
+            "cmd/upgrade.start",
+            json!({ "item_uid": uid, "preview_id": preview_id }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "старт: {ack}");
+}
+
+/// M18/F49: улучшение уходит broadcast'ом всем в локации (кроме
+/// инициатора) — строка с именем и глаголом по полу (M18/F34).
+#[tokio::test]
+async fn upgrade_broadcasts_line_to_others_in_location() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    // Шанс 1.0 → успех детерминирован (upgrade_roll ∈ [0,1)).
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.upgrade.chance_base = 1.0;
+            cfg.gameplay.upgrade.chance_per_level = 0.0;
+        })
+        .await
+    );
+    let (mut male, _l1, _c1) = in_world(&ws).await;
+    let (mut female, _l2, _c2) = in_world_gender(&ws, "warrior", "female").await;
+    let name_m = char_name(&mut male).await;
+    let name_f = char_name(&mut female).await;
+
+    // 1) Female улучшает → male видит её строку с «улучшила».
+    upgrade_once(&mut female, "dagger_knife").await;
+    assert_eq!(
+        female.wait_event("evt/upgrade/result").await["payload"]["ok"],
+        true,
+        "инициатору — личный result"
+    );
+    let bcast = male.wait_event("evt/upgrade/broadcast").await;
+    assert_eq!(
+        bcast["payload"]["source_name"], name_f,
+        "имя инициатора в broadcast: {bcast}"
+    );
+    let text = bcast["payload"]["text"].as_str().expect("text");
+    assert!(text.contains("улучшила"), "глагол по полу: {text}");
+    assert!(text.contains("Кинжал"), "предмет: {text}");
+    assert!(text.contains("до +1"), "уровень: {text}");
+    assert_eq!(bcast["payload"]["ok"], true);
+
+    // 2) Male улучшает → female видит его строку с «улучшил». Если бы
+    // инициатор получал свой broadcast, первым пришёл бы её собственный
+    // (source_name = name_f) — проверка ниже ловит и это нарушение.
+    upgrade_once(&mut male, "dagger_knife").await;
+    assert_eq!(
+        male.wait_event("evt/upgrade/result").await["payload"]["ok"],
+        true
+    );
+    let bcast = female.wait_event("evt/upgrade/broadcast").await;
+    assert_eq!(
+        bcast["payload"]["source_name"], name_m,
+        "чужой broadcast (свой инициатору не шлётся): {bcast}"
+    );
+    let text = bcast["payload"]["text"].as_str().expect("text");
+    assert!(text.contains("улучшил"), "глагол мужского рода: {text}");
+    assert!(!text.contains("улучшила"), "без женского рода: {text}");
 }
 
 #[tokio::test]
@@ -215,6 +309,7 @@ async fn upgrade_fail_break_on_fail_destroys_item() {
         return;
     };
     // Шанс 0 → всегда провал; правило break_on_fail (из конфига шаблона).
+    // Инициатор — female (M18/F49: глагол «провалила» в broadcast).
     let ws = format!(
         "ws://{}/ws",
         common::start_server_with(&db_url, |cfg| {
@@ -227,7 +322,9 @@ async fn upgrade_fail_break_on_fail_destroys_item() {
         })
         .await
     );
-    let (mut c, _login, _char) = in_world(&ws).await;
+    let (mut c, _login, _char) = in_world_gender(&ws, "warrior", "female").await;
+    // Наблюдатель в той же локации — получает broadcast провала.
+    let (mut watcher, _l2, _c2) = in_world(&ws).await;
 
     let uid = give(&mut c, "dagger_knife").await;
     give_gold(&mut c, 1000).await;
@@ -260,6 +357,22 @@ async fn upgrade_fail_break_on_fail_destroys_item() {
     );
     let removed = c.wait_event("evt/item/removed").await;
     assert_eq!(removed["payload"]["uid"], uid, "удалён: {removed}");
+
+    // M18/F49: наблюдатель в локации получает broadcast провала —
+    // строка с глаголом по полу и разрушением предмета.
+    let bcast = watcher.wait_event("evt/upgrade/broadcast").await;
+    assert_eq!(bcast["payload"]["ok"], false, "провал: {bcast}");
+    assert_eq!(
+        bcast["payload"]["item_destroyed"], true,
+        "разрушен: {bcast}"
+    );
+    assert!(
+        bcast["payload"]["new_upgrade"].is_null(),
+        "без уровня: {bcast}"
+    );
+    let text = bcast["payload"]["text"].as_str().expect("text");
+    assert!(text.contains("провалила"), "глагол по полу: {text}");
+    assert!(text.contains("РАЗРУШЕН"), "разрушение в строке: {text}");
 
     // Дальше превью по этому uid → предмета нет.
     let seq = c

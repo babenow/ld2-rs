@@ -310,6 +310,29 @@ pub struct UpgradeResult {
     pub cost: JsonMap,
 }
 
+/// M18/F49: улучшение предмета — **всем в локации** (кроме инициатора:
+/// ему итог идёт личным `evt/upgrade/result` и закрывает модалку).
+///
+/// `text` — готовая строка лога (сервер знает пол: «улучшил/улучшила»;
+/// для инициатора строка другая — «Вы улучшили …»). Клиент пишет `text`
+/// в журнал как есть (прецедент `CombatHit.text`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpgradeBroadcast {
+    /// Кто улучшал (`char_id`).
+    pub source: String,
+    /// Имя улучшившего — как его видят в локации.
+    pub source_name: String,
+    /// Предмет (`uid` инстанса).
+    pub uid: String,
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_upgrade: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_destroyed: Option<bool>,
+    /// Готовая строка лога (§8) — клиент пишет без форматирования.
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MadeItem {
     pub uid: String,
@@ -487,6 +510,7 @@ impl_events!(
     (ItemRemoved, "evt/item/removed"),
     (ItemState, "evt/item/state"),
     (UpgradeResult, "evt/upgrade/result"),
+    (UpgradeBroadcast, "evt/upgrade/broadcast"),
     (CraftResult, "evt/craft/result"),
     (CraftProfession, "evt/craft/profession"),
     (QuestProgress, "evt/quest/progress"),
