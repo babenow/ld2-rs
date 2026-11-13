@@ -321,7 +321,12 @@ impl Root {
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
-        let dialog = self.store.npc_dialog.clone()?;
+        // M18/F46: окно закрыто — сбрасываем длину ленты, чтобы при
+        // следующем открытии stick-to-bottom отработал заново.
+        let Some(dialog) = self.store.npc_dialog.clone() else {
+            self.npc_seen = 0;
+            return None;
+        };
         let lang = self.lang;
         // M18/F39: открытый магазин заменяет транскрипт («Назад» —
         // возвращает к диалогу).
@@ -1330,18 +1335,29 @@ impl Root {
         dialog: &NpcDialogView,
     ) -> Div {
         let lang = self.lang;
-        let mut col = div().flex().flex_col().gap_2();
-        // M18/F37: транскрипт — лента «NPC ↔ персонаж» (приветствие,
-        // узлы и ответы копятся в порядке разговора).
+        let now_ms = self.now_ms();
+
+        // M18/F46: stick-to-bottom — новая строка возвращает ленту вниз
+        // (паттерн журнала/чата): последнее сообщение всегда снизу.
+        let len = dialog.transcript.len();
+        if len != self.npc_seen {
+            self.npc_seen = len;
+            if len > 0 {
+                self.npc_scroll.scroll_to_bottom();
+            }
+        }
+
+        // ── Зона 1: история диалога — растёт снизу вверх, шрифт крупнее ──
+        let mut history = div().flex().flex_col().gap_2().justify_start();
         for line in &dialog.transcript {
             let text = if line.me {
                 format!("{}: {}", t(lang, Key::DialogYou), line.text)
             } else {
                 line.text.clone()
             };
-            col = col.child(
+            history = history.child(
                 div()
-                    .text_size(px(13.0))
+                    .text_size(px(15.0))
                     .font_weight(if line.me {
                         gpui::FontWeight::BOLD
                     } else {
@@ -1351,18 +1367,27 @@ impl Root {
                     .child(text),
             );
         }
+        let history_zone = div().flex_grow_1().min_h_0().child(
+            ScrollArea::new("ld2-npc-history")
+                .vertical()
+                .flex_grow_1()
+                .min_h_0()
+                .child(history),
+        );
+
+        // ── Зона 2: реплики персонажа и предложения NPC (внизу) ──
+        let mut actions = div().flex().flex_col().gap_1();
         // Ответы текущего узла — шаги ветки (моя реплика в ленту сразу,
         // сервер отвечает новым узлом; без ответов диалог закончен).
         if let Some(node) = &dialog.node {
-            let now_ms = self.now_ms();
             for reply in &node.replies {
                 // M18/F43: реплика-действие — открываем магазин вместо
                 // перехода по ветке (тот же флоу, что иконка в шапке).
                 if reply.action.as_deref() == Some("shop") {
                     let entity_id = dialog.id.clone();
-                    col = col.child(act_btn_hover(
+                    actions = actions.child(act_btn_hover(
                         cx,
-                        format!("— {}", reply.text),
+                        reply.text.clone(),
                         pal.panel,
                         pal.selection,
                         pal.text,
@@ -1389,7 +1414,7 @@ impl Root {
                     })
                     .filter(|left| *left > 0);
                 if let Some(wait_left) = wait_left {
-                    col = col.child(
+                    actions = actions.child(
                         div()
                             .px_2()
                             .py_1()
@@ -1398,7 +1423,7 @@ impl Root {
                             .text_size(px(13.0))
                             .text_color(rgb(pal.muted))
                             .child(format!(
-                                "— {} ({:02}:{:02})",
+                                "{} ({:02}:{:02})",
                                 reply.text,
                                 wait_left / 60,
                                 wait_left % 60
@@ -1406,13 +1431,14 @@ impl Root {
                     );
                     continue;
                 }
-                let label = format!("— {}", reply.text);
+                // M18/F46: дефис перед репликой убран.
+                let label = reply.text.clone();
                 let entity_id = dialog.id.clone();
                 let node_id = node.id.clone();
                 let reply_id = reply.id.clone();
                 let text = reply.text.clone();
                 // M18/F38: реплики персонажа подсвечиваются при наведении.
-                col = col.child(act_btn_hover(
+                actions = actions.child(act_btn_hover(
                     cx,
                     label,
                     pal.panel,
@@ -1437,7 +1463,7 @@ impl Root {
             }
         }
         if !dialog.quests.is_empty() {
-            col = col.child(
+            actions = actions.child(
                 div()
                     .text_size(px(12.0))
                     .text_color(rgb(pal.muted))
@@ -1491,10 +1517,20 @@ impl Root {
                         let _ = cx;
                     },
                 ));
-                col = col.child(card);
+                actions = actions.child(card);
             }
         }
-        col
+
+        // M18/F46: две горизонтальные зоны — история сверху (на весь
+        // остаток окна), реплики персонажа внизу у разделителя.
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .size_full()
+            .child(history_zone)
+            .child(div().h(px(1.0)).bg(rgb(pal.border)))
+            .child(actions)
     }
 
     fn examine_view(
