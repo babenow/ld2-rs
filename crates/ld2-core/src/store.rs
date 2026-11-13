@@ -277,7 +277,7 @@ pub struct PendingDelete {
     pub deadline: i64,
 }
 
-/// M18/F37: узел диалога — строка NPC + её видимые ответы (тексты уже
+/// M18/F37/F42: узел диалога — строка NPC + её видимые ответы (тексты уже
 /// отрендерены сервером, `{name}` подставлен).
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct NpcNode {
@@ -290,6 +290,19 @@ pub struct NpcNode {
     pub replies: Vec<NpcReplyOption>,
 }
 
+impl NpcNode {
+    /// M18/F42: абсолютные дедлайны кулдауна реплик — по ним UI ведёт
+    /// живой отсчёт `(мм:сс)` (ADR-008). Вызывается при разборе payload.
+    pub fn stamp_wait_deadlines(&mut self) {
+        let now = local_epoch_ms();
+        for reply in &mut self.replies {
+            if let Some(wait_s) = reply.wait_s {
+                reply.wait_until_ms = Some(now + (wait_s as i64) * 1000);
+            }
+        }
+    }
+}
+
 /// M18/F37/F42: ответ персонажа, видимый в текущем узле (`id` — ключ
 /// `cmd/npc.reply`).
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -300,6 +313,10 @@ pub struct NpcReplyOption {
     /// показывается неактивным с таймером (ADR-008); `None` — активен.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_s: Option<u64>,
+    /// M18/F42: абсолютный дедлайн кулдауна (epoch-мс) — ставится при
+    /// разборе payload, живой отсчёт таймера в UI (wire не несёт).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_until_ms: Option<i64>,
 }
 
 /// M18/F37: строка транскрипта окна диалога — лента NPC ↔ персонаж.
@@ -382,12 +399,14 @@ impl NpcDialogView {
     /// ADR-008).
     pub fn from_payload(payload: &serde_json::Value) -> Option<Self> {
         let dialog = payload.get("dialog")?;
-        let node = match payload.get("node") {
+        let mut node = match payload.get("node") {
             Some(value) if !value.is_null() => {
                 serde_json::from_value::<NpcNode>(value.clone()).ok()
             }
             _ => None,
         };
+        // M18/F42: дедлайны для живого отсчёта таймеров реплик.
+        node.as_mut().map(NpcNode::stamp_wait_deadlines);
         let mut transcript = Vec::new();
         if let Some(node) = &node {
             transcript.push(NpcTranscriptLine {
@@ -886,7 +905,10 @@ impl AppStore {
                     // M18/F38: конец диалога («Пока») — окно закрывается.
                     self.npc_dialog = None;
                 } else if let Some(dialog) = self.npc_dialog.as_mut() {
-                    if let Ok(node) = serde_json::from_value::<NpcNode>(payload["node"].clone()) {
+                    if let Ok(mut node) = serde_json::from_value::<NpcNode>(payload["node"].clone())
+                    {
+                        // M18/F42: дедлайны для живого отсчёта таймеров.
+                        node.stamp_wait_deadlines();
                         dialog.transcript.push(NpcTranscriptLine {
                             me: false,
                             text: node.text.clone(),
@@ -3266,6 +3288,19 @@ mod tests {
         // (ADR-008), без поля — активна.
         assert_eq!(node.replies[0].wait_s, Some(1740), "таймер кулдауна");
         assert_eq!(node.replies[1].wait_s, None, "активная реплика");
+        // Живой отсчёт: абсолютный дедлайн ≈ now + 1740 с.
+        let until = node.replies[0]
+            .wait_until_ms
+            .expect("дедлайн кулдауна ставится");
+        let expected = local_epoch_ms() + 1740 * 1000;
+        assert!(
+            (until - expected).abs() < 2_000,
+            "дедлайн {until} ≈ {expected}"
+        );
+        assert_eq!(
+            node.replies[1].wait_until_ms, None,
+            "у активной реплики дедлайна нет"
+        );
         assert_eq!(dialog.quests.len(), 1);
         assert_eq!(dialog.actions, vec!["quests", "train"], "actions из ack");
         assert_eq!(store.active_dialog(false, false), None, "попап вне модалок");

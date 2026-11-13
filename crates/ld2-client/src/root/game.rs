@@ -1354,11 +1354,21 @@ impl Root {
         // Ответы текущего узла — шаги ветки (моя реплика в ленту сразу,
         // сервер отвечает новым узлом; без ответов диалог закончен).
         if let Some(node) = &dialog.node {
+            let now_ms = self.now_ms();
             for reply in &node.replies {
-                // M18/F42: ответ на кулдауне целевой строки —
-                // неактивная кнопка с таймером в скобках, клика нет
-                // (ADR-008).
-                if let Some(wait_s) = reply.wait_s {
+                // M18/F42: живой отсчёт таймера (ADR-008) — остаток по
+                // абсолютному дедлайну; ноль → окно истекло, реплика
+                // снова активна.
+                let wait_left = reply
+                    .wait_s
+                    .map(|wait_s| {
+                        reply
+                            .wait_until_ms
+                            .map(|until| ((until - now_ms).max(0) / 1000) as u64)
+                            .unwrap_or(wait_s)
+                    })
+                    .filter(|left| *left > 0);
+                if let Some(wait_left) = wait_left {
                     col = col.child(
                         div()
                             .px_2()
@@ -1370,8 +1380,8 @@ impl Root {
                             .child(format!(
                                 "— {} ({:02}:{:02})",
                                 reply.text,
-                                wait_s / 60,
-                                wait_s % 60
+                                wait_left / 60,
+                                wait_left % 60
                             )),
                     );
                     continue;
