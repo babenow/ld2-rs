@@ -119,6 +119,31 @@ async fn shop_lists_prices_and_buys() {
     assert_eq!(gold.get("armor_bronze"), Some(&138));
     assert_eq!(gold.get("sword_knight"), Some(&207));
     assert_eq!(gold.get("rune_fire"), Some(&46));
+
+    // M18/F40: каждая позиция несёт полный снапшот (карточка по клику).
+    let tabs = ack["payload"]["shop"]["tabs"].as_array().expect("вкладки");
+    let gold_tab = tabs
+        .iter()
+        .find(|tab| tab["currency"] == "gold_coin")
+        .expect("вкладка золота");
+    let entry = gold_tab["items"]
+        .as_array()
+        .expect("товары")
+        .iter()
+        .find(|item| item["def_id"] == "potion_heal")
+        .expect("зелье в вкладке");
+    assert_eq!(
+        entry["item"]["name"], entry["name"],
+        "снапшот совпадает с позицией: {entry}"
+    );
+    assert_eq!(entry["item"]["type"], "potion", "тип из контента");
+    assert!(
+        entry["item"]["uid"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("shop:"),
+        "виртуальная строка магазина: {entry}"
+    );
     // Вкладка самоцветов: rate 0.05 от золотой цены (28 → round(1.4)=1).
     let gems = prices(&ack, "gem_str");
     assert_eq!(

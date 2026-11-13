@@ -318,6 +318,9 @@ pub struct NpcShopItem {
     /// Размер партии (qty из контента, ≥1).
     #[serde(default = "shop_item_qty")]
     pub qty: i64,
+    /// M18/F40: полный снапшот — карточка информации по клику строки.
+    #[serde(default)]
+    pub item: Option<ld2_protocol::types::ItemSnapshot>,
 }
 
 fn shop_item_qty() -> i64 {
@@ -3325,7 +3328,11 @@ mod tests {
                 "shop": { "tabs": [
                     { "currency": "gold_coin", "currency_name": "Золотая монета",
                       "items": [ { "def_id": "potion_heal", "name": "Зелье лечения",
-                                   "rarity": "common", "price": 28, "qty": 1 } ] },
+                                   "rarity": "common", "price": 28, "qty": 1,
+                                   "item": { "uid": "shop:potion_heal", "type": "potion",
+                                             "name": "Зелье лечения", "rarity": "common",
+                                             "upgrade": 0, "stats": {}, "sockets": [],
+                                             "qty": 1 } } ] },
                     { "currency": "gem_str", "currency_name": "Самоцвет силы", "items": [] }
                 ]}
             }),
@@ -3341,6 +3348,10 @@ mod tests {
             "активна первая вкладка"
         );
         assert_eq!(shop.tabs[0].items[0].price, 28);
+        // M18/F40: снапшот парсится — карточка по клику строки.
+        let snapshot = shop.tabs[0].items[0].item.as_ref().expect("снапшот товара");
+        assert_eq!(snapshot.name, "Зелье лечения");
+        assert_eq!(snapshot.item_type, "potion");
         // Закрытие диалога чистит магазин (поля внутри вида).
         store.npc_dialog = None;
         assert!(store.npc_dialog.is_none());

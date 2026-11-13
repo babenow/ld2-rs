@@ -245,8 +245,14 @@ impl Root {
                         .child(format!("×{}", item.qty)),
                 );
             }
+            // M18/F40: строка товара — подсветка наведения, клик
+            // открывает карточку информации (тот же item_detail, что
+            // «Описание» в меню предмета).
+            let row_id = format!("ld2-shop-item-{}", item.def_id);
+            let detail = item.item.clone();
             col = col.child(
                 div()
+                    .id(row_id)
                     .flex()
                     .flex_row()
                     .gap_2()
@@ -256,6 +262,14 @@ impl Root {
                     .py_1()
                     .rounded_md()
                     .bg(rgb(pal.panel))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(pal.selection)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(snapshot) = &detail {
+                            this.store.item_detail = serde_json::to_value(snapshot).ok();
+                        }
+                        cx.notify();
+                    }))
                     .child(left)
                     .child(right),
             );

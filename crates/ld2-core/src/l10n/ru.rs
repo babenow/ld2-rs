@@ -404,7 +404,7 @@ pub(super) fn t(key: Key) -> &'static str {
         BtnTraining => "Обучение",
         BtnShop => "Магазин",
         BtnBuy => "Купить",
-        ShopBack => "Назад",
+        ShopBack => "К диалогу",
         ShopOwned => "У вас: {n}",
         ShopEmpty => "Товаров нет",
     }
