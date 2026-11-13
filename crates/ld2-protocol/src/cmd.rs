@@ -100,6 +100,12 @@ pub struct EntityInfo {
     pub entity_id: String,
 }
 
+/// M18/F35: диалог NPC — приветствие/строки с условиями + доступные квесты.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct NpcTalk {
+    pub entity_id: String,
+}
+
 // ─── бой (ФР-05) ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -403,6 +409,7 @@ impl_commands!(
     (LocationLook, "cmd/location.look", true),
     (LocationMove, "cmd/location.move", false),
     (EntityInfo, "cmd/entity.info", true),
+    (NpcTalk, "cmd/npc.talk", true),
     (CombatAttack, "cmd/combat.attack", false),
     (CombatStop, "cmd/combat.stop", true),
     (CombatFlee, "cmd/combat.flee", false),

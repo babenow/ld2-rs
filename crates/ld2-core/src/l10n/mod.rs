@@ -115,6 +115,8 @@ pub enum Key {
     HistoryLabel,
     LogLabel,
     Examine,
+    /// M18/F35: пункт контекстного меню NPC — открыть диалог.
+    BtnTalk,
     Attack,
     EntityDetailTitle,
     AltNavHint,
@@ -607,6 +609,7 @@ mod tests {
         Key::HistoryLabel,
         Key::LogLabel,
         Key::Examine,
+        Key::BtnTalk,
         Key::Attack,
         Key::EntityDetailTitle,
         Key::AltNavHint,

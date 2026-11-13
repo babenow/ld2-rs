@@ -2287,7 +2287,7 @@ impl Root {
 // ── вспомогательные ────────────────────────────────────────────────────────
 
 /// Сводка целей квеста: «Волков убито 4/5» или текст цели.
-fn goals_summary(q: &ld2_protocol::types::QuestState) -> String {
+pub(crate) fn goals_summary(q: &ld2_protocol::types::QuestState) -> String {
     q.goals
         .iter()
         .map(|g| match (g.cur, g.need) {

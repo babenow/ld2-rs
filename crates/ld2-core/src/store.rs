@@ -45,6 +45,8 @@ pub enum Act {
     Attack,
     /// `entity.info` → `entity_detail`.
     Examine,
+    /// `npc.talk` → `npc_dialog` (M18/F35).
+    NpcTalk,
     /// `char.xp_invest` → `pool_left` в снапшоте.
     Invest,
     /// `item.equip`/`item.unequip` — ack несёт обновлённый `char` (§7).
@@ -243,6 +245,8 @@ pub struct AppStore {
     pub visited: Vec<VisitedLocation>,
     /// Результат `entity.info` — модалка осмотра (включая лут трупа).
     pub entity_detail: Option<serde_json::Value>,
+    /// M18/F35: открытое окно диалога NPC (реплики + квесты).
+    pub npc_dialog: Option<NpcDialogView>,
     /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
     pub pending_delete: Option<PendingDelete>,
     /// M11.7: цель текущего `char.delete` — снять карточку по ack.
@@ -267,6 +271,45 @@ pub struct PendingDelete {
     pub deadline: i64,
 }
 
+/// M18/F35: строка диалога NPC в окне (сервер уже подставил `{name}`).
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcLine {
+    pub id: String,
+    pub text: String,
+    /// Квест, который предлагает строка (кнопка «Принять» — в секции
+    /// «Квесты» окна).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quest: Option<String>,
+}
+
+/// M18/F35: открытое окно диалога NPC — payload ack `cmd/npc.talk`
+/// `{dialog: {id, name, greeting, lines[]}, quests[]}`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcDialogView {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub greeting: String,
+    #[serde(default)]
+    pub lines: Vec<NpcLine>,
+    #[serde(default)]
+    pub quests: Vec<ld2_protocol::types::QuestState>,
+}
+
+impl NpcDialogView {
+    /// Разбор payload ack (`None` — нет `dialog`; `quests` без поля → пусто).
+    pub fn from_payload(payload: &serde_json::Value) -> Option<Self> {
+        let dialog = payload.get("dialog")?;
+        Some(Self {
+            id: dialog["id"].as_str()?.into(),
+            name: dialog["name"].as_str()?.into(),
+            greeting: dialog["greeting"].as_str().unwrap_or_default().into(),
+            lines: serde_json::from_value(dialog.get("lines")?.clone()).ok()?,
+            quests: serde_json::from_value(payload.get("quests")?.clone()).unwrap_or_default(),
+        })
+    }
+}
+
 /// M11: какой всплывающий диалог активен. Приоритет и гейт экрана — здесь
 /// же их читает UI-диспетчер gpui-клиента (E2E-тест вехи M11.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +326,8 @@ pub enum Dialog {
     Socket,
     /// M17/F30a: выбор оружия под инкрустацию руны/самоцвета.
     Inscribe,
+    /// M18/F35: диалог NPC (поговорить/квесты).
+    NpcTalk,
     Create,
     Delete,
 }
@@ -326,6 +371,9 @@ impl AppStore {
                 } else if self.inscribe.is_some() {
                     // M17/F30a: окно «Куда инкрустировать…».
                     Some(Dialog::Inscribe)
+                } else if self.npc_dialog.is_some() {
+                    // M18/F35: диалог NPC — в конце цепочки.
+                    Some(Dialog::NpcTalk)
                 } else {
                     None
                 }
@@ -410,6 +458,7 @@ impl AppStore {
             log: VecDeque::new(),
             visited: Vec::new(),
             entity_detail: None,
+            npc_dialog: None,
             pending_delete: None,
             deleting_char: None,
             session_login: None,
@@ -497,7 +546,9 @@ impl AppStore {
                     self.deleting_char = None;
                     self.notice = Some(msg);
                 }
-                Act::Move | Act::Attack | Act::Examine => self.world_error = Some(msg),
+                Act::Move | Act::Attack | Act::Examine | Act::NpcTalk => {
+                    self.world_error = Some(msg)
+                }
                 // M16/F29h: ошибки листа — системные уведомления
                 // (тосты), как и весь прочий фидбек.
                 Act::Invest
@@ -572,6 +623,7 @@ impl AppStore {
             }
             Act::Attack
             | Act::Examine
+            | Act::NpcTalk
             | Act::Drop
             | Act::Upgrade
             | Act::Cast
@@ -579,7 +631,8 @@ impl AppStore {
             | Act::Chat
             | Act::ChatDelete
             | Act::Trade => {
-                // результат событиями (§8)
+                // результат событиями (§8); npc.talk обрабатывается ниже
+                // отдельным блоком (M18/F35)
             }
             Act::Party => {
                 // §7: party.create/accept несут {party}.
@@ -686,6 +739,13 @@ impl AppStore {
             }
         }
 
+        // M18/F35: диалог NPC — ack `{dialog, quests}` → окно (до Examine:
+        // там payload перемещается).
+        if act == Act::NpcTalk {
+            if let Some(payload) = ack.payload.as_ref() {
+                self.npc_dialog = NpcDialogView::from_payload(payload);
+            }
+        }
         // Осмотр: payload ack'а — детали сущности (включая лут трупа, ФР-03/ФР-11).
         if act == Act::Examine {
             self.entity_detail = ack.payload;
@@ -1174,6 +1234,13 @@ impl AppStore {
                         snap.char.quests.push(w.quest.clone());
                     }
                 }
+                // M18/F35: квест взят/сдан — убирается из открытого диалога
+                // NPC (реплики и кнопки не врут).
+                if let Some(dialog) = self.npc_dialog.as_mut() {
+                    if !matches!(w.quest.state, ld2_protocol::types::QuestPhase::Available) {
+                        dialog.quests.retain(|q| q.id != w.quest.id);
+                    }
+                }
                 let title = w.quest.title.unwrap_or(w.quest.id);
                 self.push_log(
                     LogKind::Quest,
@@ -1623,6 +1690,7 @@ impl AppStore {
         self.target = None;
         self.loot_confirm = None;
         self.quest_tracker.clear();
+        self.npc_dialog = None;
         self.session_login = None;
         self.chat.clear();
         // M14/F18: лог мира персональный — очистка при выходе.
@@ -1692,6 +1760,7 @@ impl AppStore {
         self.upgrade = None;
         self.socketing = None;
         self.quest_tracker.clear();
+        self.npc_dialog = None;
         // ФР-13: переключение персонажа сбрасывает историю чата.
         self.chat.clear();
         // M14/F18: лог мира персональный — очистка при выходе из игры.
@@ -2097,6 +2166,11 @@ mod tests {
         s.inscribe = Some("rune_1".into());
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Inscribe));
         s.inscribe = None;
+        // M18/F35: диалог NPC — в конце цепочки (выше него — все
+        // остальные игровые окна).
+        s.npc_dialog = Some(NpcDialogView::default());
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::NpcTalk));
+        s.npc_dialog = None;
         assert_eq!(s.active_dialog(false, false), None);
     }
 
@@ -2996,6 +3070,54 @@ mod tests {
         );
         assert!(detail["loot"].as_array().expect("лут").len() == 1);
         assert!(store.pending.is_none());
+    }
+
+    /// M18/F35: ack `npc.talk` открывает окно диалога (реплики + квесты);
+    /// `evt/quest/updated` с невидимой фазой убирает квест из списка окна.
+    #[test]
+    fn npc_talk_ack_opens_dialog_and_prunes_quest() {
+        let mut store = in_game();
+        store.on_world_sent(Act::NpcTalk);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            8,
+            None,
+            &serde_json::json!({
+                "dialog": {
+                    "id": "npc_elder", "name": "Староста",
+                    "greeting": "Привет, Ким!",
+                    "lines": [
+                        { "id": "l_hello", "text": "Как дела?" },
+                        { "id": "l_errand", "text": "Отнеси весть!", "quest": "q1" }
+                    ]
+                },
+                "quests": [ { "id": "q1", "title": "Волчья беда", "state": "available" } ]
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        assert_eq!(dialog.name, "Староста");
+        assert_eq!(dialog.greeting, "Привет, Ким!");
+        assert_eq!(dialog.lines.len(), 2);
+        assert_eq!(dialog.lines[1].quest.as_deref(), Some("q1"));
+        assert_eq!(dialog.quests.len(), 1);
+        assert_eq!(store.active_dialog(false, false), Some(Dialog::NpcTalk));
+        assert!(store.pending.is_none());
+
+        // Квест взят → из диалога исчезает (и в снапшоте стал active).
+        store.apply(evt(
+            "evt/quest/updated",
+            serde_json::json!({ "quest": { "id": "q1", "title": "Волчья беда", "state": "active" } }),
+        ));
+        assert!(
+            store
+                .npc_dialog
+                .as_ref()
+                .expect("диалог открыт")
+                .quests
+                .is_empty(),
+            "принятый квест убран из окна"
+        );
     }
 
     #[test]

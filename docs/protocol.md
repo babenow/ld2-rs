@@ -276,6 +276,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `location.look` | `{}` | `{location}` | + | перерисовать локацию |
 | `location.move` | `{exit_id}` | `{location}` | − | переход |
 | `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа |
+| `npc.talk` | `{entity_id}` | `{dialog: {id, name, greeting, lines[]}, quests[]}` | + | диалог NPC: реплики с условиями (`{name}` → имя; пол/уровень/атрибут/навык/профессия/предмет/`every_s`), доступные квесты NPC (M18/F35) |
 | `combat.attack` | `{target_id}` | `{}` | − | удар |
 | `combat.stop` | `{}` | `{}` | + | выйти из боя |
 | `combat.flee` | `{}` | `{}` | − | попытка сбежать |

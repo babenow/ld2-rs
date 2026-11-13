@@ -1,0 +1,32 @@
+{
+  "npcs": [
+    {
+      "id": "npc_elder",
+      "greeting": "Добро пожаловать в деревню, {name}!",
+      "lines": [
+        { "id": "l_hello", "text": "Как дела, {name}?" },
+        {
+          "id": "l_pack",
+          "text": "Ты носишь целебное зелье — держи его наготове.",
+          "when": { "item": { "def_id": "potion_heal", "qty": 1 } }
+        },
+        {
+          "id": "l_female",
+          "text": "Девушкам в лесу стоит быть осторожнее, {name}.",
+          "when": { "gender": "female" }
+        },
+        {
+          "id": "l_errand",
+          "text": "Отнеси весть в Чёрный лес — волки одолели путников!",
+          "every_s": 1800,
+          "quest": "q_wolf_hunt"
+        },
+        {
+          "id": "l_veteran",
+          "text": "Ты стал настоящим воином, {name}!",
+          "when": { "level": { "min": 5 } }
+        }
+      ]
+    }
+  ]
+}
