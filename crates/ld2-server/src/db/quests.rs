@@ -114,7 +114,7 @@ pub fn build_state(
 ) -> ld2_protocol::types::QuestState {
     use ld2_protocol::types::{QuestGoal, QuestPhase, QuestState, RewardPreview};
 
-    let (id, title, _, goals_json, reward_json, _) = def;
+    let (id, title, _, goals_json, reward_json, reward_label) = def;
     let content_goals: Vec<serde_json::Value> = goals_json.as_array().cloned().unwrap_or_default();
     let progress: Vec<serde_json::Value> = row
         .map(|(_, _, p)| p.as_array().cloned().unwrap_or_default())
@@ -151,6 +151,7 @@ pub fn build_state(
         state: phase,
         goals,
         reward_preview,
+        reward_label: reward_label.clone(),
         extra: Default::default(),
     }
 }

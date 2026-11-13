@@ -11,7 +11,8 @@ use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
 use ld2_protocol::features::{
     ChatConfig, CrimeConfig, CrimeKind as ProtocolCrimeKind, InventoryConfig, MagicConfig,
-    ManaConfig, RefreshToken, ServerInfo, SessionConfig, SessionTokens, UpgradeConfig,
+    ManaConfig, QuestsConfig, RefreshToken, ServerInfo, SessionConfig, SessionTokens,
+    UpgradeConfig,
 };
 use ld2_protocol::types::{CharacterSummary, Severity};
 use serde_json::{json, Value};
@@ -215,6 +216,10 @@ pub fn session_config(
                 regen_in_pct_s: g.magic.mana.regen_in_pct_s,
                 rune_cost: g.magic.mana.rune_cost as i64,
             },
+        },
+        // M18/F36: лимит текущих квестов (§5, DoD: конфиг, не код).
+        quests: QuestsConfig {
+            max_active: g.quests.max_active,
         },
         characters,
         extra: Default::default(),

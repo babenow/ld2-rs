@@ -19,6 +19,7 @@ mod backpack;
 mod chars;
 mod chat;
 mod game;
+mod quests;
 mod register;
 mod sheet;
 mod social;
@@ -68,6 +69,8 @@ struct PopupResize;
 enum PopupKind {
     Character,
     Backpack,
+    /// M18/F36: окно квестов (2 вкладки: текущие/выполненные).
+    Quests,
 }
 
 impl PopupKind {
@@ -76,6 +79,7 @@ impl PopupKind {
         match self {
             PopupKind::Character => "ld2-char",
             PopupKind::Backpack => "ld2-bp",
+            PopupKind::Quests => "ld2-quests",
         }
     }
 }
@@ -91,6 +95,8 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
     match kind {
         PopupKind::Character => *equip_menu = None,
         PopupKind::Backpack => *bp_menu = None,
+        // M18/F36: окно квестов контекстных меню не использует.
+        PopupKind::Quests => {}
     }
 }
 
@@ -151,6 +157,8 @@ pub(crate) enum Click {
     ToggleCharacter,
     /// M16/F29b: открыть/закрыть окно рюкзака (кнопка в шапке).
     ToggleInventory,
+    /// M18/F36: открыть/закрыть окно квестов (кнопка в шапке).
+    ToggleQuests,
     Theme(&'static str),
     ChatLimit(i64),
     /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
@@ -255,6 +263,8 @@ pub struct Root {
     /// M16/F29b: окно рюкзака — может быть открыто одновременно с
     /// персонажем (общий scrim группы окон).
     backpack_popup: PopupState,
+    /// M18/F36: окно квестов — третий член группы окон (общий scrim).
+    quests_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
     /// всплывающих окон — закрытие по mouse-up только для настоящего
     /// «клика мимо» (M15/F25e).
@@ -268,6 +278,10 @@ pub struct Root {
     viewport: (f32, f32),
     /// M16/F29b: активная вкладка рюкзака (персистентна в config).
     backpack_tab: backpack::BackpackTab,
+    /// M18/F36: вкладка окна квестов (текущие/выполненные) и выбор
+    /// в левой колонке (показывается в правой).
+    quests_tab: quests::QuestsTab,
+    selected_quest: Option<String>,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
     exit_timer: Option<(ExitKind, i64)>,
     /// M14/F17: открытая карточка навыка — id из снапшота.
@@ -308,6 +322,8 @@ pub struct Root {
     professions_scroll: ScrollHandle,
     /// M16/F29b: прокрутка тела окна рюкзака (сетка предметов).
     backpack_scroll: ScrollHandle,
+    /// M18/F36: скролл тела окна квестов.
+    quests_scroll: ScrollHandle,
     /// M15/F26: прокрутка вкладки «Параметры» (16 строк).
     params_scroll: ScrollHandle,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
@@ -456,7 +472,14 @@ impl Root {
                 delta: (40.0, 40.0),
                 ..PopupState::new((760.0, 560.0))
             },
+            // M18/F36: квесты — левее рюкзака (обе шапки видны).
+            quests_popup: PopupState {
+                delta: (-40.0, 40.0),
+                ..PopupState::new((800.0, 560.0))
+            },
             backpack_tab: backpack::BackpackTab::default(),
+            quests_tab: quests::QuestsTab::default(),
+            selected_quest: None,
             popup_scrim_down: false,
             drag_owner: None,
             viewport: (0.0, 0.0),
@@ -482,6 +505,7 @@ impl Root {
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
             backpack_scroll: ScrollHandle::new(),
+            quests_scroll: ScrollHandle::new(),
             params_scroll: ScrollHandle::new(),
             log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
@@ -921,6 +945,13 @@ impl Root {
         // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
         // настроек/диалога выхода (они ловят Esc сами).
         if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
+            // M18/F36: квесты рисуются поверх рюкзака — Esc закрывает
+            // верхнее (после рассуждений порядок: квесты → рюкзак → персонаж).
+            if self.quests_popup.open {
+                self.quests_popup.open = false;
+                cx.notify();
+                return;
+            }
             if self.backpack_popup.open {
                 self.backpack_popup.open = false;
                 cx.notify();
@@ -950,6 +981,16 @@ impl Root {
                 self.backpack_popup.open = false;
             } else {
                 self.open_popup(PopupKind::Backpack);
+            }
+            cx.notify();
+            return;
+        }
+        // M18/F36: хоткей окна квестов (кнопка в шапке дублирует).
+        if keystroke_matches(&self.config.hotkeys.open_quests, ks) {
+            if self.quests_popup.open {
+                self.quests_popup.open = false;
+            } else {
+                self.open_popup(PopupKind::Quests);
             }
             cx.notify();
             return;
@@ -1084,6 +1125,7 @@ impl Root {
         match kind {
             PopupKind::Character => &mut self.char_popup,
             PopupKind::Backpack => &mut self.backpack_popup,
+            PopupKind::Quests => &mut self.quests_popup,
         }
     }
 
@@ -1092,6 +1134,7 @@ impl Root {
         match kind {
             PopupKind::Character => &self.char_popup,
             PopupKind::Backpack => &self.backpack_popup,
+            PopupKind::Quests => &self.quests_popup,
         }
     }
 
@@ -1105,6 +1148,7 @@ impl Root {
         let (tw, th) = match kind {
             PopupKind::Character => (760.0, 760.0),
             PopupKind::Backpack => (760.0, 560.0),
+            PopupKind::Quests => (800.0, 560.0),
         };
         let (vw, vh) = self.viewport;
         let (w, h) = if vw > 0.0 && vh > 0.0 {
@@ -1115,6 +1159,7 @@ impl Root {
         let delta = match kind {
             PopupKind::Character => (0.0, 0.0),
             PopupKind::Backpack => (40.0, 40.0),
+            PopupKind::Quests => (-40.0, 40.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1125,6 +1170,10 @@ impl Root {
         match kind {
             PopupKind::Character => self.sheet_tab = sheet::SheetTab::Params,
             PopupKind::Backpack => self.backpack_tab = backpack::BackpackTab::default(),
+            // M18/F36: на «Текущих» при каждом открытии (паритет окон);
+            // выбор квеста переживает закрытие — правая колонка
+            // корректно откатывается на первой строке вкладки.
+            PopupKind::Quests => self.quests_tab = quests::QuestsTab::default(),
         }
     }
 
@@ -1193,7 +1242,7 @@ impl Root {
     /// один на всех и лежит ПОД карточками; клик мимо закрывает
     /// верхнее открытое окно (рюкзак, затем персонаж).
     fn popup_scrim(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
-        if !self.char_popup.open && !self.backpack_popup.open {
+        if !self.char_popup.open && !self.backpack_popup.open && !self.quests_popup.open {
             return None;
         }
         Some(
@@ -1222,8 +1271,11 @@ impl Root {
                                     scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
                                 root.popup_scrim_down = false;
                                 if close {
-                                    // Верхнее окно: рюкзак рисуется поверх.
-                                    if root.backpack_popup.open {
+                                    // Верхнее окно: квесты рисуются поверх
+                                    // рюкзака, рюкзак — поверх персонажа.
+                                    if root.quests_popup.open {
+                                        root.quests_popup.open = false;
+                                    } else if root.backpack_popup.open {
                                         root.backpack_popup.open = false;
                                     } else if root.char_popup.open {
                                         root.char_popup.open = false;
@@ -1282,6 +1334,15 @@ impl Root {
                     self.backpack_popup.open = false;
                 } else {
                     self.open_popup(PopupKind::Backpack);
+                }
+                cx.notify();
+            }
+            // M18/F36: окно квестов (текущие/выполненные).
+            Click::ToggleQuests => {
+                if self.quests_popup.open {
+                    self.quests_popup.open = false;
+                } else {
+                    self.open_popup(PopupKind::Quests);
                 }
                 cx.notify();
             }
@@ -1643,6 +1704,16 @@ impl Root {
                             pal.panel,
                             pal.text,
                             Click::ToggleInventory,
+                        )
+                    }))
+                    // M18/F36: кнопка квестов рядом с «Рюкзак».
+                    .children(self.store.snapshot.as_ref().map(|_| {
+                        btn(
+                            cx,
+                            t(lang, Key::QuestsTab),
+                            pal.panel,
+                            pal.text,
+                            Click::ToggleQuests,
                         )
                     })),
             )
@@ -2307,7 +2378,7 @@ struct HotkeyRowSpec {
 
 /// Все ремаппингуемые действия: навигация/цикл (ФР-19) + боевые
 /// панели (M14/F4, цифры 1–6 — Esc занят диалогами).
-const HOTKEY_ROWS: [HotkeyRowSpec; 13] = [
+const HOTKEY_ROWS: [HotkeyRowSpec; 14] = [
     HotkeyRowSpec {
         id: "ld2-hk-nav-up",
         label: Key::HkNavUp,
@@ -2385,6 +2456,12 @@ const HOTKEY_ROWS: [HotkeyRowSpec; 13] = [
         label: Key::HkOpenBackpack,
         get: |hk| hk.open_backpack.as_str(),
         set: |hk, v| hk.open_backpack = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-quests",
+        label: Key::HkOpenQuests,
+        get: |hk| hk.open_quests.as_str(),
+        set: |hk, v| hk.open_quests = v,
     },
 ];
 
@@ -3047,6 +3124,11 @@ impl Render for Root {
             .when_some(self.backpack_dialog(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
+            // M18/F36: окно квестов — поверх рюкзака (порядок слоёв =
+            // порядок закрытия по Esc/scrim).
+            .when_some(self.quests_dialog(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
@@ -3105,8 +3187,8 @@ mod tests {
     fn hotkey_rows_cover_nav_and_six_actions() {
         assert_eq!(
             HOTKEY_ROWS.len(),
-            13,
-            "навигация/цикл + 6 действий + окна персонажа и рюкзака"
+            14,
+            "навигация/цикл + 6 действий + окна персонажа/рюкзака/квестов"
         );
         let ids: std::collections::HashSet<_> = HOTKEY_ROWS.iter().map(|r| r.id).collect();
         assert_eq!(ids.len(), HOTKEY_ROWS.len(), "id строк уникальны");
@@ -3122,6 +3204,7 @@ mod tests {
         assert_eq!((HOTKEY_ROWS[10].get)(&hk), "6", "расходник");
         assert_eq!((HOTKEY_ROWS[11].get)(&hk), "c", "окно персонажа (M15/F25)");
         assert_eq!((HOTKEY_ROWS[12].get)(&hk), "i", "окно рюкзака (M16/F29b)");
+        assert_eq!((HOTKEY_ROWS[13].get)(&hk), "j", "окно квестов (M18/F36)");
 
         // Сеттер переписывает только своё поле.
         let mut hk = Hotkeys::default();

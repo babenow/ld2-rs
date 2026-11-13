@@ -47,6 +47,7 @@ const SESSION_START_JSON: &str = r#"{
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
+  "quests": { "max_active": 10 },
   "characters": [
     { "id": "c1", "name": "Ким", "location": "Черный лес",
       "summary": "Навыки: меч 3, аркана 1", "crime": ["murderer"], "online": true }
@@ -62,9 +63,17 @@ fn session_start_matches_doc_example() {
     assert_eq!(cfg.profession_limit, 2, "D10");
     // M14/F19: роль аккаунта; отсутствие поля (старый сервер) → player.
     assert_eq!(cfg.role, "player");
-    let legacy = SESSION_START_JSON.replace(r#""role": "player","#, "");
+    // M18/F36: лимит текущих квестов §5.
+    assert_eq!(cfg.quests.max_active, 10, "quests.max_active §5");
+    let legacy = SESSION_START_JSON
+        .replace(r#""role": "player","#, "")
+        .replace(r#""quests": { "max_active": 10 },"#, "");
     let old_cfg: SessionConfig = serde_json::from_str(&legacy).expect("legacy §5");
     assert_eq!(old_cfg.role, "player", "serde(default) для старых серверов");
+    assert_eq!(
+        old_cfg.quests.max_active, 10,
+        "M18/F36: старый сервер без quests → дефолт10 (§11)"
+    );
     assert_eq!(cfg.crime.t_max_s, 604800);
     assert!((cfg.crime.blend_k - 0.5).abs() < f64::EPSILON);
     assert_eq!(cfg.crime.kinds.len(), 3, "D5: Убийца + Мародёр + Вор");

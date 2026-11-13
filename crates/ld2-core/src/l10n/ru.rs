@@ -394,5 +394,11 @@ pub(super) fn t(key: Key) -> &'static str {
         InscribeNoWeapons => "Нет подходящего предмета со свободными сокетами",
         BpCurrencies => "Валюты",
         HkOpenBackpack => "Открыть рюкзак",
+        HkOpenQuests => "Окно квестов",
+        QuestsTabCurrent => "Текущие",
+        QuestsTabDone => "Выполненные",
+        QuestsStatusCurrent => "Текущие: {cur} / {max}",
+        QuestsStatusDone => "Выполнено: {done}",
+        QuestsPick => "Выберите квест слева",
     }
 }

@@ -188,3 +188,98 @@ async fn quest_state_survives_restart() {
 fn acked_state(evt: &serde_json::Value) -> &str {
     evt["payload"]["quest"]["state"].as_str().unwrap_or("")
 }
+
+/// M18/F36: лимит текущих квестов — из конфига сервера (§5
+/// `quests.max_active`): при лимите 1 повторное принятие →
+/// `E_QUEST_LIMIT`; бросок освобождает слот → можно снова.
+#[tokio::test]
+async fn quest_limit_from_config_rejects_and_recovers() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let addr = common::start_server_with(&db_url, |cfg| {
+        cfg.gameplay.quests.max_active = 1;
+    })
+    .await;
+    let ws = format!("ws://{addr}/ws");
+
+    // Регистрация: session.start несёт лимит клиенту (§5, DoD).
+    let login = ld2_test_kit::checks::unique_login();
+    let mut c = ld2_test_kit::WsClient::connect(&ws).await;
+    let seq = c
+        .send(
+            "cmd/auth.register",
+            json!({
+                "login": login,
+                "password": "longenough1",
+                "email": ld2_test_kit::checks::unique_email()
+            }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let start = c.wait_event("evt/session.start").await;
+    assert_eq!(
+        start["payload"]["quests"]["max_active"], 1,
+        "лимит из конфига в session.start: {start}"
+    );
+
+    // Персонаж и вход в мир.
+    let name = format!(
+        "Лимит_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("время монотонно")
+            .as_nanos()
+    );
+    let seq = c
+        .send(
+            "cmd/char.create",
+            json!({ "name": name, "profile": "warrior" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "создание: {ack}");
+    let char_id = ack["payload"]["character"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let seq = c
+        .send("cmd/char.select", json!({ "char_id": char_id }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "выбор");
+    c.wait_event("evt/state/snapshot").await;
+
+    // Лимит 1: первый квест занимает слот.
+    let seq = c
+        .send("cmd/quest.accept", json!({ "quest_id": "q_wolf_hunt" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "первый принят");
+    c.wait_event("evt/quest/updated").await;
+
+    // 1/1 — повторное принятие упирается в лимит (гейт раньше
+    // проверки «уже взят»).
+    let seq = c
+        .send("cmd/quest.accept", json!({ "quest_id": "q_wolf_hunt" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_QUEST_LIMIT",
+        "лимит достигнут: {ack}"
+    );
+
+    // Бросок освобождает слот → снова можно.
+    let seq = c
+        .send("cmd/quest.abandon", json!({ "quest_id": "q_wolf_hunt" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "бросок");
+    c.wait_event("evt/quest/updated").await;
+    let seq = c
+        .send("cmd/quest.accept", json!({ "quest_id": "q_wolf_hunt" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["result"],
+        "ok",
+        "слот свободен → снова можно"
+    );
+}

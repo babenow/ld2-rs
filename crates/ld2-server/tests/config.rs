@@ -113,6 +113,15 @@ fn zero_char_slots_names_key() {
     );
 }
 
+/// M18/F36: нулевой лимит текущих квестов — ошибка валидации.
+#[test]
+fn zero_quest_max_active_names_key() {
+    assert_problem(
+        &edited("max_active = 10", "max_active = 0"),
+        "gameplay.quests.max_active",
+    );
+}
+
 #[test]
 fn feature_wrong_type_names_key() {
     // строка вместо bool: untagged-парсинг проходит, ловит валидация

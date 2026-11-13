@@ -160,6 +160,10 @@ pub struct Hotkeys {
     /// Открыть/закрыть окно рюкзака (дефолт «i» — классика MMO).
     #[serde(default = "hk_backpack")]
     pub open_backpack: String,
+    // ── M18/F36: окно квестов ──
+    /// Открыть/закрыть окно квестов (дефолт «j» — journal).
+    #[serde(default = "hk_quests")]
+    pub open_quests: String,
 }
 
 fn hk_alt_up() -> String {
@@ -201,6 +205,9 @@ fn hk_char() -> String {
 fn hk_backpack() -> String {
     "i".into()
 }
+fn hk_quests() -> String {
+    "j".into()
+}
 
 impl Default for Hotkeys {
     fn default() -> Self {
@@ -218,6 +225,7 @@ impl Default for Hotkeys {
             action_consumable: hk_digit6(),
             open_character: hk_char(),
             open_backpack: hk_backpack(),
+            open_quests: hk_quests(),
         }
     }
 }
@@ -239,6 +247,7 @@ impl Hotkeys {
             ("action_consumable", &mut self.action_consumable),
             ("open_character", &mut self.open_character),
             ("open_backpack", &mut self.open_backpack),
+            ("open_quests", &mut self.open_quests),
         ]
     }
 }
@@ -388,6 +397,8 @@ mod tests {
         assert_eq!(cfg.hotkeys.open_character, "c");
         // M16/F29b: окно рюкзака и его вкладка — дефолты старого файла.
         assert_eq!(cfg.hotkeys.open_backpack, "i");
+        // M18/F36: окно квестов — дефолт старого файла.
+        assert_eq!(cfg.hotkeys.open_quests, "j");
         assert_eq!(cfg.backpack_tab, "all");
         // M16/F29j: «запомнить пароль» в старом конфиге выключено.
         assert!(!cfg.remember_password);

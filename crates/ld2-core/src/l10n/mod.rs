@@ -453,6 +453,13 @@ pub enum Key {
     InscribeNoWeapons,
     BpCurrencies,
     HkOpenBackpack,
+    // M18/F36: окно квестов (кнопка/хоткей, вкладки, статус-бар).
+    HkOpenQuests,
+    QuestsTabCurrent,
+    QuestsTabDone,
+    QuestsStatusCurrent,
+    QuestsStatusDone,
+    QuestsPick,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -915,6 +922,12 @@ mod tests {
         Key::InscribeNoWeapons,
         Key::BpCurrencies,
         Key::HkOpenBackpack,
+        Key::HkOpenQuests,
+        Key::QuestsTabCurrent,
+        Key::QuestsTabDone,
+        Key::QuestsStatusCurrent,
+        Key::QuestsStatusDone,
+        Key::QuestsPick,
     ];
 
     #[test]

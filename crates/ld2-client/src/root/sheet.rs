@@ -24,10 +24,10 @@ use ld2_core::store::{
 };
 use ld2_protocol::cmd::{
     CharXpInvest, CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave,
-    GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse, QuestAbandon, QuestAccept,
-    QuestTurnIn, SocketExtract, SocketInsert, UpgradePreview, UpgradeStart,
+    GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse, SocketExtract, SocketInsert,
+    UpgradePreview, UpgradeStart,
 };
-use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity, SkillSnapshot};
+use ld2_protocol::types::{CharacterState, ItemSnapshot, Severity, SkillSnapshot};
 
 use crate::palette::Palette;
 use ely::buttons::IconButton;
@@ -37,6 +37,7 @@ use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
+use super::quests::goals_summary;
 use super::{
     act_btn, char_card_origin, clamp_char_size, scrollable_tab, PopupDrag, PopupKind, PopupResize,
     Root,
@@ -52,20 +53,19 @@ pub(crate) enum SheetTab {
     Professions,
     /// Репутация фракций — наполняется в F27.
     Reputation,
-    Quests,
+    // M18/F36: «Квесты» переехали в отдельное окно (правило дубликатов).
     Guild,
 }
 
 impl SheetTab {
     /// M16/F29b: «Инвентарь» убран из окна — он живёт в отдельном
     /// окне рюкзака (правило дубликатов).
-    fn all() -> [(SheetTab, Key); 6] {
+    fn all() -> [(SheetTab, Key); 5] {
         [
             (SheetTab::Params, Key::SheetParams),
             (SheetTab::Skills, Key::SheetSkills),
             (SheetTab::Professions, Key::ProfessionsTab),
             (SheetTab::Reputation, Key::SheetReputation),
-            (SheetTab::Quests, Key::QuestsTab),
             (SheetTab::Guild, Key::GuildTab),
         ]
     }
@@ -77,7 +77,6 @@ impl SheetTab {
             SheetTab::Skills => IconName::Zap,
             SheetTab::Professions => IconName::Wrench,
             SheetTab::Reputation => IconName::Shield,
-            SheetTab::Quests => IconName::ListChecks,
             SheetTab::Guild => IconName::Flag,
         }
     }
@@ -88,7 +87,6 @@ impl SheetTab {
             SheetTab::Skills => "skills",
             SheetTab::Professions => "professions",
             SheetTab::Reputation => "reputation",
-            SheetTab::Quests => "quests",
             SheetTab::Guild => "guild",
         }
     }
@@ -98,12 +96,12 @@ impl SheetTab {
             "skills" => SheetTab::Skills,
             "professions" => SheetTab::Professions,
             "reputation" => SheetTab::Reputation,
-            "quests" => SheetTab::Quests,
             "guild" => SheetTab::Guild,
             // M15/F25: старые значения удалённых вкладок (attrs/statuses)
             // из сохранённого конфига → «Параметры» (ближайшая инфо-вкладка);
-            // M16/F29b: «inventory» переехал в окно рюкзака.
-            "attrs" | "statuses" | "inventory" => SheetTab::Params,
+            // M16/F29b: «inventory» переехал в окно рюкзака;
+            // M18/F36: «quests» переехал в отдельное окно.
+            "attrs" | "statuses" | "inventory" | "quests" => SheetTab::Params,
             _ => SheetTab::Params,
         }
     }
@@ -723,7 +721,6 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::CharComingSoon)),
             SheetTab::Skills => self.tab_skills(cx, pal),
-            SheetTab::Quests => self.tab_quests(cx, pal),
             SheetTab::Professions => self.tab_professions(cx, pal),
             SheetTab::Guild => self.tab_guild(cx, pal),
         };
@@ -1383,148 +1380,6 @@ impl Root {
                         format_duration(lang, entry.total_s)
                     )),
             );
-        }
-        col
-    }
-
-    // ── вкладка «Квесты» (ФР-12) ──────────────────────────────────────────
-
-    fn tab_quests(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let lang = self.lang;
-        let Some(snap) = self.store.snapshot.clone() else {
-            return div()
-                .text_color(rgb(pal.muted))
-                .child(t(lang, Key::Loading));
-        };
-        if snap.char.quests.is_empty() {
-            return div()
-                .text_color(rgb(pal.muted))
-                .child(t(lang, Key::NoQuests));
-        }
-        let mut col = div().flex().flex_col().gap_2();
-        for quest in &snap.char.quests {
-            let tracked = self.store.quest_tracker.contains(&quest.id);
-            let (state_key, color) = match quest.state {
-                QuestPhase::Available => (Key::StateAvailable, 0x98_c3_79),
-                QuestPhase::Active => (Key::StateActive, 0xab_b2_bf),
-                QuestPhase::TurnIn => (Key::StateTurnIn, 0xd1_9a_66),
-                QuestPhase::Done => (Key::StateDone, 0x61_af_ef),
-            };
-            let mut card = div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.border))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(div().text_color(rgb(color)).child(t(lang, state_key)))
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(quest.title.clone().unwrap_or_else(|| quest.id.clone())),
-                        ),
-                );
-
-            // Трекер (ФР-12): максимум 3, переключение.
-            let qid = quest.id.clone();
-            card = card.child(act_btn(
-                cx,
-                if tracked {
-                    t(lang, Key::TrackedBtn)
-                } else {
-                    t(lang, Key::TrackBtn)
-                },
-                if tracked { pal.accent } else { pal.panel },
-                pal.text,
-                move |this, cx| {
-                    this.store.toggle_quest_tracker(&qid);
-                    let _ = cx;
-                },
-            ));
-
-            // Кнопки состояния (§7).
-            let mut actions = div().flex().flex_row().gap_1();
-            match quest.state {
-                QuestPhase::Available => {
-                    let qid = quest.id.clone();
-                    actions = actions.child(act_btn(
-                        cx,
-                        t(lang, Key::BtnAccept),
-                        pal.accent,
-                        pal.accent_text,
-                        move |this, cx| {
-                            let cmd = QuestAccept {
-                                quest_id: qid.clone(),
-                            };
-                            this.send_cmd(&cmd, Act::Quest);
-                            let _ = cx;
-                        },
-                    ));
-                }
-                QuestPhase::Active => {
-                    let qid = quest.id.clone();
-                    actions = actions.child(act_btn(
-                        cx,
-                        t(lang, Key::BtnAbandon),
-                        pal.panel,
-                        pal.danger,
-                        move |this, cx| {
-                            let cmd = QuestAbandon {
-                                quest_id: qid.clone(),
-                            };
-                            this.send_cmd(&cmd, Act::Quest);
-                            let _ = cx;
-                        },
-                    ));
-                }
-                QuestPhase::TurnIn => {
-                    let qid = quest.id.clone();
-                    actions = actions.child(act_btn(
-                        cx,
-                        t(lang, Key::BtnTurnIn),
-                        pal.accent,
-                        pal.accent_text,
-                        move |this, cx| {
-                            let cmd = QuestTurnIn {
-                                quest_id: qid.clone(),
-                            };
-                            this.send_cmd(&cmd, Act::Quest);
-                            let _ = cx;
-                        },
-                    ));
-                }
-                QuestPhase::Done => {}
-            }
-            card = card.child(actions);
-
-            if !quest.goals.is_empty() {
-                card = card.child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(format!("• {}", goals_summary(quest))),
-                );
-            }
-            if let Some(reward) = &quest.reward_preview {
-                if let Some(xp) = reward.xp {
-                    card = card.child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(rgb(pal.muted))
-                            .child(format!("{}: {xp} XP", t(lang, Key::RewardLabel))),
-                    );
-                }
-            }
-            col = col.child(card);
         }
         col
     }
@@ -2286,18 +2141,6 @@ impl Root {
 
 // ── вспомогательные ────────────────────────────────────────────────────────
 
-/// Сводка целей квеста: «Волков убито 4/5» или текст цели.
-pub(crate) fn goals_summary(q: &ld2_protocol::types::QuestState) -> String {
-    q.goals
-        .iter()
-        .map(|g| match (g.cur, g.need) {
-            (Some(cur), Some(need)) => format!("{} {cur}/{need}", g.text),
-            _ => g.text.clone(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// Название профессии: l10n-ключ по id, фолбэк — сам id.
 fn prof_label(lang: Lang, id: &str) -> String {
     let key = match id {
@@ -2625,14 +2468,7 @@ mod tests {
         let tabs: Vec<&'static str> = SheetTab::all().iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(
             tabs,
-            [
-                "params",
-                "skills",
-                "professions",
-                "reputation",
-                "quests",
-                "guild"
-            ],
+            ["params", "skills", "professions", "reputation", "guild"],
             "порядок вкладок правой колонки"
         );
         for (tab, _) in SheetTab::all() {
@@ -2642,6 +2478,8 @@ mod tests {
         // из сохранённого конфига маппятся на «Параметры».
         assert_eq!(SheetTab::parse("attrs"), SheetTab::Params);
         assert_eq!(SheetTab::parse("statuses"), SheetTab::Params);
+        // M18/F36: вкладка «Квесты» переехала в отдельное окно.
+        assert_eq!(SheetTab::parse("quests"), SheetTab::Params);
         assert_eq!(SheetTab::parse("inventory"), SheetTab::Params);
     }
 }

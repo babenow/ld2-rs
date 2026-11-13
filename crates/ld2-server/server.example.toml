@@ -35,6 +35,9 @@ profession_limit = 2       # → §5 profession_limit
 
 party_max_members = 4   # ФР-14: лимит состава группы
 
+[gameplay.quests]           # M18/F36: квесты → §5 quests.max_active
+max_active = 10             # лимит текущих (взятых) квестов на персонажа
+
 [gameplay.combat]           # M12.5: тик-луп атак (D25)
 attack_interval_s = 1.0     # период атак в бою, с
 base_damage = 6             # базовый урон персонажа (v1)
