@@ -95,6 +95,25 @@ pub struct GameplaySection {
     /// без неё действуют дефолты (обратная совместимость конфигов).
     #[serde(default)]
     pub resource: ResourceSection,
+    /// M18/F36: квесты — лимит текущих (взятых) квестов на персонажа
+    /// → §5 `quests.max_active`; секция опциональна (дефолт 10).
+    #[serde(default)]
+    pub quests: QuestsSection,
+}
+
+/// Лимиты квестов (M18/F36): `max_active` — взятых квестов (фазы
+/// active/turn_in) одновременно; сверх лимита `quest.accept` →
+/// `E_QUEST_LIMIT`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestsSection {
+    pub max_active: u32,
+}
+
+impl Default for QuestsSection {
+    fn default() -> Self {
+        Self { max_active: 10 }
+    }
 }
 
 /// Значение capability-флага §5: булево или строка (`upgrade.rules`).
@@ -435,6 +454,11 @@ impl Config {
 
         if self.gameplay.party_max_members < 2 {
             out.push("gameplay.party_max_members: должен быть ≥ 2".into());
+        }
+
+        // [gameplay.quests] (M18/F36)
+        if self.gameplay.quests.max_active == 0 {
+            out.push("gameplay.quests.max_active: должен быть ≥ 1".into());
         }
 
         // [gameplay.professions] (M12.6)

@@ -6296,6 +6296,22 @@ impl Session {
         let mut outs = Vec::new();
         match op {
             "accept" => {
+                // M18/F36: лимит текущих квестов — из конфига сервера
+                // (§5 `quests.max_active`); взятые = active/turn_in.
+                let current = progress
+                    .iter()
+                    .filter(|(_, state, _)| matches!(state.as_str(), "active" | "turn_in"))
+                    .count();
+                if current
+                    >= usize::try_from(self.state.config.gameplay.quests.max_active)
+                        .unwrap_or(usize::MAX)
+                {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::QuestLimit,
+                        "лимит текущих квестов достигнут",
+                    )];
+                }
                 if row.is_some() {
                     return vec![Self::err(seq, ErrorCode::Internal, "квест уже взят")];
                 }

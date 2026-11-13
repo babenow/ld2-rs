@@ -22,7 +22,8 @@ use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
-use super::sheet::{goals_summary, rarity_label};
+use super::quests::goals_summary;
+use super::sheet::rarity_label;
 use super::social::show_party;
 use super::{act_btn, btn, hex_to_u32, Click, LogTab, Root, INSCRIBE_MS};
 

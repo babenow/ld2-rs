@@ -394,5 +394,11 @@ pub(super) fn t(key: Key) -> &'static str {
         InscribeNoWeapons => "No matching item with a free socket",
         BpCurrencies => "Currencies",
         HkOpenBackpack => "Open backpack",
+        HkOpenQuests => "Quests window",
+        QuestsTabCurrent => "Current",
+        QuestsTabDone => "Completed",
+        QuestsStatusCurrent => "Current: {cur} / {max}",
+        QuestsStatusDone => "Completed: {done}",
+        QuestsPick => "Select a quest on the left",
     }
 }

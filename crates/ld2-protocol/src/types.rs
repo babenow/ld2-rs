@@ -233,6 +233,10 @@ pub struct QuestState {
     pub goals: Vec<QuestGoal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reward_preview: Option<RewardPreview>,
+    /// M18/F36: человекочитаемая строка награды из контента
+    /// (`reward_label`), аддитивно §6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reward_label: Option<String>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }

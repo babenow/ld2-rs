@@ -180,6 +180,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
+  "quests": { "max_active": 10 },             // M18/F36: лимит текущих квестов
   "characters": [
     { "id": "c1", "name": "Ким", "profile": "warrior", "location": "Черный лес",
       "summary": "Навыки: меч 3, аркана 1", "crime": ["murderer"], "online": true }
@@ -252,7 +253,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 // QuestState
 { "id": "q_boars", "title": "Кабаны", "state": "active",     // available|active|turn_in|done
   "goals": [ { "text": "Кабанов убито", "cur": 2, "need": 5 } ],
-  "reward_preview": { "xp": 450, "items": [] } }
+  "reward_preview": { "xp": 450, "items": [] },
+  "reward_label": "450 XP в пул" }                             // M18/F36, опц.
 ```
 
 ---
@@ -297,7 +299,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `craft.learn` | `{profession_id}` | `{profession}` | − | изучить профессию у NPC |
 | `craft.start` | `{recipe_id, qty}` | `{}` (→ `evt/craft/result`) | − | крафт |
 | `quest.list` | `{}` | `{quests[]}` | + | журнал квестов |
-| `quest.accept` / `quest.turn_in` / `quest.abandon` | `{quest_id}` | `{quest}` | − | взаимодействие |
+| `quest.accept` / `quest.turn_in` / `quest.abandon` | `{quest_id}` | `{quest}` | − | взаимодействие; `accept` ограничен `quests.max_active` (§5, M18/F36 → `E_QUEST_LIMIT`) |
 | `crime.log` | `{limit?}` | `{entries[]}` | + | журнал нарушений |
 | `chat.send` | `{channel, text, to?}` | `{}` (→ `evt/chat.message`) | − | сообщение (`system` — только admin/moderator) |
 | `chat.delete` | `{id}` | `{}` (→ `evt/chat.deleted`) | − | удаление сообщения (admin/moderator, M14/F19) |
@@ -408,6 +410,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_NAME_TAKEN` | имя занято/невалидно |
 | `E_BAD_PROFILE` | неизвестный/недоступный `profile` в `char.create` |
 | `E_BAD_GENDER` | неизвестное значение `gender` в `char.create` (M18/F34: `male`\|`female`) |
+| `E_QUEST_LIMIT` | взятых квестов больше `quests.max_active` в `quest.accept` (M18/F36) |
 | `E_NOT_IN_LOCATION` | команда вне контекста локации |
 | `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `char.xp_invest`, M14) |
 | `E_EXIT_BLOCKED` | выход закрыт (завал, требование, правило) |

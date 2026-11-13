@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 
 use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::features::{
-    ChatConfig, CrimeConfig, CrimeKind, InventoryConfig, MagicConfig, ManaConfig, RefreshToken,
-    ServerInfo, SessionConfig, SessionTokens, UpgradeConfig,
+    ChatConfig, CrimeConfig, CrimeKind, InventoryConfig, MagicConfig, ManaConfig, QuestsConfig,
+    RefreshToken, ServerInfo, SessionConfig, SessionTokens, UpgradeConfig,
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, Exit,
@@ -186,6 +186,8 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
                 rune_cost: 10,
             },
         },
+        // M18/F36: лимит текущих квестов (§5).
+        quests: QuestsConfig { max_active: 10 },
         characters: vec![character_summary()],
         extra: Default::default(),
     }
@@ -500,6 +502,7 @@ pub fn quest_wolves() -> QuestState {
             xp: Some(450),
             items: vec![],
         }),
+        reward_label: Some("450 XP в пул".into()),
         extra: Default::default(),
     }
 }
