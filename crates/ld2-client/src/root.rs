@@ -628,7 +628,17 @@ impl Root {
                 .store
                 .item_cooldowns
                 .values()
-                .any(|(until_ms, _)| *until_ms > now_ms);
+                .any(|(until_ms, _)| *until_ms > now_ms)
+            // M18/F42: живой отсчёт таймеров реплик на кулдауне.
+            || self.store.npc_dialog.as_ref().is_some_and(|dialog| {
+                dialog.node.as_ref().is_some_and(|node| {
+                    node.replies.iter().any(|reply| {
+                        reply
+                            .wait_until_ms
+                            .is_some_and(|until| until > now_ms)
+                    })
+                })
+            });
 
         if had_events || cd_active || exit_active || inscribe_active {
             // gpui перерисовывается только по notify (аналог request_repaint).

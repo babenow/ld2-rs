@@ -2,7 +2,6 @@
   "npcs": [
     {
       "id": "npc_elder",
-      "greeting": "Добро пожаловать в деревню, {name}!",
       "root": "l_hello",
       "lines": [
         {

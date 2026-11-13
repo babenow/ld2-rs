@@ -96,15 +96,14 @@ async fn npc_dialog_walks_branches_and_gates_by_quests() {
     let ws = common::start_ws_server(&db_url).await;
     let (mut c, _login, _char) = in_world(&ws).await; // мужчина, l_village
 
-    // Корень: рендер `{name}`, ответы с учётом условий.
+    // Корень: рендер `{name}`; M18/F42 — `greeting` убран (ADR-008).
     let ack = talk(&mut c, "npc_elder").await;
     assert_eq!(ack["result"], "ok", "диалог: {ack}");
-    let greeting = ack["payload"]["dialog"]["greeting"]
-        .as_str()
-        .unwrap_or_default();
+    let dialog = &ack["payload"]["dialog"];
+    assert_eq!(dialog["id"], "npc_elder", "id диалога: {ack}");
     assert!(
-        !greeting.contains('{'),
-        "приветствие отрендерено: {greeting}"
+        dialog.get("greeting").is_none(),
+        "greeting убран из контракта: {ack}"
     );
     assert_eq!(node_id(&ack), Some("l_hello"), "корень ветки: {ack}");
     let text = ack["payload"]["node"]["text"].as_str().unwrap_or_default();
@@ -154,8 +153,9 @@ async fn npc_dialog_walks_branches_and_gates_by_quests() {
         "ответы нового узла: {ack}"
     );
 
-    // Второй разговор сразу: M18/F41 — всегда корень ветки (окно
-    // открывается с начала), просьба в окне `every_s` скрыта (метка).
+    // Второй разговор сразу: M18/F41 — корень ветки (окно открывается
+    // с начала), а ответ на строку в окне `every_s` — неактивный с
+    // таймером (M18/F42, ADR-008).
     let ack = talk(&mut c, "npc_elder").await;
     assert_eq!(
         node_id(&ack),
@@ -164,8 +164,19 @@ async fn npc_dialog_walks_branches_and_gates_by_quests() {
     );
     let replies = reply_ids(&ack);
     assert!(
-        !replies.contains(&"r_work".into()),
-        "второй показ в окне скрыт: {replies:?}"
+        replies.contains(&"r_work".into()),
+        "ответ с кулдауном виден: {replies:?}"
+    );
+    let wait = ack["payload"]["node"]["replies"]
+        .as_array()
+        .expect("реплики")
+        .iter()
+        .find(|reply| reply["id"] == "r_work")
+        .and_then(|reply| reply["wait_s"].as_u64())
+        .expect("wait_s у реплики на кулдауне");
+    assert!(
+        wait > 0 && wait <= 1800,
+        "остаток окна every_s в секундах: {wait}"
     );
 
     // Предметная ветка: зелье → ответ r_pack появляется.
