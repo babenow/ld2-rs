@@ -907,6 +907,33 @@ mod tests {
                     );
                 }
             }
+
+            // M18/F47: раздел stats.param — любой параметр прямо в
+            // статах: число (плоское) или {value, pct}.
+            if let Some(params) = item.stats.get("param").and_then(|v| v.as_object()) {
+                for (id, value) in params {
+                    assert!(
+                        PARAMS.contains(&id.as_str()),
+                        "неизвестный параметр {id} в stats.param у {}",
+                        item.id
+                    );
+                    let value = match value {
+                        serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
+                        serde_json::Value::Object(map) => {
+                            map.get("value").and_then(|v| v.as_i64()).unwrap_or(0)
+                        }
+                        other => panic!(
+                            "некорректное значение {other} в stats.param ({id}) у {}",
+                            item.id
+                        ),
+                    };
+                    assert_ne!(
+                        value, 0,
+                        "value должен быть ≠ 0 в stats.param ({id}) у {}",
+                        item.id
+                    );
+                }
+            }
         }
     }
 }

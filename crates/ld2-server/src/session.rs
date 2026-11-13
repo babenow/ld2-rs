@@ -3096,12 +3096,11 @@ impl Session {
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                 }
             };
-            let mut effective: Vec<serde_json::Value> = def
-                .bonuses
-                .as_ref()
-                .and_then(|v| v.as_array())
+            let mut effective: Vec<serde_json::Value> = content_bonuses(&def)
+                .iter()
                 .cloned()
-                .unwrap_or_default();
+                .map(|bonus| serde_json::to_value(bonus).unwrap_or_default())
+                .collect();
             effective.extend(bonuses.as_array().cloned().unwrap_or_default());
             let mut patch = serde_json::Map::new();
             patch.insert("bonuses".into(), serde_json::Value::Array(effective));
@@ -7191,23 +7190,52 @@ fn summary_of(row: &db::characters::CharacterRow, location_name: String) -> Char
     }
 }
 
-/// M18/F47/ADR-010: эффективный список бонусов — контент определения +
-/// бонусы инстанса (порядок сохраняется, дубликаты id разрешены — это
-/// разные источники). `None` — бонусов нет (поле не сериализуется).
-fn merge_bonuses(def: &serde_json::Value, item: &serde_json::Value) -> Option<Vec<ItemBonus>> {
-    let mut out = Vec::new();
-    for source in [def, item] {
-        let Some(list) = source.as_array() else {
-            continue;
+/// M18/F47: разобрать JSON-массив бонусов (битые записи пропускаются
+/// с предупреждением).
+fn parse_bonuses(value: &serde_json::Value) -> Vec<ItemBonus> {
+    let Some(list) = value.as_array() else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(
+            |item| match serde_json::from_value::<ItemBonus>(item.clone()) {
+                Ok(bonus) => Some(bonus),
+                Err(e) => {
+                    warn!("бонус предмета пропущен ({item}): {e}");
+                    None
+                }
+            },
+        )
+        .collect()
+}
+
+/// M18/F47/ADR-010: контент-бонусы определения — поле `bonuses` **плюс**
+/// раздел `stats.param` («любой параметр прямо в статах»).
+fn content_bonuses(def: &db::items::ItemDefRow) -> Vec<ItemBonus> {
+    let mut out = parse_bonuses(def.bonuses.as_ref().unwrap_or(&serde_json::Value::Null));
+    let Some(params) = def.stats.get("param").and_then(|v| v.as_object()) else {
+        return out;
+    };
+    for (id, value) in params {
+        let (value, pct) = match value {
+            serde_json::Value::Number(n) => (n.as_i64().unwrap_or(0), false),
+            serde_json::Value::Object(map) => (
+                map.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                map.get("pct").and_then(|v| v.as_bool()).unwrap_or(false),
+            ),
+            _ => continue,
         };
-        for value in list {
-            match serde_json::from_value::<ItemBonus>(value.clone()) {
-                Ok(bonus) => out.push(bonus),
-                Err(e) => warn!("бонус предмета пропущен ({value}): {e}"),
-            }
+        if value == 0 {
+            continue;
         }
+        out.push(ItemBonus {
+            kind: "param".into(),
+            id: id.clone(),
+            value,
+            pct,
+        });
     }
-    (!out.is_empty()).then_some(out)
+    out
 }
 
 /// Проводной вид предмета §6: поля инстанса + определение из сида (D26).
@@ -7244,11 +7272,15 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
         },
         qty: Some(i64::from(item.qty)),
         gold_value: Some(i64::from(def.gold_value)),
-        // M18/F47: бонусы = контент определения + свои бонусы инстанса.
-        bonuses: merge_bonuses(
-            def.bonuses.as_ref().unwrap_or(&serde_json::Value::Null),
-            item.bonuses.as_ref().unwrap_or(&serde_json::Value::Null),
-        ),
+        // M18/F47: бонусы = контент определения (bonuses + stats.param)
+        // + свои бонусы инстанса.
+        bonuses: {
+            let mut list = content_bonuses(def);
+            list.extend(parse_bonuses(
+                item.bonuses.as_ref().unwrap_or(&serde_json::Value::Null),
+            ));
+            (!list.is_empty()).then_some(list)
+        },
         // M17/F30g: определение — ключ кулдауна использования.
         def_id: Some(item.def_id.clone()),
         slot: def.slot.clone(),

@@ -289,7 +289,8 @@
       "upgrade": 0,
       "cooldown_s": 3.0,
       "stats": {
-        "dmg": "13..26"
+        "dmg": "13..26",
+        "param": { "crit_chance": 3 }
       },
       "bonuses": [
         { "kind": "attr", "id": "str", "value": 3 },

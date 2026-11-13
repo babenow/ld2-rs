@@ -66,7 +66,8 @@ async fn item_bonuses_snapshot_equip_and_dev_command() {
     let item = give_item(&mut c, "drakkar_axe").await;
     let uid = item["uid"].as_str().expect("uid").to_string();
     let bonuses = item["bonuses"].as_array().expect("bonuses в снапшоте");
-    assert_eq!(bonuses.len(), 4, "контент задал 4 бонуса: {bonuses:?}");
+    // 4 бонуса из `bonuses` + 1 из раздела `stats.param` (M18/F47).
+    assert_eq!(bonuses.len(), 5, "контент + stats.param: {bonuses:?}");
     assert!(
         bonuses
             .iter()
@@ -78,6 +79,12 @@ async fn item_bonuses_snapshot_equip_and_dev_command() {
             .iter()
             .any(|b| b["kind"] == "param" && b["id"] == "accuracy" && b["pct"] == true),
         "Точность +4%: {bonuses:?}"
+    );
+    assert!(
+        bonuses
+            .iter()
+            .any(|b| b["kind"] == "param" && b["id"] == "crit_chance" && b["value"] == 3),
+        "Крит из stats.param: {bonuses:?}"
     );
 
     // 2) Надетый предмет применяет бонусы: атрибут и ранг навыка.
@@ -128,8 +135,8 @@ async fn item_bonuses_snapshot_equip_and_dev_command() {
             .as_array()
             .expect("патч bonuses")
             .len(),
-        5,
-        "пятый бонус в патче: {state}"
+        6,
+        "бонус dev-команды в эффективном списке (5 контентовых + 1): {state}"
     );
     let after = snapshot(&mut c, &char_id).await;
     let accuracy_after = after["payload"]["char"]["derived"]["accuracy"]
