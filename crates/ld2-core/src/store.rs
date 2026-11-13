@@ -317,6 +317,10 @@ pub struct NpcReplyOption {
     /// разборе payload, живой отсчёт таймера в UI (wire не несёт).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_until_ms: Option<i64>,
+    /// M18/F43: действие ответа (`"shop"`) — клиент открывает магазин
+    /// вместо перехода по ветке; `None` — обычный ответ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 /// M18/F37: строка транскрипта окна диалога — лента NPC ↔ персонаж.
@@ -3267,6 +3271,7 @@ mod tests {
                     "id": "l_hello", "text": "Как дела?",
                     "replies": [
                         { "id": "r_work", "text": "Какая работа?", "wait_s": 1740 },
+                        { "id": "r_shop", "text": "Покажи свои товары.", "action": "shop" },
                         { "id": "r_bye", "text": "Пока." }
                     ]
                 },
@@ -3283,11 +3288,18 @@ mod tests {
         assert!(!dialog.transcript[0].me && dialog.transcript[0].text == "Как дела?");
         let node = dialog.node.as_ref().expect("узел");
         assert_eq!(node.id, "l_hello");
-        assert_eq!(node.replies.len(), 2);
+        assert_eq!(node.replies.len(), 3);
         // M18/F42: `wait_s` парсится — реплика на кулдауне неактивна
         // (ADR-008), без поля — активна.
         assert_eq!(node.replies[0].wait_s, Some(1740), "таймер кулдауна");
         assert_eq!(node.replies[1].wait_s, None, "активная реплика");
+        // M18/F43: `action` парсится — реплика откроет магазин.
+        assert_eq!(
+            node.replies[1].action.as_deref(),
+            Some("shop"),
+            "действие реплики"
+        );
+        assert_eq!(node.replies[2].action, None, "у обычной ответа нет");
         // Живой отсчёт: абсолютный дедлайн ≈ now + 1740 с.
         let until = node.replies[0]
             .wait_until_ms
@@ -3298,7 +3310,7 @@ mod tests {
             "дедлайн {until} ≈ {expected}"
         );
         assert_eq!(
-            node.replies[1].wait_until_ms, None,
+            node.replies[2].wait_until_ms, None,
             "у активной реплики дедлайна нет"
         );
         assert_eq!(dialog.quests.len(), 1);

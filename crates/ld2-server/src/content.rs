@@ -561,6 +561,7 @@ mod tests {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
         let content = load(&dir).expect("контент контента загружается");
         let dialogs = crate::dialogs::load(&dir).expect("dialogs.json парсится");
+        let shops = crate::shops::load(&dir).expect("shops.json парсится");
         assert!(!dialogs.is_empty(), "диалоги NPC есть");
 
         // У каждого выдающего квеста NPC — запись диалога.
@@ -651,6 +652,21 @@ mod tests {
                         reply_ids.insert(reply.id.as_str()),
                         "id ответа дублируется у {npc_id}"
                     );
+                    // M18/F43: действие ответа — известное и только там,
+                    // где у NPC оно реально есть (action=shop → магазин).
+                    if let Some(action) = &reply.action {
+                        assert_eq!(
+                            action.as_str(),
+                            "shop",
+                            "неизвестное действие {action} у ответа {} ({npc_id})",
+                            reply.id
+                        );
+                        assert!(
+                            shops.contains_key(npc_id),
+                            "ответ {} с action=shop, но у {npc_id} нет магазина",
+                            reply.id
+                        );
+                    }
                     if let Some(next) = &reply.next {
                         assert!(
                             npc.lines.iter().any(|l| &l.id == next),
