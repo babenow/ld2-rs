@@ -123,8 +123,28 @@ async fn second_offense_blends_partial_sum() {
         "вклад частичного сложения: {delta}"
     );
     assert_eq!(delta, 3557, "0.5·7200·(1−7200/604800) ≈ 3557");
+    // Живой остаток: total_term = expires_at − now (§10) — при wall-clock
+    // дрейфе между нарушениями T_cur = 7200 − elapsed, а не константа 7200
+    // (в CI elapsed ≥ 1 с → 7199 + delta). Считаем T_cur из `at` журнала —
+    // проверка детерминирована, формула из спецификации не размывается.
+    let at_first = first["payload"]["log_entry"]["at"]
+        .as_i64()
+        .expect("at первой записи");
+    let at_second = second["payload"]["log_entry"]["at"]
+        .as_i64()
+        .expect("at второй записи");
+    let t_cur = at_first + 7200 - at_second;
+    assert!(
+        (0..=7200).contains(&t_cur),
+        "остаток первого срока в пределах [0; 7200]: {t_cur} \
+         (at: {at_first} → {at_second})"
+    );
     let total = second["payload"]["log_entry"]["total_s"].as_i64().unwrap();
-    assert_eq!(total, 7200 + delta, "T_new = T + delta");
+    assert_eq!(
+        total,
+        t_cur + delta,
+        "T_new = T + delta (T живой = {t_cur})"
+    );
 
     // Журнал: две записи.
     let seq = c.send("cmd/crime.log", json!({ "limit": 10 })).await;
