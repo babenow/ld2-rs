@@ -400,5 +400,6 @@ pub(super) fn t(key: Key) -> &'static str {
         QuestsStatusCurrent => "Текущие: {cur} / {max}",
         QuestsStatusDone => "Выполнено: {done}",
         QuestsPick => "Выберите квест слева",
+        DialogYou => "Вы",
     }
 }

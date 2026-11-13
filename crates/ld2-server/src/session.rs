@@ -9,9 +9,10 @@ use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
     ChatDelete, ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
     GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip,
-    ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcTalk,
-    PartyAccept, PartyInvite, PartyKick, SkillUse, SocketExtract, SocketInsert, StateResync,
-    TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
+    ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcReply,
+    NpcTalk, PartyAccept, PartyInvite, PartyKick, SkillUse, SocketExtract, SocketInsert,
+    StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview,
+    UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -159,6 +160,8 @@ impl Session {
             "cmd/entity.info" => self.entity_info(env, seq).await,
             // M18/F35: диалог NPC (поговорить/квесты)
             "cmd/npc.talk" => self.npc_talk(env, seq).await,
+            // M18/F37: ответ персонажа — переход по ветке
+            "cmd/npc.reply" => self.npc_reply(env, seq).await,
             "cmd/state.resync" => self.state_resync(env, seq).await,
             // бой (ФР-05, M12.5)
             "cmd/combat.attack" => self.combat_attack(env, seq).await,
@@ -6031,13 +6034,138 @@ impl Session {
         vec![Self::ack_payload(seq, &serde_json::json!({}))]
     }
 
-    // ── диалоги NPC (M18/F35) ─────────────────────────────────────────────────
+    // ── диалоги NPC (M18/F35; ветки/реплики F37) ──────────────────────────
 
-    /// `cmd/npc.talk` (M18/F35): NPC текущей локации → приветствие и строки
-    /// с условиями (пол/уровень/атрибут/навык/профессия/предмет, тайминг
-    /// `every_s` — кулдаун в БД, шаблон `{name}`) + доступные квесты этого
-    /// NPC (фаза available). ack `{dialog: {id, name, greeting, lines[]},
-    /// quests[]}`; строки несут `quest` (кнопка «Принять» на клиенте).
+    /// NPC из сида текущей локации (паритет с `entity.info`);
+    /// не-NPC/несущность → `E_TARGET_GONE`.
+    async fn require_npc(&self, seq: u32, entity_id: &str) -> Result<Entity, Out> {
+        let pool = &self.state.pool;
+        let current = self.location_id.clone().unwrap_or_default();
+        let entities = match db::locations::get(pool, &current).await {
+            Ok(Some(row)) => {
+                serde_json::from_value::<Vec<Entity>>(row.entities.clone()).unwrap_or_default()
+            }
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                warn!("npc (чтение {current}): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        };
+        let Some(entity) = entities.into_iter().find(|e| e.id == entity_id) else {
+            return Err(Self::err(seq, ErrorCode::TargetGone, "сущность не найдена"));
+        };
+        if entity.kind != ld2_protocol::types::EntityKind::Npc {
+            return Err(Self::err(seq, ErrorCode::TargetGone, "это не NPC"));
+        }
+        Ok(entity)
+    }
+
+    /// Контекст персонажа для условий диалога (имя/пол/уровень/attrs/
+    /// навыки/профессии/рюкзак — M18/F35).
+    async fn dialog_context(
+        &self,
+        char_id: &str,
+        seq: u32,
+    ) -> Result<crate::dialogs::DialogContext, Out> {
+        let pool = &self.state.pool;
+        let row = match db::characters::get(pool, char_id).await {
+            Ok(Some(row)) => row,
+            Ok(None) => return Err(Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")),
+            Err(e) => {
+                warn!("npc (лист): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        };
+        let (level, _, _) =
+            crate::systems::level_for_total(row.total_xp, &self.state.config.gameplay.level);
+        let attrs: std::collections::BTreeMap<String, i64> =
+            serde_json::from_value(row.attrs.clone()).unwrap_or_default();
+        let mut skills = std::collections::HashMap::new();
+        let mut professions = std::collections::HashMap::new();
+        let mut items = std::collections::HashMap::new();
+        match db::skills::learned(pool, char_id).await {
+            Ok(rows) => {
+                for s in rows {
+                    skills.insert(s.skill_id, i64::from(s.rank));
+                }
+            }
+            Err(e) => {
+                warn!("npc (навыки): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        }
+        match db::professions::learned(pool, char_id).await {
+            Ok(rows) => {
+                for p in rows {
+                    professions.insert(p.0, i64::from(p.2));
+                }
+            }
+            Err(e) => {
+                warn!("npc (профессии): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        }
+        match db::items::inventory(pool, char_id).await {
+            Ok(rows) => {
+                for it in rows {
+                    *items.entry(it.def_id).or_insert(0) += i64::from(it.qty);
+                }
+            }
+            Err(e) => {
+                warn!("npc (рюкзак): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        }
+        Ok(crate::dialogs::DialogContext {
+            name: row.name,
+            gender: row.gender,
+            level: i64::from(level),
+            attrs,
+            skills,
+            professions,
+            items,
+        })
+    }
+
+    /// Доступные квесты NPC (giver == id, фаза available): id-ы для
+    /// гейта строк + wire-список для ack.
+    async fn npc_quests(
+        &self,
+        char_id: &str,
+        npc_id: &str,
+        seq: u32,
+    ) -> Result<(std::collections::HashSet<String>, Vec<serde_json::Value>), Out> {
+        let pool = &self.state.pool;
+        let (defs, progress) = match (
+            db::quests::defs(pool).await,
+            db::quests::progress(pool, char_id).await,
+        ) {
+            (Ok(d), Ok(p)) => (d, p),
+            (Err(e), _) | (_, Err(e)) => {
+                warn!("npc (квесты): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        };
+        let mut quests = Vec::new();
+        let mut available = std::collections::HashSet::new();
+        for def in &defs {
+            if def.2.as_deref() != Some(npc_id) {
+                continue;
+            }
+            let progress_row = progress.iter().find(|(id, _, _)| id == &def.0);
+            let state = db::quests::build_state(def, progress_row);
+            if state.state == ld2_protocol::types::QuestPhase::Available {
+                available.insert(state.id.clone());
+                quests.push(serde_json::to_value(&state).unwrap_or_default());
+            }
+        }
+        Ok((available, quests))
+    }
+
+    /// `cmd/npc.talk` (M18/F35/F37): NPC текущей локации → приветствие,
+    /// **корень ветки** (узел с видимыми ответами) и доступные квесты.
+    /// ack `{dialog: {id, name, greeting}, node: {...}|null, quests[]}`;
+    /// `node: null` — записи диалога нет (квесты отдаются).
     async fn npc_talk(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
@@ -6049,105 +6177,19 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
+        };
+        let context = match self.dialog_context(&char_id, seq).await {
+            Ok(context) => context,
+            Err(out) => return vec![out],
+        };
+        let (available, quests) = match self.npc_quests(&char_id, &entity.id, seq).await {
+            Ok(pair) => pair,
+            Err(out) => return vec![out],
+        };
         let pool = &self.state.pool;
-
-        // NPC из сида текущей локации (паритет с entity.info).
-        let current = self.location_id.clone().unwrap_or_default();
-        let entities = match db::locations::get(pool, &current).await {
-            Ok(Some(row)) => {
-                serde_json::from_value::<Vec<Entity>>(row.entities.clone()).unwrap_or_default()
-            }
-            Ok(None) => Vec::new(),
-            Err(e) => {
-                warn!("npc.talk (чтение {current}): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        };
-        let Some(entity) = entities.into_iter().find(|e| e.id == cmd.entity_id) else {
-            return vec![Self::err(seq, ErrorCode::TargetGone, "сущность не найдена")];
-        };
-        if entity.kind != ld2_protocol::types::EntityKind::Npc {
-            return vec![Self::err(seq, ErrorCode::TargetGone, "это не NPC")];
-        }
-
-        // Контекст персонажа для условий.
-        let row = match db::characters::get(pool, &char_id).await {
-            Ok(Some(row)) => row,
-            Ok(None) => {
-                return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
-            }
-            Err(e) => {
-                warn!("npc.talk (лист): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        };
-        let (level, _, _) =
-            crate::systems::level_for_total(row.total_xp, &self.state.config.gameplay.level);
-        let attrs: std::collections::BTreeMap<String, i64> =
-            serde_json::from_value(row.attrs.clone()).unwrap_or_default();
-        let mut skills = std::collections::HashMap::new();
-        let mut professions = std::collections::HashMap::new();
-        let mut items = std::collections::HashMap::new();
-        match db::skills::learned(pool, &char_id).await {
-            Ok(rows) => {
-                for s in rows {
-                    skills.insert(s.skill_id, i64::from(s.rank));
-                }
-            }
-            Err(e) => {
-                warn!("npc.talk (навыки): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }
-        match db::professions::learned(pool, &char_id).await {
-            Ok(rows) => {
-                for p in rows {
-                    professions.insert(p.0, i64::from(p.2));
-                }
-            }
-            Err(e) => {
-                warn!("npc.talk (профессии): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }
-        match db::items::inventory(pool, &char_id).await {
-            Ok(rows) => {
-                for it in rows {
-                    *items.entry(it.def_id).or_insert(0) += i64::from(it.qty);
-                }
-            }
-            Err(e) => {
-                warn!("npc.talk (рюкзак): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }
-
-        // Доступные квесты NPC (giver == id, фаза available).
-        let (defs, progress) = match (
-            db::quests::defs(pool).await,
-            db::quests::progress(pool, &char_id).await,
-        ) {
-            (Ok(d), Ok(p)) => (d, p),
-            (Err(e), _) | (_, Err(e)) => {
-                warn!("npc.talk (квесты): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        };
-        let mut quests: Vec<serde_json::Value> = Vec::new();
-        let mut available = std::collections::HashSet::new();
-        for def in &defs {
-            if def.2.as_deref() != Some(entity.id.as_str()) {
-                continue;
-            }
-            let progress_row = progress.iter().find(|(id, _, _)| id == &def.0);
-            let state = db::quests::build_state(def, progress_row);
-            if state.state == ld2_protocol::types::QuestPhase::Available {
-                available.insert(state.id.clone());
-                quests.push(serde_json::to_value(&state).unwrap_or_default());
-            }
-        }
-
-        // Строки: чистая функция видимости + отметки показа `every_s`.
         let shown = match db::dialogs::shown_lines(pool, &char_id, &entity.id).await {
             Ok(map) => map,
             Err(e) => {
@@ -6155,42 +6197,35 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
-        let ctx = crate::dialogs::LineCtx {
-            name: &row.name,
-            gender: &row.gender,
-            level: i64::from(level),
-            attrs: &attrs,
-            skills: &skills,
-            professions: &professions,
-            items: &items,
-            available_quests: &available,
-        };
         let now = crate::time::now_epoch();
-        let (greeting, visible) = match self.state.dialogs.get(&entity.id) {
-            Some(def) => (
-                crate::dialogs::render(&def.greeting, &row.name),
-                crate::dialogs::visible_lines(def, &ctx, now, &shown),
-            ),
-            // Нет записи диалога — пустые реплики, квесты отдаются.
-            None => (String::new(), Vec::new()),
+        let ctx = context.line_ctx(&available);
+        let (greeting, node) = match self.state.dialogs.get(&entity.id) {
+            Some(def) => {
+                let root = def
+                    .root
+                    .clone()
+                    .or_else(|| def.lines.first().map(|l| l.id.clone()))
+                    .unwrap_or_default();
+                let greeting = crate::dialogs::render(&def.greeting, &context.name);
+                (
+                    greeting,
+                    crate::dialogs::enter_node(def, &root, &ctx, now, &shown),
+                )
+            }
+            None => (String::new(), None),
         };
-        for line in visible.iter().filter(|l| l.mark_shown) {
-            if let Err(e) = db::dialogs::mark_shown(pool, &char_id, &entity.id, &line.id, now).await
-            {
-                // Показ уже уходит клиенту — кулдаун догонит в следующий раз.
-                warn!("npc.talk (отметка показа {}): {e}", line.id);
+        if let Some((node, mark)) = &node {
+            if *mark {
+                if let Err(e) =
+                    db::dialogs::mark_shown(pool, &char_id, &entity.id, &node.id, now).await
+                {
+                    // Показ уже уходит клиенту — кулдаун догонит в следующий раз.
+                    warn!("npc.talk (отметка показа {}): {e}", node.id);
+                }
             }
         }
-        let lines: Vec<serde_json::Value> = visible
-            .iter()
-            .map(|line| {
-                let mut value = serde_json::json!({ "id": line.id, "text": line.text });
-                if let Some(quest) = &line.quest {
-                    value["quest"] = serde_json::json!(quest);
-                }
-                value
-            })
-            .collect();
+        let node =
+            serde_json::to_value(node.map(|(node, _)| node)).unwrap_or(serde_json::Value::Null);
         vec![Self::ack_payload(
             seq,
             &serde_json::json!({
@@ -6198,10 +6233,90 @@ impl Session {
                     "id": entity.id,
                     "name": entity.name,
                     "greeting": greeting,
-                    "lines": lines,
                 },
+                "node": node,
                 "quests": quests,
             }),
+        )]
+    }
+
+    /// `cmd/npc.reply` (M18/F37): ответ персонажа — переход по связи
+    /// `node_id` → `reply_id`; у ответа без `next` диалог заканчивается
+    /// (`{node: null}`). ack `{node: {...}|null, quests[]}` — список
+    /// квестов освежается (приняли/сдали между открытиями).
+    async fn npc_reply(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<NpcReply>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
+        };
+        let Some(def) = self.state.dialogs.get(&entity.id) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "диалога нет")];
+        };
+        let context = match self.dialog_context(&char_id, seq).await {
+            Ok(context) => context,
+            Err(out) => return vec![out],
+        };
+        let (available, quests) = match self.npc_quests(&char_id, &entity.id, seq).await {
+            Ok(pair) => pair,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let shown = match db::dialogs::shown_lines(pool, &char_id, &entity.id).await {
+            Ok(map) => map,
+            Err(e) => {
+                warn!("npc.reply (кулдауны строк): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let now = crate::time::now_epoch();
+        let ctx = context.line_ctx(&available);
+
+        // Валидация связи (stateless): строка → ответ → цель.
+        let Some(node_line) = def.lines.iter().find(|line| line.id == cmd.node_id) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет такой строки")];
+        };
+        let Some(reply) = node_line
+            .replies
+            .iter()
+            .find(|reply| reply.id == cmd.reply_id)
+        else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет такой реплики")];
+        };
+        if !crate::dialogs::reply_allowed(reply, &ctx) {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "реплика недоступна")];
+        }
+        let node = match &reply.next {
+            // Конец диалога — без следующего узла.
+            None => serde_json::Value::Null,
+            Some(next_id) => {
+                let Some((view, mark)) =
+                    crate::dialogs::enter_node(def, next_id, &ctx, now, &shown)
+                else {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "строка недоступна")];
+                };
+                if mark {
+                    if let Err(e) =
+                        db::dialogs::mark_shown(pool, &char_id, &entity.id, next_id, now).await
+                    {
+                        warn!("npc.reply (отметка показа {next_id}): {e}");
+                    }
+                }
+                serde_json::to_value(&view).unwrap_or_default()
+            }
+        };
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "node": node, "quests": quests }),
         )]
     }
 

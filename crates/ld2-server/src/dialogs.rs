@@ -21,13 +21,16 @@ pub struct DialogsRoot {
     pub npcs: Vec<DialogNpc>,
 }
 
-/// Диалог одного NPC: приветствие и строки с условиями.
+/// Диалог одного NPC: приветствие, корень ветки и строки с условиями.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct DialogNpc {
     pub id: String,
     /// Шаблон приветствия (`{name}` → имя персонажа).
     #[serde(default)]
     pub greeting: String,
+    /// M18/F37: корень ветки диалога; без поля — первая строка списка.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
     #[serde(default)]
     pub lines: Vec<DialogLine>,
 }
@@ -47,6 +50,23 @@ pub struct DialogLine {
     /// Тайминг-реплика: раз в N секунд на персонажа (кулдаун в БД).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub every_s: Option<u64>,
+    /// M18/F37: реплики персонажа — ответы, связывающие строки в
+    /// ветку диалога (`next` — id целевой строки, `None` — конец).
+    #[serde(default)]
+    pub replies: Vec<DialogReply>,
+}
+
+/// M18/F37: реплика персонажа (ответ) — переход на строку `next`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DialogReply {
+    pub id: String,
+    pub text: String,
+    /// Целевая строка; `None` — диалог заканчивается.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    /// Условия видимости ответа (AND) — как у строк.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<DialogWhen>,
 }
 
 /// Условия видимости строки (AND; незаданные ключи не проверяются).
@@ -99,6 +119,37 @@ fn default_qty() -> i64 {
     1
 }
 
+/// M18/F37: контекст персонажа для диалогов (owned — собирается из
+/// БД один раз и живёт в обеих командах диалога).
+pub struct DialogContext {
+    pub name: String,
+    pub gender: String,
+    pub level: i64,
+    pub attrs: BTreeMap<String, i64>,
+    /// Навыки: id → ранг.
+    pub skills: HashMap<String, i64>,
+    /// Профессии: id → ранг.
+    pub professions: HashMap<String, i64>,
+    /// Рюкзак: def_id → суммарное количество.
+    pub items: HashMap<String, i64>,
+}
+
+impl DialogContext {
+    /// Borrowed-контекст для чистых функций видимости.
+    pub fn line_ctx<'a>(&'a self, available: &'a HashSet<String>) -> LineCtx<'a> {
+        LineCtx {
+            name: &self.name,
+            gender: &self.gender,
+            level: self.level,
+            attrs: &self.attrs,
+            skills: &self.skills,
+            professions: &self.professions,
+            items: &self.items,
+            available_quests: available,
+        }
+    }
+}
+
 /// Контекст персонажа для условий (M18/F35).
 pub struct LineCtx<'a> {
     pub name: &'a str,
@@ -130,9 +181,38 @@ pub fn render(text: &str, name: &str) -> String {
     text.replace("{name}", name)
 }
 
-/// Чистая функция видимости строк: гейт `quest` → условия `when` →
-/// окно `every_s` (нет показа либо показан не позже окна → скрыта;
-/// окно истекло → показываем и метим заново).
+/// Чистая функция видимости одной строки: `None` — скрыта (гейт
+/// `quest` → условия `when` → окно `every_s`), `Some(true)` — показать
+/// и **отметить показ** (открытие окна `every_s` — только при входе в
+/// узел; пик видимости ответов отметку не ставит).
+pub fn line_visible(
+    line: &DialogLine,
+    ctx: &LineCtx,
+    now: i64,
+    shown: &HashMap<String, i64>,
+) -> Option<bool> {
+    if let Some(quest) = &line.quest {
+        if !ctx.available_quests.contains(quest) {
+            return None;
+        }
+    }
+    if let Some(when) = &line.when {
+        if !when_ok(when, ctx) {
+            return None;
+        }
+    }
+    if let Some(every) = line.every_s {
+        match shown.get(&line.id) {
+            Some(at) if now.saturating_sub(*at) < every as i64 => return None,
+            // Окно истекло либо показа не было — показ и новая метка.
+            _ => return Some(true),
+        }
+    }
+    Some(false)
+}
+
+/// Чистая функция видимости строк (юнит-тесты покрывают каждое условие):
+/// условия AND + `every_s` + гейт `quest`. `now`/`shown` — epoch-секунды.
 pub fn visible_lines(
     npc: &DialogNpc,
     ctx: &LineCtx,
@@ -141,23 +221,9 @@ pub fn visible_lines(
 ) -> Vec<VisibleLine> {
     let mut out = Vec::new();
     for line in &npc.lines {
-        if let Some(quest) = &line.quest {
-            if !ctx.available_quests.contains(quest) {
-                continue;
-            }
-        }
-        if let Some(when) = &line.when {
-            if !when_ok(when, ctx) {
-                continue;
-            }
-        }
-        let mut mark = false;
-        if let Some(every) = line.every_s {
-            match shown.get(&line.id) {
-                Some(at) if now.saturating_sub(*at) < every as i64 => continue,
-                Some(_) | None => mark = true,
-            }
-        }
+        let Some(mark) = line_visible(line, ctx, now, shown) else {
+            continue;
+        };
         out.push(VisibleLine {
             id: line.id.clone(),
             text: render(&line.text, ctx.name),
@@ -166,6 +232,88 @@ pub fn visible_lines(
         });
     }
     out
+}
+
+/// M18/F37: разрешён ли ответ в текущем контексте (условия ответа).
+pub fn reply_allowed(reply: &DialogReply, ctx: &LineCtx) -> bool {
+    reply.when.as_ref().is_none_or(|when| when_ok(when, ctx))
+}
+
+/// M18/F37: видимый узел диалога — строка + её видимые ответы (тексты
+/// уже отрендерены сервером).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NodeView {
+    pub id: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quest: Option<String>,
+    pub replies: Vec<ReplyView>,
+}
+
+/// M18/F37: ответ, который видит персонаж (id — для `cmd/npc.reply`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReplyView {
+    pub id: String,
+    pub text: String,
+}
+
+/// M18/F37: вход в узел (корень из `npc.talk` либо переход по ответу):
+/// `None` — строка скрыта; `Some((узел, mark))` — показать, `mark` —
+/// отметить открытие окна `every_s` в БД (вызывающий пишет).
+pub fn enter_node(
+    npc: &DialogNpc,
+    line_id: &str,
+    ctx: &LineCtx,
+    now: i64,
+    shown: &HashMap<String, i64>,
+) -> Option<(NodeView, bool)> {
+    let line = npc.lines.iter().find(|l| l.id == line_id)?;
+    let mark = line_visible(line, ctx, now, shown)?;
+    let replies = visible_replies(line, npc, ctx, now, shown)
+        .into_iter()
+        .map(|reply| ReplyView {
+            id: reply.id.clone(),
+            text: render(&reply.text, ctx.name),
+        })
+        .collect();
+    Some((
+        NodeView {
+            id: line.id.clone(),
+            text: render(&line.text, ctx.name),
+            quest: line.quest.clone(),
+            replies,
+        },
+        mark,
+    ))
+}
+
+/// Видимые ответы строки — условия ответа (AND) **и**
+/// видимость целевой строки (пик, без отметки `every_s`: в узел ещё не
+/// входили — метка ставится только при входе). Ответ без `next` (конец
+/// диалога) разрешён всегда.
+pub fn visible_replies<'a>(
+    line: &'a DialogLine,
+    npc: &DialogNpc,
+    ctx: &LineCtx,
+    now: i64,
+    shown: &HashMap<String, i64>,
+) -> Vec<&'a DialogReply> {
+    line.replies
+        .iter()
+        .filter(|reply| {
+            if !reply_allowed(reply, ctx) {
+                return false;
+            }
+            match &reply.next {
+                None => true,
+                Some(next_id) => npc
+                    .lines
+                    .iter()
+                    .find(|target| &target.id == next_id)
+                    .is_some_and(|target| line_visible(target, ctx, now, shown).is_some()),
+            }
+        })
+        .collect()
 }
 
 fn when_ok(when: &DialogWhen, ctx: &LineCtx) -> bool {
@@ -391,6 +539,83 @@ mod tests {
         // Строка без every_s меток не ставит.
         let plain = lines.iter().find(|l| l.id == "l_plain").expect("plain");
         assert!(!plain.mark_shown, "обычная строка не метится");
+    }
+
+    /// M18/F37: узел + ответы: фильтр условий ответа, гейт цели
+    /// (скрытая строка прячет ветку), конец ветки без `next`, пик не
+    /// метит `every_s` — метка только при входе (`mark`).
+    #[test]
+    fn node_and_replies_walk_the_tree() {
+        let npc: DialogNpc = serde_json::from_value(serde_json::json!({
+            "id": "npc_elder",
+            "greeting": "Привет, {name}!",
+            "root": "l_hello",
+            "lines": [
+                { "id": "l_hello", "text": "Как дела, {name}?", "replies": [
+                    { "id": "r_work", "text": "Какая работа?", "next": "l_errand" },
+                    { "id": "r_pack", "text": "Про зелье", "next": "l_pack" },
+                    { "id": "r_f", "text": "Опасно?", "next": "l_female" },
+                    { "id": "r_bye", "text": "Пока." }
+                ] },
+                { "id": "l_errand", "text": "Отнеси весть!", "every_s": 1800,
+                  "replies": [ { "id": "r_back", "text": "Хорошо.", "next": null } ] },
+                { "id": "l_pack", "text": "Зелье с тобой.",
+                  "when": { "item": { "def_id": "potion_heal" } } },
+                { "id": "l_female", "text": "Береги себя.",
+                  "when": { "gender": "female" } }
+            ]
+        }))
+        .expect("диалог парсится");
+
+        let empty = HashSet::new();
+        let items = HashMap::new();
+        let (attrs, skills, profs) = (BTreeMap::new(), HashMap::new(), HashMap::new());
+        let ctx = mk_ctx("Ким", "male", &attrs, &skills, &profs, &items, &empty);
+        let now = 1_000_000;
+        let shown = HashMap::new();
+
+        // Корень: целевые ветки скрыты по условиям (нет зелья/пол),
+        // конец ветки (r_bye) и рабочая ветка — видны.
+        let (node, mark) = enter_node(&npc, "l_hello", &ctx, now, &shown).expect("корень виден");
+        assert_eq!(node.id, "l_hello");
+        assert_eq!(node.text, "Как дела, Ким?", "шаблон отрендерен");
+        assert!(!mark, "корень без every_s не метится");
+        let ids: Vec<&str> = node.replies.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["r_work", "r_bye"], "видимые ответы: {ids:?}");
+
+        // Женщина с зельем открывает обе условные ветки.
+        let items = HashMap::from([("potion_heal".to_string(), 1i64)]);
+        let ctx = mk_ctx("Мира", "female", &attrs, &skills, &profs, &items, &empty);
+        let (node, _) = enter_node(&npc, "l_hello", &ctx, now, &shown).expect("корень виден");
+        let ids: Vec<&str> = node.replies.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["r_work", "r_pack", "r_f", "r_bye"], "{ids:?}");
+
+        // Вход в тайминг-узел метит показ; пик (visible_replies из
+        // l_hello) метки не требует и не меняет shown.
+        let ctx = mk_ctx("Ким", "male", &attrs, &skills, &profs, &items, &empty);
+        let (node, mark) = enter_node(&npc, "l_errand", &ctx, now, &shown).expect("узел виден");
+        assert!(mark, "первый показ every_s метится");
+        assert_eq!(node.replies[0].id, "r_back");
+
+        // Повторный вход в пределах окна → узел скрыт.
+        let mut shown = HashMap::new();
+        shown.insert("l_errand".to_string(), now - 100);
+        assert!(
+            enter_node(&npc, "l_errand", &ctx, now, &shown).is_none(),
+            "в окне скрыт"
+        );
+
+        // Прямой вызов visible_replies (корень) — цель l_errand скрыта
+        // (метка в shown) → ветка r_work исчезла, конец r_bye остался.
+        let root = npc.lines.iter().find(|l| l.id == "l_hello").unwrap();
+        let ids: Vec<&str> = visible_replies(root, &npc, &ctx, now, &shown)
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect();
+        assert_eq!(ids, ["r_pack", "r_bye"], "r_pack — есть зелье: {ids:?}");
+
+        // Несуществующий узел → None.
+        assert!(enter_node(&npc, "l_nope", &ctx, now, &shown).is_none());
     }
 
     /// M18/F35: строка с `quest` несёт его id (кнопка на клиенте).

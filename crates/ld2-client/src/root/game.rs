@@ -1102,15 +1102,51 @@ impl Root {
     ) -> Div {
         let lang = self.lang;
         let mut col = div().flex().flex_col().gap_2();
-        if !dialog.greeting.is_empty() {
+        // M18/F37: транскрипт — лента «NPC ↔ персонаж» (приветствие,
+        // узлы и ответы копятся в порядке разговора).
+        for line in &dialog.transcript {
+            let text = if line.me {
+                format!("{}: {}", t(lang, Key::DialogYou), line.text)
+            } else {
+                line.text.clone()
+            };
             col = col.child(
                 div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(dialog.greeting.clone()),
+                    .text_size(px(13.0))
+                    .font_weight(if line.me {
+                        gpui::FontWeight::BOLD
+                    } else {
+                        gpui::FontWeight::NORMAL
+                    })
+                    .text_color(rgb(if line.me { pal.accent } else { pal.text }))
+                    .child(text),
             );
         }
-        for line in &dialog.lines {
-            col = col.child(div().child(line.text.clone()));
+        // Ответы текущего узла — шаги ветки (моя реплика в ленту сразу,
+        // сервер отвечает новым узлом; без ответов диалог закончен).
+        if let Some(node) = &dialog.node {
+            for reply in &node.replies {
+                let label = format!("— {}", reply.text);
+                let entity_id = dialog.id.clone();
+                let node_id = node.id.clone();
+                let reply_id = reply.id.clone();
+                let text = reply.text.clone();
+                col = col.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
+                    if let Some(view) = this.store.npc_dialog.as_mut() {
+                        view.transcript.push(ld2_core::store::NpcTranscriptLine {
+                            me: true,
+                            text: text.clone(),
+                        });
+                    }
+                    let cmd = ld2_protocol::cmd::NpcReply {
+                        entity_id: entity_id.clone(),
+                        node_id: node_id.clone(),
+                        reply_id: reply_id.clone(),
+                    };
+                    this.send_cmd(&cmd, Act::NpcReply);
+                    let _ = cx;
+                }));
+            }
         }
         if !dialog.quests.is_empty() {
             col = col.child(

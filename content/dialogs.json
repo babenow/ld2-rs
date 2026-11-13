@@ -3,28 +3,51 @@
     {
       "id": "npc_elder",
       "greeting": "Добро пожаловать в деревню, {name}!",
+      "root": "l_hello",
       "lines": [
-        { "id": "l_hello", "text": "Как дела, {name}?" },
         {
-          "id": "l_pack",
-          "text": "Ты носишь целебное зелье — держи его наготове.",
-          "when": { "item": { "def_id": "potion_heal", "qty": 1 } }
-        },
-        {
-          "id": "l_female",
-          "text": "Девушкам в лесу стоит быть осторожнее, {name}.",
-          "when": { "gender": "female" }
+          "id": "l_hello",
+          "text": "Как дела, {name}?",
+          "replies": [
+            { "id": "r_work", "text": "Какая работа есть?", "next": "l_errand" },
+            { "id": "r_pack", "text": "Ты знаешь про целебные зелья?", "next": "l_pack" },
+            { "id": "r_care", "text": "Мне опасно выходить в лес?", "next": "l_female" },
+            { "id": "r_glory", "text": "Я уже настоящий воин?", "next": "l_veteran" },
+            { "id": "r_bye", "text": "Пока.", "next": null }
+          ]
         },
         {
           "id": "l_errand",
           "text": "Отнеси весть в Чёрный лес — волки одолели путников!",
+          "quest": "q_wolf_hunt",
           "every_s": 1800,
-          "quest": "q_wolf_hunt"
+          "replies": [
+            { "id": "r_errand_bye", "text": "Хорошо, позже зайду.", "next": null }
+          ]
+        },
+        {
+          "id": "l_pack",
+          "text": "Ты носишь целебное зелье — держи его наготове.",
+          "when": { "item": { "def_id": "potion_heal", "qty": 1 } },
+          "replies": [
+            { "id": "r_pack_bye", "text": "Понятно.", "next": null }
+          ]
+        },
+        {
+          "id": "l_female",
+          "text": "Девушкам в лесу стоит быть осторожнее, {name}.",
+          "when": { "gender": "female" },
+          "replies": [
+            { "id": "r_female_bye", "text": "Спасибо за совет.", "next": null }
+          ]
         },
         {
           "id": "l_veteran",
           "text": "Ты стал настоящим воином, {name}!",
-          "when": { "level": { "min": 5 } }
+          "when": { "level": { "min": 5 } },
+          "replies": [
+            { "id": "r_vet_bye", "text": "Спасибо!", "next": null }
+          ]
         }
       ]
     }

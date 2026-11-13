@@ -624,6 +624,80 @@ mod tests {
                     }
                 }
             }
+
+            // M18/F37: дерево диалога — корень существует, ответы ведут
+            // на существующие строки, id ответов уникальны (в пределах
+            // NPC), ветки ацикличны (DFS от корня).
+            let root = npc
+                .root
+                .as_deref()
+                .or_else(|| npc.lines.first().map(|l| l.id.as_str()))
+                .expect("в диалоге есть строки");
+            assert!(
+                npc.lines.iter().any(|l| l.id == root),
+                "корень {root} отсутствует у {npc_id}"
+            );
+            let mut reply_ids = HashSet::new();
+            let mut edges: std::collections::HashMap<&str, Vec<&str>> =
+                std::collections::HashMap::new();
+            for line in &npc.lines {
+                for reply in &line.replies {
+                    assert!(
+                        reply_ids.insert(reply.id.as_str()),
+                        "id ответа дублируется у {npc_id}"
+                    );
+                    if let Some(next) = &reply.next {
+                        assert!(
+                            npc.lines.iter().any(|l| &l.id == next),
+                            "ответ {} у {npc_id} ведёт на несуществующую {next}",
+                            reply.id
+                        );
+                        edges.entry(line.id.as_str()).or_default().push(next);
+                    }
+                    if let Some(when) = &reply.when {
+                        if let Some(gender) = &when.gender {
+                            assert!(
+                                matches!(gender.as_str(), "male" | "female"),
+                                "неизвестный пол у ответа {}",
+                                reply.id
+                            );
+                        }
+                        if let Some(item) = &when.item {
+                            assert!(
+                                item_ids.contains(item.def_id.as_str()),
+                                "неизвестный item у ответа {}",
+                                reply.id
+                            );
+                        }
+                    }
+                }
+            }
+            // Ацикличность: тройной обход (граф маленький).
+            fn has_cycle<'a>(
+                node: &'a str,
+                edges: &std::collections::HashMap<&'a str, Vec<&'a str>>,
+                visiting: &mut std::collections::HashSet<&'a str>,
+                done: &mut std::collections::HashSet<&'a str>,
+            ) -> bool {
+                if done.contains(node) {
+                    return false;
+                }
+                if !visiting.insert(node) {
+                    return true;
+                }
+                let cyclic = edges
+                    .get(node)
+                    .is_some_and(|nexts| nexts.iter().any(|n| has_cycle(n, edges, visiting, done)));
+                visiting.remove(node);
+                done.insert(node);
+                cyclic
+            }
+            let mut visiting = std::collections::HashSet::new();
+            let mut done = std::collections::HashSet::new();
+            assert!(
+                !has_cycle(root, &edges, &mut visiting, &mut done),
+                "цикл в ветках диалога {npc_id}"
+            );
         }
     }
 }
