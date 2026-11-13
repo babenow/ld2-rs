@@ -203,6 +203,9 @@ pub enum Key {
     ProfCook,
     ProfHerbalist,
     ProfHunter,
+    /// M18: строка журнала «изучил профессию» (store → push_log);
+    /// `{p}` — имя профессии (см. [`prof_label`]), `{r}` — ранг.
+    LogProfession,
     // M8: чат (ФР-13)
     ChLabel,
     ChSend,
@@ -559,6 +562,26 @@ pub fn tf(lang: Lang, key: Key, subs: &[(&str, &str)]) -> String {
     s
 }
 
+/// M18: имя профессии по её id из контента (`professions.json`) —
+/// на языке игрока; неизвестный id (новый контент без ключа) остаётся
+/// как есть. Раньше жила в клиенте (`sheet.rs`) — строка журнала об
+/// изучении профессии локализуется тем же переводом (M18/F50).
+pub fn prof_label(lang: Lang, id: &str) -> String {
+    let key = match id {
+        "blacksmith" => Some(Key::ProfBlacksmith),
+        "alchemist" => Some(Key::ProfAlchemist),
+        "scribe" => Some(Key::ProfScribe),
+        "woodcarver" => Some(Key::ProfWoodcarver),
+        "tailor" => Some(Key::ProfTailor),
+        "cook" => Some(Key::ProfCook),
+        "herbalist" => Some(Key::ProfHerbalist),
+        "hunter" => Some(Key::ProfHunter),
+        _ => None,
+    };
+    key.map(|k| t(lang, k).to_string())
+        .unwrap_or_else(|| id.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,6 +741,7 @@ mod tests {
         Key::ProfCook,
         Key::ProfHerbalist,
         Key::ProfHunter,
+        Key::LogProfession,
         Key::ChLabel,
         Key::ChSend,
         Key::ChReply,
@@ -968,6 +992,28 @@ mod tests {
             assert!(!t(Lang::Ru, key).is_empty(), "пустой RU: {key:?}");
             assert!(!t(Lang::En, key).is_empty(), "пустой EN: {key:?}");
         }
+    }
+
+    /// M18/F50: имя профессии на языке игрока; неизвестный id (новый
+    /// контент без ключа) — сам id.
+    #[test]
+    fn prof_label_localizes_and_falls_back() {
+        assert_eq!(prof_label(Lang::Ru, "tailor"), "Портной");
+        assert_eq!(prof_label(Lang::En, "tailor"), "Tailor");
+        assert_eq!(prof_label(Lang::Ru, "mint"), "mint", "фолбэк — id");
+        assert_eq!(prof_label(Lang::En, "mint"), "mint", "фолбэк — id");
+    }
+
+    /// M18/F50: строка журнала «изучил профессию» — плейсхолдеры
+    /// `{p}`/`{r}` подставляются на обоих языках.
+    #[test]
+    fn log_profession_line_substitutes_both_langs() {
+        let p = prof_label(Lang::Ru, "tailor");
+        let ru = tf(Lang::Ru, Key::LogProfession, &[("p", &p), ("r", "3")]);
+        assert_eq!(ru, "Профессия «Портной»: ранг 3", "RU: {ru}");
+        assert!(!ru.contains('{'), "плейсхолдеры заменены");
+        let en = tf(Lang::En, Key::LogProfession, &[("p", "Tailor"), ("r", "3")]);
+        assert_eq!(en, "Profession \"Tailor\": rank 3", "EN: {en}");
     }
 
     /// M14/F17: имя плейсхолдера допускается в скобках — вызовы

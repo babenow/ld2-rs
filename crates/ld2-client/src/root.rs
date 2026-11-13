@@ -1396,6 +1396,8 @@ impl Root {
             Click::Lang(code) => {
                 self.lang = Lang::from_code(code);
                 self.config.lang = self.lang.code().to_string();
+                // M18/F50: новые строки журнала — на новом языке.
+                self.store.set_lang(self.lang);
                 self.save_config();
             }
             Click::ToggleSettings => {

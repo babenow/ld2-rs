@@ -167,6 +167,10 @@ pub enum NotifyKind {
 #[derive(Debug)]
 pub struct AppStore {
     pub screen: Screen,
+    /// M18/F50: язык клиентских строк журнала (`push_log`) — синк из
+    /// настроек (`Root.lang`); влияет только на новые строки,
+    /// существующие остаются на языке написания.
+    pub lang: crate::l10n::Lang,
     pub session: Option<SessionConfig>,
     pub snapshot: Option<StateSnapshot>,
     pub transport: TransportStatus,
@@ -564,9 +568,16 @@ impl AppStore {
 }
 
 impl AppStore {
+    /// M18/F50: смена языка (синк из настроек клиента) — на новые
+    /// строки журнала; уже записанные не переписываются.
+    pub fn set_lang(&mut self, lang: crate::l10n::Lang) {
+        self.lang = lang;
+    }
+
     pub fn new() -> Self {
         Self {
             screen: Screen::Login,
+            lang: crate::l10n::Lang::Ru,
             session: None,
             snapshot: None,
             transport: TransportStatus::Connecting,
@@ -1518,11 +1529,16 @@ impl AppStore {
                         snap.char.professions.push(w.profession.clone());
                     }
                 }
+                // M18/F50: имя профессии и шаблон — на языке игрока
+                // (как вкладка «Профессии»); id — только фолбэк.
+                let prof_name = crate::l10n::prof_label(self.lang, &w.profession.id);
+                let rank = w.profession.rank.to_string();
                 self.push_log(
                     LogKind::Loot,
-                    format!(
-                        "Профессия «{}»: ранг {}",
-                        w.profession.id, w.profession.rank
+                    crate::l10n::tf(
+                        self.lang,
+                        crate::l10n::Key::LogProfession,
+                        &[("p", &prof_name), ("r", &rank)],
                     ),
                 );
                 vec![]
@@ -3164,6 +3180,35 @@ mod tests {
         store.apply(snapshot_event());
         assert_eq!(store.screen, Screen::Game);
         store
+    }
+
+    /// M18/F50: строка журнала «изучил профессию» локализуется — имя
+    /// профессии (не сырой id) и шаблон на языке игрока; смена языка
+    /// действует на новые строки.
+    #[test]
+    fn craft_profession_log_line_is_localized() {
+        let prof = |id: &str| {
+            serde_json::json!({
+                "profession": { "id": id, "rank": 2, "xp": 10, "xp_to_next": 40 }
+            })
+        };
+        let mut store = in_game();
+        store.apply(evt("evt/craft/profession", prof("tailor")));
+        let last = store.log.back().expect("строка журнала");
+        assert_eq!(last.kind, LogKind::Loot);
+        assert_eq!(
+            last.text, "Профессия «Портной»: ранг 2",
+            "RU: имя профессии, не id"
+        );
+
+        // Смена языка → новые строки на новом; неизвестный id → фолбэк.
+        store.set_lang(crate::l10n::Lang::En);
+        store.apply(evt("evt/craft/profession", prof("mint")));
+        let last = store.log.back().expect("строка журнала");
+        assert_eq!(
+            last.text, "Profession \"mint\": rank 2",
+            "EN: шаблон и фолбэк-id"
+        );
     }
 
     #[test]

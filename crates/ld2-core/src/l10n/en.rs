@@ -166,6 +166,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ProfCook => "Cook",
         ProfHerbalist => "Herbalist",
         ProfHunter => "Hunter",
+        LogProfession => "Profession \"{p}\": rank {r}",
         // M8: chat
         ChLabel => "Chat",
         ChSend => "Send",

@@ -63,6 +63,8 @@ fn main() -> anyhow::Result<()> {
     let mut app_store = AppStore::new();
     // НФР §8/ФР-19: лимит истории чата — из конфига.
     app_store.chat_limit = config.chat_limit;
+    // M18/F50: язык строк журнала — из конфига (смена — в настройках).
+    app_store.set_lang(lang);
 
     // M11.5: тема/шрифт/масштаб Ely ↔ config (ФР-19, §13, НФР min 12px).
     let theme_light = config.theme == "light";

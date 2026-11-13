@@ -18,7 +18,7 @@ use gpui::{
     div, prelude::*, px, rgb, AnyElement, Context, Div, DragMoveEvent, EmptyView, MouseButton,
     SharedString, Window,
 };
-use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
+use ld2_core::l10n::{format_duration, prof_label, t, tf, Key, Lang};
 use ld2_core::store::{
     crime_kind_title, filter_active_statuses, local_epoch, Act, Screen, UpgradeView,
 };
@@ -2182,22 +2182,8 @@ impl Root {
 
 // ── вспомогательные ────────────────────────────────────────────────────────
 
-/// Название профессии: l10n-ключ по id, фолбэк — сам id.
-fn prof_label(lang: Lang, id: &str) -> String {
-    let key = match id {
-        "blacksmith" => Some(Key::ProfBlacksmith),
-        "alchemist" => Some(Key::ProfAlchemist),
-        "scribe" => Some(Key::ProfScribe),
-        "woodcarver" => Some(Key::ProfWoodcarver),
-        "tailor" => Some(Key::ProfTailor),
-        "cook" => Some(Key::ProfCook),
-        "herbalist" => Some(Key::ProfHerbalist),
-        "hunter" => Some(Key::ProfHunter),
-        _ => None,
-    };
-    key.map(|k| t(lang, k).to_string())
-        .unwrap_or_else(|| id.to_string())
-}
+// `prof_label` (название профессии по id) переехал в `ld2_core::l10n` —
+// им же локализуется строка журнала об изучении (M18/F50).
 
 /// M15/F25: строка «подпись … значение» в панели опыта окна персонажа.
 fn xp_kv_row(pal: &Palette, label: &str, value: &str) -> Div {
