@@ -422,6 +422,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
         id: id.into(),
         name: name.into(),
         profile: Some("warrior".into()),
+        gender: "male".into(),
         attrs: BTreeMap::from([("str".to_string(), 14i64), ("int".to_string(), 9i64)]),
         skills: vec![
             SkillSnapshot {

@@ -37,6 +37,8 @@ pub enum ErrorCode {
     CharLimit,
     NameTaken,
     BadProfile,
+    /// Неизвестное значение `gender` в `char.create` (M18/F34).
+    BadGender,
     NotInLocation,
     /// В локации нет тренера для профессии/навыка (M14).
     NoTrainer,
@@ -89,6 +91,7 @@ impl ErrorCode {
             Self::CharLimit => "E_CHAR_LIMIT",
             Self::NameTaken => "E_NAME_TAKEN",
             Self::BadProfile => "E_BAD_PROFILE",
+            Self::BadGender => "E_BAD_GENDER",
             Self::NotInLocation => "E_NOT_IN_LOCATION",
             Self::NoTrainer => "E_NO_TRAINER",
             Self::ExitBlocked => "E_EXIT_BLOCKED",
@@ -141,6 +144,7 @@ impl FromStr for ErrorCode {
             "E_CHAR_LIMIT" => Self::CharLimit,
             "E_NAME_TAKEN" => Self::NameTaken,
             "E_BAD_PROFILE" => Self::BadProfile,
+            "E_BAD_GENDER" => Self::BadGender,
             "E_NOT_IN_LOCATION" => Self::NotInLocation,
             "E_NO_TRAINER" => Self::NoTrainer,
             "E_EXIT_BLOCKED" => Self::ExitBlocked,
@@ -226,6 +230,7 @@ mod tests {
         "E_PERMISSION",
         "E_TOO_LARGE",
         "E_INTERNAL",
+        "E_BAD_GENDER",
     ];
 
     #[test]

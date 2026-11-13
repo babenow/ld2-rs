@@ -326,6 +326,8 @@ pub struct Root {
     /// M10.6: создание/удаление персонажей (ФР-02).
     create_name: Option<Entity<TextInput>>,
     create_profile: ld2_core::store::Profile,
+    /// M18/F34: пол — селектор в форме создания (по умолчанию мужской).
+    create_gender: ld2_core::store::Gender,
     create_open: bool,
     create_submitted: bool,
     delete_target: Option<(String, String)>,
@@ -489,6 +491,7 @@ impl Root {
             party_collapsed,
             create_name: None,
             create_profile: ld2_core::store::Profile::default(),
+            create_gender: ld2_core::store::Gender::default(),
             create_open: false,
             create_submitted: false,
             delete_target: None,

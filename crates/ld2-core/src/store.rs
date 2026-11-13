@@ -1922,6 +1922,38 @@ impl Profile {
     }
 }
 
+/// M18/F34: пол персонажа — wire-значения `cmd/char.create.gender`
+/// (`male`/`female`); общий для клиентов (D12), задаётся при создании.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Gender {
+    #[default]
+    Male,
+    Female,
+}
+
+impl Gender {
+    pub fn all() -> [Gender; 2] {
+        [Gender::Male, Gender::Female]
+    }
+
+    /// Wire-значение `cmd/char.create.gender`.
+    pub fn value(self) -> &'static str {
+        match self {
+            Gender::Male => "male",
+            Gender::Female => "female",
+        }
+    }
+
+    /// Локализованное название пола.
+    pub fn label_key(self) -> crate::l10n::Key {
+        use crate::l10n::Key;
+        match self {
+            Gender::Male => Key::GenderMale,
+            Gender::Female => Key::GenderFemale,
+        }
+    }
+}
+
 /// Заголовок преступления из конфига сервера (§5 kinds), фолбэк — kind.
 pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
     store

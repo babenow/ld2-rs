@@ -98,7 +98,7 @@ fn session_start_matches_doc_example() {
 const SNAPSHOT_JSON: &str = r#"{
   "state_version": 1337,
   "char": {
-    "id": "c1", "name": "Ким",
+    "id": "c1", "name": "Ким", "gender": "male",
     "attrs": { "str": 14, "int": 9 },
     "skills": [ { "id": "sword", "group": "weapon",
                   "rank": 3, "xp": 612, "xp_to_next": 480 } ],
@@ -149,6 +149,10 @@ fn snapshot_matches_doc_example() {
     let snap: StateSnapshot = serde_json::from_str(SNAPSHOT_JSON).expect("снапшот парсится");
     assert_eq!(snap.state_version, 1337);
     assert_eq!(snap.char.hp.cur, 42);
+    assert_eq!(
+        snap.char.gender, "male",
+        "M18/F34: пол в снапшоте (без поля старого сервера → male)"
+    );
     assert_eq!(
         snap.char.mp,
         Mp { cur: 45, max: 60 },
@@ -232,6 +236,7 @@ fn command_envelope_round_trip_per_domain() {
                 &CharCreate {
                     name: "Ким".into(),
                     profile: "warrior".into(),
+                    gender: None,
                 },
             )
             .unwrap(),
@@ -528,4 +533,17 @@ fn item_snapshot_open_fields_survive() {
     // Round-trip сохраняет extra
     let back: ItemSnapshot = serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
     assert_eq!(item, back);
+}
+
+/// M18/F34: снапшот старого сервера без `gender` парсится → `male` (§11);
+/// поле в JSON присутствует при сериализации.
+#[test]
+fn gender_defaults_when_absent() {
+    let json = r#"{ "id": "c1", "name": "Ким",
+        "hp": { "cur": 100, "max": 100 }, "mp": { "cur": 60, "max": 60 } }"#;
+    let state: ld2_protocol::types::CharacterState =
+        serde_json::from_str(json).expect("снапшот без gender парсится");
+    assert_eq!(state.gender, "male", "фолбэк старого сервера");
+    let encoded = serde_json::to_value(&state).expect("сериализация");
+    assert_eq!(encoded["gender"], "male", "поле в JSON");
 }
