@@ -960,6 +960,7 @@ impl Root {
         if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
             // M18/F38: диалог NPC — верхний слой группы окон.
             if self.store.npc_dialog.is_some() {
+                tracing::debug!("закрытие диалога NPC: Esc");
                 self.store.npc_dialog = None;
                 self.npc_popup.open = false;
                 cx.notify();
@@ -1306,6 +1307,7 @@ impl Root {
                                     // Верхнее окно: диалог → квесты →
                                     // рюкзак → персонаж.
                                     if root.store.npc_dialog.is_some() {
+                                        tracing::debug!("закрытие диалога NPC: скрим");
                                         root.store.npc_dialog = None;
                                         root.npc_popup.open = false;
                                     } else if root.quests_popup.open {
@@ -1474,10 +1476,14 @@ impl Root {
             }
             // M18/F35: диалог NPC — реплики/квесты вместо осмотра.
             Click::NpcTalk(id) => {
+                tracing::debug!("вых. cmd/npc.talk {id}");
                 let cmd = ld2_protocol::cmd::NpcTalk { entity_id: id };
                 match self.transport.send(&cmd) {
                     Ok(_) => self.store.on_world_sent(Act::NpcTalk),
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                    Err(e) => {
+                        tracing::debug!("cmd/npc.talk не ушла: {e}");
+                        self.store.world_error = Some(format!("нет связи: {e}"));
+                    }
                 }
             }
             Click::PartyInvite(player_id) => {

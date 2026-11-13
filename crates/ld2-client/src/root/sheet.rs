@@ -367,7 +367,16 @@ impl Root {
             .min_h_0()
             .child(self.character_left_column(cx, pal))
             .child(self.character_tabs(cx, pal));
-        Some(self.popup_window(window, cx, pal, PopupKind::Character, title, body, None))
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Character,
+            title,
+            None,
+            body,
+            None,
+        ))
     }
 
     /// M16/F29b: оболочка всплывающего окна (механика M15/F25b–g):
@@ -385,6 +394,9 @@ impl Root {
         pal: &Palette,
         kind: PopupKind,
         title: impl Into<SharedString>,
+        // M18/F41: кнопки действий слева в шапке (окно диалога NPC —
+        // магазин/«К диалогу»); у остальных окон — None.
+        leading: Option<Div>,
         body: Div,
         // M16/F29g: нижняя панель под телом (по аналогии с шапкой).
         footer: Option<Div>,
@@ -419,7 +431,17 @@ impl Root {
                     root.popup_scrim_down = false;
                 }),
             )
-            .child(div().font_weight(gpui::FontWeight::BOLD).child(title))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    // M18/F41: контекстные кнопки диалога — слева от
+                    // заголовка (бывший статус-бар переехал сюда).
+                    .children(leading)
+                    .child(div().font_weight(gpui::FontWeight::BOLD).child(title)),
+            )
             .child(
                 IconButton::new(format!("{id}-close"), IconName::X)
                     .tooltip(t(lang, Key::BtnClose))
@@ -428,6 +450,7 @@ impl Root {
                         // M18/F38: окно диалога закрывается вместе со своим
                         // состоянием (гейт рендера — наличие npc_dialog).
                         if kind == PopupKind::Npc {
+                            tracing::debug!("закрытие диалога NPC: крестик");
                             root.store.npc_dialog = None;
                         }
                         cx.notify();

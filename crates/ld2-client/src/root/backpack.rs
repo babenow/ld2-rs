@@ -244,6 +244,7 @@ impl Root {
             pal,
             PopupKind::Backpack,
             t(lang, Key::BackpackTitle),
+            None,
             body,
             Some(footer),
         ))

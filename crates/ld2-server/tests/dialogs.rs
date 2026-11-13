@@ -154,8 +154,15 @@ async fn npc_dialog_walks_branches_and_gates_by_quests() {
         "ответы нового узла: {ack}"
     );
 
-    // Второй разговор сразу: просьба в окне `every_s` скрыта (метка).
-    let replies = reply_ids(&talk(&mut c, "npc_elder").await);
+    // Второй разговор сразу: M18/F41 — всегда корень ветки (окно
+    // открывается с начала), просьба в окне `every_s` скрыта (метка).
+    let ack = talk(&mut c, "npc_elder").await;
+    assert_eq!(
+        node_id(&ack),
+        Some("l_hello"),
+        "повторное открытие — корень ветки: {ack}"
+    );
+    let replies = reply_ids(&ack);
     assert!(
         !replies.contains(&"r_work".into()),
         "второй показ в окне скрыт: {replies:?}"
