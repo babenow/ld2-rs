@@ -3309,6 +3309,85 @@ mod tests {
         assert_eq!(store.active_dialog(false, false), None);
     }
 
+    /// M18/F41: повторное открытие диалога (`cmd/npc.talk`) начинает
+    /// разговор заново — лента с приветствия, открытый магазин и
+    /// выбранная валюта сброшены.
+    #[test]
+    fn npc_talk_reopens_resets_dialog_to_start() {
+        let mut store = in_game();
+        let talk_ack = |seq: u32| {
+            ld2_protocol::Ack::ok_with_payload(
+                seq,
+                None,
+                &serde_json::json!({
+                    "dialog": {
+                        "id": "npc_elder", "name": "Староста",
+                        "greeting": "Привет, Ким!"
+                    },
+                    "node": {
+                        "id": "l_hello", "text": "Как дела?",
+                        "replies": [ { "id": "r_bye", "text": "Пока." } ]
+                    },
+                    "quests": [],
+                    "actions": [ "shop" ]
+                }),
+            )
+            .unwrap()
+        };
+
+        // Первое открытие: приветствие + корневой узел.
+        store.on_world_sent(Act::NpcTalk);
+        store.apply(IngressEvent::Ack(talk_ack(20)));
+        // Разговор пошёл дальше: ответ → третья строка ленты.
+        store.on_world_sent(Act::NpcReply);
+        store.apply(IngressEvent::Ack(
+            ld2_protocol::Ack::ok_with_payload(
+                21,
+                None,
+                &serde_json::json!({
+                    "node": { "id": "l_errand", "text": "Отнеси весть!",
+                              "replies": [ { "id": "r_done", "text": "Хорошо." } ] },
+                    "quests": []
+                }),
+            )
+            .unwrap(),
+        ));
+        // И магазин открыт, и валюта выбрана.
+        store.on_world_sent(Act::ShopList);
+        store.apply(IngressEvent::Ack(
+            ld2_protocol::Ack::ok_with_payload(
+                22,
+                None,
+                &serde_json::json!({
+                    "shop": { "tabs": [
+                        { "currency": "gold_coin", "currency_name": "Золотая монета",
+                          "items": [] },
+                        { "currency": "gem_str", "currency_name": "Самоцвет силы",
+                          "items": [] }
+                    ]}
+                }),
+            )
+            .unwrap(),
+        ));
+        {
+            let dialog = store.npc_dialog.as_mut().expect("диалог открыт");
+            dialog.shop_currency = Some("gem_str".into());
+            assert_eq!(dialog.transcript.len(), 3, "лента разговора");
+            assert!(dialog.shop.is_some(), "магазин открыт");
+        }
+
+        // Повторное открытие — всё с начала.
+        store.on_world_sent(Act::NpcTalk);
+        store.apply(IngressEvent::Ack(talk_ack(23)));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        assert_eq!(dialog.transcript.len(), 2, "лента заново: {dialog:?}");
+        assert_eq!(dialog.transcript[0].text, "Привет, Ким!", "с приветствия");
+        assert_eq!(dialog.node.as_ref().expect("корень").id, "l_hello");
+        assert!(dialog.shop.is_none(), "магазин закрыт");
+        assert!(dialog.shop_currency.is_none(), "валюта сброшена");
+        assert_eq!(dialog.actions, vec!["shop"], "actions нового ack");
+    }
+
     /// M18/F39: ack `shop.list` открывает панель магазина внутри окна
     /// диалога (активная вкладка — первая).
     #[test]

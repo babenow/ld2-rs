@@ -470,6 +470,8 @@ pub enum Key {
     ShopBack,
     ShopOwned,
     ShopEmpty,
+    // M18/F41: надпись над вкладками магазина — вкладка это валюта.
+    ShopCurrency,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -945,6 +947,7 @@ mod tests {
         Key::ShopBack,
         Key::ShopOwned,
         Key::ShopEmpty,
+        Key::ShopCurrency,
     ];
 
     #[test]

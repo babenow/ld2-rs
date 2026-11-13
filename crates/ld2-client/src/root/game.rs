@@ -16,6 +16,7 @@ use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
 
 use crate::palette::Palette;
+use ely::buttons::IconButton;
 use ely::forms::Choice;
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
@@ -197,7 +198,16 @@ impl Root {
             })
             .unwrap_or(0);
 
-        let mut col = div().flex().flex_col().gap_1();
+        // M18/F41: колонка на весь бокс — гибкий отступ прижимает
+        // кнопку возврата к нижнему краю панели.
+        let mut col = div().flex().flex_col().gap_1().size_full();
+        // M18/F41: сверху подпись, что вкладка — это валюта торговца.
+        col = col.child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::ShopCurrency)),
+        );
         col = col.child(tabs);
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
         col = col.child(
@@ -274,20 +284,30 @@ impl Root {
                     .child(right),
             );
         }
-        // Назад — к транскрипту диалога (само окно остаётся).
-        col = col.child(act_btn_hover(
-            cx,
-            t(lang, Key::ShopBack),
-            pal.panel,
-            pal.selection,
-            pal.text,
-            |this, cx| {
-                if let Some(view) = this.store.npc_dialog.as_mut() {
-                    view.shop = None;
-                }
-                let _ = cx;
-            },
-        ));
+        // M18/F41: «К диалогу» — отступ растягивает колонку, кнопка
+        // прижата к низу слева (дублирует иконку в шапке окна).
+        col = col.child(div().flex_grow_1().min_h_0());
+        col = col.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_start()
+                .pt_1()
+                .child(act_btn_hover(
+                    cx,
+                    t(lang, Key::ShopBack),
+                    pal.panel,
+                    pal.selection,
+                    pal.text,
+                    |this, cx| {
+                        if let Some(view) = this.store.npc_dialog.as_mut() {
+                            view.shop = None;
+                            view.shop_currency = None;
+                        }
+                        let _ = cx;
+                    },
+                )),
+        );
         col
     }
 
@@ -311,82 +331,37 @@ impl Root {
             self.npc_dialog_view(cx, pal, &dialog)
         };
 
-        // Статус-бар: контекстные кнопки — только реально существующие
-        // системы (M18/F38, решение: без заглушек).
-        let mut bar = div()
-            .flex()
-            .flex_row()
-            .gap_2()
-            .items_center()
-            .justify_end()
-            .px_3()
-            .py_2()
-            .bg(rgb(pal.selection))
-            .border_t_1()
-            .border_color(rgb(pal.border));
-        let mut has_actions = false;
-        let shop_entity = dialog.id.clone();
-        for action in &dialog.actions {
-            match action.as_str() {
-                // NPC даёт квесты → окно квестов (не закрывая диалог).
-                "quests" => {
-                    has_actions = true;
-                    bar = bar.child(act_btn_hover(
-                        cx,
-                        t(lang, Key::QuestsTab),
-                        pal.panel,
-                        pal.selection,
-                        pal.text,
-                        |this, cx| {
-                            if !this.quests_popup.open {
-                                this.open_popup(PopupKind::Quests);
-                            }
-                            let _ = cx;
-                        },
-                    ));
-                }
-                // M18/F39: магазин → список товаров (ack рисует панель).
-                "shop" => {
-                    has_actions = true;
-                    let entity_id = shop_entity.clone();
-                    bar = bar.child(act_btn_hover(
-                        cx,
-                        t(lang, Key::BtnShop),
-                        pal.panel,
-                        pal.selection,
-                        pal.text,
-                        move |this, cx| {
-                            let cmd = ld2_protocol::cmd::ShopList {
-                                entity_id: entity_id.clone(),
-                            };
-                            this.send_cmd(&cmd, Act::ShopList);
-                            let _ = cx;
-                        },
-                    ));
-                }
-                // Тренер → окно персонажа, вкладка «Профессии»
-                // (обучение профессиям реально существует, F8).
-                "train" => {
-                    has_actions = true;
-                    bar = bar.child(act_btn_hover(
-                        cx,
-                        t(lang, Key::BtnTraining),
-                        pal.panel,
-                        pal.selection,
-                        pal.text,
-                        |this, cx| {
-                            if !this.char_popup.open {
-                                this.open_popup(PopupKind::Character);
-                            }
-                            this.sheet_tab = super::sheet::SheetTab::Professions;
-                            let _ = cx;
-                        },
-                    ));
-                }
-                _ => {}
-            }
+        // M18/F41: контекстные кнопки диалога — иконки слева в шапке
+        // окна (статус-бар убран; «Квесты»/«Обучение» убраны по решению
+        // пользователя). Тултипы — тексты l10n, что и были у кнопок.
+        let mut leading = div().flex().flex_row().gap_1().items_center();
+        if dialog.shop.is_some() {
+            // Открыт магазин — возврат к транскрипту (иконка «назад»).
+            leading = leading.child(
+                IconButton::new("ld2-npc-back", IconName::ArrowLeft)
+                    .tooltip(t(lang, Key::ShopBack))
+                    .on_click(cx.listener(|root, _, _, cx| {
+                        if let Some(view) = root.store.npc_dialog.as_mut() {
+                            view.shop = None;
+                            view.shop_currency = None;
+                        }
+                        cx.notify();
+                    })),
+            );
+        } else if dialog.actions.iter().any(|action| action == "shop") {
+            let entity_id = dialog.id.clone();
+            leading = leading.child(
+                IconButton::new("ld2-npc-shop", IconName::Tag)
+                    .tooltip(t(lang, Key::BtnShop))
+                    .on_click(cx.listener(move |root, _, _, cx| {
+                        let cmd = ld2_protocol::cmd::ShopList {
+                            entity_id: entity_id.clone(),
+                        };
+                        root.send_cmd(&cmd, Act::ShopList);
+                        cx.notify();
+                    })),
+            );
         }
-        let footer = has_actions.then_some(bar);
 
         Some(self.popup_window(
             window,
@@ -394,8 +369,9 @@ impl Root {
             pal,
             PopupKind::Npc,
             dialog.name.clone(),
+            Some(leading),
             body,
-            footer,
+            None,
         ))
     }
 

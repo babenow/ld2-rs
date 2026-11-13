@@ -407,5 +407,6 @@ pub(super) fn t(key: Key) -> &'static str {
         ShopBack => "К диалогу",
         ShopOwned => "У вас: {n}",
         ShopEmpty => "Товаров нет",
+        ShopCurrency => "Валюта",
     }
 }

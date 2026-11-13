@@ -254,6 +254,7 @@ impl Root {
                     pal,
                     PopupKind::Quests,
                     t(lang, Key::QuestsTab),
+                    None,
                     div()
                         .text_color(rgb(pal.muted))
                         .child(t(lang, Key::Loading)),
@@ -417,6 +418,7 @@ impl Root {
             pal,
             PopupKind::Quests,
             t(lang, Key::QuestsTab),
+            None,
             content,
             Some(footer),
         ))
