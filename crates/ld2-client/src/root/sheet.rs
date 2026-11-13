@@ -425,6 +425,11 @@ impl Root {
                     .tooltip(t(lang, Key::BtnClose))
                     .on_click(cx.listener(move |root, _, _, cx| {
                         root.popup_mut(kind).open = false;
+                        // M18/F38: окно диалога закрывается вместе со своим
+                        // состоянием (гейт рендера — наличие npc_dialog).
+                        if kind == PopupKind::Npc {
+                            root.store.npc_dialog = None;
+                        }
                         cx.notify();
                     })),
             )

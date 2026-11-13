@@ -6128,13 +6128,21 @@ impl Session {
     }
 
     /// Доступные квесты NPC (giver == id, фаза available): id-ы для
-    /// гейта строк + wire-список для ack.
+    /// гейта строк + wire-список для ack + флаг «NPC вообще даёт
+    /// квесты» (кнопка статус-бара, M18/F38).
     async fn npc_quests(
         &self,
         char_id: &str,
         npc_id: &str,
         seq: u32,
-    ) -> Result<(std::collections::HashSet<String>, Vec<serde_json::Value>), Out> {
+    ) -> Result<
+        (
+            std::collections::HashSet<String>,
+            Vec<serde_json::Value>,
+            bool,
+        ),
+        Out,
+    > {
         let pool = &self.state.pool;
         let (defs, progress) = match (
             db::quests::defs(pool).await,
@@ -6148,10 +6156,12 @@ impl Session {
         };
         let mut quests = Vec::new();
         let mut available = std::collections::HashSet::new();
+        let mut gives_quests = false;
         for def in &defs {
             if def.2.as_deref() != Some(npc_id) {
                 continue;
             }
+            gives_quests = true;
             let progress_row = progress.iter().find(|(id, _, _)| id == &def.0);
             let state = db::quests::build_state(def, progress_row);
             if state.state == ld2_protocol::types::QuestPhase::Available {
@@ -6159,7 +6169,7 @@ impl Session {
                 quests.push(serde_json::to_value(&state).unwrap_or_default());
             }
         }
-        Ok((available, quests))
+        Ok((available, quests, gives_quests))
     }
 
     /// `cmd/npc.talk` (M18/F35/F37): NPC текущей локации → приветствие,
@@ -6185,10 +6195,22 @@ impl Session {
             Ok(context) => context,
             Err(out) => return vec![out],
         };
-        let (available, quests) = match self.npc_quests(&char_id, &entity.id, seq).await {
-            Ok(pair) => pair,
-            Err(out) => return vec![out],
-        };
+        let (available, quests, gives_quests) =
+            match self.npc_quests(&char_id, &entity.id, seq).await {
+                Ok(triple) => triple,
+                Err(out) => return vec![out],
+            };
+        // M18/F38: контекстные кнопки статус-бара — только реально
+        // существующие системы: «Квесты» (NPC — выдающий) и «Обучение»
+        // (trainer в extra сущности); торговля/склад — когда появятся
+        // их системы.
+        let mut actions: Vec<&str> = Vec::new();
+        if gives_quests {
+            actions.push("quests");
+        }
+        if entity.extra.contains_key("trainer") {
+            actions.push("train");
+        }
         let pool = &self.state.pool;
         let shown = match db::dialogs::shown_lines(pool, &char_id, &entity.id).await {
             Ok(map) => map,
@@ -6236,6 +6258,7 @@ impl Session {
                 },
                 "node": node,
                 "quests": quests,
+                "actions": actions,
             }),
         )]
     }
@@ -6266,8 +6289,8 @@ impl Session {
             Ok(context) => context,
             Err(out) => return vec![out],
         };
-        let (available, quests) = match self.npc_quests(&char_id, &entity.id, seq).await {
-            Ok(pair) => pair,
+        let (available, quests, _) = match self.npc_quests(&char_id, &entity.id, seq).await {
+            Ok(triple) => triple,
             Err(out) => return vec![out],
         };
         let pool = &self.state.pool;
