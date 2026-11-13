@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
-    AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
-    ChatDelete, ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
-    GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip,
-    ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcReply,
-    NpcTalk, PartyAccept, PartyInvite, PartyKick, ShopBuy, ShopList, SkillUse, SocketExtract,
+    AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, ChatDelete, ChatSend,
+    CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo, GuildBrowse,
+    GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip, ItemMove,
+    ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcReply, NpcTalk,
+    PartyAccept, PartyInvite, PartyKick, ShopBuy, ShopList, SkillTrain, SkillUse, SocketExtract,
     SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold,
     UpgradePreview, UpgradeStart,
 };
@@ -215,7 +215,7 @@ impl Session {
             "cmd/socket.insert" => self.socket_insert(env, seq).await,
             "cmd/socket.extract" => self.socket_extract(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
-            "cmd/char.xp_invest" => self.char_xp_invest(env, seq).await,
+            "cmd/skill.train" => self.skill_train(env, seq).await,
             "cmd/item.use" => self.item_use(env, seq).await,
             "cmd/item.equip" => self.item_equip(env, seq).await,
             "cmd/item.unequip" => self.item_unequip(env, seq).await,
@@ -1756,37 +1756,31 @@ impl Session {
         mine
     }
 
-    /// `cmd/char.xp_invest` (§7): вложение XP-пула в навык — транзакционно
-    /// (D27), потолок/гейты — skills.md §2.2 (конфиг `[skills]`, D25).
-    async fn char_xp_invest(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+    /// `cmd/skill.train` (M18/F44, ADR-009): повышение ранга навыка у
+    /// тренера **из диалога**. Условия: тренер по навыку в локации (M14,
+    /// `E_NO_TRAINER`), у NPC есть запись обучения, **шкала навыка
+    /// заполнена на 100 %** (`E_SKILL_NOT_READY`), хватает очков опыта
+    /// (`E_XP_POOL`) и платы из контента (`E_INGREDIENTS`). Потолок ранга
+    /// и гейт атрибутов — как у прежнего `char.xp_invest` (удалён: он
+    /// обходил гейт 100 %).
+    async fn skill_train(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
         }
-        let Ok(cmd) = Self::payload_of::<CharXpInvest>(env, seq) else {
+        let Ok(cmd) = Self::payload_of::<SkillTrain>(env, seq) else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
         let char_id = match self.require_char_id(seq) {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
-        if cmd.points <= 0 {
-            return vec![Self::err(seq, ErrorCode::XpPool, "points должен быть > 0")];
-        }
         // Локация до заимствования pool (current_location требует &mut self).
         let location = self.current_location(&char_id).await;
         let pool = &self.state.pool;
-        match db::skills::content_skill(pool, &cmd.skill_id).await {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return vec![Self::err(seq, ErrorCode::XpPool, "нет такого навыка")];
-            }
-            Err(e) => {
-                warn!("xp_invest (навык): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }
-        // M14: вложение/повышение — только у тренера по навыку в локации.
-        let Some(price) = (match trainers::trainer_price(
+        // M14: обучение только у тренера по навыку в локации — маркер
+        // контента (`locations.json → trainer.skills`) служит гейтом;
+        // цена при этом берётся из диалога (ADR-009).
+        let trainer = match trainers::trainer_price(
             pool,
             &location,
             trainers::TrainerKind::Skill,
@@ -1796,105 +1790,150 @@ impl Session {
         {
             Ok(price) => price,
             Err(e) => {
-                warn!("xp_invest (тренер): {e}");
+                warn!("skill.train (тренер): {e}");
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
-        }) else {
+        };
+        if trainer.is_none() {
             return vec![Self::err(
                 seq,
                 ErrorCode::NoTrainer,
                 "здесь нет тренера по этому навыку",
             )];
+        }
+        // NPC диалога несёт список навыков и плату (ADR-009).
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
         };
-
-        let pool_now = match db::skills::xp_pool(pool, &char_id).await {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("xp_invest (пул): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        let entry = match self
+            .state
+            .dialogs
+            .get(&entity.id)
+            .and_then(|def| def.training.iter().find(|t| t.skill == cmd.skill_id))
+        {
+            Some(entry) => entry.clone(),
+            None => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::NoTrainer,
+                    "этот NPC не обучает этому навыку",
+                )];
             }
         };
-        if pool_now < cmd.points {
-            return vec![Self::err(seq, ErrorCode::XpPool, "не хватает очков опыта")];
+        // Навык есть в контенте.
+        match db::skills::content_skill(pool, &cmd.skill_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return vec![Self::err(seq, ErrorCode::XpPool, "нет такого навыка")];
+            }
+            Err(e) => {
+                warn!("skill.train (навык): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
         }
-        let (mut xp, mut rank) = match db::skills::learned(pool, &char_id).await {
+        // Прогресс: строка создаётся использованием навыка (тик боя/
+        // крафта); без неё шкала пустая → отказ до оплаты.
+        let (xp, rank) = match db::skills::learned(pool, &char_id).await {
             Ok(rows) => rows
                 .into_iter()
                 .find(|s| s.skill_id == cmd.skill_id)
                 .map(|s| (s.xp, s.rank))
                 .unwrap_or((0, 0)),
             Err(e) => {
-                warn!("xp_invest (прогресс): {e}");
+                warn!("skill.train (прогресс): {e}");
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
-        // Ранг на момент запроса — по нему считается цена (вложение не
-        // дорожает от того, что само же повышает ранг).
-        let rank_at_start = rank;
         let cfg = &self.state.config.skills;
-        xp += cmd.points;
-        loop {
-            let need = crate::systems::xp_to_next(rank.max(0) as u32, cfg);
-            if xp < need {
-                break;
-            }
-            if rank >= cfg.rank_max as i32 {
+        let need = crate::systems::xp_to_next(rank.max(0) as u32, cfg);
+        // M18/F44: повышение ранга — только при полной шкале (100 %).
+        if need > 0 && xp < need {
+            let percent = (xp * 100 / need.max(1)).clamp(0, 100);
+            return vec![Self::err(
+                seq,
+                ErrorCode::SkillNotReady,
+                format!("шкала навыка заполнена на {percent} % — нужно 100 %"),
+            )];
+        }
+        if rank >= cfg.rank_max as i32 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::RankCap,
+                "достигнут потолок ранга",
+            )];
+        }
+        let next = rank + 1;
+        // Гейт атрибутов (§2.2 skills.md) — как у прежнего вложения.
+        if let Some(gate) = cfg.gates.iter().find(|g| g.rank as i32 == next) {
+            let max_attr = self
+                .char
+                .as_ref()
+                .map(|c| c.attrs.values().max().copied().unwrap_or(0))
+                .unwrap_or(0);
+            if max_attr < gate.attr {
                 return vec![Self::err(
                     seq,
-                    ErrorCode::RankCap,
-                    "достигнут потолок ранга",
+                    ErrorCode::RequirementAttr,
+                    format!(
+                        "ранг {next} требует атрибут {} (максимум {max_attr})",
+                        gate.attr
+                    ),
                 )];
             }
-            let next = rank + 1;
-            // Гейт атрибутов (§2.2): конфиг даёт значение порога; сравниваем
-            // с максимальным из пяти атрибутов персонажа.
-            if let Some(gate) = cfg.gates.iter().find(|g| g.rank as i32 == next) {
-                let max_attr = self
-                    .char
-                    .as_ref()
-                    .map(|c| c.attrs.values().max().copied().unwrap_or(0))
-                    .unwrap_or(0);
-                if max_attr < gate.attr {
-                    return vec![Self::err(
-                        seq,
-                        ErrorCode::RequirementAttr,
-                        format!(
-                            "ранг {next} требует атрибут {} (максимум {max_attr})",
-                            gate.attr
-                        ),
-                    )];
-                }
-            }
-            xp -= need;
-            rank = next;
         }
-        // M14: оплата тренеру — ПОСЛЕ всех проверок (тренер → пул → ранг →
-        // гейт атрибутов): за неудачное вложение золото не списывается.
-        let gold = trainers::gold_price(&price, i64::from(rank_at_start));
-        // F29a: оплата монетами — события списания в конце ответа.
-        let money_events = match self.pay_trainer(seq, &char_id, &price, gold).await {
+        // Плата очками опыта (пул квестов).
+        let pool_now = match db::skills::xp_pool(pool, &char_id).await {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("skill.train (пул): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if pool_now < entry.points {
+            return vec![Self::err(
+                seq,
+                ErrorCode::XpPool,
+                format!("не хватает очков опыта: {}", entry.points),
+            )];
+        }
+        // Плата тренеру (золото + предметы из диалога) — проверки до
+        // списаний (паттерн M14/F5).
+        let money_events = match self
+            .pay_dialog_fee(seq, &char_id, entry.gold, &entry.items)
+            .await
+        {
             Ok(events) => events,
             Err(e) => return vec![e],
         };
-
-        let pool_left = pool_now - cmd.points;
+        let pool_left = pool_now - entry.points;
+        // Ранг +1, шкала обнуляется (заполняется использованием заново).
         if let Err(e) =
-            db::skills::invest_tx(pool, &char_id, &cmd.skill_id, xp, rank, pool_left).await
+            db::skills::invest_tx(pool, &char_id, &cmd.skill_id, 0, next, pool_left).await
         {
-            warn!("xp_invest (транзакция): {e}");
+            warn!("skill.train (транзакция): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
         let mut outs = vec![
-            Self::ack_payload(seq, &serde_json::json!({ "pool_left": pool_left })),
+            Self::ack_payload(
+                seq,
+                &serde_json::json!({
+                    "rank": next.max(0) as u32,
+                    "xp": 0,
+                    "xp_to_next": crate::systems::xp_to_next(next.max(0) as u32, cfg),
+                    "pool_left": pool_left,
+                }),
+            ),
             out_event(
                 "evt/char/xp",
                 None,
                 serde_json::to_value(CharXp {
                     skill_id: cmd.skill_id,
-                    amount: cmd.points,
-                    skill_xp: xp,
-                    rank: Some(rank.max(0) as u32),
-                    xp_to_next: Some(crate::systems::xp_to_next(rank.max(0) as u32, cfg)),
+                    // Отрицательное amount — очки пула списаны на ранг.
+                    amount: -entry.points,
+                    skill_xp: 0,
+                    rank: Some(next.max(0) as u32),
+                    xp_to_next: Some(crate::systems::xp_to_next(next.max(0) as u32, cfg)),
                     pool_left: Some(pool_left),
                 })
                 .unwrap_or_default(),
@@ -1902,6 +1941,92 @@ impl Session {
         ];
         outs.extend(money_events);
         outs
+    }
+
+    /// M18/F44: плата за обучение из контента диалога (ADR-009) — золото
+    /// монетами, предметы по `def_id`; все проверки до списаний
+    /// (паттерн `pay_trainer` M14/F5).
+    async fn pay_dialog_fee(
+        &self,
+        seq: u32,
+        char_id: &str,
+        gold: i64,
+        items: &[crate::dialogs::TrainingItem],
+    ) -> Result<Vec<Out>, Out> {
+        let pool = &self.state.pool;
+        if gold > 0 {
+            match db::items::count_by_type(pool, char_id, db::items::MONEY_TYPE).await {
+                Ok(have) if have >= gold => {}
+                Ok(have) => {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("не хватает золота: {gold} (есть {have})"),
+                    ));
+                }
+                Err(e) => {
+                    warn!("skill.train (монеты): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            }
+        }
+        if !items.is_empty() {
+            let inventory = match db::items::inventory(pool, char_id).await {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!("skill.train (инвентарь): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            };
+            for item in items {
+                let have: i64 = inventory
+                    .iter()
+                    .filter(|row| row.def_id == item.def_id)
+                    .map(|row| i64::from(row.qty))
+                    .sum();
+                if have < item.qty {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("нужен предмет: {} ×{} (есть {have})", item.def_id, item.qty),
+                    ));
+                }
+            }
+        }
+        let mut events = Vec::new();
+        if gold > 0 {
+            match db::items::consume_money(pool, char_id, gold).await {
+                Ok(Some(changes)) => events.extend(Self::money_events(changes)),
+                Ok(None) => {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("не хватает золота: {gold}"),
+                    ));
+                }
+                Err(e) => {
+                    warn!("skill.train (списание золота): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            }
+        }
+        for item in items {
+            match db::items::consume_by_def(pool, char_id, &item.def_id, item.qty).await {
+                Ok(Some(changes)) => events.extend(Self::money_events(changes)),
+                Ok(None) => {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("нужен предмет: {} ×{}", item.def_id, item.qty),
+                    ));
+                }
+                Err(e) => {
+                    warn!("skill.train (списание {}): {e}", item.def_id);
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            }
+        }
+        Ok(events)
     }
 
     /// `cmd/item.move` (M16/F29g): поменять местами два предмета
@@ -2816,6 +2941,66 @@ impl Session {
         // монеты.
         if scenario == "kit" {
             return self.scenario_kit(seq).await;
+        }
+        // `/scenario skillxp <skill_id> [xp]` — M18/F44: заполнить шкалу
+        // навыка (по умолчанию ровно до 100 %) — смоук обучения у
+        // тренера без боя (гейт 100 %, ADR-009).
+        if let Some(rest) = scenario.strip_prefix("skillxp ") {
+            let mut parts = rest.split_whitespace();
+            let Some(skill_id) = parts.next().map(str::to_string) else {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "формат: skillxp <skill_id> [xp]",
+                )];
+            };
+            let char_id = match self.require_char_id(seq) {
+                Ok(id) => id,
+                Err(out) => return vec![out],
+            };
+            let pool = &self.state.pool;
+            let (xp_now, rank) = match db::skills::learned_one(pool, &char_id, &skill_id).await {
+                Ok(Some(pair)) => pair,
+                Ok(None) => (0, 0),
+                Err(e) => {
+                    warn!("scenario skillxp (прогресс): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let xp = match parts.next().and_then(|v| v.parse::<i64>().ok()) {
+                Some(xp) => xp.max(0),
+                None => crate::systems::xp_to_next(rank.max(0) as u32, &self.state.config.skills),
+            };
+            let pool_left = match db::skills::xp_pool(pool, &char_id).await {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("scenario skillxp (пул): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            if let Err(e) =
+                db::skills::invest_tx(pool, &char_id, &skill_id, xp, rank, pool_left).await
+            {
+                warn!("scenario skillxp: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            let need = crate::systems::xp_to_next(rank.max(0) as u32, &self.state.config.skills);
+            return vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                out_event(
+                    "evt/char/xp",
+                    None,
+                    serde_json::to_value(CharXp {
+                        skill_id,
+                        amount: xp - xp_now,
+                        skill_xp: xp,
+                        rank: Some(rank.max(0) as u32),
+                        xp_to_next: Some(need),
+                        pool_left: Some(pool_left),
+                    })
+                    .unwrap_or_default(),
+                ),
+            ];
         }
         if scenario != "death" {
             return vec![Self::err(
@@ -6253,6 +6438,16 @@ impl Session {
         }
         let node =
             serde_json::to_value(node.map(|(node, _)| node)).unwrap_or(serde_json::Value::Null);
+        // M18/F44: обучение NPC из контента диалога (ADR-009) — список
+        // навыков с ценой; у NPC без training — пустой массив.
+        let training = self
+            .state
+            .dialogs
+            .get(&entity.id)
+            .map(|def| {
+                serde_json::to_value(&def.training).unwrap_or_else(|_| serde_json::json!([]))
+            })
+            .unwrap_or_else(|| serde_json::json!([]));
         vec![Self::ack_payload(
             seq,
             &serde_json::json!({
@@ -6263,6 +6458,7 @@ impl Session {
                 "node": node,
                 "quests": quests,
                 "actions": actions,
+                "training": training,
             }),
         )]
     }

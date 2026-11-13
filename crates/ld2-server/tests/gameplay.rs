@@ -33,7 +33,7 @@ async fn move_exit(c: &mut WsClient, exit_id: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn skills_invest_gate_and_cap() {
+async fn skill_train_gates_and_cap() {
     let Some(db_url) = common::test_url() else {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
@@ -50,41 +50,54 @@ async fn skills_invest_gate_and_cap() {
         .await
         .expect("наполнить пул");
 
-    // Неизвестный навык и неpositive-очки → E_XP_POOL.
+    // M18/F44: NPC не обучает неизвестному навыку (нет записи в диалоге
+    // и в маркере локации) → E_NO_TRAINER.
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "no_such", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "no_such" }),
         )
         .await;
-    assert_eq!(c.ack(seq).await["error"]["code"], "E_XP_POOL");
-    let seq = c
-        .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 0 }),
-        )
-        .await;
-    assert_eq!(c.ack(seq).await["error"]["code"], "E_XP_POOL");
+    assert_eq!(c.ack(seq).await["error"]["code"], "E_NO_TRAINER");
 
-    // M14: вложение платное (цена тренера, ранг 0 → базовая) — даём золото.
+    // Шкала пустая → E_SKILL_NOT_READY (гейт 100 %, ADR-009).
     give_gold(&mut c, 1000).await;
-
-    // Вложение: ack несёт pool_left, evt/char/xp несёт прогресс (§7/§8).
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 50 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
     let ack = c.ack(seq).await;
-    assert_eq!(ack["result"], "ok", "инвест: {ack}");
-    assert_eq!(ack["payload"]["pool_left"], 99950);
+    assert_eq!(
+        ack["error"]["code"], "E_SKILL_NOT_READY",
+        "шкала не полна: {ack}"
+    );
+
+    // Успех: шкала 100 % (SQL), плата из диалога — 10 очков + 100 золота.
+    common::set_skill(&pool, &char_id, "sword", xp_to_next(0), 0).await;
+    let seq = c
+        .send(
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "обучение: {ack}");
+    assert_eq!(ack["payload"]["rank"], 1, "ранг +1");
+    assert_eq!(ack["payload"]["xp"], 0, "шкала обнулена");
+    assert_eq!(ack["payload"]["pool_left"], 99990, "100000 − 10 очков");
     let xp = c.wait_event("evt/char/xp").await;
     assert_eq!(xp["payload"]["skill_id"], "sword");
-    assert_eq!(xp["payload"]["skill_xp"], 50);
-    assert_eq!(xp["payload"]["xp_to_next"], 120, "порог rank0 (§2.2)");
+    assert_eq!(xp["payload"]["rank"], 1);
+    assert_eq!(xp["payload"]["amount"], -10, "списаны очки пула");
+    let gold =
+        ld2_server::db::items::count_by_type(&pool, &char_id, ld2_server::db::items::MONEY_TYPE)
+            .await
+            .expect("золото");
+    assert_eq!(gold, 900, "плата 100 золота списана");
 
-    // Снапшот: все навыки контента, вложенный — со своим прогрессом.
+    // Снапшот: навык ранга 1 с пустой шкалой, имя из контента.
     let seq = c
         .send("cmd/char.select", json!({ "char_id": char_id }))
         .await;
@@ -100,18 +113,37 @@ async fn skills_invest_gate_and_cap() {
         .iter()
         .find(|s| s["id"] == "sword")
         .expect("sword в снапшоте");
-    assert_eq!(sword["xp"], 50);
-    assert_eq!(sword["rank"], 0);
+    assert_eq!(sword["xp"], 0, "шкала после повышения пуста");
+    assert_eq!(sword["rank"], 1);
     assert_eq!(sword["name"], "Владение мечом");
 
-    // Гейт атрибутов (§2.2): вложение до ранга 10 при атрибутах 10 < 12
-    // → E_REQUIREMENT_ATTR, пул НЕ списан (транзакция не выполнялась).
-    let need_total: i64 = (0..10).map(xp_to_next).sum();
-    let points = need_total - 50 + 5;
+    // Не хватает очков опыта → E_XP_POOL (шкала полная, пул не тронут).
+    sqlx::query("UPDATE characters SET xp_pool = 5 WHERE id = $1")
+        .bind(&char_id)
+        .execute(&pool)
+        .await
+        .expect("малый пул");
+    common::set_skill(&pool, &char_id, "sword", xp_to_next(1), 1).await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": points }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["error"]["code"], "E_XP_POOL");
+
+    // Гейт атрибутов (§2.2): ранг 9 + шкала 100 % → ранг 10 требует
+    // атрибут 12 (у персонажа 10) → E_REQUIREMENT_ATTR, пул не списан.
+    sqlx::query("UPDATE characters SET xp_pool = 100000 WHERE id = $1")
+        .bind(&char_id)
+        .execute(&pool)
+        .await
+        .expect("пул");
+    common::set_skill(&pool, &char_id, "sword", xp_to_next(9), 9).await;
+    let seq = c
+        .send(
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
     let ack = c.ack(seq).await;
@@ -125,29 +157,21 @@ async fn skills_invest_gate_and_cap() {
     let _ = c.ack(seq).await;
     let snap = c.wait_event("evt/state/snapshot").await;
     assert_eq!(
-        snap["payload"]["char"]["xp_pool"], 99950,
-        "неудачный инвест не списал пул"
+        snap["payload"]["char"]["xp_pool"], 100000,
+        "неудачное обучение не списало пул"
     );
 
-    // Потолок ранга (§2.2): rank=30 (конфиг) → E_RANK_CAP.
-    // Пула должно хватать на сам вклад — иначе сработает проверка пула.
+    // Потолок ранга (§2.2): rank = 30 (конфиг) + шкала 100 % → E_RANK_CAP.
     sqlx::query("UPDATE characters SET xp_pool = 1000000 WHERE id = $1")
         .bind(&char_id)
         .execute(&pool)
         .await
         .expect("пул для капа");
-    sqlx::query(
-        "UPDATE character_skills SET rank = 30, xp = 0 \
-         WHERE character_id = $1 AND skill_id = 'sword'",
-    )
-    .bind(&char_id)
-    .execute(&pool)
-    .await
-    .expect("ранг обновлён");
+    common::set_skill(&pool, &char_id, "sword", xp_to_next(30), 30).await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": xp_to_next(30) }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
     let ack = c.ack(seq).await;
@@ -347,18 +371,19 @@ async fn death_loses_lut_but_keeps_progress() {
     let cfg = common::test_config(&db_url, |_| {});
     let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
 
-    // «Прогресс»: вложение XP — у тренера в деревне (M14: E_NO_TRAINER вне
-    // деревни), вложение платное (цена по рангу).
+    // «Прогресс»: повышение ранга у тренера (M18/F44, ADR-009) — шкала
+    // 100 % (SQL), плата из диалога: 10 очков пула + 100 золота.
     sqlx::query("UPDATE characters SET xp_pool = 1000 WHERE id = $1")
         .bind(&char_id)
         .execute(&pool)
         .await
         .expect("пул");
     give_gold(&mut c, 1000).await;
+    common::set_skill(&pool, &char_id, "sword", xp_to_next(0), 0).await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
@@ -430,7 +455,8 @@ async fn death_loses_lut_but_keeps_progress() {
         .find(|s| s["id"] == "sword")
         .expect("sword")
         .clone();
-    assert_eq!(sword["xp"], 10, "прогресс навыка сохранён");
+    assert_eq!(sword["xp"], 0, "шкала обнулена при повышении");
+    assert_eq!(sword["rank"], 1, "ранг навыка сохранён");
     assert_eq!(
         snap["payload"]["location"]["id"], "l_village",
         "респаун в спавне"
@@ -459,17 +485,19 @@ async fn progress_survives_restart() {
     let (mut c, login, char_id) = in_world(&ws1).await;
     let cfg = common::test_config(&db_url, |_| {});
     let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    // M18/F44: прогресс — шкала 100 % и повышение ранга у тренера
+    // (ADR-009): плата 10 очков пула + 100 золота.
     sqlx::query("UPDATE characters SET xp_pool = 500 WHERE id = $1")
         .bind(&char_id)
         .execute(&pool)
         .await
         .expect("пул");
-    // Вложение — у тренера в деревне (M14), платно (цена по рангу).
     give_gold(&mut c, 1000).await;
+    common::set_skill(&pool, &char_id, "sword", xp_to_next(0), 0).await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 25 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
@@ -515,8 +543,8 @@ async fn progress_survives_restart() {
         "нож пережил рестарт: {inv:?}"
     );
     assert_eq!(
-        snap["payload"]["char"]["xp_pool"], 475,
-        "пул пережил рестарт"
+        snap["payload"]["char"]["xp_pool"], 490,
+        "пул пережил рестарт (500 − 10 очков)"
     );
     let sword = snap["payload"]["char"]["skills"]
         .as_array()
@@ -525,7 +553,8 @@ async fn progress_survives_restart() {
         .find(|s| s["id"] == "sword")
         .expect("sword")
         .clone();
-    assert_eq!(sword["xp"], 25, "прогресс навыка пережил рестарт");
+    assert_eq!(sword["xp"], 0, "шкала обнулена при повышении");
+    assert_eq!(sword["rank"], 1, "ранг пережил рестарт");
     assert_eq!(
         snap["payload"]["location"]["id"], "l_forest",
         "позиция пережила рестарт"

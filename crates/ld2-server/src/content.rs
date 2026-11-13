@@ -626,6 +626,53 @@ mod tests {
                 }
             }
 
+            // M18/F44: обучение навыкам (ADR-009) — навык из контента,
+            // очки/золото положительные, предметы существуют, навык
+            // уникален у NPC, и NPC обязательно тренер по этому навыку
+            // (иначе запись недостижима — сервер отдаёт E_NO_TRAINER).
+            let mut trained = HashSet::new();
+            for entry in &npc.training {
+                assert!(
+                    skill_ids.contains(entry.skill.as_str()),
+                    "неизвестный skill {} в training у {npc_id}",
+                    entry.skill
+                );
+                assert!(
+                    trained.insert(entry.skill.as_str()),
+                    "skill {} дублируется в training у {npc_id}",
+                    entry.skill
+                );
+                assert!(
+                    entry.points > 0,
+                    "training.points должен быть > 0: {npc_id}"
+                );
+                assert!(entry.gold >= 0, "training.gold должен быть ≥ 0: {npc_id}");
+                for item in &entry.items {
+                    assert!(
+                        item_ids.contains(item.def_id.as_str()),
+                        "неизвестный item {} в training у {npc_id}",
+                        item.def_id
+                    );
+                    assert!(item.qty > 0, "training.qty должен быть > 0: {npc_id}");
+                }
+                let marker_trains = content
+                    .locations
+                    .iter()
+                    .flat_map(|loc| loc.entities.iter())
+                    .find(|e| e.id == *npc_id)
+                    .and_then(|e| e.extra.get("trainer"))
+                    .and_then(|t| t.get("skills"))
+                    .and_then(|s| s.as_array())
+                    .is_some_and(|arr| {
+                        arr.iter().any(|v| v.as_str() == Some(entry.skill.as_str()))
+                    });
+                assert!(
+                    marker_trains,
+                    "у {npc_id} есть training.{}, но нет маркера trainer.skills в locations.json",
+                    entry.skill
+                );
+            }
+
             // M18/F37/F38: дерево диалога — корень существует (любой
             // диалог начинается со стартовой реплики), ответы ведут
             // на существующие строки, id ответов уникальны (в пределах
@@ -652,20 +699,26 @@ mod tests {
                         reply_ids.insert(reply.id.as_str()),
                         "id ответа дублируется у {npc_id}"
                     );
-                    // M18/F43: действие ответа — известное и только там,
-                    // где у NPC оно реально есть (action=shop → магазин).
+                    // M18/F43/F44: действие ответа — известное и только
+                    // там, где у NPC оно реально есть: shop → магазин,
+                    // train → список обучения в диалоге.
                     if let Some(action) = &reply.action {
-                        assert_eq!(
-                            action.as_str(),
-                            "shop",
-                            "неизвестное действие {action} у ответа {} ({npc_id})",
-                            reply.id
-                        );
-                        assert!(
-                            shops.contains_key(npc_id),
-                            "ответ {} с action=shop, но у {npc_id} нет магазина",
-                            reply.id
-                        );
+                        match action.as_str() {
+                            "shop" => assert!(
+                                shops.contains_key(npc_id),
+                                "ответ {} с action=shop, но у {npc_id} нет магазина",
+                                reply.id
+                            ),
+                            "train" => assert!(
+                                !npc.training.is_empty(),
+                                "ответ {} с action=train, но у {npc_id} нет training",
+                                reply.id
+                            ),
+                            other => panic!(
+                                "неизвестное действие {other} у ответа {} ({npc_id})",
+                                reply.id
+                            ),
+                        }
                     }
                     if let Some(next) = &reply.next {
                         assert!(

@@ -50,36 +50,38 @@ async fn scenario_gold_stacks_and_spends_at_trainer() {
         .execute(&pool)
         .await
         .expect("пул");
-    pool.close().await;
 
     // Два начисления → один стак (F29a: grant_stacking).
     give_gold(&mut c, 30).await;
     give_gold(&mut c, 70).await;
     assert_eq!(money_rows(&db_url, &char_id).await, (1, 100), "один стак");
 
-    // Покупка у тренера: вложение ранга 0 стоит 100 — стак уходит
-    // целиком событием evt/item/removed (consumed).
+    // M18/F44: обучение у тренера стоит 100 золота из диалога — стак
+    // уходит целиком событием evt/item/removed (consumed).
+    common::set_skill(&pool, &char_id, "sword", 10_000_000, 0).await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "инвест за монеты");
+    assert_eq!(c.ack(seq).await["result"], "ok", "обучение за монеты");
     let removed = c.wait_event("evt/item/removed").await;
     assert_eq!(removed["payload"]["reason"], "consumed", "стак списан");
     assert_eq!(money_rows(&db_url, &char_id).await, (0, 0), "стак пуст");
 
     // Частичное списание: 150 − 100 = 50 → патч qty в живом стаке.
     give_gold(&mut c, 150).await;
+    common::set_skill(&pool, &char_id, "sword", 10_000_000, 1).await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "второй инвест");
+    assert_eq!(c.ack(seq).await["result"], "ok", "второе обучение");
     let state = c.wait_event("evt/item/state").await;
     assert_eq!(state["payload"]["patch"]["qty"], 50, "остаток стака");
     assert_eq!(money_rows(&db_url, &char_id).await, (1, 50), "частичное");
+    pool.close().await;
 }

@@ -5,7 +5,7 @@
 //! (или наоборот) ломает эти тесты.
 
 use ld2_protocol::cmd::{
-    AuthLogin, CharCreate, CharXpInvest, ChatSend, GuildRankSet, LocationMove, MagicRuneCast, Ping,
+    AuthLogin, CharCreate, ChatSend, GuildRankSet, LocationMove, MagicRuneCast, Ping, SkillTrain,
     StateResync, TradeAddItem,
 };
 use ld2_protocol::evt::{
@@ -328,9 +328,9 @@ fn command_envelope_round_trip_per_domain() {
             Envelope::command(
                 9,
                 TS,
-                &CharXpInvest {
+                &SkillTrain {
+                    entity_id: "npc_elder".into(),
                     skill_id: "sword".into(),
-                    points: 50,
                 },
             )
             .unwrap(),

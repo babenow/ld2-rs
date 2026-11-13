@@ -78,11 +78,13 @@ pub struct CharDelete {
     pub char_id: String,
 }
 
-/// Вложение очков опыта из пула квестов (D3/§2.1 skills.md).
+/// M18/F44/ADR-009: повышение ранга навыка у тренера через диалог —
+/// шкала навыка 100 % + очки опыта (пул) + плата из диалога NPC.
+/// Заменяет `char.xp_invest` (обходил гейт 100 %).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct CharXpInvest {
+pub struct SkillTrain {
+    pub entity_id: String,
     pub skill_id: String,
-    pub points: i64,
 }
 
 // ─── мир / навигация (ФР-03) ─────────────────────────────────────────────────
@@ -431,7 +433,7 @@ impl_commands!(
     (CharCreate, "cmd/char.create", false),
     (CharSelect, "cmd/char.select", true),
     (CharDelete, "cmd/char.delete", false),
-    (CharXpInvest, "cmd/char.xp_invest", false),
+    (SkillTrain, "cmd/skill.train", false),
     (LocationLook, "cmd/location.look", true),
     (LocationMove, "cmd/location.move", false),
     (EntityInfo, "cmd/entity.info", true),

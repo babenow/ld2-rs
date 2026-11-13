@@ -282,6 +282,22 @@
       "hands": 2
     },
     {
+      "id": "drakkar_axe",
+      "type": "weapon",
+      "name": "Топор Драккара",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 3.0,
+      "stats": {
+        "dmg": "13..26"
+      },
+      "gold_value": 320,
+      "skill": "twohand",
+      "slot": "main_hand",
+      "hands": 2,
+      "sockets": 4
+    },
+    {
       "id": "hammer_battle",
       "type": "weapon",
       "name": "Боевой молот",
