@@ -342,6 +342,7 @@ pub fn staff_item() -> ItemSnapshot {
         qty: None,
         gold_value: Some(120),
         extra: Default::default(),
+        bonuses: None,
     }
 }
 
@@ -363,6 +364,7 @@ pub fn scroll_item() -> ItemSnapshot {
         qty: Some(1),
         gold_value: Some(30),
         extra: Default::default(),
+        bonuses: None,
     }
 }
 
@@ -387,6 +389,7 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
         qty: Some(1),
         gold_value: Some(20),
         extra: Default::default(),
+        bonuses: None,
     }
 }
 
@@ -414,6 +417,7 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
             sockets: None,
             qty: Some(3),
             gold_value: Some(5),
+            bonuses: None,
             extra: Default::default(),
         })
         .collect()

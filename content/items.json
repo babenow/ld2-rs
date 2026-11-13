@@ -291,6 +291,12 @@
       "stats": {
         "dmg": "13..26"
       },
+      "bonuses": [
+        { "kind": "attr", "id": "str", "value": 3 },
+        { "kind": "param", "id": "damage", "value": 2 },
+        { "kind": "param", "id": "accuracy", "value": 4, "pct": true },
+        { "kind": "skill", "id": "sword", "value": 1 }
+      ],
       "gold_value": 320,
       "skill": "twohand",
       "slot": "main_hand",

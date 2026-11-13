@@ -118,6 +118,22 @@ pub struct Socket {
     pub rune: Option<RuneInfo>,
 }
 
+/// M18/F47/ADR-010: бонус предмета — атрибут, параметр или навык
+/// (`kind`: `attr` | `param` | `skill`); `pct` — проценты, только у
+/// `param` (суммируются к итогу).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemBonus {
+    pub kind: String,
+    pub id: String,
+    pub value: i64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pct: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 /// Предмет инвентаря/экипировки/трупа (§6).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemSnapshot {
@@ -153,6 +169,9 @@ pub struct ItemSnapshot {
     pub qty: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gold_value: Option<i64>,
+    /// M18/F47/ADR-010: бонусы предмета (контент + инстанс) — аддитивно §11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bonuses: Option<Vec<ItemBonus>>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }

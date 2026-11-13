@@ -241,7 +241,11 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "slot": "main_hand", "hands": 2,         // M17/F30b: слот предмета (ring/artifact —
                                             // псевдослоты пар) и руки (2 — двуручник)
   "def_id": "dagger_knife",              // M17/F30g: ключ кулдауна использования
-  "qty": 1, "gold_value": 120 }
+  "qty": 1, "gold_value": 120,
+  "bonuses": [ { "kind": "attr",  "id": "str",      "value": 3 },   // M18/F47 (ADR-010):
+               { "kind": "param", "id": "accuracy", "value": 4, "pct": true } ] }
+                                            // бонусы: kind ∈ attr|param|skill; pct — только у
+                                            // param (суммируются к итогу); без поля — нет бонусов
 
 // SkillSnapshot
 { "id": "sword", "name": "Владение мечом", "description": "+2% физ. урона мечом",
