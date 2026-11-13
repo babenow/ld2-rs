@@ -351,7 +351,7 @@ impl Root {
         } else if dialog.actions.iter().any(|action| action == "shop") {
             let entity_id = dialog.id.clone();
             leading = leading.child(
-                IconButton::new("ld2-npc-shop", IconName::Tag)
+                IconButton::new("ld2-npc-shop", IconName::DollarSign)
                     .tooltip(t(lang, Key::BtnShop))
                     .on_click(cx.listener(move |root, _, _, cx| {
                         let cmd = ld2_protocol::cmd::ShopList {
