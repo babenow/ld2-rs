@@ -1875,6 +1875,41 @@ impl Root {
                 col = col.child(div().child(format!("{}: {}", stat_label(lang, key), value)));
             }
         }
+        // M18/F47/ADR-010: бонусы предмета — «Сила +3», «Точность +4%»,
+        // «Владение мечом +2» (контент + инстанс, слитые сервером).
+        if let Some(bonuses) = detail["bonuses"].as_array() {
+            if !bonuses.is_empty() {
+                col = col.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::ItemBonuses)),
+                );
+                for bonus in bonuses {
+                    let kind = bonus["kind"].as_str().unwrap_or_default();
+                    let id = bonus["id"].as_str().unwrap_or_default();
+                    let value = bonus["value"].as_i64().unwrap_or(0);
+                    let pct = bonus["pct"].as_bool().unwrap_or(false);
+                    let name = match kind {
+                        "attr" => attr_label(lang, id),
+                        "param" => param_label(lang, id),
+                        "skill" => self
+                            .store
+                            .snapshot
+                            .as_ref()
+                            .and_then(|snap| snap.char.skills.iter().find(|skill| skill.id == id))
+                            .and_then(|skill| skill.name.clone())
+                            .unwrap_or_else(|| id.to_string()),
+                        _ => id.to_string(),
+                    };
+                    let sign = if value >= 0 { "+" } else { "" };
+                    col = col.child(div().child(format!(
+                        "{name} {sign}{value}{}",
+                        if pct { "%" } else { "" }
+                    )));
+                }
+            }
+        }
         if let Some(sockets) = detail["sockets"].as_array() {
             for socket in sockets {
                 if let Some(rune) = socket["rune"].as_object() {
@@ -2318,6 +2353,31 @@ pub(crate) fn stat_label(lang: Lang, stat: &str) -> String {
         other => other,
     }
     .to_string()
+}
+
+/// M18/F47: id производного параметра → название (бонусы предмета,
+/// ADR-010); `damage` — общая метка «Урон».
+pub(crate) fn param_label(lang: Lang, id: &str) -> String {
+    let key = match id {
+        "accuracy" => Key::ParAccuracy,
+        "damage" | "damage_min" | "damage_max" => Key::ParDamage,
+        "crit_chance" => Key::ParCritChance,
+        "crit_damage" => Key::ParCritDamage,
+        "armor" => Key::ParArmor,
+        "dodge" => Key::ParDodge,
+        "parry_min" | "parry_max" => Key::ParParry,
+        "parry_chance" => Key::ParParryChance,
+        "block_min" | "block_max" => Key::ParBlock,
+        "block_chance" => Key::ParBlockChance,
+        "magic_defense" => Key::ParMagicDefense,
+        "magic_dodge" => Key::ParMagicDodge,
+        "magic_resist" => Key::ParMagicResist,
+        "magic_dispel" => Key::ParMagicDispel,
+        "magic_crit_damage" => Key::ParMagicCritDamage,
+        "magic_crit_chance" => Key::ParMagicCritChance,
+        _ => return id.to_string(),
+    };
+    t(lang, key).to_string()
 }
 
 /// M16/F29e: школа магии (значение `school`; fallback — сырое).

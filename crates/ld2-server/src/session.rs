@@ -22,8 +22,8 @@ use ld2_protocol::evt::{
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, EquipMap, Hp,
-    ItemSnapshot, LocationSnapshot, Mp, ProfessionSnapshot, Requires, Severity, SkillSnapshot,
-    Socket,
+    ItemBonus, ItemSnapshot, LocationSnapshot, Mp, ProfessionSnapshot, Requires, Severity,
+    SkillSnapshot, Socket,
 };
 use ld2_protocol::ErrorCode;
 use serde::de::DeserializeOwned;
@@ -1029,6 +1029,8 @@ impl Session {
                     upgrade: 0,
                     equipped_slot: None,
                     sockets: serde_json::json!([]),
+                    // M18/F47: лут несёт контент-бонусы (ADR-010).
+                    bonuses: def.bonuses.clone(),
                 };
                 loot.push(item_snapshot(&row, &def));
             }
@@ -1100,6 +1102,8 @@ impl Session {
                 upgrade: 0,
                 equipped_slot: None,
                 sockets: serde_json::json!([]),
+                // M18/F47: лут несёт контент-бонусы (ADR-010).
+                bonuses: def.bonuses.clone(),
             };
             loot.push(item_snapshot(&row, &def));
         }
@@ -1280,6 +1284,24 @@ impl Session {
             .filter(|i| equip_uids.contains(i.uid.as_str()))
             .cloned()
             .collect();
+        // M18/F47/ADR-010: бонусы надетых предметов — атрибуты в attrs
+        // (туда же, где считаются самоцветы), навыки к рангу снапшота;
+        // параметры применяет stats::derive.
+        let mut skill_bonus: BTreeMap<String, i64> = BTreeMap::new();
+        for item in &equipped {
+            for bonus in item.bonuses.iter().flatten() {
+                match bonus.kind.as_str() {
+                    "attr" => *attrs.entry(bonus.id.clone()).or_insert(0) += bonus.value,
+                    "skill" => *skill_bonus.entry(bonus.id.clone()).or_insert(0) += bonus.value,
+                    _ => {}
+                }
+            }
+        }
+        for skill in skills.iter_mut() {
+            if let Some(bonus) = skill_bonus.get(&skill.id) {
+                skill.rank = (i64::from(skill.rank) + *bonus).max(0) as u32;
+            }
+        }
         let derived = crate::stats::derive(
             &attrs,
             &skills,
@@ -2997,6 +3019,99 @@ impl Session {
                         rank: Some(rank.max(0) as u32),
                         xp_to_next: Some(need),
                         pool_left: Some(pool_left),
+                    })
+                    .unwrap_or_default(),
+                ),
+            ];
+        }
+        // `/scenario bonus <uid> <kind> <id> <value> [pct]` — M18/F47:
+        // добавить бонус инстансу (ADR-010) — смоук карточки и статов
+        // без правки контента.
+        if let Some(rest) = scenario.strip_prefix("bonus ") {
+            let mut parts = rest.split_whitespace();
+            let (Some(uid), Some(kind), Some(id), Some(value)) = (
+                parts.next().map(str::to_string),
+                parts.next().map(str::to_string),
+                parts.next().map(str::to_string),
+                parts.next().and_then(|v| v.parse::<i64>().ok()),
+            ) else {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "формат: bonus <uid> <kind> <id> <value> [pct]",
+                )];
+            };
+            if !matches!(kind.as_str(), "attr" | "param" | "skill") {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "kind должен быть attr | param | skill",
+                )];
+            }
+            let pct = parts.next().is_some_and(|v| v == "pct");
+            if pct && kind != "param" {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "pct допустим только для kind=param",
+                )];
+            }
+            let char_id = match self.require_char_id(seq) {
+                Ok(id) => id,
+                Err(out) => return vec![out],
+            };
+            let pool = &self.state.pool;
+            let Some(row) = (match db::items::find(pool, &uid, &char_id).await {
+                Ok(row) => row,
+                Err(e) => {
+                    warn!("scenario bonus (предмет): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }) else {
+                return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+            };
+            let mut list: Vec<serde_json::Value> = row
+                .bonuses
+                .as_ref()
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            list.push(serde_json::json!({
+                "kind": kind, "id": id, "value": value, "pct": pct
+            }));
+            let bonuses = serde_json::Value::Array(list);
+            if let Err(e) = db::items::set_bonuses(pool, &uid, bonuses.clone()).await {
+                warn!("scenario bonus (запись): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            // Патч несёт эффективный список (контент + инстанс) — как
+            // item_snapshot, иначе карточка потеряет контент-бонусы.
+            let def = match db::items::def(pool, &row.def_id).await {
+                Ok(Some(def)) => def,
+                Ok(None) => {
+                    return vec![Self::err(seq, ErrorCode::ItemGone, "нет определения")];
+                }
+                Err(e) => {
+                    warn!("scenario bonus (определение): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let mut effective: Vec<serde_json::Value> = content_bonuses(&def)
+                .iter()
+                .cloned()
+                .map(|bonus| serde_json::to_value(bonus).unwrap_or_default())
+                .collect();
+            effective.extend(bonuses.as_array().cloned().unwrap_or_default());
+            let mut patch = serde_json::Map::new();
+            patch.insert("bonuses".into(), serde_json::Value::Array(effective));
+            return vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                out_event(
+                    "evt/item/state",
+                    None,
+                    serde_json::to_value(ItemState {
+                        uid: row.uid,
+                        patch,
                     })
                     .unwrap_or_default(),
                 ),
@@ -6650,6 +6765,8 @@ impl Session {
                     upgrade: 0,
                     equipped_slot: None,
                     sockets: serde_json::json!([]),
+                    // M18/F47: карточка товара показывает бонусы (ADR-010).
+                    bonuses: def.bonuses.clone(),
                 };
                 let item_value =
                     serde_json::to_value(item_snapshot(&virtual_row, &def)).unwrap_or_default();
@@ -7073,6 +7190,54 @@ fn summary_of(row: &db::characters::CharacterRow, location_name: String) -> Char
     }
 }
 
+/// M18/F47: разобрать JSON-массив бонусов (битые записи пропускаются
+/// с предупреждением).
+fn parse_bonuses(value: &serde_json::Value) -> Vec<ItemBonus> {
+    let Some(list) = value.as_array() else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(
+            |item| match serde_json::from_value::<ItemBonus>(item.clone()) {
+                Ok(bonus) => Some(bonus),
+                Err(e) => {
+                    warn!("бонус предмета пропущен ({item}): {e}");
+                    None
+                }
+            },
+        )
+        .collect()
+}
+
+/// M18/F47/ADR-010: контент-бонусы определения — поле `bonuses` **плюс**
+/// раздел `stats.param` («любой параметр прямо в статах»).
+fn content_bonuses(def: &db::items::ItemDefRow) -> Vec<ItemBonus> {
+    let mut out = parse_bonuses(def.bonuses.as_ref().unwrap_or(&serde_json::Value::Null));
+    let Some(params) = def.stats.get("param").and_then(|v| v.as_object()) else {
+        return out;
+    };
+    for (id, value) in params {
+        let (value, pct) = match value {
+            serde_json::Value::Number(n) => (n.as_i64().unwrap_or(0), false),
+            serde_json::Value::Object(map) => (
+                map.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                map.get("pct").and_then(|v| v.as_bool()).unwrap_or(false),
+            ),
+            _ => continue,
+        };
+        if value == 0 {
+            continue;
+        }
+        out.push(ItemBonus {
+            kind: "param".into(),
+            id: id.clone(),
+            value,
+            pct,
+        });
+    }
+    out
+}
+
 /// Проводной вид предмета §6: поля инстанса + определение из сида (D26).
 fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> ItemSnapshot {
     ItemSnapshot {
@@ -7107,6 +7272,15 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
         },
         qty: Some(i64::from(item.qty)),
         gold_value: Some(i64::from(def.gold_value)),
+        // M18/F47: бонусы = контент определения (bonuses + stats.param)
+        // + свои бонусы инстанса.
+        bonuses: {
+            let mut list = content_bonuses(def);
+            list.extend(parse_bonuses(
+                item.bonuses.as_ref().unwrap_or(&serde_json::Value::Null),
+            ));
+            (!list.is_empty()).then_some(list)
+        },
         // M17/F30g: определение — ключ кулдауна использования.
         def_id: Some(item.def_id.clone()),
         slot: def.slot.clone(),

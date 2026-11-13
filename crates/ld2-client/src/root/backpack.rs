@@ -455,6 +455,7 @@ mod tests {
             sockets: None,
             qty: Some(qty),
             gold_value: Some(1),
+            bonuses: None,
             extra: Default::default(),
         };
         let items = vec![

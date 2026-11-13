@@ -408,6 +408,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ShopOwned => "У вас: {n}",
         ShopEmpty => "Товаров нет",
         ShopCurrency => "Валюта",
+        ItemBonuses => "Бонусы",
         BtnTrain => "Обучить",
         SkillReady => "возможно повышение ранга",
         TrainingPoints => "{n} очков опыта",

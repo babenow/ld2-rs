@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use ld2_protocol::types::{Entity, Exit, Requires};
+use ld2_protocol::types::{Entity, Exit, ItemBonus, Requires};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -105,6 +105,9 @@ pub struct ContentItemDef {
     /// левую); `None` → 1.
     #[serde(default)]
     pub hands: Option<i32>,
+    /// M18/F47: бонусы предмета (ADR-010) — атрибут/параметр/навык.
+    #[serde(default)]
+    pub bonuses: Vec<ItemBonus>,
 }
 
 /// Профессия из `professions.json` (skills.md §5.1: первичная/вторичная).
@@ -352,14 +355,14 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         let stats = serde_json::Value::Object(item.stats.clone());
         let requires = serde_json::to_value(&item.requires).unwrap_or(serde_json::Value::Null);
         sqlx::query(
-            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, slot, hands, cooldown_s) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, slot, hands, cooldown_s, bonuses) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
              ON CONFLICT (id) DO UPDATE SET \
                item_type = EXCLUDED.item_type, name = EXCLUDED.name, rarity = EXCLUDED.rarity, \
                upgrade = EXCLUDED.upgrade, stats = EXCLUDED.stats, requires = EXCLUDED.requires, \
                gold_value = EXCLUDED.gold_value, qty = EXCLUDED.qty, skill = EXCLUDED.skill, \
                sockets = EXCLUDED.sockets, slot = EXCLUDED.slot, hands = EXCLUDED.hands, \
-               cooldown_s = EXCLUDED.cooldown_s",
+               cooldown_s = EXCLUDED.cooldown_s, bonuses = EXCLUDED.bonuses",
         )
         .bind(&item.id)
         .bind(&item.item_type)
@@ -375,6 +378,7 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         .bind(&item.slot)
         .bind(item.hands.unwrap_or(1))
         .bind(item.cooldown_s.unwrap_or(1.0))
+        .bind(serde_json::to_value(&item.bonuses).unwrap_or(serde_json::Value::Null))
         .execute(&mut *tx)
         .await?;
     }
@@ -825,6 +829,108 @@ mod tests {
                     assert!(
                         item_ids.contains(item.as_str()),
                         "нет товара {item} у {npc_id}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// M18/F47: `items.json` с бонусами валиден (ADR-010): kind ∈
+    /// attr|param|skill, id существует (атрибут/параметр/навык), value ≠ 0,
+    /// `pct` только у param, id уникален в пределах предмета.
+    #[test]
+    fn items_content_is_valid() {
+        use std::collections::HashSet;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = load(&dir).expect("контент контента загружается");
+        let skill_ids: HashSet<&str> = content.skills.iter().map(|s| s.id.as_str()).collect();
+        const ATTRS: [&str; 4] = ["str", "dex", "vit", "int"];
+        const PARAMS: [&str; 20] = [
+            "accuracy",
+            "damage",
+            "damage_min",
+            "damage_max",
+            "crit_chance",
+            "crit_damage",
+            "armor",
+            "dodge",
+            "parry_min",
+            "parry_max",
+            "parry_chance",
+            "block_min",
+            "block_max",
+            "block_chance",
+            "magic_defense",
+            "magic_dodge",
+            "magic_resist",
+            "magic_dispel",
+            "magic_crit_damage",
+            "magic_crit_chance",
+        ];
+        for item in &content.items {
+            let mut seen = HashSet::new();
+            for bonus in &item.bonuses {
+                assert!(
+                    seen.insert(bonus.id.as_str()),
+                    "дубль бонуса {} у {}",
+                    bonus.id,
+                    item.id
+                );
+                assert_ne!(bonus.value, 0, "value должен быть ≠ 0: {}", item.id);
+                match bonus.kind.as_str() {
+                    "attr" => assert!(
+                        ATTRS.contains(&bonus.id.as_str()),
+                        "неизвестный атрибут {} у {}",
+                        bonus.id,
+                        item.id
+                    ),
+                    "param" => assert!(
+                        PARAMS.contains(&bonus.id.as_str()),
+                        "неизвестный параметр {} у {}",
+                        bonus.id,
+                        item.id
+                    ),
+                    "skill" => assert!(
+                        skill_ids.contains(bonus.id.as_str()),
+                        "неизвестный навык {} у {}",
+                        bonus.id,
+                        item.id
+                    ),
+                    other => panic!("неизвестный kind {other} у {}", item.id),
+                }
+                if bonus.pct {
+                    assert_eq!(
+                        bonus.kind, "param",
+                        "pct допустим только у param: {}",
+                        item.id
+                    );
+                }
+            }
+
+            // M18/F47: раздел stats.param — любой параметр прямо в
+            // статах: число (плоское) или {value, pct}.
+            if let Some(params) = item.stats.get("param").and_then(|v| v.as_object()) {
+                for (id, value) in params {
+                    assert!(
+                        PARAMS.contains(&id.as_str()),
+                        "неизвестный параметр {id} в stats.param у {}",
+                        item.id
+                    );
+                    let value = match value {
+                        serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
+                        serde_json::Value::Object(map) => {
+                            map.get("value").and_then(|v| v.as_i64()).unwrap_or(0)
+                        }
+                        other => panic!(
+                            "некорректное значение {other} в stats.param ({id}) у {}",
+                            item.id
+                        ),
+                    };
+                    assert_ne!(
+                        value, 0,
+                        "value должен быть ≠ 0 в stats.param ({id}) у {}",
+                        item.id
                     );
                 }
             }

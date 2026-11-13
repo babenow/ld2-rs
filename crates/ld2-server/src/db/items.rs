@@ -19,6 +19,8 @@ pub struct ItemRow {
     /// Сокеты посоха: `[{index, rune?, def_id?}]` (ADR-002; `def_id` —
     /// служебное поле для извлечения, в §6 не попадает).
     pub sockets: serde_json::Value,
+    /// M18/F47: бонусы инстанса (ADR-010); `NULL` — нет своих бонусов.
+    pub bonuses: Option<Value>,
 }
 
 /// Определение из сида (`content/items.json` → `item_defs`).
@@ -45,12 +47,14 @@ pub struct ItemDefRow {
     /// M17/F30g: кулдаун использования/скорость атаки, с (контент,
     /// дефолт 1.0).
     pub cooldown_s: f64,
+    /// M18/F47: бонусы из контента (ADR-010); `NULL` — их нет.
+    pub bonuses: Option<Value>,
 }
 
 /// Инвентарь персонажа в порядке получения (стабильный порядок UI).
 pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items \
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses FROM items \
          WHERE character_id = $1 ORDER BY sort_order NULLS LAST, created_at, uid",
     )
     .bind(char_id)
@@ -62,7 +66,7 @@ pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sql
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
         "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
-                slot, hands, skill, cooldown_s \
+                slot, hands, skill, cooldown_s, bonuses \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)
@@ -73,7 +77,7 @@ pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx
 /// Инстанс в инвентаре конкретного персонажа; `None` — чужой/несуществующий.
 pub async fn find(pool: &PgPool, uid: &str, char_id: &str) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items \
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses FROM items \
          WHERE uid = $1 AND character_id = $2",
     )
     .bind(uid)
@@ -89,7 +93,7 @@ pub async fn find_equipped_in_slot(
     slot: &str,
 ) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items \
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses FROM items \
          WHERE character_id = $1 AND equipped_slot = $2",
     )
     .bind(char_id)
@@ -117,13 +121,24 @@ pub async fn insert(
         "INSERT INTO items (character_id, def_id, qty, sort_order) \
          VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
          FROM items WHERE character_id = $1), 0)) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
     )
     .bind(char_id)
     .bind(def_id)
     .bind(qty)
     .fetch_one(pool)
     .await
+}
+
+/// M18/F47: записать бонусы инстанса (ADR-010) — dev-сценарий
+/// `/scenario bonus`, будущие источники в игре.
+pub async fn set_bonuses(pool: &PgPool, uid: &str, bonuses: Value) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE items SET bonuses = $2 WHERE uid = $1")
+        .bind(uid)
+        .bind(bonuses)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Надеть/снять (slot = NULL — снять).
@@ -159,7 +174,7 @@ pub async fn delete(pool: &PgPool, uid: &str) -> Result<u64, sqlx::Error> {
 pub async fn delete_all(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
         "DELETE FROM items WHERE character_id = $1 \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
     )
     .bind(char_id)
     .fetch_all(pool)
@@ -206,7 +221,7 @@ pub async fn take_loot_tx(
         "INSERT INTO items (character_id, def_id, qty, sort_order) \
          VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
          FROM items WHERE character_id = $1), 0)) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
     )
     .bind(char_id)
     .bind(def_id)
@@ -344,7 +359,7 @@ pub async fn insert_by_type(
 /// ещё у стороны-владельца, но читаем для зеркала §8).
 pub async fn find_any(pool: &PgPool, uid: &str) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets FROM items WHERE uid = $1",
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses FROM items WHERE uid = $1",
     )
     .bind(uid)
     .fetch_optional(pool)

@@ -28,6 +28,7 @@
 | `qty` | int | размер стака (партия выдачи/продажи) |
 | `upgrade` | int | предельный уровень улучшения |
 | `gold_value` | int | база цены (наценки магазина считаются от неё) |
+| `bonuses` | list? | **бонусы предмета** (M18/F47, ADR-010): `[{kind, id, value, pct?}]`, `kind ∈ attr \| param \| skill` — «Сила +3», «Точность +4%», «+1 к рангу навыка»; `pct` только у `param` |
 | `stats` | obj | `damage`/`dmg`/`armor`/`heal`/`charges`/`spell`/`school`/`magic`/`value`/`attr`/`max` |
 | `requires` | obj? | требования использования (`attr`, `level`, `profession`) |
 | `sockets` | int? | число сокетов (руны → оружие, самоцветы → броня) |
@@ -125,9 +126,9 @@ npcs[{ id, markup,                        # наценка торговца
 
 | Таблица | Ключевые поля |
 |---|---|
-| `items` | `uid`, `def_id → item_defs`, `qty`, `upgrade`, `equipped_slot`, `sockets jsonb`, `sort_order` |
-| `item_defs` | сид контента: `id`, `item_type`, `name`, `rarity`, `upgrade`, `stats jsonb`, `requires jsonb`, `gold_value`, `qty`, `skill`, `sockets`, `slot`, `hands`, `cooldown_s` |
-| `character_skills` | `(character_id, skill_id)`, **`xp`** (шкала копится использованием), **`rank`** (меняет `skill.train` при `xp ≥ xp_to_next`) |
+| `items` | `uid`, `def_id → item_defs`, `qty`, `upgrade`, `equipped_slot`, `sockets jsonb`, `sort_order`, **`bonuses jsonb`** (бонусы инстанса — задел под источники в игре: кузница/награды) |
+| `item_defs` | сид контента: `id`, `item_type`, `name`, `rarity`, `upgrade`, `stats jsonb`, `requires jsonb`, `gold_value`, `qty`, `skill`, `sockets`, `slot`, `hands`, `cooldown_s`, **`bonuses jsonb`** (контент-бонусы) |
+| `character_skills` | `(character_id, skill_id)`, **`xp`** (шкала копится использованием), **`rank`** (заученный; **эффективный ранг** = `rank` + бонусы `kind=skill` надетых предметов — считается при построении снапшота, в БД не пишется) |
 | `character_professions` | `(character_id, profession_id)`, `xp`, `rank` |
 | `character_quests` | `(character_id, quest_id)`, `state`, `progress jsonb` |
 | `character_dialog_lines` | `(character_id, npc_id, line_id)`, `shown_at` — кулдауны `every_s` диалогов |
@@ -155,8 +156,9 @@ npcs[{ id, markup,                        # наценка торговца
 | Тип | Содержимое |
 |---|---|
 | `CharacterState` | `id`, `name`, `attrs{}`, `skills[]`, `professions[]`, `hp`, `mp`, `xp_pool`, `level`, `total_xp`, `xp_in_level`, `xp_to_next`, `derived`, `profile`, `gender`, `equip{слот → ItemSnapshot}`, `inventory[]`, `crime`, `quests[]` — ядро `evt/state/snapshot` |
-| `ItemSnapshot` | `uid`, `item_type`, `name`, `rarity`, `upgrade`, `stats{}`, `requires?`, `sockets[]`, `def_id`, `slot`, `hands`, `qty` — карточка предмета, позиция магазина, лут |
-| `SkillSnapshot` | `id`, `name`, `description`, `group`, `rank`, `xp`, `xp_to_next` |
+| `ItemSnapshot` | `uid`, `item_type`, `name`, `rarity`, `upgrade`, `stats{}`, `requires?`, `sockets[]`, `def_id`, `slot`, `hands`, `qty`, **`bonuses?`** — карточка предмета, позиция магазина, лут |
+| `ItemBonus` | `{kind: attr\|param\|skill, id, value, pct?}` — бонус надетого предмета (ADR-010): `attr` → в `CharacterState.attrs`, `param` → `stats::derive` (плоские к итогу, `%` — сумма к итогу), `skill` → +N к рангу `SkillSnapshot.rank` |
+| `SkillSnapshot` | `id`, `name`, `description`, `group`, `rank`, `xp`, `xp_to_next` — `rank` включает **бонусы надетых предметов** (`kind=skill`), а `xp_to_next` считается по заученному рангу — шкала и `skill.train` согласованы |
 | `ProfessionSnapshot` | `id`, `rank`, `xp`, `xp_to_next` |
 | `QuestState` | `id`, `title`, `state` (`available\|active\|turn_in\|done`), `goals[]`, `reward_preview`, `reward_label` |
 | `Entity` / `LocationSnapshot` | `id`, `kind`, `name`, `hp`, `tags`, `aggro`, `extra{trainer…}` / `flags`, `exits[]`, `entities[]` |

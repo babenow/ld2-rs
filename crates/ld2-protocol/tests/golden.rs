@@ -544,6 +544,34 @@ fn item_snapshot_open_fields_survive() {
     assert_eq!(item, back);
 }
 
+/// M18/F47 (ADR-010): бонусы предмета — аддитивное поле; без поля
+/// парсится (сервер старой версии), round-trip сохраняет.
+#[test]
+fn item_bonuses_round_trip() {
+    let json = r#"{
+      "uid": "i_7", "type": "weapon", "name": "Топор Драккара",
+      "rarity": "epic", "upgrade": 0, "stats": {},
+      "bonuses": [ { "kind": "attr", "id": "str", "value": 3 },
+                   { "kind": "param", "id": "accuracy", "value": 4, "pct": true } ]
+    }"#;
+    let item: ItemSnapshot = serde_json::from_str(json).expect("парсинг бонусов");
+    let bonuses = item.bonuses.as_ref().expect("bonuses есть");
+    assert_eq!(bonuses.len(), 2);
+    assert_eq!(bonuses[0].kind, "attr");
+    assert_eq!(bonuses[0].value, 3);
+    assert!(!bonuses[0].pct, "pct по умолчанию false");
+    assert!(bonuses[1].pct, "процентный бонус");
+    let back: ItemSnapshot = serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
+    assert_eq!(item, back, "round-trip");
+
+    let old = r#"{
+      "uid": "i_8", "type": "potion", "name": "Зелье",
+      "rarity": "common", "upgrade": 0, "stats": {}
+    }"#;
+    let old_item: ItemSnapshot = serde_json::from_str(old).expect("старый сервер");
+    assert!(old_item.bonuses.is_none(), "бонусов нет → None");
+}
+
 /// M18/F34: снапшот старого сервера без `gender` парсится → `male` (§11);
 /// поле в JSON присутствует при сериализации.
 #[test]
