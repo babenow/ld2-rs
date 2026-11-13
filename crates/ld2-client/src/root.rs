@@ -325,6 +325,10 @@ pub struct Root {
     /// и stick-to-bottom чата.
     journal_scroll: ScrollHandle,
     chat_scroll: ScrollHandle,
+    /// M18/F46: прокрутка ленты диалога NPC (stick-to-bottom) и длина
+    /// ленты на прошлом кадре — по ней решается досcrollивание вниз.
+    npc_scroll: ScrollHandle,
+    npc_seen: usize,
     /// M14/F3: обычная прокрутка вкладок листа «Навыки»/«Профессии».
     skills_scroll: ScrollHandle,
     professions_scroll: ScrollHandle,
@@ -515,6 +519,8 @@ impl Root {
             last_notice: None,
             journal_scroll: ScrollHandle::new(),
             chat_scroll: ScrollHandle::new(),
+            npc_scroll: ScrollHandle::new(),
+            npc_seen: 0,
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
             backpack_scroll: ScrollHandle::new(),
