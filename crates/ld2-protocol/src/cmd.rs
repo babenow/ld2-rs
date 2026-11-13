@@ -62,6 +62,10 @@ pub struct CharCreate {
     pub name: String,
     /// Стартовый профиль: Воин/Лучник/Маг (список — capability сервера).
     pub profile: String,
+    /// M18/F34: пол (`male`/`female`); отсутствие/`null` → `male`
+    /// (обратная совместимость, §11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gender: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

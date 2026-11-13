@@ -584,7 +584,20 @@ impl Session {
                 format!("неизвестный профиль: {}", cmd.profile),
             )];
         }
-        match db::characters::create(pool, account_id, &cmd.name, &cmd.profile).await {
+        // M18/F34: пол — `male`/`female`; старые клиенты не шлют пол →
+        // `male` (обратная совместимость §11).
+        let gender = match cmd.gender.as_deref() {
+            None | Some("male") => "male",
+            Some("female") => "female",
+            Some(other) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::BadGender,
+                    format!("неизвестный пол: {other}"),
+                )];
+            }
+        };
+        match db::characters::create(pool, account_id, &cmd.name, &cmd.profile, gender).await {
             Ok(Some(row)) => {
                 // M17/F30e: стартовый ресурс по профилю (WoW): воин —
                 // ярость с нуля, лучник — полная энергия; мана (маг) —
@@ -1272,6 +1285,8 @@ impl Session {
             // M17/F30b: класс для правил экипировки на клиенте (F30e —
             // ресурс боя).
             profile: Some(row.profile.clone()),
+            // M18/F34: пол для диалогов NPC (F35).
+            gender: row.gender.clone(),
             attrs,
             skills,
             // Изученные профессии (§6, M12.6).

@@ -356,6 +356,10 @@ pub struct CharacterState {
     /// правила экипировки и ресурс боя (F30e); аддитивно §6.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// M18/F34: пол (`male`/`female`) — задаётся при создании, диалоги
+    /// NPC знают пол (F35); старый сервер без поля → `male` (§11).
+    #[serde(default = "default_gender")]
+    pub gender: String,
     #[serde(default)]
     pub equip: EquipMap,
     #[serde(default)]
@@ -366,6 +370,11 @@ pub struct CharacterState {
     pub quests: Vec<QuestState>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
+}
+
+/// Фолбэк пола для снапшотов старых серверов (M18/F34, §11).
+fn default_gender() -> String {
+    "male".to_string()
 }
 
 /// Сводка персонажа в списке аккаунта (§5 `characters[]`, ФР-02).

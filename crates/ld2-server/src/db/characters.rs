@@ -9,6 +9,8 @@ pub struct CharacterRow {
     pub id: String,
     pub name: String,
     pub profile: String,
+    /// M18/F34: пол (`male`/`female`) — из `char.create`.
+    pub gender: String,
     pub location_id: String,
     pub hp_cur: i32,
     pub hp_max: i32,
@@ -25,7 +27,7 @@ pub struct CharacterRow {
 /// Живые персонажи аккаунта (для `char.list` и `evt/session.start` §5).
 pub async fn list(pool: &PgPool, account_id: i64) -> Result<Vec<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
-        "SELECT id, name, profile, location_id, hp_cur, hp_max, \
+        "SELECT id, name, profile, gender, location_id, hp_cur, hp_max, \
          mp_cur, mp_max, xp_pool, total_xp, state_version, attrs \
          FROM characters \
          WHERE account_id = $1 AND deleted_at IS NULL ORDER BY created_at",
@@ -53,16 +55,19 @@ pub async fn create(
     account_id: i64,
     name: &str,
     profile: &str,
+    gender: &str,
 ) -> Result<Option<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
-        "INSERT INTO characters (account_id, name, profile) VALUES ($1, $2, $3) \
+        "INSERT INTO characters (account_id, name, profile, gender) \
+         VALUES ($1, $2, $3, $4) \
          ON CONFLICT (name) WHERE deleted_at IS NULL DO NOTHING \
-         RETURNING id, name, profile, location_id, hp_cur, hp_max, \
+         RETURNING id, name, profile, gender, location_id, hp_cur, hp_max, \
                   mp_cur, mp_max, xp_pool, total_xp, state_version, attrs",
     )
     .bind(account_id)
     .bind(name)
     .bind(profile)
+    .bind(gender)
     .fetch_optional(pool)
     .await
 }
@@ -74,7 +79,7 @@ pub async fn find(
     char_id: &str,
 ) -> Result<Option<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
-        "SELECT id, name, profile, location_id, hp_cur, hp_max, \
+        "SELECT id, name, profile, gender, location_id, hp_cur, hp_max, \
          mp_cur, mp_max, xp_pool, total_xp, state_version, attrs \
          FROM characters \
          WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL",
@@ -100,7 +105,7 @@ pub async fn bump_state_version(pool: &PgPool, char_id: &str) -> Result<i64, sql
 /// перезагрузка состояния после мутаций).
 pub async fn get(pool: &PgPool, char_id: &str) -> Result<Option<CharacterRow>, sqlx::Error> {
     sqlx::query_as::<_, CharacterRow>(
-        "SELECT id, name, profile, location_id, hp_cur, hp_max, \
+        "SELECT id, name, profile, gender, location_id, hp_cur, hp_max, \
          mp_cur, mp_max, xp_pool, total_xp, state_version, attrs \
          FROM characters WHERE id = $1 AND deleted_at IS NULL",
     )

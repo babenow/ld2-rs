@@ -269,7 +269,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `auth.logout` | `{}` | `{}` | + | выход |
 | `session.refresh` | `{}` | `{access_token, expires_in_s}` | + | ротация токена |
 | `char.list` | `{}` | `{characters[]}` | + | список персонажей |
-| `char.create` | `{name, profile}` | `{character}` | − | создание (profile: Воин/Лучник/Маг, список — capability сервера) |
+| `char.create` | `{name, profile, gender?}` | `{character}` | − | создание (profile: Воин/Лучник/Маг, список — capability сервера; gender `male`\|`female`, без поля → `male` — M18/F34) |
 | `char.select` | `{char_id}` | `{}` (→ `evt/state/snapshot`) | + | вход в мир |
 | `char.delete` | `{char_id}` | `{}` | − | удаление |
 | `char.xp_invest` | `{skill_id, points}` | `{pool_left}` | − | вложить очки опыта в навык |
@@ -406,6 +406,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_CHAR_LIMIT` | слотов персонажей больше нет (`char_slot_limit`) |
 | `E_NAME_TAKEN` | имя занято/невалидно |
 | `E_BAD_PROFILE` | неизвестный/недоступный `profile` в `char.create` |
+| `E_BAD_GENDER` | неизвестное значение `gender` в `char.create` (M18/F34: `male`\|`female`) |
 | `E_NOT_IN_LOCATION` | команда вне контекста локации |
 | `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `char.xp_invest`, M14) |
 | `E_EXIT_BLOCKED` | выход закрыт (завал, требование, правило) |
