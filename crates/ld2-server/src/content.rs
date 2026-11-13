@@ -549,4 +549,81 @@ mod tests {
             );
         }
     }
+
+    /// M18/F35: контент диалогов валиден — у каждого `giver` есть запись
+    /// диалога; id строк уникальны; ссылки (`quest`/`item`/`skill`/
+    /// `profession`) указывают на существующий контент; `every_s > 0`;
+    /// пол — `male`/`female`.
+    #[test]
+    fn dialogs_content_is_valid() {
+        use std::collections::HashSet;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = load(&dir).expect("контент контента загружается");
+        let dialogs = crate::dialogs::load(&dir).expect("dialogs.json парсится");
+        assert!(!dialogs.is_empty(), "диалоги NPC есть");
+
+        // У каждого выдающего квеста NPC — запись диалога.
+        for quest in &content.quests {
+            if let Some(giver) = &quest.giver {
+                assert!(
+                    dialogs.contains_key(giver),
+                    "у квеста {} giver={giver} нет диалога",
+                    quest.id
+                );
+            }
+        }
+
+        let item_ids: HashSet<&str> = content.items.iter().map(|i| i.id.as_str()).collect();
+        let skill_ids: HashSet<&str> = content.skills.iter().map(|s| s.id.as_str()).collect();
+        let prof_ids: HashSet<&str> = content.professions.iter().map(|p| p.id.as_str()).collect();
+        let quest_ids: HashSet<&str> = content.quests.iter().map(|q| q.id.as_str()).collect();
+
+        for (npc_id, npc) in &dialogs {
+            let mut seen = HashSet::new();
+            for line in &npc.lines {
+                assert!(seen.insert(&line.id), "id строки дублируется у {npc_id}");
+                if let Some(every) = line.every_s {
+                    assert!(every > 0, "every_s должен быть > 0: {npc_id}/{}", line.id);
+                }
+                if let Some(quest) = &line.quest {
+                    assert!(
+                        quest_ids.contains(quest.as_str()),
+                        "неизвестный quest {} у {npc_id}",
+                        line.id
+                    );
+                }
+                if let Some(when) = &line.when {
+                    if let Some(item) = &when.item {
+                        assert!(
+                            item_ids.contains(item.def_id.as_str()),
+                            "неизвестный item {} у {npc_id}",
+                            line.id
+                        );
+                    }
+                    if let Some(skill) = &when.skill {
+                        assert!(
+                            skill_ids.contains(skill.id.as_str()),
+                            "неизвестный skill {} у {npc_id}",
+                            line.id
+                        );
+                    }
+                    if let Some(prof) = &when.profession {
+                        assert!(
+                            prof_ids.contains(prof.id.as_str()),
+                            "неизвестная profession {} у {npc_id}",
+                            line.id
+                        );
+                    }
+                    if let Some(gender) = &when.gender {
+                        assert!(
+                            matches!(gender.as_str(), "male" | "female"),
+                            "неизвестный пол {} у {npc_id}",
+                            line.id
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

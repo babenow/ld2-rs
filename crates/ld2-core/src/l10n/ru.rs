@@ -80,6 +80,7 @@ pub(super) fn t(key: Key) -> &'static str {
         HistoryLabel => "История",
         LogLabel => "Лог мира",
         Examine => "Осмотреть",
+        BtnTalk => "Поговорить",
         Attack => "Атаковать",
         EntityDetailTitle => "Осмотр",
         AltNavHint => "Alt+↑↓←→ — переходы",

@@ -9,7 +9,9 @@
 use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stateful};
 use ld2_core::l10n::{format_duration, t, tf, Key};
-use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, AppStore, LogKind};
+use ld2_core::store::{
+    crime_kind_title, filter_active_statuses, local_epoch, Act, AppStore, LogKind, NpcDialogView,
+};
 use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
 
@@ -20,9 +22,9 @@ use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
-use super::sheet::rarity_label;
+use super::sheet::{goals_summary, rarity_label};
 use super::social::show_party;
-use super::{btn, hex_to_u32, Click, LogTab, Root, INSCRIBE_MS};
+use super::{act_btn, btn, hex_to_u32, Click, LogTab, Root, INSCRIBE_MS};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -125,6 +127,17 @@ impl Root {
             let close = self.dismiss(cx, |r| r.store.clear_loot_confirm());
             return Some(
                 Dialog::new("ld2-loot", title, close)
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
+        // M18/F35: диалог NPC (после осмотра/луута — как в active_dialog).
+        if let Some(dialog) = self.store.npc_dialog.clone() {
+            let title = dialog.name.clone();
+            let body = self.npc_dialog_view(cx, pal, &dialog).into_any_element();
+            let close = self.dismiss(cx, |r| r.store.npc_dialog = None);
+            return Some(
+                Dialog::new("ld2-npc", title, close)
                     .child(body)
                     .into_any_element(),
             );
@@ -538,15 +551,21 @@ impl Root {
                 cx.listener({
                     let id = id.clone();
                     move |this, _, _, cx| {
-                        if matches!(
-                            this.store
-                                .snapshot
-                                .as_ref()
-                                .and_then(|s| { s.location.entities.iter().find(|e| e.id == id) })
-                                .map(|e| e.kind),
-                            Some(EntityKind::Monster) | Some(EntityKind::Player)
-                        ) {
-                            this.store.select_target(id.clone());
+                        let kind = this
+                            .store
+                            .snapshot
+                            .as_ref()
+                            .and_then(|s| s.location.entities.iter().find(|e| e.id == id))
+                            .map(|e| e.kind);
+                        match kind {
+                            Some(EntityKind::Monster) | Some(EntityKind::Player) => {
+                                this.store.select_target(id.clone());
+                            }
+                            // M18/F35: клик по NPC → диалог (поговорить/квесты).
+                            Some(EntityKind::Npc) => {
+                                this.on_click(Click::NpcTalk(id.clone()), cx);
+                            }
+                            _ => {}
                         }
                         cx.notify();
                     }
@@ -584,7 +603,15 @@ impl Root {
                 this.update(acx, |root, cx| root.on_click(click.clone(), cx));
             })
         };
-        let mut menu = Menu::new().item(mk(
+        let mut menu = Menu::new();
+        if entity.kind == EntityKind::Npc {
+            // M18/F35: диалог NPC — поговорить/квесты.
+            menu = menu.item(mk(
+                t(lang, Key::BtnTalk).to_string(),
+                Click::NpcTalk(id.clone()),
+            ));
+        }
+        menu = menu.item(mk(
             t(lang, Key::Examine).to_string(),
             Click::Examine(id.clone()),
         ));
@@ -1060,6 +1087,89 @@ impl Root {
                 )
                 .mt(px(10.0)),
             )
+    }
+
+    /// M18/F35: окно диалога NPC: приветствие, реплики (текст готов —
+    /// `{name}` подставляет сервер) и секция «Квесты» с кнопкой
+    /// «Принять» (`cmd/quest.accept`; принятый исчезает по
+    /// `evt/quest/updated` — store чистит `npc_dialog.quests`).
+    fn npc_dialog_view(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        dialog: &NpcDialogView,
+    ) -> Div {
+        let lang = self.lang;
+        let mut col = div().flex().flex_col().gap_2();
+        if !dialog.greeting.is_empty() {
+            col = col.child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(dialog.greeting.clone()),
+            );
+        }
+        for line in &dialog.lines {
+            col = col.child(div().child(line.text.clone()));
+        }
+        if !dialog.quests.is_empty() {
+            col = col.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::QuestsTab)),
+            );
+            for quest in &dialog.quests {
+                let mut card = div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .border_1()
+                    .border_color(rgb(pal.border))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(quest.title.clone().unwrap_or_else(|| quest.id.clone())),
+                    );
+                if !quest.goals.is_empty() {
+                    card = card.child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format!("• {}", goals_summary(quest))),
+                    );
+                }
+                if let Some(reward) = &quest.reward_preview {
+                    if let Some(xp) = reward.xp {
+                        card = card.child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(rgb(pal.muted))
+                                .child(format!("{}: {xp} XP", t(lang, Key::RewardLabel))),
+                        );
+                    }
+                }
+                let qid = quest.id.clone();
+                card = card.child(act_btn(
+                    cx,
+                    t(lang, Key::BtnAccept),
+                    pal.accent,
+                    pal.accent_text,
+                    move |this, cx| {
+                        let cmd = ld2_protocol::cmd::QuestAccept {
+                            quest_id: qid.clone(),
+                        };
+                        this.send_cmd(&cmd, Act::Quest);
+                        let _ = cx;
+                    },
+                ));
+                col = col.child(card);
+            }
+        }
+        col
     }
 
     fn examine_view(

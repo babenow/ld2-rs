@@ -168,6 +168,8 @@ pub(crate) enum Click {
     Attack(String),
     Flee,
     Examine(String),
+    /// M18/F35: диалог NPC (поговорить/квесты).
+    NpcTalk(String),
     PartyInvite(String),
     TradeOpen(String),
     RuneCast {
@@ -1371,6 +1373,14 @@ impl Root {
                 let cmd = ld2_protocol::cmd::EntityInfo { entity_id: id };
                 match self.transport.send(&cmd) {
                     Ok(_) => self.store.on_world_sent(Act::Examine),
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+            }
+            // M18/F35: диалог NPC — реплики/квесты вместо осмотра.
+            Click::NpcTalk(id) => {
+                let cmd = ld2_protocol::cmd::NpcTalk { entity_id: id };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::NpcTalk),
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
@@ -2961,7 +2971,8 @@ impl Root {
         match kind {
             ld2_core::store::Dialog::Death
             | ld2_core::store::Dialog::Examine
-            | ld2_core::store::Dialog::Loot => self.game_dialog(cx, pal),
+            | ld2_core::store::Dialog::Loot
+            | ld2_core::store::Dialog::NpcTalk => self.game_dialog(cx, pal),
             ld2_core::store::Dialog::PartyInvite
             | ld2_core::store::Dialog::GuildInvite
             | ld2_core::store::Dialog::Trade => self.social_dialog(cx, pal),

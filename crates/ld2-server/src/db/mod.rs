@@ -14,6 +14,7 @@ pub mod characters;
 pub mod chat;
 pub mod craft;
 pub mod crime;
+pub mod dialogs;
 pub mod guilds;
 pub mod items;
 pub mod locations;
