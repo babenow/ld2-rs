@@ -139,6 +139,31 @@ async fn npc_dialog_walks_branches_and_gates_by_quests() {
         .find(|reply| reply["id"] == "r_shop")
         .and_then(|reply| reply["action"].as_str());
     assert_eq!(action, Some("shop"), "реплика магазина: {ack}");
+    // M18/F44: реплика открывает панель обучения (паритет магазина).
+    let train_action = ack["payload"]["node"]["replies"]
+        .as_array()
+        .expect("реплики")
+        .iter()
+        .find(|reply| reply["id"] == "r_train")
+        .and_then(|reply| reply["action"].as_str());
+    assert_eq!(train_action, Some("train"), "реплика обучения: {ack}");
+    // M18/F44: обучение идёт из контента диалога (ADR-009).
+    let training = ack["payload"]["training"].as_array().expect("training");
+    assert_eq!(training.len(), 3, "три навыка у Старосты: {training:?}");
+    let sword = training
+        .iter()
+        .find(|entry| entry["skill"] == "sword")
+        .expect("sword в обучении");
+    assert_eq!(sword["points"], 10, "цена очками: {sword}");
+    assert_eq!(sword["gold"], 100, "цена золотом: {sword}");
+    let fire = training
+        .iter()
+        .find(|entry| entry["skill"] == "fire")
+        .expect("fire в обучении");
+    assert_eq!(
+        fire["items"][0]["def_id"], "herb",
+        "плата предметом: {fire}"
+    );
     assert!(
         !replies.contains(&"r_pack".into()),
         "зелья нет → ответа нет"

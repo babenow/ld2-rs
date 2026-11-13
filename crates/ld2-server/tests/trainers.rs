@@ -48,21 +48,12 @@ async fn set_pool(db_url: &str, char_id: &str, points: i64) {
     pool.close().await;
 }
 
-/// Ранг навыка напрямую в БД (для цены, зависящей от ранга).
-async fn set_skill_rank(db_url: &str, char_id: &str, skill: &str, rank: i32) {
+/// M18/F44: шкала навыка «полная» (100 %) — условие повышения ранга
+/// (ADR-009); xp с большим запасом, чтобы не дублировать формулу.
+async fn fill_bar(db_url: &str, char_id: &str, skill: &str, rank: i32) {
     let cfg = common::test_config(db_url, |_| {});
     let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
-    sqlx::query(
-        "INSERT INTO character_skills (character_id, skill_id, xp, rank) \
-         VALUES ($1, $2, 0, $3) \
-         ON CONFLICT (character_id, skill_id) DO UPDATE SET rank = EXCLUDED.rank",
-    )
-    .bind(char_id)
-    .bind(skill)
-    .bind(rank)
-    .execute(&pool)
-    .await
-    .expect("ранг");
+    common::set_skill(&pool, char_id, skill, 10_000_000, rank).await;
     pool.close().await;
 }
 
@@ -93,15 +84,15 @@ async fn trainer_gate_blocks_learn_and_invest_outside_village() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_NO_TRAINER", "learn в лесу: {ack}");
 
-    // Пул пуст — но ошибка должна быть про тренера, а не про пул.
+    // Пул/шкала не заполнены — но ошибка должна быть про тренера.
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
     let ack = c.ack(seq).await;
-    assert_eq!(ack["error"]["code"], "E_NO_TRAINER", "invest в лесу: {ack}");
+    assert_eq!(ack["error"]["code"], "E_NO_TRAINER", "train в лесу: {ack}");
 
     // В деревне у старосты тренер есть — то же обучение проходит.
     let ack = move_exit(&mut c, "e_south").await;
@@ -135,16 +126,17 @@ async fn learn_and_invest_are_paid_and_fail_without_gold() {
         "learn без золота: {ack}"
     );
 
+    fill_bar(&db_url, &char_id, "sword", 0).await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(
         ack["error"]["code"], "E_INGREDIENTS",
-        "invest без золота: {ack}"
+        "train без золота: {ack}"
     );
 
     // Ровно базовая цена → learn проходит, золото уходит полностью.
@@ -167,23 +159,26 @@ async fn learn_and_invest_are_paid_and_fail_without_gold() {
         "повтор learn не списал золото"
     );
 
-    // Invest снова требует оплату (золота нет) → E_INGREDIENTS.
+    // Повторное обучение снова требует оплату (золота нет) → E_INGREDIENTS.
+    fill_bar(&db_url, &char_id, "sword", 1).await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(
         ack["error"]["code"], "E_INGREDIENTS",
-        "invest без золота после learn: {ack}"
+        "train без золота после learn: {ack}"
     );
 }
 
-/// Цена вложения растёт с рангом навыка: `100 + 50 × 3 = 250`.
+/// M18/F44: цена обучения — из диалога и **не растёт с рангом**
+/// (ADR-009): 100 золота на любом ранге (прежний рост
+/// `gold_base + gold_per_rank × ранг` остался у профессий).
 #[tokio::test]
-async fn trainer_price_grows_with_rank() {
+async fn trainer_fee_is_flat_from_dialog() {
     let Some(db_url) = common::test_url() else {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
@@ -191,20 +186,29 @@ async fn trainer_price_grows_with_rank() {
     let ws = common::start_ws_server(&db_url).await;
     let (mut c, _login, char_id) = in_world(&ws).await;
 
-    set_skill_rank(&db_url, &char_id, "sword", 3).await;
+    fill_bar(&db_url, &char_id, "sword", 3).await;
     set_pool(&db_url, &char_id, 1000).await;
     give_gold(&mut c, 1000).await;
 
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
         )
         .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "инвест у тренера");
+    assert_eq!(c.ack(seq).await["result"], "ok", "обучение у тренера");
     assert_eq!(
         gold_of(&db_url, &char_id).await,
-        1000 - (100 + 50 * 3),
-        "цена ранга 3: 100 + 50×3"
+        900,
+        "фиксированная цена из диалога: 100"
     );
+    let cfg = common::test_config(&db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    let left: i64 = sqlx::query_scalar("SELECT xp_pool FROM characters WHERE id = $1")
+        .bind(&char_id)
+        .fetch_one(&pool)
+        .await
+        .expect("пул");
+    pool.close().await;
+    assert_eq!(left, 990, "списано 10 очков опыта");
 }

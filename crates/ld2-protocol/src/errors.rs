@@ -65,6 +65,8 @@ pub enum ErrorCode {
     Permission,
     XpPool,
     RankCap,
+    /// M18/F44: шкала навыка не заполнена на 100 % (ADR-009).
+    SkillNotReady,
     ProfessionLimit,
     /// M18/F36: взятых квестов больше `quests.max_active` (§5).
     QuestLimit,
@@ -120,6 +122,7 @@ impl ErrorCode {
             Self::Permission => "E_PERMISSION",
             Self::XpPool => "E_XP_POOL",
             Self::RankCap => "E_RANK_CAP",
+            Self::SkillNotReady => "E_SKILL_NOT_READY",
             Self::ProfessionLimit => "E_PROFESSION_LIMIT",
             Self::QuestLimit => "E_QUEST_LIMIT",
             Self::NotEnoughMoney => "E_NOT_ENOUGH_MONEY",

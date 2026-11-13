@@ -3,6 +3,11 @@
     {
       "id": "npc_elder",
       "root": "l_hello",
+      "training": [
+        { "skill": "sword", "points": 10, "gold": 100 },
+        { "skill": "bow", "points": 10, "gold": 100 },
+        { "skill": "fire", "points": 10, "gold": 100, "items": [ { "def_id": "herb", "qty": 1 } ] }
+      ],
       "lines": [
         {
           "id": "l_hello",
@@ -13,6 +18,7 @@
             { "id": "r_care", "text": "Мне опасно выходить в лес?", "next": "l_female" },
             { "id": "r_glory", "text": "Я уже настоящий воин?", "next": "l_veteran" },
             { "id": "r_shop", "text": "Покажи свои товары.", "action": "shop" },
+            { "id": "r_train", "text": "Чему ты можешь научить?", "action": "train" },
             { "id": "r_bye", "text": "Пока.", "next": null }
           ]
         },

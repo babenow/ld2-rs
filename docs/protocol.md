@@ -274,11 +274,11 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `char.create` | `{name, profile, gender?}` | `{character}` | − | создание (profile: Воин/Лучник/Маг, список — capability сервера; gender `male`\|`female`, без поля → `male` — M18/F34) |
 | `char.select` | `{char_id}` | `{}` (→ `evt/state/snapshot`) | + | вход в мир |
 | `char.delete` | `{char_id}` | `{}` | − | удаление |
-| `char.xp_invest` | `{skill_id, points}` | `{pool_left}` | − | вложить очки опыта в навык |
+| `skill.train` | `{entity_id, skill_id}` | `{rank, xp, xp_to_next, pool_left}` | − | повышение ранга навыка **у тренера в диалоге** (M18/F44, ADR-009): гейты — тренер в локации (`E_NO_TRAINER`), **шкала 100 %** (`E_SKILL_NOT_READY`), очки опыта (`E_XP_POOL`), плата из контента диалога (`E_INGREDIENTS`), потолок/атрибут (`E_RANK_CAP`/`E_REQUIREMENT_ATTR`); списывает очки пула, шкала обнуляется; заменяет `char.xp_invest` |
 | `location.look` | `{}` | `{location}` | + | перерисовать локацию |
 | `location.move` | `{exit_id}` | `{location}` | − | переход |
 | `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа |
-| `npc.talk` | `{entity_id}` | `{dialog: {id, name}, node, quests[], actions[]}` | + | диалог NPC: **корень ветки** (`node`: `{id, text, quest?, replies: [{id, text, wait_s?, action?}]}`; `wait_s` — секунды до конца кулдауна целевой строки: ответ показывается **неактивным** с таймером, без поля — активен; `action` — действие вместо перехода (`"shop"` → клиент шлёт `shop.list`); ответы с не выполненными условиями скрыты; `node: null` — нет записи), доступные квесты, `actions` (M18/F35, ветки F37/F42/F43; `greeting` убран — ADR-008) |
+| `npc.talk` | `{entity_id}` | `{dialog: {id, name}, node, quests[], actions[], training[]}` | + | диалог NPC: **корень ветки** (`node`: `{id, text, quest?, replies: [{id, text, wait_s?, action?}]}`; `wait_s` — секунды до конца кулдауна целевой строки: ответ показывается **неактивным** с таймером, без поля — активен; `action` — действие вместо перехода (`"shop"` → панель магазина, `"train"` → панель обучения; клиент шлёт `shop.list`/`skill.train`); ответы с не выполненными условиями скрыты; `node: null` — нет записи), доступные квесты, `actions`, `training: [{skill, points, gold, items?}]` — чему NPC учит и по какой цене (M18/F35, ветки F37/F42/F43/F44; `greeting` убран — ADR-008, обучение — ADR-009) |
 | `npc.reply` | `{entity_id, node_id, reply_id}` | `{node: {...}\|null, quests[]}` | − | ответ персонажа — переход по ветке (`node` — форма из `npc.talk`, включая `wait_s`); `node: null` — конец диалога (M18/F37, ADR-008) |
 | `shop.list` | `{entity_id}` | `{shop: {tabs: [{currency, currency_name, items[]}]}}` | + | товары NPC с ценами (база `gold_value` × наценка сервера × наценка торговца × скидка; `actions` в `npc.talk` содержит `shop`) (M18/F39) |
 | `shop.buy` | `{entity_id, currency, def_id}` | `{}` | − | покупка: списание валюты (события) + выдача предмета; `E_NOT_ENOUGH_MONEY` / `E_INVENTORY_FULL` (M18/F39) |
@@ -416,7 +416,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_QUEST_LIMIT` | взятых квестов больше `quests.max_active` в `quest.accept` (M18/F36) |
 | `E_NOT_ENOUGH_MONEY` | не хватает валюты в `shop.buy` (M18/F39) |
 | `E_NOT_IN_LOCATION` | команда вне контекста локации |
-| `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `char.xp_invest`, M14) |
+| `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `skill.train`, M14/M18) |
 | `E_EXIT_BLOCKED` | выход закрыт (завал, требование, правило) |
 | `E_TARGET_GONE` | цели нет (умерла/ушла) |
 | `E_NOT_IN_COMBAT` / `E_IN_COMBAT` | бой разрешён/запрещён здесь |
@@ -435,8 +435,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_PARTY_FULL` / `E_GUILD_LIMIT` | лимиты группы/гильдии |
 | `E_GUILD_PERMISSION` | нет прав (ранг) |
 | `E_PERMISSION` | нет прав роли аккаунта (модерация чата, M14/F19) |
-| `E_XP_POOL` | не хватает очков опыта (`char.xp_invest`) |
+| `E_XP_POOL` | не хватает очков опыта (`skill.train`) |
 | `E_RANK_CAP` | достигнут потолок ранга навыка/профессии |
+| `E_SKILL_NOT_READY` | шкала навыка не заполнена на 100 % — повышение ранга недоступно (`skill.train`, M18/F44) |
 | `E_PROFESSION_LIMIT` | превышен `profession_limit` первичных профессий |
 | `E_STATION_REQUIRED` | для рецепта нет станка в локации |
 | `E_TOOL_MISSING` | нет требуемого инструмента в инвентаре |
@@ -564,8 +565,9 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 - [ ] `cmd/auth.register`: лимиты длины из конфига (`E_WEAK_PASSWORD`), уникальность
       (`E_LOGIN_TAKEN`), выключенный флаг (`E_REGISTER_DISABLED`), rate-limit → `E_RATE_LIMITED`;
       email: синтаксис/нормализация (`E_BAD_EMAIL`), уникальность (`E_EMAIL_TAKEN`, D33).
-- [ ] `craft.learn`/`char.xp_invest`: тренер в локации (`E_NO_TRAINER`), оплата золотом/предметами
-      по цене тренера (`E_INGREDIENTS`, M14); кулдаун/гейт `skill.use` (`E_COOLDOWN`/`E_REQUIREMENT_ATTR`).
+- [ ] `craft.learn`/`skill.train`: тренер в локации (`E_NO_TRAINER`), оплата золотом/предметами
+      (`E_INGREDIENTS`, M14/M18); у `skill.train` — гейт шкалы 100 % (`E_SKILL_NOT_READY`) и очки
+      опыта (`E_XP_POOL`); кулдаун/гейт `skill.use` (`E_COOLDOWN`/`E_REQUIREMENT_ATTR`).
 - [ ] Модель преступности §10 через конфиг `crime.*`; статусы включаются присутствием `kind` в `crime.kinds` (в моке: murderer, marauder, **thief**).
 - [ ] Мана (D4): сервер проверяет `mp` перед кастом руны (`E_NOT_ENOUGH_MP`), свитки — без маны; реген по `magic.mana` из §5.
 - [ ] Неизвестные `cmd` от клиента (старее/новее по версии) — `E_INTERNAL`/игнор по §11, без падений.

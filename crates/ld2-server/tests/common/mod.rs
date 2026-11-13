@@ -163,3 +163,21 @@ pub async fn in_world_profile(ws: &str, profile: &str) -> (WsClient, String, Str
     c.wait_event("evt/state/snapshot").await;
     (c, login, char_id)
 }
+
+/// M18/F44: выставить прогресс навыка напрямую (SQL) — повышение ранга
+/// у тренера требует **полной шкалы** (ADR-009), а тесты не гоняют бой.
+pub async fn set_skill(pool: &sqlx::PgPool, char_id: &str, skill_id: &str, xp: i64, rank: i32) {
+    sqlx::query(
+        "INSERT INTO character_skills (character_id, skill_id, xp, rank) \
+         VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (character_id, skill_id) DO UPDATE SET \
+           xp = EXCLUDED.xp, rank = EXCLUDED.rank",
+    )
+    .bind(char_id)
+    .bind(skill_id)
+    .bind(xp)
+    .bind(rank)
+    .execute(pool)
+    .await
+    .expect("навык выставлен");
+}

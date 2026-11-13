@@ -23,9 +23,9 @@ use ld2_core::store::{
     crime_kind_title, filter_active_statuses, local_epoch, Act, Screen, UpgradeView,
 };
 use ld2_protocol::cmd::{
-    CharXpInvest, CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave,
-    GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse, SocketExtract, SocketInsert,
-    UpgradePreview, UpgradeStart,
+    CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave, GuildRankSet,
+    ItemDrop, ItemEquip, ItemUnequip, ItemUse, SocketExtract, SocketInsert, UpgradePreview,
+    UpgradeStart,
 };
 use ld2_protocol::types::{CharacterState, ItemSnapshot, Severity, SkillSnapshot};
 
@@ -939,7 +939,7 @@ impl Root {
                     .child(t(lang, key)),
             );
             for skill in group {
-                col = col.child(self.skill_row(cx, pal, skill, pool));
+                col = col.child(self.skill_row(cx, pal, skill));
             }
         }
         // Строки без известной группы — в конце: старый сервер (group =
@@ -955,19 +955,19 @@ impl Root {
             })
             .collect();
         for skill in rest {
-            col = col.child(self.skill_row(cx, pal, skill, pool));
+            col = col.child(self.skill_row(cx, pal, skill));
         }
         col
     }
 
     /// M15/F28: строка навыка (перенос из таба) — название/ранг,
-    /// тултип описания, ⓘ-карточка, прогресс и вложение XP из пула.
+    /// тултип описания, ⓘ-карточка, прогресс; M18/F44: при полной
+    /// шкале — подсказка «возможно повышение ранга».
     fn skill_row(
         &mut self,
         cx: &mut Context<'_, Self>,
         pal: &Palette,
         skill: &SkillSnapshot,
-        pool: i64,
     ) -> impl gpui::IntoElement {
         let lang = self.lang;
         let name = skill.name.clone().unwrap_or_else(|| skill.id.clone());
@@ -1017,39 +1017,17 @@ impl Root {
                 pal.accent,
                 pal,
             ));
-        // Вложение очков из пула (D3/D4, ФР-04).
-        if pool > 0 {
-            let mut buttons = div().flex().flex_row().gap_1();
-            for (label, points) in [("+1", 1_i64), ("+5", 5_i64)] {
-                let sid = id.clone();
-                buttons =
-                    buttons.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
-                        this.invest(&sid, points.min(pool));
-                        let _ = cx;
-                    }));
-            }
-            let sid = id.clone();
-            buttons = buttons.child(act_btn(
-                cx,
-                t(lang, Key::MaxLabel),
-                pal.panel,
-                pal.text,
-                move |this, cx| {
-                    this.invest(&sid, pool);
-                    let _ = cx;
-                },
-            ));
-            row = row.child(buttons);
+        // M18/F44: вложение очков из пула убрано (ADR-009) — повышение
+        // ранга только у тренера в диалоге; при полной шкале — подсказка.
+        if skill.xp_to_next > 0 && skill.xp >= skill.xp_to_next {
+            row = row.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(pal.accent))
+                    .child(t(lang, Key::SkillReady)),
+            );
         }
         row
-    }
-
-    fn invest(&mut self, skill_id: &str, points: i64) {
-        let cmd = CharXpInvest {
-            skill_id: skill_id.to_string(),
-            points,
-        };
-        self.send_cmd(&cmd, Act::Invest);
     }
 
     // ── вкладка «Атрибуты» ────────────────────────────────────────────────

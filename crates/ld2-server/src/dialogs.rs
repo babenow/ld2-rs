@@ -21,8 +21,9 @@ pub struct DialogsRoot {
     pub npcs: Vec<DialogNpc>,
 }
 
-/// Диалог одного NPC: корень ветки и строки с условиями (M18/F42:
-/// поле `greeting` убрано — ADR-008).
+/// Диалог одного NPC: корень ветки, строки с условиями и обучение
+/// (M18/F42: поле `greeting` убрано — ADR-008; M18/F44: `training` —
+/// ADR-009).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct DialogNpc {
     pub id: String,
@@ -31,6 +32,38 @@ pub struct DialogNpc {
     pub root: Option<String>,
     #[serde(default)]
     pub lines: Vec<DialogLine>,
+    /// M18/F44: чему этот NPC учит и по какой цене (ADR-009); пусто —
+    /// не тренер по навыкам.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub training: Vec<TrainingEntry>,
+}
+
+/// M18/F44: обучение навыку у NPC (ADR-009) — повышение ранга стоит
+/// очков опыта (пул) + платы, указанной здесь.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TrainingEntry {
+    /// id навыка из `skills.json`.
+    pub skill: String,
+    /// Плата очками опыта (пул квестов), > 0.
+    pub points: i64,
+    /// Плата золотом (монеты); 0 — без золота.
+    #[serde(default)]
+    pub gold: i64,
+    /// Плата предметами (def_id → qty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<TrainingItem>,
+}
+
+/// M18/F44: предмет платы за обучение.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TrainingItem {
+    pub def_id: String,
+    #[serde(default = "training_qty")]
+    pub qty: i64,
+}
+
+fn training_qty() -> i64 {
+    1
 }
 
 /// Строка диалога.

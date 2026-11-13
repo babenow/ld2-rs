@@ -395,6 +395,36 @@ pub struct NpcDialogView {
     /// M18/F39: активная валютная вкладка магазина.
     #[serde(default)]
     pub shop_currency: Option<String>,
+    /// M18/F44: обучение у этого NPC (ADR-009) — навыки с ценой.
+    #[serde(default)]
+    pub training: Vec<NpcTraining>,
+    /// M18/F44: открыта ли панель обучения (реплика `action=train`,
+    /// паритет магазина); чистится вместе с окном диалога.
+    #[serde(default)]
+    pub training_open: bool,
+}
+
+/// M18/F44: обучение навыку у NPC в диалоге (ADR-009) — повышение ранга
+/// стоит очков опыта (пул) + платы из контента.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcTraining {
+    pub skill: String,
+    /// Плата очками опыта (пул квестов).
+    pub points: i64,
+    /// Плата золотом (монеты); 0 — без золота.
+    #[serde(default)]
+    pub gold: i64,
+    /// Плата предметами.
+    #[serde(default)]
+    pub items: Vec<NpcTrainingItem>,
+}
+
+/// M18/F44: предмет платы за обучение.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcTrainingItem {
+    pub def_id: String,
+    #[serde(default = "shop_item_qty")]
+    pub qty: i64,
 }
 
 impl NpcDialogView {
@@ -428,6 +458,10 @@ impl NpcDialogView {
                 .unwrap_or_default(),
             shop: None,
             shop_currency: None,
+            training: serde_json::from_value(payload.get("training").cloned().unwrap_or_default())
+                .unwrap_or_default(),
+            // M18/F44: панель обучения закрыта — открывает реплика.
+            training_open: false,
         })
     }
 }
@@ -1228,9 +1262,20 @@ impl AppStore {
                         }
                     }
                 }
-                let text = match xp.rank {
-                    Some(rank) => format!("+{} XP → {} — ранг {rank}!", xp.amount, xp.skill_id),
-                    None => format!("+{} XP → {}", xp.amount, xp.skill_id),
+                let text = if xp.amount < 0 {
+                    // M18/F44: повышение ранга у тренера — очки пула
+                    // списаны (amount отрицательный), шкала обнулена.
+                    match xp.rank {
+                        Some(rank) => {
+                            format!("{} — ранг {rank}! (−{} очков)", xp.skill_id, -xp.amount)
+                        }
+                        None => format!("{} (−{} очков)", xp.skill_id, -xp.amount),
+                    }
+                } else {
+                    match xp.rank {
+                        Some(rank) => format!("+{} XP → {} — ранг {rank}!", xp.amount, xp.skill_id),
+                        None => format!("+{} XP → {}", xp.amount, xp.skill_id),
+                    }
                 };
                 self.push_log(LogKind::Xp, text);
                 vec![]
@@ -3276,7 +3321,12 @@ mod tests {
                     ]
                 },
                 "quests": [ { "id": "q1", "title": "Волчья беда", "state": "available" } ],
-                "actions": [ "quests", "train" ]
+                "actions": [ "quests", "train" ],
+                "training": [
+                    { "skill": "sword", "points": 10, "gold": 100 },
+                    { "skill": "fire", "points": 10, "gold": 50,
+                      "items": [ { "def_id": "herb", "qty": 1 } ] }
+                ]
             }),
         )
         .unwrap();
@@ -3315,6 +3365,18 @@ mod tests {
         );
         assert_eq!(dialog.quests.len(), 1);
         assert_eq!(dialog.actions, vec!["quests", "train"], "actions из ack");
+        // M18/F44: обучение парсится (ADR-009) — навык, очки, плата.
+        assert_eq!(dialog.training.len(), 2, "обучение: {dialog:?}");
+        let train = &dialog.training[0];
+        assert_eq!(train.skill, "sword");
+        assert_eq!(train.points, 10);
+        assert_eq!(train.gold, 100);
+        assert!(train.items.is_empty(), "у sword платы предметами нет");
+        let fire = &dialog.training[1];
+        assert_eq!(fire.skill, "fire");
+        assert_eq!(fire.items.len(), 1, "у fire плата предметом");
+        assert_eq!(fire.items[0].def_id, "herb");
+        assert_eq!(fire.items[0].qty, 1);
         assert_eq!(store.active_dialog(false, false), None, "попап вне модалок");
         assert!(store.pending.is_none());
 

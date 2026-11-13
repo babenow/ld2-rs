@@ -472,6 +472,11 @@ pub enum Key {
     ShopEmpty,
     // M18/F41: надпись над вкладками магазина — вкладка это валюта.
     ShopCurrency,
+    // M18/F44: обучение навыков в диалоге тренера (ADR-009).
+    BtnTrain,
+    SkillReady,
+    TrainingPoints,
+    TrainingGold,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -948,6 +953,10 @@ mod tests {
         Key::ShopOwned,
         Key::ShopEmpty,
         Key::ShopCurrency,
+        Key::BtnTrain,
+        Key::SkillReady,
+        Key::TrainingPoints,
+        Key::TrainingGold,
     ];
 
     #[test]
