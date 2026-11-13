@@ -80,6 +80,20 @@ impl PopupKind {
     }
 }
 
+/// M18/F33: открытие окна сбрасывает контекстное меню **своей**
+/// стороны. Иначе закрытие окна с открытым меню оставляло
+/// `bp_menu`/`equip_menu = Some(...)`: keyed state меню и `asked`-
+/// счётчик гаснут вместе с элементом (кадр без рендера), поэтому при
+/// следующем открытии stale-запрос `.manual(Some((n, at)))` открывал
+/// меню само. `open_popup` — единственная точка, где окно становится
+/// открытым, — инвариант: любое открытое окно стартует с пустым меню.
+fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mut Option<T>) {
+    match kind {
+        PopupKind::Character => *equip_menu = None,
+        PopupKind::Backpack => *bp_menu = None,
+    }
+}
+
 /// M16/F29b: состояние всплывающего окна — геометрия drag/resize и
 /// флаг «жест начат на scrim» (M15/F25e: закрыть может только
 /// полный клик, целиком прошедший по scrim).
@@ -1080,6 +1094,9 @@ impl Root {
     /// 760×760; рюкзак 760×560), по центру с клампом под вьюпорт
     /// (drag/resize живут до закрытия) и первая вкладка.
     fn open_popup(&mut self, kind: PopupKind) {
+        // M18/F33: чистое контекстное меню при каждом открытии (см.
+        // clear_popup_menu).
+        clear_popup_menu(kind, &mut self.bp_menu, &mut self.equip_menu);
         let (tw, th) = match kind {
             PopupKind::Character => (760.0, 760.0),
             PopupKind::Backpack => (760.0, 560.0),
@@ -3030,6 +3047,25 @@ impl Render for Root {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M18/F33: открытие окна сбрасывает его контекстное меню —
+    /// иначе меню, открытое в момент закрытия, появлялось бы само
+    /// при следующем открытии (stale-запрос `.manual` + гаснущий
+    /// keyed state). Каждое окно сбрасывает только своё меню.
+    #[test]
+    fn opening_popup_clears_its_context_menu() {
+        let mut bp = Some("bp".to_string());
+        let mut eq = Some("eq".to_string());
+        clear_popup_menu(PopupKind::Backpack, &mut bp, &mut eq);
+        assert!(bp.is_none(), "меню рюкзака сброшено при открытии");
+        assert_eq!(eq.as_deref(), Some("eq"), "меню персонажа не тронуто");
+        clear_popup_menu(PopupKind::Character, &mut bp, &mut eq);
+        assert!(eq.is_none(), "меню персонажа сброшено при открытии");
+        assert!(bp.is_none(), "меню рюкзака уже пусто");
+        // Повторное открытие — без паники и без лишних эффектов.
+        clear_popup_menu(PopupKind::Backpack, &mut bp, &mut eq);
+        assert!(bp.is_none() && eq.is_none());
+    }
 
     /// M14/F4: боевые хоткеи — дефолтные цифры 1–6 парсятся и
     /// распознаются так же, как навигационные спецификации.
