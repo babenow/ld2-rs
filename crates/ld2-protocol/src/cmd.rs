@@ -106,6 +106,16 @@ pub struct NpcTalk {
     pub entity_id: String,
 }
 
+/// M18/F37: ответ персонажа в диалоге — переход с `node_id` по
+/// `reply_id` на следующую строку (без `next` у ответа — конец,
+/// сервер отвечает `{node: null}`).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct NpcReply {
+    pub entity_id: String,
+    pub node_id: String,
+    pub reply_id: String,
+}
+
 // ─── бой (ФР-05) ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -410,6 +420,7 @@ impl_commands!(
     (LocationMove, "cmd/location.move", false),
     (EntityInfo, "cmd/entity.info", true),
     (NpcTalk, "cmd/npc.talk", true),
+    (NpcReply, "cmd/npc.reply", false),
     (CombatAttack, "cmd/combat.attack", false),
     (CombatStop, "cmd/combat.stop", true),
     (CombatFlee, "cmd/combat.flee", false),

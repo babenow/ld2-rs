@@ -460,6 +460,8 @@ pub enum Key {
     QuestsStatusCurrent,
     QuestsStatusDone,
     QuestsPick,
+    // M18/F37: реплики персонажа в транскрипте диалога.
+    DialogYou,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -928,6 +930,7 @@ mod tests {
         Key::QuestsStatusCurrent,
         Key::QuestsStatusDone,
         Key::QuestsPick,
+        Key::DialogYou,
     ];
 
     #[test]

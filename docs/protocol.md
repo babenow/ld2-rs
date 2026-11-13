@@ -278,7 +278,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `location.look` | `{}` | `{location}` | + | перерисовать локацию |
 | `location.move` | `{exit_id}` | `{location}` | − | переход |
 | `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа |
-| `npc.talk` | `{entity_id}` | `{dialog: {id, name, greeting, lines[]}, quests[]}` | + | диалог NPC: реплики с условиями (`{name}` → имя; пол/уровень/атрибут/навык/профессия/предмет/`every_s`), доступные квесты NPC (M18/F35) |
+| `npc.talk` | `{entity_id}` | `{dialog: {id, name, greeting}, node, quests[]}` | + | диалог NPC: приветствие + **корень ветки** (`node`: `{id, text, quest?, replies[]}`; реплики с условиями; `null` — нет записи), доступные квесты (M18/F35, ветки F37) |
+| `npc.reply` | `{entity_id, node_id, reply_id}` | `{node: {...}\|null, quests[]}` | − | ответ персонажа — переход по ветке; `node: null` — конец диалога (M18/F37) |
 | `combat.attack` | `{target_id}` | `{}` | − | удар |
 | `combat.stop` | `{}` | `{}` | + | выйти из боя |
 | `combat.flee` | `{}` | `{}` | − | попытка сбежать |

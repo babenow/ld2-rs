@@ -400,5 +400,6 @@ pub(super) fn t(key: Key) -> &'static str {
         QuestsStatusCurrent => "Current: {cur} / {max}",
         QuestsStatusDone => "Completed: {done}",
         QuestsPick => "Select a quest on the left",
+        DialogYou => "You",
     }
 }

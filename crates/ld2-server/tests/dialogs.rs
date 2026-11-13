@@ -1,7 +1,7 @@
-//! M18/F35: диалоги NPC против реального сервера (гейт:
-//! LD2_TEST_DATABASE_URL): реплики с условиями (предмет/пол), тайминг
-//! `every_s`, связь с квестами (взятый квест скрывает просьбу), отказы
-//! для не-NPC/несуществующих сущностей.
+//! M18/F35/F37: диалоги NPC против реального сервера (гейт:
+//! LD2_TEST_DATABASE_URL): ветки реплик (персонаж отвечает — NPC
+//! связывает строки), условия на строках/ответах, тайминг `every_s`,
+//! связь с квестами, отказы не-NPC/несущих сущностей.
 
 mod common;
 
@@ -23,14 +23,30 @@ async fn talk(c: &mut WsClient, npc_id: &str) -> Value {
     c.ack(seq).await
 }
 
-/// Идентификаторы видимых строк в ответе.
-fn line_ids(ack: &Value) -> Vec<String> {
-    ack["payload"]["dialog"]["lines"]
+/// Ответ персонажа → ack.
+async fn reply(c: &mut WsClient, npc_id: &str, node_id: &str, reply_id: &str) -> Value {
+    let seq = c
+        .send(
+            "cmd/npc.reply",
+            json!({ "entity_id": npc_id, "node_id": node_id, "reply_id": reply_id }),
+        )
+        .await;
+    c.ack(seq).await
+}
+
+/// id текущего узла в ack.
+fn node_id(ack: &Value) -> Option<&str> {
+    ack["payload"]["node"]["id"].as_str()
+}
+
+/// id видимых ответов узла.
+fn reply_ids(ack: &Value) -> Vec<String> {
+    ack["payload"]["node"]["replies"]
         .as_array()
-        .map(|lines| {
-            lines
+        .map(|replies| {
+            replies
                 .iter()
-                .filter_map(|l| l["id"].as_str().map(String::from))
+                .filter_map(|r| r["id"].as_str().map(String::from))
                 .collect()
         })
         .unwrap_or_default()
@@ -68,11 +84,11 @@ async fn registered(ws: &str) -> (WsClient, String) {
     (c, login)
 }
 
-/// M18/F35: базовая реплика всегда, условия (предмет/пол) открывают
-/// свои строки; квест NPC — в списке, взятый квест скрывает просьбу и
-/// исчезает из списка; несуществующая сущность → отказ.
+/// M18/F35/F37: корень ветки с ответами; ответ ведёт к узлу-просьбе
+/// (квест + `every_s`); условия ответа (предмет) открывают ветку;
+/// взятый квест скрывает просьбу; несущность → отказ.
 #[tokio::test]
-async fn npc_talk_lines_conditions_and_quests() {
+async fn npc_dialog_walks_branches_and_gates_by_quests() {
     let Some(db_url) = common::test_url() else {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
@@ -80,51 +96,76 @@ async fn npc_talk_lines_conditions_and_quests() {
     let ws = common::start_ws_server(&db_url).await;
     let (mut c, _login, _char) = in_world(&ws).await; // мужчина, l_village
 
-    // Первый диалог: рендер `{name}`, набор строк, квест в списке.
+    // Корень: рендер `{name}`, ответы с учётом условий.
     let ack = talk(&mut c, "npc_elder").await;
     assert_eq!(ack["result"], "ok", "диалог: {ack}");
     let greeting = ack["payload"]["dialog"]["greeting"]
         .as_str()
         .unwrap_or_default();
-    assert!(!greeting.contains('{'), "шаблон отрендерен: {greeting}");
-    for line in ack["payload"]["dialog"]["lines"]
-        .as_array()
-        .expect("строки диалога")
-    {
-        assert!(
-            !line["text"].as_str().unwrap_or_default().contains('{'),
-            "текст строки отрендерен: {line}"
-        );
-    }
-    let ids = line_ids(&ack);
-    assert!(ids.contains(&"l_hello".into()), "базовая реплика: {ids:?}");
-    assert!(!ids.contains(&"l_female".into()), "мужчине не про женщин");
-    assert!(!ids.contains(&"l_pack".into()), "зелья ещё нет");
     assert!(
-        ids.contains(&"l_errand".into()),
-        "просьба-квест видна: {ids:?}"
+        !greeting.contains('{'),
+        "приветствие отрендерено: {greeting}"
     );
+    assert_eq!(node_id(&ack), Some("l_hello"), "корень ветки: {ack}");
+    let text = ack["payload"]["node"]["text"].as_str().unwrap_or_default();
+    assert!(!text.contains('{'), "текст узла отрендерен: {text}");
+    let replies = reply_ids(&ack);
+    assert!(
+        replies.contains(&"r_work".into()),
+        "просьба видна: {replies:?}"
+    );
+    assert!(
+        replies.contains(&"r_bye".into()),
+        "прощание видно: {replies:?}"
+    );
+    assert!(
+        !replies.contains(&"r_pack".into()),
+        "зелья нет → ответа нет"
+    );
+    assert!(!replies.contains(&"r_care".into()), "мужчине не про женщин");
+    assert!(!replies.contains(&"r_glory".into()), "1-й уровень не воин");
     let quests = ack["payload"]["quests"].as_array().expect("quests");
     assert!(
         quests.iter().any(|q| q["id"] == "q_wolf_hunt"),
         "квест NPC в списке: {quests:?}"
     );
 
-    // Предметная реплика: зелье в рюкзаке → строка появляется.
-    give(&mut c, "potion_heal").await;
-    let ids = line_ids(&talk(&mut c, "npc_elder").await);
-    assert!(ids.contains(&"l_pack".into()), "после зелья: {ids:?}");
+    // Ответ персонажа → узел-просьба (every_s метится при входе).
+    let ack = reply(&mut c, "npc_elder", "l_hello", "r_work").await;
+    assert_eq!(ack["result"], "ok", "ответ: {ack}");
+    assert_eq!(node_id(&ack), Some("l_errand"), "переход: {ack}");
+    let inner_text = ack["payload"]["node"]["text"].as_str().unwrap_or_default();
+    assert!(!inner_text.contains('{'), "текст отрендерен: {inner_text}");
+    assert!(
+        reply_ids(&ack).contains(&"r_errand_bye".into()),
+        "ответы нового узла: {ack}"
+    );
 
-    // Принимаем квест из диалога → просьба и квест исчезают.
+    // Второй разговор сразу: просьба в окне `every_s` скрыта (метка).
+    let replies = reply_ids(&talk(&mut c, "npc_elder").await);
+    assert!(
+        !replies.contains(&"r_work".into()),
+        "второй показ в окне скрыт: {replies:?}"
+    );
+
+    // Предметная ветка: зелье → ответ r_pack появляется.
+    give(&mut c, "potion_heal").await;
+    let replies = reply_ids(&talk(&mut c, "npc_elder").await);
+    assert!(
+        replies.contains(&"r_pack".into()),
+        "после зелья: {replies:?}"
+    );
+
+    // Принимаем квест → просьба-ветка исчезает, квеста в списке нет.
     let seq = c
         .send("cmd/quest.accept", json!({ "quest_id": "q_wolf_hunt" }))
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "принятие квеста");
     let ack = talk(&mut c, "npc_elder").await;
-    let ids = line_ids(&ack);
+    let replies = reply_ids(&ack);
     assert!(
-        !ids.contains(&"l_errand".into()),
-        "взятый квест скрыл просьбу: {ids:?}"
+        !replies.contains(&"r_work".into()),
+        "взятый квест скрыл ветку: {replies:?}"
     );
     let quests = ack["payload"]["quests"].as_array().expect("quests");
     assert!(
@@ -137,11 +178,10 @@ async fn npc_talk_lines_conditions_and_quests() {
     assert_eq!(c.ack(seq).await["error"]["code"], "E_TARGET_GONE");
 }
 
-/// M18/F35: объект в деревне — не NPC (отказ); тайминг-реплика
-/// (`every_s`) видна один раз за период — сразу второй диалог её не
-/// показывает.
+/// M18/F37: связки нет (чужая строка/ответ) → отказ; конец ветки
+/// (`next: null`) → `{node: null}`; объект в деревне — не NPC.
 #[tokio::test]
-async fn npc_talk_rejects_non_npc_and_times_lines() {
+async fn npc_reply_validates_links_and_non_npc() {
     let Some(db_url) = common::test_url() else {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
@@ -160,20 +200,40 @@ async fn npc_talk_rejects_non_npc_and_times_lines() {
         "текст отказа: {ack}"
     );
 
-    // Первый диалог показывает просьбу (every_s=1800) и метит её.
-    let ids = line_ids(&talk(&mut c, "npc_elder").await);
-    assert!(ids.contains(&"l_errand".into()), "первый показ: {ids:?}");
-    // Сразу второй — в пределах окна её нет.
-    let ids = line_ids(&talk(&mut c, "npc_elder").await);
-    assert!(
-        !ids.contains(&"l_errand".into()),
-        "второй показ в окне скрыт: {ids:?}"
+    // Чужая строка / чужой ответ → отказы.
+    let seq = c
+        .send(
+            "cmd/npc.reply",
+            json!({ "entity_id": "npc_elder", "node_id": "l_nope", "reply_id": "r_bye" }),
+        )
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_TARGET_GONE",
+        "нет строки"
     );
+    let seq = c
+        .send(
+            "cmd/npc.reply",
+            json!({ "entity_id": "npc_elder", "node_id": "l_hello", "reply_id": "r_nope" }),
+        )
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_TARGET_GONE",
+        "нет ответа"
+    );
+
+    // Конец ветки: r_bye без next → node: null.
+    let ack = reply(&mut c, "npc_elder", "l_hello", "r_bye").await;
+    assert_eq!(ack["result"], "ok", "прощание: {ack}");
+    assert!(ack["payload"]["node"].is_null(), "конец диалога: {ack}");
 }
 
-/// M18/F35 + F34: персонаж-женщина видит гендерную реплику.
+/// M18/F35/F37 + F34: персонаж-женщина видит ветку «берегись леса»
+/// (условие на ответе/строке по полу).
 #[tokio::test]
-async fn npc_talk_shows_gender_line_for_female_char() {
+async fn npc_dialog_shows_gender_branch_for_female_char() {
     let Some(db_url) = common::test_url() else {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
@@ -205,7 +265,15 @@ async fn npc_talk_shows_gender_line_for_female_char() {
 
     let ack = talk(&mut c, "npc_elder").await;
     assert_eq!(ack["result"], "ok", "диалог: {ack}");
-    let ids = line_ids(&ack);
-    assert!(ids.contains(&"l_female".into()), "женская реплика: {ids:?}");
-    assert!(ids.contains(&"l_hello".into()), "базовая реплика: {ids:?}");
+    let replies = reply_ids(&ack);
+    assert!(
+        replies.contains(&"r_care".into()),
+        "ветка для женщин видна: {replies:?}"
+    );
+
+    let ack = reply(&mut c, "npc_elder", "l_hello", "r_care").await;
+    assert_eq!(ack["result"], "ok", "переход: {ack}");
+    assert_eq!(node_id(&ack), Some("l_female"), "узел: {ack}");
+    let text = ack["payload"]["node"]["text"].as_str().unwrap_or_default();
+    assert!(!text.contains('{'), "текст отрендерен: {text}");
 }
