@@ -6446,12 +6446,26 @@ impl Session {
                     discount_bp,
                     cfg.max_discount_bp,
                 );
+                let unit = i64::from(def.qty).max(1);
+                // M18/F40: полный снапшот на виртуальной строке —
+                // карточка информации по клику на товар.
+                let virtual_row = db::items::ItemRow {
+                    uid: format!("shop:{}", def.id),
+                    def_id: def.id.clone(),
+                    qty: unit.clamp(1, i64::from(i32::MAX)) as i32,
+                    upgrade: 0,
+                    equipped_slot: None,
+                    sockets: serde_json::json!([]),
+                };
+                let item_value =
+                    serde_json::to_value(item_snapshot(&virtual_row, &def)).unwrap_or_default();
                 items.push(serde_json::json!({
                     "def_id": def.id,
                     "name": def.name,
                     "rarity": def.rarity,
                     "price": crate::shops::price_in_currency(gold, currency.rate),
-                    "qty": i64::from(def.qty).max(1),
+                    "qty": unit,
+                    "item": item_value,
                 }));
             }
             tabs.push(serde_json::json!({
