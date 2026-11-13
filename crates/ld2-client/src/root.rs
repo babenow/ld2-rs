@@ -943,15 +943,50 @@ impl Root {
             .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
     }
 
+    /// M18/F41: снять фокус со всех полей ввода окна (`Window::blur`).
+    ///
+    /// gpui не blur'ит поле само: после набора текста фокус «залипал»
+    /// в чате, и гейт [`Self::typing_focused`] глушил **все** глобальные
+    /// хоткеи (C/I/квесты не открывались, в т.ч. параллельно). Прямой
+    /// `handle.update` из обработчика ввода недоступен: событие
+    /// обрабатывается внутри `update_window`, где окно временно снято
+    /// с карты `App` (вернётся «window not found»). Откладываем blur
+    /// до конца цикла эффектов — к `flush_effects` окно уже на месте.
+    pub(crate) fn blur_typing(cx: &mut Context<'_, Self>) {
+        cx.defer(|cx| {
+            let Some(handle) = cx.active_window() else {
+                return;
+            };
+            let _ = handle.update(cx, |_, window, cx| window.blur(cx));
+        });
+    }
+
     /// Обработка глобального нажатия: навигация/цикл целей по хоткеям
     /// из config (ФР-19); не срабатывает вне игры и при наборе текста.
     pub(crate) fn handle_keystroke(
         &mut self,
         ks: &gpui::Keystroke,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.store.screen != Screen::Game || self.typing_focused(window, cx) {
+        // M18/F41: Esc в поле ввода = выход из чата (снять фокус),
+        // иначе гейт ниже глушит хоткеи до следующего клика мышью.
+        if ks.key == "escape" && self.typing_focused(window, cx) {
+            tracing::debug!("Esc в поле ввода → снятие фокуса");
+            window.blur(cx);
+            cx.notify();
+            return;
+        }
+        let typing = self.typing_focused(window, cx);
+        if self.store.screen != Screen::Game || typing {
+            // Диагностика жалоб «хоткеи не работают»: ранний выход из-за
+            // экрана или фокуса в поле ввода.
+            tracing::debug!(
+                "keystroke {:?} пропущен гейтом: screen={:?}, typing_focused={}",
+                ks,
+                self.store.screen,
+                typing
+            );
             return;
         }
         for (spec, dir) in [
@@ -1004,6 +1039,7 @@ impl Root {
         // M15/F25: хоткей окна персонажа (кнопка в шапке дублирует);
         // M16/F29b: окна открываются одновременно (общий scrim).
         if keystroke_matches(&self.config.hotkeys.open_character, ks) {
+            tracing::debug!("hotkey окна персонажа → open={}", !self.char_popup.open);
             if self.char_popup.open {
                 self.char_popup.open = false;
             } else {
@@ -3181,6 +3217,18 @@ impl Render for Root {
             .flex_col()
             .bg(rgb(pal.bg))
             .text_color(rgb(pal.text))
+            // M18/F41: клик мимо поля ввода снимает с него фокус
+            // (capture-фаза корня — до bubble-фокусировки самого поля:
+            // клик по полю вернёт фокус ему, клик мимо оставит снятым).
+            // Без этого фокус «залипал» в чате и гейт typing_focused
+            // глушил все хоткеи окон после набора текста.
+            .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                if this.typing_focused(window, cx) {
+                    tracing::debug!("клик мимо поля → снятие фокуса");
+                    window.blur(cx);
+                    cx.notify();
+                }
+            }))
             .child(self.titlebar(cx, &pal))
             .child(self.header(cx, &pal))
             .child(
