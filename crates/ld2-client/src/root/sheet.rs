@@ -450,6 +450,7 @@ impl Root {
                         // M18/F38: окно диалога закрывается вместе со своим
                         // состоянием (гейт рендера — наличие npc_dialog).
                         if kind == PopupKind::Npc {
+                            tracing::debug!("закрытие диалога NPC: крестик");
                             root.store.npc_dialog = None;
                         }
                         cx.notify();

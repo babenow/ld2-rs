@@ -617,6 +617,13 @@ impl AppStore {
         }
 
         let Some(act) = self.pending.take() else {
+            // M18/F41: ack без корреляции (гонка команд) молча теряется —
+            // в debug-логе видно, чей ack пришёл не вовремя.
+            tracing::debug!(
+                "ack {} (seq={}) без pending — пропущен",
+                ack.msg_type,
+                ack.seq
+            );
             return vec![];
         };
 
@@ -860,6 +867,18 @@ impl AppStore {
         if act == Act::NpcTalk {
             if let Some(payload) = ack.payload.as_ref() {
                 self.npc_dialog = NpcDialogView::from_payload(payload);
+                // M18/F41: диагностика повторного открытия диалога.
+                tracing::debug!(
+                    "ack npc.talk (seq={}) → открыт={}, узел={:?}, строк ленты={}",
+                    ack.seq,
+                    self.npc_dialog.is_some(),
+                    self.npc_dialog
+                        .as_ref()
+                        .and_then(|d| d.node.as_ref().map(|n| n.id.clone())),
+                    self.npc_dialog.as_ref().map_or(0, |d| d.transcript.len()),
+                );
+            } else {
+                tracing::debug!("ack npc.talk (seq={}) без payload", ack.seq);
             }
         }
         // M18/F37: ответ персонажа — новый узел (`node: null` — конец);
