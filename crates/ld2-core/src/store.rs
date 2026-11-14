@@ -921,7 +921,11 @@ impl AppStore {
                     (self.upgrade.as_mut(), ack.payload.as_ref())
                 {
                     upgrade.preview = Some(payload.clone());
-                    upgrade.result = None;
+                    // M18/F55: итог прошлого броска НЕ затираем — он
+                    // должен остаться на экране заточки (зелёным/красным)
+                    // даже после автопревью. Сбрасывается при открытии
+                    // предмета (`open_upgrade`), при смене камня и при
+                    // старте следующего улучшения.
                 }
             }
             Act::Socket => {
@@ -3847,6 +3851,60 @@ mod tests {
     /// M18/F54: ack выбора камня заполняет активный камень (uid/имя из
     /// снапшота/качество); удаление камня снимает выбор и гасит превью,
     /// чтобы не стартовать по неактуальному `preview_id`.
+    /// M18/F55: итог заточки переживает автопревью — после результата
+    /// запрашивается новое превью (для повторного улучшения), и итог
+    /// обязан остаться на экране зелёным/красным, а не исчезнуть.
+    #[test]
+    fn sharpen_result_survives_new_preview() {
+        let mut store = in_game();
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        let ack_preview = |n: u32| {
+            ld2_protocol::Ack::ok_with_payload(
+                n,
+                None,
+                &serde_json::json!({
+                    "preview_id": format!("pv_{n}"),
+                    "delta": { "upgrade": "+3" },
+                    "cost": { "gold": 100 }
+                }),
+            )
+            .unwrap()
+        };
+
+        // Первое превью → результат.
+        store.on_sheet_sent(Act::Preview);
+        store.apply(IngressEvent::Ack(ack_preview(41)));
+        store.apply(evt(
+            "evt/upgrade/result",
+            serde_json::json!({
+                "uid": "i_17", "ok": true, "new_upgrade": 3,
+                "item_destroyed": false, "cost": { "gold": 100 }
+            }),
+        ));
+        assert!(
+            store.upgrade.as_ref().unwrap().result.is_some(),
+            "итог есть"
+        );
+        assert!(
+            store.upgrade.as_ref().unwrap().preview.is_none(),
+            "превью сброшено под автопревью"
+        );
+
+        // Автопревью после результата (M18/F55): итог обязан пережить.
+        store.on_sheet_sent(Act::Preview);
+        store.apply(IngressEvent::Ack(ack_preview(42)));
+
+        let view = store.upgrade.as_ref().expect("окно открыто");
+        assert!(
+            view.preview.is_some(),
+            "новое превью принято — повторная заточка доступна"
+        );
+        assert!(
+            view.result.is_some(),
+            "итог прошлого броска не затёрт новым превью"
+        );
+    }
+
     #[test]
     fn sharpen_stone_set_by_ack_and_cleared_on_removed() {
         let mut store = in_game();

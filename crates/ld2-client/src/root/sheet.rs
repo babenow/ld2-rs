@@ -2140,6 +2140,37 @@ impl Root {
         ))
     }
 
+    /// M18/F55: итог заточки для показа прямо на экране заточки —
+    /// карточка зелёным при успехе и красным при провале (разрушение /
+    /// без изменений). Вызывается и в ветке «превью ещё нет», и в
+    /// основной — итог переживает автопревью.
+    fn sharpen_result_line(&self, lang: Lang, pal: &Palette, res: &serde_json::Value) -> Div {
+        let ok = res.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        let (text, color) = if ok {
+            let n = res.get("new_upgrade").and_then(|v| v.as_u64()).unwrap_or(0);
+            (
+                tf(lang, Key::SharpenResultOk, &[("s", &n.to_string())]),
+                pal.success,
+            )
+        } else if res
+            .get("item_destroyed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            (t(lang, Key::SharpenResultBroken).to_string(), pal.danger)
+        } else {
+            (t(lang, Key::SharpenResultFail).to_string(), pal.danger)
+        };
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .font_weight(gpui::FontWeight::BOLD)
+            .text_color(rgb(color))
+            .child(text)
+    }
+
     /// Улучшение (ФР-10): «сейчас +N → после +M», шанс, стоимость (§7).
     pub(crate) fn upgrade_view(
         &mut self,
@@ -2156,22 +2187,10 @@ impl Root {
             .cloned();
         let mut col = div().flex().flex_col().gap_1();
         let Some(preview) = view.preview.clone() else {
-            if let Some(res) = view.result.clone() {
-                let text = if res.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
-                    format!(
-                        "Успех: +{}",
-                        res.get("new_upgrade").and_then(|v| v.as_u64()).unwrap_or(0)
-                    )
-                } else if res
-                    .get("item_destroyed")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
-                    "Провал: предмет разрушен.".to_string()
-                } else {
-                    "Провал: уровень не изменился.".to_string()
-                };
-                col = col.child(div().text_color(rgb(pal.muted)).child(text));
+            if let Some(res) = view.result.as_ref() {
+                // M18/F55: итог броска — прямо на экране заточки,
+                // зелёный успех / красный провал (а не уведомление ОС).
+                col = col.child(self.sharpen_result_line(lang, pal, res));
             } else {
                 col = col.child(
                     div()
@@ -2182,6 +2201,13 @@ impl Root {
             // M18/F53: кнопки внизу нет — закрытие крестиком в шапке.
             return col;
         };
+
+        // M18/F55: итог прошлого броска остаётся виден на том же
+        // экране (автопревью его не затирает) — гасится только при
+        // старте следующего улучшения.
+        if let Some(res) = view.result.as_ref() {
+            col = col.child(self.sharpen_result_line(lang, pal, res));
+        }
 
         let current = self
             .store
@@ -2297,6 +2323,11 @@ impl Root {
                         .as_ref()
                         .map(|s| (s.upgrade.duration_s * 1000.0).round() as i64)
                         .unwrap_or(3_000);
+                    // M18/F55: прошлый итог не должен висеть во время
+                    // прогресса нового броска.
+                    if let Some(v) = this.store.upgrade.as_mut() {
+                        v.result = None;
+                    }
                     this.upgrade_progress =
                         Some((uid.clone(), preview_id.clone(), this.now_ms(), duration_ms));
                     let _ = cx;
