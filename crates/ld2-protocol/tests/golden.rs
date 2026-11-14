@@ -44,7 +44,7 @@ const SESSION_START_JSON: &str = r#"{
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
   "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
-  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
+  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "quests": { "max_active": 10 },
@@ -65,6 +65,7 @@ fn session_start_matches_doc_example() {
     assert_eq!(cfg.role, "player");
     // M18/F36: лимит текущих квестов §5.
     assert_eq!(cfg.quests.max_active, 10, "quests.max_active §5");
+    assert!((cfg.upgrade.duration_s - 3.0).abs() < f64::EPSILON);
     let legacy = SESSION_START_JSON
         .replace(r#""role": "player","#, "")
         .replace(r#""quests": { "max_active": 10 },"#, "");

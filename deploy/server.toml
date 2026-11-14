@@ -104,6 +104,7 @@ gold_base = 100         # стоимость улучшения +0 → +1 (зо�
 gold_per_level = 50     # прибавка за уровень
 chance_base = 0.9       # шанс успеха с +0
 chance_per_level = 0.05 # снижение шанса за уровень
+duration_s = 3          # длительность анимации улучшения, сек (M18/F53)
 
 [gameplay.professions]  # skills.md §8 (D25)
 rank_max = 7            # предел ранга профессии

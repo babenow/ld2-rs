@@ -318,6 +318,7 @@ mod tests {
             gold_per_level: 50,
             chance_base: 0.9,
             chance_per_level: 0.05,
+            duration_s: 3.0,
         }
     }
 

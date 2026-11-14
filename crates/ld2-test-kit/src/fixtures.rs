@@ -176,6 +176,7 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
             max_level: UPGRADE_MAX,
             preview: true,
             shows_chance: true,
+            duration_s: 3.0,
         },
         magic: MagicConfig {
             rune_recharge: "item".into(),

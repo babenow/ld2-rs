@@ -204,6 +204,9 @@ pub struct UpgradeSection {
     pub chance_base: f64,
     /// Снижение шанса за уровень.
     pub chance_per_level: f64,
+    /// Длительность анимации улучшения, сек (M18/F53). Прогресс-бар
+    /// клиента идёт это время; результат приходит после.
+    pub duration_s: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -478,6 +481,13 @@ impl Config {
             out.push(format!(
                 "gameplay.upgrade.chance_per_level: должен быть в 0..=1 (получено: {})",
                 self.gameplay.upgrade.chance_per_level
+            ));
+        }
+
+        if self.gameplay.upgrade.duration_s <= 0.0 {
+            out.push(format!(
+                "gameplay.upgrade.duration_s: должен быть > 0 (получено: {})",
+                self.gameplay.upgrade.duration_s
             ));
         }
 

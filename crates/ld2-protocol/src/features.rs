@@ -109,6 +109,13 @@ pub struct UpgradeConfig {
     pub max_level: u32,
     pub preview: bool,
     pub shows_chance: bool,
+    /// M18/F53: длительность анимации улучшения, сек (прогресс-бар).
+    #[serde(default = "default_upgrade_duration_s")]
+    pub duration_s: f64,
+}
+
+fn default_upgrade_duration_s() -> f64 {
+    3.0
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

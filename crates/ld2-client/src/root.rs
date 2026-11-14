@@ -292,6 +292,9 @@ pub struct Root {
     selected_quest: Option<String>,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
     exit_timer: Option<(ExitKind, i64)>,
+    /// M18/F53: прогресс улучшения в диалоге — (uid, preview_id, старт мс,
+    /// длительность мс). Команда `upgrade.start` отправляется по истечении.
+    upgrade_progress: Option<(String, String, i64, i64)>,
     /// M14/F17: открытая карточка навыка — id из снапшота.
     skill_info: Option<String>,
     first_frame: bool,
@@ -501,6 +504,7 @@ impl Root {
             drag_owner: None,
             viewport: (0.0, 0.0),
             exit_timer: None,
+            upgrade_progress: None,
             skill_info: None,
             first_frame: true,
             guild_input: None,
@@ -606,6 +610,25 @@ impl Root {
             }
         }
 
+        // M18/F53: прогресс улучшения в диалоге — по истечении 3 с
+        // (из настроек сервера) отправляем cmd/upgrade.start; модалка
+        // закроется по evt/upgrade/result.
+        let upgrade_progress_active = self.upgrade_progress.is_some();
+        if let Some((uid, preview_id, _started, ends)) = self.upgrade_progress.clone() {
+            if self.now_ms() >= ends {
+                self.upgrade_progress = None;
+                let cmd = ld2_protocol::cmd::UpgradeStart {
+                    item_uid: uid,
+                    preview_id,
+                };
+                self.send_cmd(&cmd, Act::Upgrade);
+            }
+        }
+        // Если модалка закрыта (Esc/✕) — сбрасываем прогресс.
+        if self.store.upgrade.is_none() {
+            self.upgrade_progress = None;
+        }
+
         // M11.4: новый notice → всплывающий тост Ely (текст в экране
         // остаётся до замены — на время жизни тоста возможен дубль).
         if let Some(notice) = self.store.notice.clone() {
@@ -644,14 +667,17 @@ impl Root {
                             .is_some_and(|until| until > now_ms)
                     })
                 })
-            });
+            })
+            // M18/F53: прогресс улучшения в диалоге.
+            || self.upgrade_progress.is_some();
 
-        if had_events || cd_active || exit_active || inscribe_active {
+        if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
         Duration::from_millis(
-            if had_events || cd_active || exit_active || inscribe_active {
+            if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active
+            {
                 50
             } else {
                 200

@@ -25,7 +25,6 @@ use ld2_core::store::{
 use ld2_protocol::cmd::{
     CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave, GuildRankSet,
     ItemDrop, ItemEquip, ItemUnequip, ItemUse, SocketExtract, SocketInsert, UpgradePreview,
-    UpgradeStart,
 };
 use ld2_protocol::types::{CharacterState, ItemSnapshot, Severity, SkillSnapshot};
 
@@ -1953,6 +1952,11 @@ impl Root {
     ) -> Div {
         let lang = self.lang;
         let pending = self.store.pending == Some(Act::Upgrade);
+        let progress = self
+            .upgrade_progress
+            .as_ref()
+            .filter(|p| p.0 == view.item_uid)
+            .cloned();
         let mut col = div().flex().flex_col().gap_1();
         let Some(preview) = view.preview.clone() else {
             col = col.child(
@@ -2020,7 +2024,35 @@ impl Root {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let can_start = !preview_id.is_empty() && !pending;
+        let can_start = !preview_id.is_empty() && !pending && progress.is_none();
+        if let Some((_uid, _pid, started, duration)) = progress.clone() {
+            let now = self.now_ms();
+            let left = (started + duration - now).max(0);
+            let frac = ((now - started) as f32 / duration.max(1) as f32).clamp(0.0, 1.0);
+            let secs = (left + 999) / 1000;
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .mt(px(8.0))
+                    .child(
+                        div().h(px(6.0)).rounded_md().bg(rgb(pal.border)).child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(frac))
+                                .rounded_md()
+                                .bg(rgb(pal.warn)),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format!("{}… {} с", t(lang, Key::Loading), secs)),
+                    ),
+            );
+        }
         let mut row = div().flex().flex_row().gap_2().mt(px(8.0));
         row = row.child(act_btn(
             cx,
@@ -2029,6 +2061,7 @@ impl Root {
             pal.text,
             |this, cx| {
                 this.store.close_upgrade();
+                this.upgrade_progress = None;
                 let _ = cx;
             },
         ));
@@ -2040,11 +2073,16 @@ impl Root {
                 pal.warn,
                 0xffffff,
                 move |this, cx| {
-                    let cmd = UpgradeStart {
-                        item_uid: uid.clone(),
-                        preview_id: preview_id.clone(),
-                    };
-                    this.send_cmd(&cmd, Act::Upgrade);
+                    // M18/F53: прогресс 3 с (из настроек сервера), затем
+                    // отправка cmd/upgrade.start (root::tick).
+                    let duration_ms = this
+                        .store
+                        .session
+                        .as_ref()
+                        .map(|s| (s.upgrade.duration_s * 1000.0).round() as i64)
+                        .unwrap_or(3_000);
+                    this.upgrade_progress =
+                        Some((uid.clone(), preview_id.clone(), this.now_ms(), duration_ms));
                     let _ = cx;
                 },
             ));

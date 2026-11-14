@@ -4406,6 +4406,7 @@ impl Session {
                     new_upgrade: Some(new_level as u32),
                     item_destroyed: Some(false),
                     cost: serde_json::from_value(cost_json.clone()).unwrap_or_default(),
+                    duration_ms: Some((cfg.duration_s * 1000.0).round() as i64),
                 })
                 .unwrap_or_default(),
             ));
@@ -4442,7 +4443,8 @@ impl Session {
                 ));
             } else if new_upgrade != level {
                 if let Err(e) =
-                    db::items::set_upgrade(&pool, &item.uid, new_upgrade - def.upgrade).await
+                    db::items::set_upgrade(&pool, &item.uid, (new_upgrade - def.upgrade).max(0))
+                        .await
                 {
                     warn!("upgrade.start (понижение): {e}");
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
@@ -4469,6 +4471,7 @@ impl Session {
                 },
                 item_destroyed: Some(destroyed),
                 cost: serde_json::from_value(cost_json).unwrap_or_default(),
+                duration_ms: Some((cfg.duration_s * 1000.0).round() as i64),
             };
             outs.insert(
                 0,
