@@ -88,7 +88,8 @@ async fn rune_weapon_gem_armor_only_and_equipped_attrs() {
     let rune = give(&mut c, "rune_fire").await;
     let gem = give(&mut c, "gem_str").await; // +3 str
 
-    // Руна в броню — отказ.
+    // M18/F58: руна в броню — отказ, т.к. слот брони принимает
+    // самоцветы (решает `accepts`, а не тип предмета).
     let seq = c
         .send(
             "cmd/socket.insert",
@@ -104,8 +105,8 @@ async fn rune_weapon_gem_armor_only_and_equipped_attrs() {
         ack["error"]["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("оружие"),
-        "текст отказа: {ack}"
+            .contains("самоцветы"),
+        "текст называет, что принимает слот: {ack}"
     );
 
     // Самоцвет в оружие — отказ.
@@ -723,4 +724,76 @@ async fn snapshot_carries_socket_accepts() {
         "посох: все слоты рунные (дефолт не-брони)"
     );
     assert_eq!(accepts_of(&helm_uid), ["gem"], "броня: слот под самоцвет");
+}
+
+/// M18/F58 (ADR-012): слот принимает по `accepts` — гемы в оружие
+/// разрешены там, где слот под самоцветы (`stats.rune_sockets` делит
+/// слоты: первые рунные, остальные под самоцветы).
+#[tokio::test]
+async fn gem_goes_into_weapon_socket_by_accepts() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // 4 слота: 0,1 — рунные; 2,3 — под самоцветы.
+    let sword = give(&mut c, "sword_1000_true").await;
+    let rune = give(&mut c, "rune_fire").await;
+    let gem = give(&mut c, "gem_str").await;
+
+    async fn insert(
+        c: &mut ld2_test_kit::WsClient,
+        staff_uid: &str,
+        idx: u64,
+        rune_uid: &str,
+    ) -> serde_json::Value {
+        let seq = c
+            .send(
+                "cmd/socket.insert",
+                json!({ "staff_uid": staff_uid, "socket_index": idx, "rune_uid": rune_uid }),
+            )
+            .await;
+        c.ack(seq).await
+    }
+
+    // Руна в рунный слот — работает (экземпляр расходуется).
+    let ack = insert(&mut c, &sword, 0, &rune).await;
+    assert_eq!(ack["result"], "ok", "руна в рунный слот: {ack}");
+    let rune2 = give(&mut c, "rune_fire").await;
+
+    // Самоцвет в слот оружия (accepts: gem) — работает (F58).
+    let ack = insert(&mut c, &sword, 2, &gem).await;
+    assert_eq!(ack["result"], "ok", "самоцвет в оружие разрешён: {ack}");
+    // Гем потрачен при успешной вставке — для кейса ниже нужен новый.
+    let gem2 = give(&mut c, "gem_str").await;
+
+    // Руна в гемный слот — отказ (свежий экземпляр: старый потрачен).
+    let ack = insert(&mut c, &sword, 3, &rune2).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NO_RUNE_SLOT",
+        "руна в гемный слот: {ack}"
+    );
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("самоцветы"),
+        "текст называет принимаемое слотом: {ack}"
+    );
+
+    // Самоцвет в рунный слот — отказ (слот 1 рунный); gem потрачен → свой.
+    let ack = insert(&mut c, &sword, 1, &gem2).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NO_RUNE_SLOT",
+        "самоцвет в рунный слот: {ack}"
+    );
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("руны"),
+        "текст называет принимаемое слотом: {ack}"
+    );
 }
