@@ -2618,7 +2618,7 @@ pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
         "uncommon" => 0x98_c3_79,
         "rare" => 0x61_af_ef,
         "epic" => 0xa0_52_2d,
-        "legendary" => 0xe5_c0_7b,
+        "legendary" => 0x66_06_b2,
         _ => pal.text,
     }
 }
