@@ -2160,12 +2160,19 @@ impl Root {
                         _ => id.to_string(),
                     };
                     let sign = if value >= 0 { "+" } else { "" };
+                    // M18/F56: та же плитка, что у статов выше —
+                    // label приглушённым слева, значение жирным вправо
+                    // (иначе бонусы «плыли» относительно статов).
                     col = col.child(
                         div()
                             .flex()
                             .flex_row()
-                            .gap_1()
-                            .child(div().text_color(rgb(pal.muted)).child(name.clone()))
+                            .justify_between()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(pal.panel))
+                            .child(div().text_color(rgb(pal.muted)).child(name))
                             .child(div().font_weight(gpui::FontWeight::BOLD).child(format!(
                                 "{}{}{}",
                                 sign,
