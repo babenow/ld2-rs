@@ -242,6 +242,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ItemTypeStone => "Камень усиления",
         StatQuality => "Качество камня",
         SharpenNoItems => "Нет предметов для заточки",
+        SharpenNoStone => "Камень усиления не выбран — возьмите камень в рюкзаке",
         SharpenResultOk => "Успешно: +{s}",
         SharpenResultFail => "Провал: уровень не изменился",
         SharpenResultBroken => "Провал: предмет разрушен",

@@ -242,6 +242,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ItemTypeStone => "Sharpening stone",
         StatQuality => "Stone quality",
         SharpenNoItems => "No items available for sharpening",
+        SharpenNoStone => "No sharpening stone selected — take a stone from your backpack",
         SharpenResultOk => "Success: +{s}",
         SharpenResultFail => "Failed: level unchanged",
         SharpenResultBroken => "Failed: item destroyed",

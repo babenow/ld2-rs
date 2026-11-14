@@ -201,8 +201,13 @@ pub struct AppStore {
     pub item_detail: Option<serde_json::Value>,
     /// Модалка улучшения (ФР-10).
     pub upgrade: Option<UpgradeView>,
-    /// M18/F54: активный камень усиления — гейт окна заточки.
+    /// M18/F54: активный камень усиления.
     pub sharpen_stone: Option<SharpenStone>,
+    /// M18/F55: окно заточки открыто (экран списка показан) — гейт
+    /// рендера. Переживает расход последнего камня, чтобы «назад»
+    /// возвращал к списку, а не закрывал окно; снимается только при
+    /// закрытии окна (Esc/крестик/скрим).
+    pub sharpen_list: bool,
     /// Открытая инкрустация (ФР-09): uid посоха.
     pub socketing: Option<String>,
     /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
@@ -594,6 +599,7 @@ impl AppStore {
             item_detail: None,
             upgrade: None,
             sharpen_stone: None,
+            sharpen_list: false,
             socketing: None,
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
@@ -909,6 +915,8 @@ impl AppStore {
                         name,
                         quality: sel.quality,
                     });
+                    // M18/F55: окно открыто — гейт рендера (список).
+                    self.sharpen_list = true;
                     // Свежий выбор камня — прошлый результат неактуален.
                     if let Some(upgrade) = self.upgrade.as_mut() {
                         upgrade.result = None;
@@ -3903,6 +3911,47 @@ mod tests {
             view.result.is_some(),
             "итог прошлого броска не затёрт новым превью"
         );
+    }
+
+    /// M18/F55: окно заточки переживает расход последнего камня —
+    /// иначе «назад» (гейт был `stone || upgrade`) закрывал окно вовсе
+    /// (жалоба M18/F55). Гейт — отдельный флаг `sharpen_list`.
+    #[test]
+    fn sharpen_window_outlives_spent_stone() {
+        let mut store = in_game();
+        assert!(!store.sharpen_list, "окно по умолчанию закрыто");
+
+        // Выбор камня открывает окно (экран списка).
+        store.on_sheet_sent(Act::Sharpen);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            51,
+            None,
+            &serde_json::json!({ "stone_uid": "i_17", "quality": 5 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.sharpen_list, "окно открыто выбором камня");
+
+        // Последний камень потрачен → сервер снимает выбор...
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "consumed" }),
+        ));
+        assert!(store.sharpen_stone.is_none(), "камень снят");
+        assert!(
+            store.sharpen_list,
+            "окно обязано пережить расход камня — иначе «назад» его закроет"
+        );
+
+        // «Назад» к списку закрывает только карточку предмета.
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.close_upgrade();
+        assert!(store.upgrade.is_none(), "карточка предмета закрыта");
+        assert!(store.sharpen_list, "список доступен — окно живо");
+
+        // Закрытие окна (крестик/Esc/скрим) — флаг снимается.
+        store.sharpen_list = false;
+        assert!(!store.sharpen_list, "окно закрыто");
     }
 
     #[test]

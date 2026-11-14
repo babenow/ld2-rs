@@ -196,15 +196,15 @@ impl Root {
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
-        // M18/F54: окно живёт, пока есть выбранный камень (список) ИЛИ
-        // открытый предмет (сама заточка). Последний камень потрачен —
-        // sharpen_stone снят, но окно остаётся, чтобы показать результат;
-        // «назад» ведёт к списку, а его гейт уже пуст → окно закроется.
-        let stone = self.store.sharpen_stone.clone();
-        let view = self.store.upgrade.clone();
-        if stone.is_none() && view.is_none() {
+        // M18/F55: гейт окна — флаг «список показан», а не наличие
+        // камня/предмета: последний камень потрачен → sharpen_stone
+        // снят, но окно обязано пережить это, иначе «назад» закрывал
+        // его вовсе (жалоба M18/F55).
+        if !self.store.sharpen_list {
             return None;
         }
+        let stone = self.store.sharpen_stone.clone();
+        let view = self.store.upgrade.clone();
         let (title, leading, body) = match view {
             Some(view) => (
                 view.item_name.clone(),
@@ -260,6 +260,16 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::Loading));
         };
+        // M18/F55: камень потрачен (последний) — список предметов не
+        // показываем: без него сервер не даст превью. Вместо пустоты —
+        // заглушка, чтобы было понятно, почему дальше идти некуда.
+        if self.store.sharpen_stone.is_none() {
+            return div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.danger))
+                .child(t(lang, Key::SharpenNoStone));
+        }
         // M18/F54: качество камня — фиксированная шапка **над**
         // списком (не уезжает при прокрутке), строки — в ScrollArea:
         // предметов больше, чем помещается в карточку.
@@ -622,6 +632,8 @@ impl Root {
                         if kind == PopupKind::Upgrade {
                             tracing::debug!("закрытие окна заточки: крестик");
                             root.store.close_upgrade();
+                            root.store.sharpen_stone = None;
+                            root.store.sharpen_list = false;
                             root.upgrade_progress = None;
                         }
                         if kind == PopupKind::Item {

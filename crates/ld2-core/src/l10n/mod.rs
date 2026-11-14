@@ -283,6 +283,8 @@ pub enum Key {
     StatQuality,
     /// M18/F54: в списке нет предметов, доступных для заточки.
     SharpenNoItems,
+    /// M18/F55: в списке нет выбранного камня (последний потрачен).
+    SharpenNoStone,
     /// M18/F55: итог заточки на экране — успех (`{s}` = новый уровень).
     SharpenResultOk,
     /// M18/F55: итог заточки — провал, уровень не изменился.
@@ -805,6 +807,7 @@ mod tests {
         Key::ItemTypeStone,
         Key::StatQuality,
         Key::SharpenNoItems,
+        Key::SharpenNoStone,
         Key::SharpenResultOk,
         Key::SharpenResultFail,
         Key::SharpenResultBroken,

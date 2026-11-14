@@ -780,7 +780,13 @@ impl Root {
                     }
                 }
                 Effect::Notify(kind) => {
-                    // D7: под флагом настроек (desktop.notify).
+                    // M18/F55: итог заточки рисуется цветом прямо на
+                    // экране заточки — системное уведомление («новое
+                    // окно») для него убрано. Остальные события (D7) —
+                    // под флагом desktop.notify.
+                    if matches!(kind, ld2_core::store::NotifyKind::Upgrade) {
+                        continue;
+                    }
                     if self.config.notify {
                         ld2_core::notify::show(&l10n::notify_body(self.lang, kind));
                     }
@@ -1083,6 +1089,7 @@ impl Root {
                 tracing::debug!("закрытие окна заточки: Esc");
                 self.store.close_upgrade();
                 self.store.sharpen_stone = None;
+                self.store.sharpen_list = false;
                 self.upgrade_progress = None;
                 cx.notify();
                 return;
@@ -1460,6 +1467,7 @@ impl Root {
                                     {
                                         root.store.close_upgrade();
                                         root.store.sharpen_stone = None;
+                                        root.store.sharpen_list = false;
                                         root.upgrade_progress = None;
                                     } else if root.store.item_detail.is_some() {
                                         root.store.item_detail = None;
