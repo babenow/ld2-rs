@@ -1861,10 +1861,11 @@ fn action_disabled(id: &str, label: String, reason: String, pal: &Palette) -> St
         .child(label)
 }
 
-/// M14/F4: текст причины «кулдаун» — остаток округляется вверх
-/// (100 мс до конца → «1 с»), чтобы значение не мигало в 0.
 fn cooldown_reason(lang: ld2_core::l10n::Lang, left_ms: i64) -> String {
-    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    // M18/F52: без округления вверх (+999) и без «минимум 1 с» — иначе
+    // кнопка показывает «1 с» ещё ~1 с после фактического окончания
+    // кулдауна (жалоба: «задержка после окончания»).
+    let secs = left_ms.max(0) / 1000;
     tf(lang, Key::HotbarCooldown, &[("{s}", &secs.to_string())])
 }
 
@@ -1877,7 +1878,9 @@ fn cd_disabled(
     lang: ld2_core::l10n::Lang,
     pal: &Palette,
 ) -> Stateful<Div> {
-    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    // M18/F52: без округления вверх — остаток в секундах как есть
+    // (см. cooldown_reason).
+    let secs = left_ms.max(0) / 1000;
     let short = tf(lang, Key::HotbarCdShort, &[("{s}", &secs.to_string())]);
     action_disabled(
         id,
@@ -1898,19 +1901,15 @@ fn cd_bar_button(
     lang: ld2_core::l10n::Lang,
     pal: &Palette,
 ) -> Div {
-    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    // M18/F52: без округления вверх — реальный остаток в секундах.
+    let secs = left_ms.max(0) / 1000;
     let short = tf(lang, Key::HotbarCdShort, &[("{s}", &secs.to_string())]);
     let frac = (left_ms as f32 / total_ms.max(1) as f32).clamp(0.0, 1.0);
     div()
         .flex()
         .flex_col()
         .gap_1()
-        .child(action_disabled(
-            id,
-            format!("{label} · {short}"),
-            cooldown_reason(lang, left_ms),
-            pal,
-        ))
+        // M18/F52: кулдаун-бар над кнопкой (был под ней).
         .child(
             div().h(px(3.0)).rounded_md().bg(rgb(pal.border)).child(
                 div()
@@ -1920,6 +1919,12 @@ fn cd_bar_button(
                     .bg(rgb(pal.accent)),
             ),
         )
+        .child(action_disabled(
+            id,
+            format!("{label} · {short}"),
+            cooldown_reason(lang, left_ms),
+            pal,
+        ))
 }
 
 /// Цвет severity (палитра §7.4, локальная копия — egui-версия возвращает Color32).
