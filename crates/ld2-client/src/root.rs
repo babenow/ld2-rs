@@ -629,6 +629,20 @@ impl Root {
             self.upgrade_progress = None;
         }
 
+        // M18/F53: после результата модалка остаётся открытой —
+        // автоматически запрашиваем новое превью для следующего улучшения.
+        if self.store.pending != Some(Act::Preview)
+            && self
+                .store
+                .upgrade
+                .as_ref()
+                .is_some_and(|v| v.result.is_some() && v.preview.is_none())
+        {
+            let uid = self.store.upgrade.as_ref().unwrap().item_uid.clone();
+            let cmd = ld2_protocol::cmd::UpgradePreview { item_uid: uid };
+            self.send_cmd(&cmd, Act::Preview);
+        }
+
         // M11.4: новый notice → всплывающий тост Ely (текст в экране
         // остаётся до замены — на время жизни тоста возможен дубль).
         if let Some(notice) = self.store.notice.clone() {

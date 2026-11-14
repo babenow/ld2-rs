@@ -97,6 +97,9 @@ pub struct UpgradeView {
     pub item_name: String,
     /// payload `upgrade.preview`: `{preview_id, delta, cost, chance}`.
     pub preview: Option<serde_json::Value>,
+    /// M18/F53: последний результат `evt/upgrade/result` (модалка не
+    /// закрывается — показываем итог и позволяем улучшать дальше).
+    pub result: Option<serde_json::Value>,
 }
 
 /// Цветовой тип строки журнала мира (ФР-17; палитра §7.4 — в UI).
@@ -871,6 +874,7 @@ impl AppStore {
                     (self.upgrade.as_mut(), ack.payload.as_ref())
                 {
                     upgrade.preview = Some(payload.clone());
+                    upgrade.result = None;
                 }
             }
             Act::Socket => {
@@ -1408,7 +1412,7 @@ impl AppStore {
             "evt/upgrade/result" => {
                 // ФР-10: результат — событием; модалка закрывается.
                 let Ok(result) =
-                    serde_json::from_value::<ld2_protocol::evt::UpgradeResult>(payload)
+                    serde_json::from_value::<ld2_protocol::evt::UpgradeResult>(payload.clone())
                 else {
                     return vec![];
                 };
@@ -1437,7 +1441,14 @@ impl AppStore {
                         format!("Провал улучшения: «{name}» (без изменений)"),
                     );
                 }
-                self.upgrade = None;
+                // M18/F53: модалка не закрывается — сохраняем результат,
+                // сбрасываем превью (следующее улучшение запросит новое).
+                if let Some(view) = self.upgrade.as_mut() {
+                    if view.item_uid == result.uid {
+                        view.result = Some(payload.clone());
+                        view.preview = None;
+                    }
+                }
                 vec![Effect::Notify(NotifyKind::Upgrade)]
             }
             "evt/quest/progress" | "evt/quest/updated" => {
@@ -1785,6 +1796,7 @@ impl AppStore {
             item_uid,
             item_name,
             preview: None,
+            result: None,
         });
     }
 
@@ -3754,7 +3766,7 @@ mod tests {
         assert_eq!(view.item_uid, "i_17");
         assert_eq!(view.preview.as_ref().unwrap()["preview_id"], "pv_7");
 
-        // Результат закрывает модалку и пишет лог.
+        // Результат остаётся в модалке (не закрывается) и пишет лог.
         store.apply(evt(
             "evt/upgrade/result",
             serde_json::json!({
@@ -3762,7 +3774,11 @@ mod tests {
                 "item_destroyed": false, "cost": { "gold": 300 }
             }),
         ));
-        assert!(store.upgrade.is_none(), "модалка закрыта по результату");
+        assert!(store.upgrade.is_some(), "модалка остаётся открытой");
+        assert!(
+            store.upgrade.as_ref().unwrap().result.is_some(),
+            "результат сохранён"
+        );
         let last = store.log.back().expect("лог");
         assert_eq!(last.kind, LogKind::Loot);
         assert!(last.text.contains("+3"), "{}", last.text);
@@ -3778,7 +3794,7 @@ mod tests {
                 "uid": "i_17", "ok": false, "item_destroyed": true, "cost": {}
             }),
         ));
-        assert!(store.upgrade.is_none());
+        assert!(store.upgrade.is_some());
         let last = store.log.back().expect("лог");
         assert_eq!(
             last.kind,

@@ -1959,11 +1959,29 @@ impl Root {
             .cloned();
         let mut col = div().flex().flex_col().gap_1();
         let Some(preview) = view.preview.clone() else {
-            col = col.child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::Loading)),
-            );
+            if let Some(res) = view.result.clone() {
+                let text = if res.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    format!(
+                        "Успех: +{}",
+                        res.get("new_upgrade").and_then(|v| v.as_u64()).unwrap_or(0)
+                    )
+                } else if res
+                    .get("item_destroyed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    "Провал: предмет разрушен.".to_string()
+                } else {
+                    "Провал: уровень не изменился.".to_string()
+                };
+                col = col.child(div().text_color(rgb(pal.muted)).child(text));
+            } else {
+                col = col.child(
+                    div()
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::Loading)),
+                );
+            }
             col = col.child(act_btn(
                 cx,
                 t(lang, Key::Exit),
@@ -1971,6 +1989,7 @@ impl Root {
                 pal.text,
                 |this, cx| {
                     this.store.close_upgrade();
+                    this.upgrade_progress = None;
                     let _ = cx;
                 },
             ));
