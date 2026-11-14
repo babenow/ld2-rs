@@ -185,9 +185,14 @@ impl Root {
         let title = detail["name"].as_str().unwrap_or("?").to_string();
         // M18/F57: контент прокручивается — описание (статы, бонусы,
         // сокеты, цена) не помещалось в высоту карточки и обрезалось.
-        // Обёртка `flex_grow_1().min_h_0()` занимает остаток тела
-        // попапа (приём окна NPC), ScrollArea даёт полосу.
-        let body = div().flex_grow_1().min_h_0().child(
+        //
+        // Обёртка обязана быть **flex-колонкой**: ScrollArea рисует
+        // ребёнка с `.size_full()` внутри `overflow_hidden`, поэтому его
+        // собственная высота должна быть ограничена снаружи. Без `.flex().flex_col()`
+        // его `flex_grow_1().min_h_0()` игнорируется (родитель не
+        // flex-контейнер), высота равна контенту — скролла нет.
+        // Приём сверен с `character_left_column` (рабочий).
+        let body = div().flex().flex_col().flex_grow_1().min_h_0().child(
             ScrollArea::new("ld2-item-detail")
                 .vertical()
                 .flex_grow_1()
