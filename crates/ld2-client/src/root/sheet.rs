@@ -1856,7 +1856,7 @@ impl Root {
                 // M16/F29e: ключи и значения — на языке игрока
                 // (школы — свои названия; прочие значения — как есть).
                 // M18/F53: `param` — вложенный объект {id: значение};
-                // показываем каждое производное как «Критический удар: 3».
+                // показываем каждое производное как «Критический удар: +3%».
                 if key == "param" {
                     if let Some(params) = value.as_object() {
                         for (pid, pval) in params {
@@ -1864,11 +1864,27 @@ impl Root {
                                 .as_str()
                                 .map(str::to_string)
                                 .unwrap_or_else(|| pval.to_string());
-                            col = col.child(div().child(format!(
-                                "{}: {}",
-                                param_label(lang, pid),
-                                raw
-                            )));
+                            let suffix = if param_is_percent(pid) { "%" } else { "" };
+                            col = col.child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .justify_between()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .bg(rgb(pal.panel))
+                                    .child(
+                                        div()
+                                            .text_color(rgb(pal.muted))
+                                            .child(param_label(lang, pid)),
+                                    )
+                                    .child(
+                                        div()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .child(format!("{}{}", raw, suffix)),
+                                    ),
+                            );
                         }
                         continue;
                     }
@@ -1890,7 +1906,22 @@ impl Root {
                 } else {
                     raw
                 };
-                col = col.child(div().child(format!("{}: {}", stat_label(lang, key), value)));
+                col = col.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_between()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(pal.panel))
+                        .child(
+                            div()
+                                .text_color(rgb(pal.muted))
+                                .child(stat_label(lang, key)),
+                        )
+                        .child(div().font_weight(gpui::FontWeight::BOLD).child(value)),
+                );
             }
         }
         // M18/F47/ADR-010: бонусы предмета — «Сила +3», «Точность +4%»,
@@ -1921,10 +1952,19 @@ impl Root {
                         _ => id.to_string(),
                     };
                     let sign = if value >= 0 { "+" } else { "" };
-                    col = col.child(div().child(format!(
-                        "{name} {sign}{value}{}",
-                        if pct { "%" } else { "" }
-                    )));
+                    col = col.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_1()
+                            .child(div().text_color(rgb(pal.muted)).child(name.clone()))
+                            .child(div().font_weight(gpui::FontWeight::BOLD).child(format!(
+                                "{}{}{}",
+                                sign,
+                                value,
+                                if pct { "%" } else { "" }
+                            ))),
+                    );
                 }
             }
         }
@@ -2396,6 +2436,24 @@ pub(crate) fn param_label(lang: Lang, id: &str) -> String {
         _ => return id.to_string(),
     };
     t(lang, key).to_string()
+}
+
+/// M18: производные параметры, которые измеряются в процентах.
+pub(crate) fn param_is_percent(id: &str) -> bool {
+    matches!(
+        id,
+        "accuracy"
+            | "crit_chance"
+            | "crit_damage"
+            | "dodge"
+            | "parry_chance"
+            | "block_chance"
+            | "magic_dodge"
+            | "magic_resist"
+            | "magic_dispel"
+            | "magic_crit_damage"
+            | "magic_crit_chance"
+    )
 }
 
 /// M16/F29e: школа магии (значение `school`; fallback — сырое).
