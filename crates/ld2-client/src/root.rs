@@ -511,7 +511,9 @@ impl Root {
             },
             item_popup: PopupState {
                 delta: (80.0, -20.0),
-                ..PopupState::new((520.0, 420.0))
+                // M18/F55: фоллбэк до open_popup — в диапазоне
+                // «резиновой» ширины (320..480).
+                ..PopupState::new((400.0, 420.0))
             },
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
@@ -1313,19 +1315,31 @@ impl Root {
     /// M16/F29f: открытие окна — базовый размер (персонаж **выше**:
     /// 760×760; рюкзак 760×560), по центру с клампом под вьюпорт
     /// (drag/resize живут до закрытия) и первая вкладка.
-    fn open_popup(&mut self, kind: PopupKind) {
-        // M18/F33: чистое контекстное меню при каждом открытии (см.
-        // clear_popup_menu).
-        clear_popup_menu(kind, &mut self.bp_menu, &mut self.equip_menu);
-        let (tw, th) = match kind {
+    /// M18/F55: базовый размер карточки для `open_popup`.
+    ///
+    /// Окно описания предмета — **«резиновое»**: ширина считается доли
+    /// вьюпорта (28 %, clamp `320..480`) вместо прежних фиксированных
+    /// 520 px; высота остаётся константой, докрутит resize-grip.
+    /// `clamp` также спасает нулевой viewport до первой отрисовки.
+    /// Остальные окна — константы (как были).
+    fn popup_base_size(kind: PopupKind, viewport: (f32, f32)) -> (f32, f32) {
+        let (vw, _) = viewport;
+        match kind {
             PopupKind::Character => (760.0, 760.0),
             PopupKind::Backpack => (760.0, 560.0),
             PopupKind::Quests => (800.0, 560.0),
             PopupKind::Npc => (640.0, 560.0),
-            PopupKind::Item => (520.0, 420.0),
+            PopupKind::Item => ((vw * 0.28).clamp(320.0, 480.0), 420.0),
             PopupKind::Upgrade => (440.0, 360.0),
-        };
+        }
+    }
+
+    fn open_popup(&mut self, kind: PopupKind) {
+        // M18/F33: чистое контекстное меню при каждом открытии (см.
+        // clear_popup_menu).
+        clear_popup_menu(kind, &mut self.bp_menu, &mut self.equip_menu);
         let (vw, vh) = self.viewport;
+        let (tw, th) = Self::popup_base_size(kind, self.viewport);
         let (w, h) = if vw > 0.0 && vh > 0.0 {
             clamp_char_size(tw, th, vw, vh)
         } else {
@@ -3425,6 +3439,41 @@ mod tests {
     use super::*;
 
     /// M18/F33: открытие окна сбрасывает его контекстное меню —
+    /// M18/F55: окно описания предмета «резиновое» — ширина от доли
+    /// вьюпорта (28 %, clamp 320..480), а не прежние фиксированные
+    /// 520 px; остальные окна от вьюпорта не зависят.
+    #[test]
+    fn item_popup_width_follows_viewport() {
+        // Типичный экран: 28 % от 1600 ≈ 448 — уже прежних 520.
+        let (w, h) = Root::popup_base_size(PopupKind::Item, (1600.0, 900.0));
+        assert!((w - 448.0).abs() < 0.01, "28% от 1600 = {w}");
+        assert_eq!(h, 420.0, "высота — константа, докрутит resize-grip");
+
+        // Широкий экран не даёт окну раздуться, узкий — не схлопывает.
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Item, (3000.0, 900.0)).0,
+            480.0,
+            "верхняя граница"
+        );
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Item, (800.0, 600.0)).0,
+            320.0,
+            "нижняя граница"
+        );
+        // Viewport ещё не отрисован (0×0) — clamp даёт валидный размер.
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Item, (0.0, 0.0)).0,
+            320.0,
+            "до первой отрисовки"
+        );
+
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Character, (1000.0, 700.0)),
+            (760.0, 760.0),
+            "персонаж — константа"
+        );
+    }
+
     /// иначе меню, открытое в момент закрытия, появлялось бы само
     /// при следующем открытии (stale-запрос `.manual` + гаснущий
     /// keyed state). Каждое окно сбрасывает только своё меню.
