@@ -102,6 +102,30 @@ pub fn upgrade_chance(current: i64, cfg: &UpgradeSection) -> f64 {
     (cfg.chance_base - cfg.chance_per_level * current as f64).clamp(0.0, 1.0)
 }
 
+/// M18/F54: шанс заточки с камнем усиления. Базовый шанс конфига
+/// плюс **качество камня** (процентные пункты, `stats.quality`, может
+/// быть отрицательным у малого камня) с динамическим затуханием
+/// `1/(1+level)` — чем выше уровень, тем слабее бонус камня; сверху
+/// множитель **рейтов сервера** (`rates.chance`). Итог клампится в 0..=1.
+///
+/// ```
+/// # use ld2_server::systems::upgrade_chance_with_stone;
+/// // качество ±5%, уровень 0 → ±5% к шансу; уровень 9 → ±0.5%.
+/// assert!((upgrade_chance_with_stone(0.9, 5, 0, 1.0) - 0.95).abs() < 1e-9);
+/// assert!((upgrade_chance_with_stone(0.9, -5, 0, 1.0) - 0.85).abs() < 1e-9);
+/// // рейты 0 → шанс гарантированно падает.
+/// assert_eq!(upgrade_chance_with_stone(0.9, 5, 0, 0.0), 0.0);
+/// ```
+pub fn upgrade_chance_with_stone(
+    base: f64,
+    stone_quality: i64,
+    level: i64,
+    rates_chance: f64,
+) -> f64 {
+    let stone_bonus = stone_quality as f64 / 100.0 / (1.0 + level.max(0) as f64);
+    ((base + stone_bonus) * rates_chance).clamp(0.0, 1.0)
+}
+
 /// Бросок улучшения: `roll ∈ [0,1)` против шанса (v1: источник — время,
 /// детерминизма не обещаем; тесты выставляют шанс 0/1).
 pub fn upgrade_roll(now_ms: i64) -> f64 {
@@ -332,6 +356,37 @@ mod tests {
         // Шанс не уходит ниже нуля на высоких уровнях.
         assert_eq!(upgrade_chance(100, &c), 0.0);
         assert_eq!(upgrade_chance(-5, &c).min(1.0), 1.0, "кламп сверху");
+    }
+
+    /// M18/F54: бонус камня к шансу — качество в процентных пунктах
+    /// с затуханием 1/(1+level), сверху рейты сервера, кламп 0..=1.
+    #[test]
+    fn upgrade_chance_with_stone_applies_quality_and_rates() {
+        let base = 0.9;
+        // Разброс ±5% на нулевом уровне (малый/большой камень).
+        assert!((upgrade_chance_with_stone(base, -5, 0, 1.0) - 0.85).abs() < 1e-9);
+        assert!((upgrade_chance_with_stone(base, 0, 0, 1.0) - 0.9).abs() < 1e-9);
+        assert!((upgrade_chance_with_stone(base, 5, 0, 1.0) - 0.95).abs() < 1e-9);
+        // Динамика: чем выше уровень — тем слабее бонус (1/(1+level)).
+        let hi = upgrade_chance_with_stone(base, 5, 9, 1.0);
+        assert!(
+            (hi - (base + 0.05 / 10.0)).abs() < 1e-9,
+            "уровень 9 → +0.5%"
+        );
+        assert!(
+            hi < upgrade_chance_with_stone(base, 5, 0, 1.0),
+            "бонус затухает"
+        );
+        // Рейты сервера: 0 — шанс гарантированно падает; 1 — без изменений.
+        assert_eq!(upgrade_chance_with_stone(base, 5, 0, 0.0), 0.0);
+        assert!((upgrade_chance_with_stone(base, 5, 0, 1.0) - 0.95).abs() < 1e-9);
+        // Кламп сверху: большая база × рейты не уходит выше 1.
+        assert_eq!(upgrade_chance_with_stone(1.0, 5, 0, 10.0), 1.0);
+        assert_eq!(
+            upgrade_chance_with_stone(0.0, -5, 0, 1.0),
+            0.0,
+            "кламп снизу"
+        );
     }
 
     #[test]

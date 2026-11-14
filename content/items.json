@@ -752,6 +752,36 @@
       "stats": {},
       "gold_value": 15,
       "qty": 1
+    },
+    {
+      "id": "stone_upgrade_small",
+      "type": "upgrade_stone",
+      "name": "Малый камень усиления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": { "quality": -5 },
+      "gold_value": 10,
+      "qty": 1
+    },
+    {
+      "id": "stone_upgrade_medium",
+      "type": "upgrade_stone",
+      "name": "Средний камень усиления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": { "quality": 0 },
+      "gold_value": 30,
+      "qty": 1
+    },
+    {
+      "id": "stone_upgrade_large",
+      "type": "upgrade_stone",
+      "name": "Большой камень усиления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": { "quality": 5 },
+      "gold_value": 60,
+      "qty": 1
     }
   ]
 }

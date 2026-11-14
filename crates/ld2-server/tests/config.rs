@@ -140,6 +140,37 @@ fn shop_max_discount_out_of_range_names_key() {
     );
 }
 
+/// M18/F54: множитель шансов вне 0..=10 — ошибка валидации.
+#[test]
+fn bad_rates_chance_names_key() {
+    assert_problem(
+        &edited("chance = 1.0", "chance = 25.0"),
+        "gameplay.rates.chance",
+    );
+}
+
+/// M18/F54: старый конфиг без `[gameplay.rates]` валиден и получает
+/// дефолтный множитель 1.0 (обратная совместимость, §11).
+#[test]
+fn rates_section_is_optional_with_default_one() {
+    let text = example_text();
+    let stripped: String = text
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            !t.starts_with("[gameplay.rates]") && !t.starts_with("chance = 1.0")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!stripped.contains("[gameplay.rates]"), "секция удалена");
+    let cfg: Config = toml::from_str(&stripped).expect("старый TOML парсится");
+    cfg.problems().is_empty().then_some(()).expect("валиден");
+    assert!(
+        (cfg.gameplay.rates.chance - 1.0).abs() < f64::EPSILON,
+        "дефолт 1.0"
+    );
+}
+
 #[test]
 fn feature_wrong_type_names_key() {
     // строка вместо bool: untagged-парсинг проходит, ловит валидация

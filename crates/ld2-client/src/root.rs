@@ -637,7 +637,12 @@ impl Root {
         // закроется по evt/upgrade/result.
         let upgrade_progress_active = self.upgrade_progress.is_some();
         if let Some((uid, preview_id, _started, ends)) = self.upgrade_progress.clone() {
-            if self.now_ms() >= ends {
+            // M18/F54: камень мог выбыть за 3 с прогресса — старт без
+            // него сервер отверг бы; сбрасываем, ничего не отправляя.
+            if self.store.sharpen_stone.is_none() {
+                tracing::debug!("прогресс заточки сброшен: камень выбыл");
+                self.upgrade_progress = None;
+            } else if self.now_ms() >= ends {
                 self.upgrade_progress = None;
                 let cmd = ld2_protocol::cmd::UpgradeStart {
                     item_uid: uid,
@@ -647,13 +652,14 @@ impl Root {
             }
         }
         // Если модалка закрыта (Esc/✕) — сбрасываем прогресс.
-        if self.store.upgrade.is_none() {
+        if self.store.upgrade.is_none() && self.store.sharpen_stone.is_none() {
             self.upgrade_progress = None;
         }
 
         // M18/F53: после результата модалка остаётся открытой —
         // автоматически запрашиваем новое превью для следующего улучшения.
-        if self.store.pending != Some(Act::Preview)
+        if self.store.sharpen_stone.is_some()
+            && self.store.pending != Some(Act::Preview)
             && self
                 .store
                 .upgrade
@@ -1071,10 +1077,12 @@ impl Root {
         // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
         // настроек/диалога выхода (они ловят Esc сами).
         if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
-            // M18/F53: окно заточки — верхний слой группы окон.
-            if self.store.upgrade.is_some() {
+            // M18/F54: окно заточки (список предметов или сама заточка) —
+            // верхний слой группы окон; Esc закрывает оба экрана разом.
+            if self.store.sharpen_stone.is_some() || self.store.upgrade.is_some() {
                 tracing::debug!("закрытие окна заточки: Esc");
                 self.store.close_upgrade();
+                self.store.sharpen_stone = None;
                 self.upgrade_progress = None;
                 cx.notify();
                 return;
@@ -1447,8 +1455,11 @@ impl Root {
                                 if close {
                                     // Верхнее окно: заточка → описание →
                                     // диалог → квесты → рюкзак → персонаж.
-                                    if root.store.upgrade.is_some() {
+                                    if root.store.sharpen_stone.is_some()
+                                        || root.store.upgrade.is_some()
+                                    {
                                         root.store.close_upgrade();
+                                        root.store.sharpen_stone = None;
                                         root.upgrade_progress = None;
                                     } else if root.store.item_detail.is_some() {
                                         root.store.item_detail = None;
@@ -1666,6 +1677,14 @@ impl Root {
             Click::UseItem(uid) => {
                 // M14/F4: расходник боя (свиток/зелье) запускает
                 // глобальный кулдаун; лут и прочие предметы — нет.
+                // M18/F54: камень усиления — отдельный ack (Act::Sharpen).
+                let stone = self.store.snapshot.as_ref().and_then(|s| {
+                    s.char
+                        .inventory
+                        .iter()
+                        .find(|i| i.uid == uid && i.item_type == "upgrade_stone")
+                        .map(|i| i.uid.clone())
+                });
                 let combat_item = self.store.snapshot.as_ref().is_some_and(|s| {
                     s.char.inventory.iter().any(|i| {
                         i.uid == uid && matches!(i.item_type.as_str(), "scroll" | "potion")
@@ -1677,9 +1696,18 @@ impl Root {
                 };
                 match self.transport.send(&cmd) {
                     Ok(_) => {
-                        self.store.on_world_sent(Act::Drop);
+                        self.store.on_world_sent(if stone.is_some() {
+                            Act::Sharpen
+                        } else {
+                            Act::Drop
+                        });
                         if combat_item {
                             self.store.begin_global_cooldown(self.now_ms());
+                        }
+                        if stone.is_some() {
+                            // M18/F54: геометрия карточки; гейт рендера —
+                            // sharpen_stone, которое придёт в ack.
+                            self.open_popup(PopupKind::Upgrade);
                         }
                         self.store.entity_detail = None;
                         self.store.clear_loot_confirm();

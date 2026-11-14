@@ -275,6 +275,14 @@ pub enum Key {
     On,
     Off,
     BtnClose,
+    /// M18/F54: «назад» в шапке окна заточки (список предметов).
+    BtnBack,
+    /// M18/F54: тип предмета «камень усиления».
+    ItemTypeStone,
+    /// M18/F54: качество камня усиления (`stats.quality`, % пункты).
+    StatQuality,
+    /// M18/F54: в списке нет предметов, доступных для заточки.
+    SharpenNoItems,
     NotifyDeath,
     NotifyPartyInvite,
     NotifyGuildInvite,
@@ -787,6 +795,10 @@ mod tests {
         Key::On,
         Key::Off,
         Key::BtnClose,
+        Key::BtnBack,
+        Key::ItemTypeStone,
+        Key::StatQuality,
+        Key::SharpenNoItems,
         Key::NotifyDeath,
         Key::NotifyPartyInvite,
         Key::NotifyGuildInvite,

@@ -65,6 +65,10 @@ pub struct Session {
     out_tx: tokio::sync::mpsc::UnboundedSender<String>,
     /// Активное превью улучшения (ФР-10, M12.5c): stale → `E_UPGRADE_PREVIEW_STALE`.
     preview_state: Option<UpgradePreviewState>,
+    /// M18/F54: выбранный камень усиления (uid) — активен, пока игрок
+    /// не потратит его на улучшение. Ставится `cmd/item.use` камня,
+    /// проверяется на превью/старте, тратится при старте (1 шт./улучшение).
+    sharpen_stone: Option<String>,
     /// Кулдаун чата (`chat.cooldown_s`, ФР-13): момент последнего сообщения.
     last_chat_at: Option<std::time::Instant>,
 }
@@ -76,6 +80,12 @@ struct UpgradePreviewState {
     item_uid: String,
     /// Уровень на момент превью.
     level: i32,
+    /// M18/F54: качество активного камня (процентные пункты) — бросок
+    /// старта использует то же значение, что и показанное превью.
+    stone_quality: i32,
+    /// M18/F54: uid камня на момент превью — между превью и стартом
+    /// камень не должен смениться/исчезнуть.
+    stone_uid: String,
 }
 
 impl Session {
@@ -98,6 +108,7 @@ impl Session {
             char: None,
             location_id: None,
             preview_state: None,
+            sharpen_stone: None,
             last_chat_at: None,
         }
     }
@@ -2116,6 +2127,29 @@ impl Session {
                 "нет определения предмета",
             )];
         };
+        // M18/F54: камень усиления — не расходник: `item.use` выбирает
+        // активный камень, клиент открывает список предметов для заточки;
+        // 1 шт. списывается сервером при `upgrade.start`.
+        if def.item_type == "upgrade_stone" {
+            if item.qty <= 0 {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Ingredients,
+                    "камень усиления не найден",
+                )];
+            }
+            self.sharpen_stone = Some(item.uid.clone());
+            // Типизированный payload (ld2-protocol) — golden-тест фиксирует
+            // форму ack; клиент читает `stone_uid`/`quality` (M18/F54).
+            let selected = ld2_protocol::StoneSelected {
+                stone_uid: item.uid,
+                quality: i64::from(Self::stone_quality(&def)),
+            };
+            return vec![Self::ack_payload(
+                seq,
+                &serde_json::to_value(selected).expect("StoneSelected сериализуется"),
+            )];
+        }
         // M17/F30g: кулдаун предмета (cooldown_s, дефолт 1 с).
         if let Some(err) = self.item_cd_gate(seq, &char_id, &def).await {
             return vec![err];
@@ -4223,6 +4257,50 @@ impl Session {
         outs
     }
 
+    /// M18/F54: активный камень усиления — предмет (`upgrade_stone`)
+    /// из инвентаря текущего персонажа; `None` — не выбран или потерян
+    /// (выброшен/продан после выбора).
+    async fn active_stone(
+        &self,
+        stone_uid: &str,
+        char_id: &str,
+    ) -> Option<(db::items::ItemRow, db::items::ItemDefRow)> {
+        let pool = &self.state.pool;
+        let item = db::items::find(pool, stone_uid, char_id)
+            .await
+            .ok()
+            .flatten()?;
+        if item.qty <= 0 {
+            return None;
+        }
+        let def = db::items::def(pool, &item.def_id).await.ok().flatten()?;
+        if def.item_type != "upgrade_stone" {
+            return None;
+        }
+        Some((item, def))
+    }
+
+    /// M18/F54: качество камня (`stats.quality`, процентные пункты;
+    /// ключа нет → 0 — нейтральный «средний» камень).
+    fn stone_quality(def: &db::items::ItemDefRow) -> i32 {
+        def.stats
+            .get("quality")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0) as i32
+    }
+
+    /// M18/F54: итоговый шанс заточки — база конфига + бонус камня
+    /// (затухание 1/(1+level)) × рейты сервера.
+    fn sharpen_chance(&self, base: f64, stone_quality: i32, level: i32) -> f64 {
+        let rates = self.state.config.gameplay.rates.chance;
+        crate::systems::upgrade_chance_with_stone(
+            base,
+            i64::from(stone_quality),
+            i64::from(level),
+            rates,
+        )
+    }
+
     /// `cmd/upgrade.preview` (§7, ФР-10): превью «сейчас → после» —
     /// `preview_id`, `delta.upgrade`, `cost.gold`, `chance` (если
     /// `shows_chance`). `E_UPGRADE_MAX` — уровень уже предельный.
@@ -4263,17 +4341,39 @@ impl Session {
 
         let cfg = &self.state.config.gameplay.upgrade;
         let level = def.upgrade + item.upgrade;
+        // Потолок уровня — раньше проверки камня: предмет вообще не
+        // улучшается, камень тут ни при чём.
         if level >= cfg.max_level as i32 {
             return vec![Self::err(seq, ErrorCode::UpgradeMax, "предельный уровень")];
         }
+        // M18/F54: улучшение требует выбранный камень усиления.
+        let Some(stone_uid) = self.sharpen_stone.clone() else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Ingredients,
+                "нужен камень усиления",
+            )];
+        };
+        let Some((_, stone_def)) = self.active_stone(&stone_uid, &char_id).await else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Ingredients,
+                "камень усиления не найден",
+            )];
+        };
+        let stone_quality = Self::stone_quality(&stone_def);
+
         let next = level + 1;
         let cost = crate::systems::upgrade_cost(i64::from(level), cfg);
-        let chance = crate::systems::upgrade_chance(i64::from(level), cfg);
+        let base = crate::systems::upgrade_chance(i64::from(level), cfg);
+        let chance = self.sharpen_chance(base, stone_quality, level);
         let preview_id = format!("pv_{:x}", crate::time::now_ms());
         self.preview_state = Some(UpgradePreviewState {
             preview_id: preview_id.clone(),
             item_uid: item.uid.clone(),
             level,
+            stone_quality,
+            stone_uid,
         });
 
         let mut payload = serde_json::json!({
@@ -4355,6 +4455,23 @@ impl Session {
             )];
         }
 
+        // M18/F54: камень от превью обязан существовать и совпадать
+        // с активным (игрок мог выкинуть/сменить его между превью и стартом).
+        let Some((stone_item, _)) = self.active_stone(&preview.stone_uid, &char_id).await else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Ingredients,
+                "камень усиления не найден",
+            )];
+        };
+        if self.sharpen_stone.as_deref() != Some(preview.stone_uid.as_str()) {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Ingredients,
+                "выбран другой камень усиления",
+            )];
+        }
+
         // Золото списывается всегда (до броска); F29a: монеты-стаки.
         let cost = crate::systems::upgrade_cost(i64::from(level), &cfg);
         let money_events = match db::items::consume_money(&pool, &char_id, cost).await {
@@ -4372,7 +4489,48 @@ impl Session {
             }
         };
 
-        let chance = crate::systems::upgrade_chance(i64::from(level), &cfg);
+        // M18/F54: 1 шт. камня на улучшение — списываем до броска.
+        let stone_events = if stone_item.qty > 1 {
+            // Стак пережил расход — камень остаётся активным, игрок
+            // может заточить следующий предмет тем же стаком.
+            let new_qty = i64::from(stone_item.qty) - 1;
+            if let Err(e) = db::items::set_qty(&pool, &stone_item.uid, new_qty).await {
+                warn!("upgrade.start (камень qty): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(new_qty));
+            vec![out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: stone_item.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            )]
+        } else {
+            if let Err(e) = db::items::delete(&pool, &stone_item.uid).await {
+                warn!("upgrade.start (камень удаление): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            // Последняя штука — выбор снимается.
+            self.sharpen_stone = None;
+            vec![out_event(
+                "evt/item/removed",
+                None,
+                serde_json::to_value(ItemRemoved {
+                    uid: stone_item.uid.clone(),
+                    reason: ItemRemovalReason::Consumed,
+                })
+                .unwrap_or_default(),
+            )]
+        };
+
+        // M18/F54: шанс — тот же, что показано в превью (база + бонус
+        // камня × рейты сервера).
+        let base = crate::systems::upgrade_chance(i64::from(level), &cfg);
+        let chance = self.sharpen_chance(base, preview.stone_quality, level);
         let success = crate::systems::upgrade_roll(crate::time::now_ms()) < chance;
         let rule = crate::systems::UpgradeFailRule::parse(
             self.state
@@ -4391,6 +4549,8 @@ impl Session {
         let mut outs = Vec::new();
         // F29a: оплата монетами — события списания до результата.
         outs.extend(money_events);
+        // M18/F54: списанный камень усиления.
+        outs.extend(stone_events);
         if success {
             let new_level = level + 1;
             if let Err(e) = db::items::set_upgrade(&pool, &item.uid, item.upgrade + 1).await {

@@ -196,10 +196,149 @@ impl Root {
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
-        let view = self.store.upgrade.clone()?;
-        let title = view.item_name.clone();
-        let body = self.upgrade_view(cx, pal, &view);
-        Some(self.popup_window(window, cx, pal, PopupKind::Upgrade, title, None, body, None))
+        // M18/F54: окно живёт, пока есть выбранный камень (список) ИЛИ
+        // открытый предмет (сама заточка). Последний камень потрачен —
+        // sharpen_stone снят, но окно остаётся, чтобы показать результат;
+        // «назад» ведёт к списку, а его гейт уже пуст → окно закроется.
+        let stone = self.store.sharpen_stone.clone();
+        let view = self.store.upgrade.clone();
+        if stone.is_none() && view.is_none() {
+            return None;
+        }
+        let (title, leading, body) = match view {
+            Some(view) => (
+                view.item_name.clone(),
+                // «Назад» к списку — как в окне диалога NPC (M18/F41).
+                Some(self.sharpen_back_btn(cx)),
+                self.upgrade_view(cx, pal, &view),
+            ),
+            None => (
+                stone.map(|st| st.name).unwrap_or_default(),
+                None,
+                self.sharpen_list_view(cx, pal),
+            ),
+        };
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Upgrade,
+            title,
+            leading,
+            body,
+            None,
+        ))
+    }
+
+    /// M18/F54: кнопка «назад» в шапке окна заточки — возврат от
+    /// экрана заточки к списку предметов (само окно не закрывается).
+    fn sharpen_back_btn(&mut self, cx: &mut Context<'_, Self>) -> Div {
+        div().child(
+            IconButton::new("ld2-sharpen-back", IconName::ArrowLeft)
+                .tooltip(t(self.lang, Key::BtnBack))
+                .on_click(cx.listener(|root, _, _, cx| {
+                    root.store.close_upgrade();
+                    root.upgrade_progress = None;
+                    cx.notify();
+                })),
+        )
+    }
+
+    /// M18/F54: экран 1 — предметы, которые можно заточить (строки как
+    /// в магазине торговца): название/уровень слева, «+N» справа;
+    /// клик → экран заточки этого предмета.
+    fn sharpen_list_view(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let max_level = self
+            .store
+            .session
+            .as_ref()
+            .map(|s| s.upgrade.max_level)
+            .unwrap_or(9) as i32;
+        let Some(snap) = self.store.snapshot.clone() else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        let mut col = div().flex().flex_col().gap_1().size_full();
+        // M18/F54: каким камнем режем и что он даёт шансу — сверху списка.
+        if let Some(stone) = self.store.sharpen_stone.clone() {
+            let sign = if stone.quality >= 0 { "+" } else { "" };
+            col = col.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(format!(
+                        "{}: {}{}%",
+                        t(lang, Key::StatQuality),
+                        sign,
+                        stone.quality
+                    )),
+            );
+        }
+        let mut found = false;
+        for item in &snap.char.inventory {
+            // Все улучшаемые типы (M18/F54: камни — для всех), до потолка.
+            if !matches!(item.item_type.as_str(), "weapon" | "armor" | "staff")
+                || item.upgrade >= max_level
+            {
+                continue;
+            }
+            found = true;
+            let uid = item.uid.clone();
+            let name = item.name.clone();
+            let upgrade = item.upgrade;
+            col = col.child(
+                div()
+                    .id(format!("ld2-sharpen-{uid}"))
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(pal.selection)))
+                    .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        // Экран 2: превью этого предмета (камень уже активен).
+                        this.store.open_upgrade(uid.clone(), name.clone());
+                        let cmd = UpgradePreview {
+                            item_uid: uid.clone(),
+                        };
+                        this.send_cmd(&cmd, Act::Preview);
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .flex_grow_1()
+                            .text_color(rgb(rarity_color(&item.rarity, pal)))
+                            .child(format!("{} {}", item.name, badges(item))),
+                    )
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(format!("+{upgrade}")),
+                    ),
+            );
+        }
+        if !found {
+            col = col.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::SharpenNoItems)),
+            );
+        }
+        col
     }
 
     /// M17/F30a: список оружия, куда можно инкрустировать руну —
@@ -1238,14 +1377,20 @@ impl Root {
         let lang = self.lang;
         let mut menu = Menu::new();
 
-        // Использовать (свиток/зелье/…).
+        // Использовать (свиток/зелье/…); M18/F54: камень усиления —
+        // отдельный ack (Act::Sharpen) + открытие окна заточки.
         let uid = item.uid.clone();
+        let is_stone = item.item_type == "upgrade_stone";
         menu = menu.item(menu_item(cx, t(lang, Key::MenuUse), move |this, _cx| {
             let cmd = ItemUse {
                 item_uid: uid.clone(),
                 target_id: None,
             };
-            this.send_cmd(&cmd, Act::Drop);
+            this.send_cmd(&cmd, if is_stone { Act::Sharpen } else { Act::Drop });
+            if is_stone {
+                // Геометрия карточки (гейт рендера — sharpen_stone из ack).
+                this.open_popup(PopupKind::Upgrade);
+            }
         }));
 
         // M17/F30a/F30c: инкрустация руны ИЛИ самоцвета — окно
@@ -1277,13 +1422,16 @@ impl Root {
         }
 
         // Улучшение (ФР-10): до максимума из конфига сервера.
+        // M18/F54: сервер требует активный камень — пункт показываем
+        // только когда камень уже выбран (иначе `E_INGREDIENTS`).
         let max_level = self
             .store
             .session
             .as_ref()
             .map(|s| s.upgrade.max_level)
             .unwrap_or(9) as i32;
-        let upgradable = matches!(item.item_type.as_str(), "weapon" | "armor" | "staff");
+        let upgradable = matches!(item.item_type.as_str(), "weapon" | "armor" | "staff")
+            && self.store.sharpen_stone.is_some();
         if upgradable && item.upgrade < max_level {
             let uid = item.uid.clone();
             let name = item.name.clone();
@@ -2422,6 +2570,8 @@ pub(crate) fn type_label(lang: Lang, item_type: &str) -> String {
         "shield" => t(lang, Key::ItemTypeShield),
         "artifact" => t(lang, Key::ItemTypeArtifact),
         "gem" => t(lang, Key::ItemTypeGem),
+        // M18/F54: камни усиления (заточка).
+        "upgrade_stone" => t(lang, Key::ItemTypeStone),
         other => other,
     }
     .to_string()
@@ -2441,6 +2591,8 @@ pub(crate) fn stat_label(lang: Lang, stat: &str) -> String {
         "max" => t(lang, Key::StatMax),
         "attr" => t(lang, Key::StatAttr),
         "value" => t(lang, Key::StatValue),
+        // M18/F54: качество камня усиления (процентные пункты).
+        "quality" => t(lang, Key::StatQuality),
         other => other,
     }
     .to_string()

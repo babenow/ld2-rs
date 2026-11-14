@@ -132,7 +132,7 @@ fn tab_for_type(item_type: &str) -> BackpackTab {
         "potion" => BackpackTab::Potion,
         "rune" | "scroll" => BackpackTab::Magic,
         "herb" | "wood_oak" | "parchment" | "ink" => BackpackTab::Material,
-        "flask" | "chisel" | "quill" => BackpackTab::Tool,
+        "flask" | "chisel" | "quill" | "upgrade_stone" => BackpackTab::Tool,
         "money" => BackpackTab::Currencies,
         "armor" | "shield" => BackpackTab::Armor,
         "artifact" => BackpackTab::Artifact,

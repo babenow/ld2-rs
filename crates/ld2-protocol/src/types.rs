@@ -241,6 +241,16 @@ pub struct RewardPreview {
     pub items: Vec<serde_json::Value>,
 }
 
+/// M18/F54: подтверждение выбора камня усиления (`cmd/item.use` ack):
+/// uid выбранного камня и его качество в процентных пунктах
+/// (`stats.quality`; −5 малый / 0 средний / +5 большой).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StoneSelected {
+    pub stone_uid: String,
+    /// Процентные пункты к шансу заточки до затухания 1/(1+level).
+    pub quality: i64,
+}
+
 /// Квест в журнале (§6, ФР-12).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuestState {

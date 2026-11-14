@@ -64,6 +64,8 @@ pub enum Act {
     Preview,
     /// `upgrade.start` → результат событием (ФР-10).
     Upgrade,
+    /// M18/F54: `item.use` камня усиления → ack `{stone_uid, quality}`.
+    Sharpen,
     /// `socket.insert`/`socket.extract` → ack несёт посох/руну (§7).
     Socket,
     /// Каст из hotbar (ФР-09) — ошибки в мир (`E_NOT_ENOUGH_MP`…).
@@ -100,6 +102,16 @@ pub struct UpgradeView {
     /// M18/F53: последний результат `evt/upgrade/result` (модалка не
     /// закрывается — показываем итог и позволяем улучшать дальше).
     pub result: Option<serde_json::Value>,
+}
+
+/// M18/F54: выбранный камень усиления — активен, пока сервер его не
+/// снимет (последняя штука потрачена) или игрок не закроет окно.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SharpenStone {
+    pub uid: String,
+    pub name: String,
+    /// Качество в процентных пунктах (`stats.quality`; −5/0/+5).
+    pub quality: i64,
 }
 
 /// Цветовой тип строки журнала мира (ФР-17; палитра §7.4 — в UI).
@@ -189,6 +201,8 @@ pub struct AppStore {
     pub item_detail: Option<serde_json::Value>,
     /// Модалка улучшения (ФР-10).
     pub upgrade: Option<UpgradeView>,
+    /// M18/F54: активный камень усиления — гейт окна заточки.
+    pub sharpen_stone: Option<SharpenStone>,
     /// Открытая инкрустация (ФР-09): uid посоха.
     pub socketing: Option<String>,
     /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
@@ -579,6 +593,7 @@ impl AppStore {
             death: None,
             item_detail: None,
             upgrade: None,
+            sharpen_stone: None,
             socketing: None,
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
@@ -718,6 +733,7 @@ impl AppStore {
                 | Act::Equip
                 | Act::Unequip
                 | Act::Drop
+                | Act::Sharpen
                 | Act::Preview
                 | Act::Upgrade
                 | Act::Socket
@@ -863,6 +879,40 @@ impl AppStore {
                         } else {
                             snap.char.professions.push(prof);
                         }
+                    }
+                }
+            }
+            Act::Sharpen => {
+                // M18/F54: сервер выбрал камень — запоминаем для окна
+                // заточки (имя берём из снапшота, качество — из ack).
+                if let Some(payload) = ack.payload.as_ref() {
+                    // Типизированный ack (ld2-protocol, golden §7) —
+                    // старая/чужая форма молча игнорируется.
+                    let Ok(sel) =
+                        serde_json::from_value::<ld2_protocol::StoneSelected>(payload.clone())
+                    else {
+                        return vec![];
+                    };
+                    let name = self
+                        .snapshot
+                        .as_ref()
+                        .and_then(|s| {
+                            s.char
+                                .inventory
+                                .iter()
+                                .find(|i| i.uid == sel.stone_uid)
+                                .map(|i| i.name.clone())
+                        })
+                        .unwrap_or_else(|| sel.stone_uid.clone());
+                    self.sharpen_stone = Some(SharpenStone {
+                        uid: sel.stone_uid,
+                        name,
+                        quality: sel.quality,
+                    });
+                    // Свежий выбор камня — прошлый результат неактуален.
+                    if let Some(upgrade) = self.upgrade.as_mut() {
+                        upgrade.result = None;
+                        upgrade.preview = None;
                     }
                 }
             }
@@ -1364,6 +1414,20 @@ impl AppStore {
                     snap.char
                         .equip
                         .retain(|_, slot| slot.as_deref() != Some(removed.uid.as_str()));
+                }
+                // M18/F54: активный камень выбыл — снимаем выбор и
+                // гасим превью: оно было посчитано с этим камнем, повторный
+                // старт без нового камня (`E_UPGRADE_PREVIEW_STALE`/`E_…`)
+                // был бы неверным шагом.
+                if self
+                    .sharpen_stone
+                    .as_ref()
+                    .is_some_and(|st| st.uid == removed.uid)
+                {
+                    self.sharpen_stone = None;
+                    if let Some(view) = self.upgrade.as_mut() {
+                        view.preview = None;
+                    }
                 }
                 self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
                 vec![]
@@ -3778,6 +3842,55 @@ mod tests {
         let last = store.log.back().expect("лог");
         assert_eq!(last.kind, LogKind::Loot);
         assert!(last.text.contains("+3"), "{}", last.text);
+    }
+
+    /// M18/F54: ack выбора камня заполняет активный камень (uid/имя из
+    /// снапшота/качество); удаление камня снимает выбор и гасит превью,
+    /// чтобы не стартовать по неактуальному `preview_id`.
+    #[test]
+    fn sharpen_stone_set_by_ack_and_cleared_on_removed() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Sharpen);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            31,
+            None,
+            &serde_json::json!({ "stone_uid": "i_17", "quality": 5 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+
+        let stone = store.sharpen_stone.as_ref().expect("камень выбран");
+        assert_eq!(stone.uid, "i_17");
+        assert_eq!(stone.quality, 5, "качество из ack");
+        assert_eq!(stone.name, "Ясеневый посох", "имя из снапшота");
+
+        // Превью посчитано с камнем — запоминаем, что оно есть.
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.on_sheet_sent(Act::Preview);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            32,
+            None,
+            &serde_json::json!({ "preview_id": "pv_1", "delta": { "upgrade": "+3" } }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.upgrade.as_ref().unwrap().preview.is_some());
+
+        // Камень выбыл → выбор снят, превью погашено (старт был бы
+        // неверным шагом без нового камня).
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "consumed" }),
+        ));
+        assert!(
+            store.sharpen_stone.is_none(),
+            "выбор камня снят по удалению"
+        );
+        assert!(
+            store.upgrade.as_ref().unwrap().preview.is_none(),
+            "превью погашено вместе с камнем"
+        );
+        assert!(store.upgrade.is_some(), "окно заточки само не закрывается");
     }
 
     #[test]
