@@ -131,9 +131,10 @@ const SNAPSHOT_JSON: &str = r#"{
     "equip": { "main_hand": "i_17", "off_hand": null },
     "inventory": [ { "uid": "i_17", "type": "staff", "name": "Ясеневый посох",
                      "rarity": "rare", "upgrade": 2, "stats": {},
-                     "sockets": [ { "index": 0, "rune": { "name": "Руна огня",
+                     "sockets": [ { "index": 0, "accepts": "rune",
+                       "rune": { "name": "Руна огня",
                        "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
-                                  { "index": 1, "rune": null } ] } ],
+                                  { "index": 1, "accepts": "rune", "rune": null } ] } ],
     "crime": { "statuses": [ { "kind": "murderer", "severity": "high",
                                "expires_at": 1762150000 } ] },
     "quests": [ { "id": "q_boars", "state": "active",
@@ -198,6 +199,18 @@ fn snapshot_matches_doc_example() {
     );
     assert_eq!(snap.char.inventory[0].item_type, "staff");
     assert_eq!(snap.char.inventory[0].upgrade, 2);
+    // M18/F58 (ADR-012): тип слота доходит до клиента из §6-примера.
+    let sockets = snap.char.inventory[0].sockets.as_ref().expect("сокеты");
+    assert_eq!(
+        sockets[0].accepts.as_deref(),
+        Some("rune"),
+        "accepts заполненного слота"
+    );
+    assert_eq!(
+        sockets[1].accepts.as_deref(),
+        Some("rune"),
+        "accepts пустого слота"
+    );
     let staff = &snap.char.inventory[0];
     let sockets = staff.sockets.as_ref().expect("сокеты посоха");
     assert_eq!(sockets.len(), 2);
@@ -523,6 +536,21 @@ fn ack_ok_and_error_round_trip() {
 }
 
 // ─── предмет (§6): открытые поля и сокеты ────────────────────────────────────
+
+/// M18/F58 (ADR-012): снапшот старого сервера без `accepts`
+/// парсится — поле аддитивное (§11), клиент фолбэчит по типу предмета.
+#[test]
+fn socket_accepts_optional_for_old_server() {
+    let old = r#"{ "uid": "i_9", "type": "weapon", "name": "Меч",
+        "rarity": "common", "upgrade": 0, "stats": {},
+        "sockets": [ { "index": 0, "rune": null } ] }"#;
+    let item: ItemSnapshot = serde_json::from_str(old).expect("старый сервер парсится");
+    let sockets = item.sockets.as_ref().expect("сокеты");
+    assert!(
+        sockets[0].accepts.is_none(),
+        "accepts отсутствует → клиент фолбэчит по типу предмета"
+    );
+}
 
 #[test]
 fn item_snapshot_open_fields_survive() {

@@ -7415,23 +7415,45 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
         sockets: {
-            let sockets: Vec<Socket> =
+            let mut sockets: Vec<Socket> =
                 serde_json::from_value(item.sockets.clone()).unwrap_or_default();
-            if sockets.is_empty() {
+            if sockets.is_empty() && def.sockets > 0 {
                 // M18/F31: предмет с сокетами показывает их даже до
                 // первой вставки — окно инкрустации и список целей
                 // видят всё оружие/броню с сокетами (ленивая форма).
-                if def.sockets > 0 {
-                    let list: Vec<serde_json::Value> = (0..def.sockets.max(0))
-                        .map(|i| serde_json::json!({ "index": i, "rune": null }))
-                        .collect();
-                    serde_json::from_value(serde_json::Value::Array(list)).ok()
-                } else {
-                    None
-                }
-            } else {
-                Some(sockets)
+                let list: Vec<serde_json::Value> = (0..def.sockets.max(0))
+                    .map(|i| serde_json::json!({ "index": i, "rune": null }))
+                    .collect();
+                sockets =
+                    serde_json::from_value(serde_json::Value::Array(list)).unwrap_or_default();
             }
+            // M18/F58 (ADR-012): тип слота добираем при отправке —
+            // `stats.rune_sockets` предмета (0 = весь под самоцветы),
+            // дефолт по типу: броня → gem, оружие/посох → rune (прежнее
+            // поведение). Правится так и raw-запись сокета после
+            // инкрустации, где поля нет; миграции БД не требуется.
+            if !sockets.is_empty() {
+                let rune_slots = def
+                    .stats
+                    .get("rune_sockets")
+                    .and_then(serde_json::Value::as_i64)
+                    .map(|n| n.max(0))
+                    .unwrap_or(if def.item_type == "armor" {
+                        0
+                    } else {
+                        i64::from(def.sockets)
+                    });
+                for socket in &mut sockets {
+                    if socket.accepts.is_none() {
+                        socket.accepts = Some(if i64::from(socket.index) < rune_slots {
+                            "rune".into()
+                        } else {
+                            "gem".into()
+                        });
+                    }
+                }
+            }
+            (!sockets.is_empty()).then_some(sockets)
         },
         qty: Some(i64::from(item.qty)),
         gold_value: Some(i64::from(def.gold_value)),
