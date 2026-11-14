@@ -342,6 +342,7 @@ mod tests {
                     damage: Some(damage),
                     def_id: None,
                 }),
+                accepts: Some("rune".into()),
             }])
         };
         // Меч 6..9 + руна +10: (6+10+5 str) / (9+10+5).

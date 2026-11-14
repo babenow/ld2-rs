@@ -116,6 +116,12 @@ pub struct Socket {
     pub index: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rune: Option<RuneInfo>,
+    /// M18/F58 (ADR-012): тип слота — что он принимает (`rune` | `gem`).
+    /// Аддитивно §11: старый сервер поля не шлёт → клиент фолбэчит по
+    /// типу предмета (прежнее поведение: броня — самоцветы,
+    /// оружие/посох — руны).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepts: Option<String>,
 }
 
 /// M18/F47/ADR-010: бонус предмета — атрибут, параметр или навык

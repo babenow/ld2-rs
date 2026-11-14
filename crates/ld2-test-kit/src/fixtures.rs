@@ -334,10 +334,12 @@ pub fn staff_item() -> ItemSnapshot {
                     damage: None,
                     def_id: None,
                 }),
+                accepts: Some("rune".into()),
             },
             Socket {
                 index: 1,
                 rune: None,
+                accepts: Some("rune".into()),
             },
         ]),
         qty: None,

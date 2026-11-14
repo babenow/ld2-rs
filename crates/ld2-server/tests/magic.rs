@@ -676,3 +676,51 @@ async fn sockets_persist_across_server_restart() {
         "пустой слот остался пустым: {staff}"
     );
 }
+
+/// M18/F58 (ADR-012): сервер проставляет `accepts` в снапшоте — тип
+/// слота реально доходит до клиента. Дефолт по типу предмета (когда
+/// `stats.rune_sockets` не задан): броня → `gem`, оружие/посох → `rune`
+/// — прежнее поведение правил инкрустации сохраняется.
+#[tokio::test]
+async fn snapshot_carries_socket_accepts() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // staff_apprentice: 2 слота, посох → оба рунных;
+    // helm_knight: 1 слот, броня → под самоцвет.
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let helm_uid = give(&mut c, "helm_knight").await;
+
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "resync");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let inv = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь");
+
+    let accepts_of = |uid: &str| -> Vec<String> {
+        let item = inv
+            .iter()
+            .find(|i| i["uid"] == uid)
+            .unwrap_or_else(|| panic!("предмет {uid} должен быть в инвентаре"));
+        item["sockets"]
+            .as_array()
+            .expect("сокеты")
+            .iter()
+            .map(|s| s["accepts"].as_str().unwrap_or("<нет поля>").to_string())
+            .collect()
+    };
+
+    assert_eq!(
+        accepts_of(&staff_uid),
+        ["rune", "rune"],
+        "посох: все слоты рунные (дефолт не-брони)"
+    );
+    assert_eq!(accepts_of(&helm_uid), ["gem"], "броня: слот под самоцвет");
+}

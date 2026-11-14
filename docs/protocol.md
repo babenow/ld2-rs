@@ -236,8 +236,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },
   "requires": { "attr": { "int": 12 }, "profession": null, "level": null },
-  "sockets": [ { "index": 0, "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
-               { "index": 1, "rune": null } ],
+  "sockets": [ { "index": 0, "accepts": "rune",              // M18/F58 (ADR-012): тип слота: rune|gem; аддитивно
+                    "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
+               { "index": 1, "accepts": "rune", "rune": null } ],   // старый сервер поля не шлёт → клиент фолбэчит
   "slot": "main_hand", "hands": 2,         // M17/F30b: слот предмета (ring/artifact —
                                             // псевдослоты пар) и руки (2 — двуручник)
   "def_id": "dagger_knife",              // M17/F30g: ключ кулдауна использования
@@ -298,7 +299,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны посоха |
-| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) |
+| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие) |
 | `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune, char?}` | − | извлечение (цель надета — ack несёт `char`, M18/F32) |
 | `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после»; **M18/F54:** без активного камня → `E_INGREDIENTS`; `chance` уже включает бонус камня × рейты сервера |
 | `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение; **M18/F54:** тратит 1 шт. активного камня (`evt/item/state` qty−1 либо `evt/item/removed`), камень сбрасывается |
