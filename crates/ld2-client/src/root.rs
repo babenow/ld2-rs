@@ -73,6 +73,10 @@ enum PopupKind {
     Quests,
     /// M18/F38: окно диалога NPC — как окно персонажа (попап).
     Npc,
+    /// M18: описание предмета — как окно персонажа (попап).
+    Item,
+    /// M18/F53: окно заточки — попап (карточка с шапкой, без затемнения).
+    Upgrade,
 }
 
 impl PopupKind {
@@ -83,6 +87,8 @@ impl PopupKind {
             PopupKind::Backpack => "ld2-bp",
             PopupKind::Quests => "ld2-quests",
             PopupKind::Npc => "ld2-npc",
+            PopupKind::Item => "ld2-item",
+            PopupKind::Upgrade => "ld2-upgrade",
         }
     }
 }
@@ -102,6 +108,9 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
         PopupKind::Quests => {}
         // M18/F38: окно диалога NPC тоже.
         PopupKind::Npc => {}
+        PopupKind::Item => {}
+        // M18/F53: окно заточки — попап.
+        PopupKind::Upgrade => {}
     }
 }
 
@@ -273,6 +282,9 @@ pub struct Root {
     /// M18/F38: окно диалога NPC — геометрия (гейт рендера — наличие
     /// `store.npc_dialog`, см. `npc_window`).
     npc_popup: PopupState,
+    item_popup: PopupState,
+    /// M18/F53: окно заточки — попап (геометрия карточки).
+    upgrade_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
     /// всплывающих окон — закрытие по mouse-up только для настоящего
     /// «клика мимо» (M15/F25e).
@@ -496,6 +508,15 @@ impl Root {
             npc_popup: PopupState {
                 delta: (60.0, -40.0),
                 ..PopupState::new((640.0, 560.0))
+            },
+            item_popup: PopupState {
+                delta: (80.0, -20.0),
+                ..PopupState::new((520.0, 420.0))
+            },
+            // M18/F53: окно заточки — карточка по центру, без затемнения.
+            upgrade_popup: PopupState {
+                delta: (0.0, -40.0),
+                ..PopupState::new((520.0, 520.0))
             },
             backpack_tab: backpack::BackpackTab::default(),
             quests_tab: quests::QuestsTab::default(),
@@ -1049,6 +1070,21 @@ impl Root {
         // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
         // настроек/диалога выхода (они ловят Esc сами).
         if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
+            // M18/F53: окно заточки — верхний слой группы окон.
+            if self.store.upgrade.is_some() {
+                tracing::debug!("закрытие окна заточки: Esc");
+                self.store.close_upgrade();
+                self.upgrade_progress = None;
+                cx.notify();
+                return;
+            }
+            // M18/F53: описание предмета — поверх окна заточки.
+            if self.store.item_detail.is_some() {
+                tracing::debug!("закрытие описания предмета: Esc");
+                self.store.item_detail = None;
+                cx.notify();
+                return;
+            }
             // M18/F38: диалог NPC — верхний слой группы окон.
             if self.store.npc_dialog.is_some() {
                 tracing::debug!("закрытие диалога NPC: Esc");
@@ -1241,6 +1277,8 @@ impl Root {
             PopupKind::Backpack => &mut self.backpack_popup,
             PopupKind::Quests => &mut self.quests_popup,
             PopupKind::Npc => &mut self.npc_popup,
+            PopupKind::Item => &mut self.item_popup,
+            PopupKind::Upgrade => &mut self.upgrade_popup,
         }
     }
 
@@ -1251,6 +1289,8 @@ impl Root {
             PopupKind::Backpack => &self.backpack_popup,
             PopupKind::Quests => &self.quests_popup,
             PopupKind::Npc => &self.npc_popup,
+            PopupKind::Item => &self.item_popup,
+            PopupKind::Upgrade => &self.upgrade_popup,
         }
     }
 
@@ -1266,6 +1306,8 @@ impl Root {
             PopupKind::Backpack => (760.0, 560.0),
             PopupKind::Quests => (800.0, 560.0),
             PopupKind::Npc => (640.0, 560.0),
+            PopupKind::Item => (520.0, 420.0),
+            PopupKind::Upgrade => (520.0, 520.0),
         };
         let (vw, vh) = self.viewport;
         let (w, h) = if vw > 0.0 && vh > 0.0 {
@@ -1278,6 +1320,8 @@ impl Root {
             PopupKind::Backpack => (40.0, 40.0),
             PopupKind::Quests => (-40.0, 40.0),
             PopupKind::Npc => (60.0, -40.0),
+            PopupKind::Item => (80.0, -20.0),
+            PopupKind::Upgrade => (0.0, -40.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1294,6 +1338,10 @@ impl Root {
             PopupKind::Quests => self.quests_tab = quests::QuestsTab::default(),
             // M18/F38: окно диалога открывает ack, не open_popup.
             PopupKind::Npc => {}
+            // M18: описание предмета открывает контекстное меню.
+            PopupKind::Item => {}
+            // M18/F53: окно заточки открывает контекстное меню.
+            PopupKind::Upgrade => {}
         }
     }
 
@@ -1396,9 +1444,14 @@ impl Root {
                                     scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
                                 root.popup_scrim_down = false;
                                 if close {
-                                    // Верхнее окно: диалог → квесты →
-                                    // рюкзак → персонаж.
-                                    if root.store.npc_dialog.is_some() {
+                                    // Верхнее окно: заточка → описание →
+                                    // диалог → квесты → рюкзак → персонаж.
+                                    if root.store.upgrade.is_some() {
+                                        root.store.close_upgrade();
+                                        root.upgrade_progress = None;
+                                    } else if root.store.item_detail.is_some() {
+                                        root.store.item_detail = None;
+                                    } else if root.store.npc_dialog.is_some() {
                                         tracing::debug!("закрытие диалога NPC: скрим");
                                         root.store.npc_dialog = None;
                                         root.npc_popup.open = false;
@@ -3220,10 +3273,9 @@ impl Root {
             ld2_core::store::Dialog::PartyInvite
             | ld2_core::store::Dialog::GuildInvite
             | ld2_core::store::Dialog::Trade => self.social_dialog(cx, pal),
-            ld2_core::store::Dialog::Item
-            | ld2_core::store::Dialog::Upgrade
-            | ld2_core::store::Dialog::Socket
-            | ld2_core::store::Dialog::Inscribe => self.sheet_dialog(cx, pal),
+            ld2_core::store::Dialog::Socket | ld2_core::store::Dialog::Inscribe => {
+                self.sheet_dialog(cx, pal)
+            }
             ld2_core::store::Dialog::Create | ld2_core::store::Dialog::Delete => {
                 self.chars_dialog(cx, pal)
             }
@@ -3311,6 +3363,15 @@ impl Render for Root {
             // M18/F38: окно диалога NPC — верхний слой группы попапов
             // (модалки смерти/осмотра/луута рисуются позже — выше).
             .when_some(self.npc_window(window, cx, &pal), |d, layer| d.child(layer))
+            // M18/F53: описание предмета и окно заточки — попапы
+            // (карточка с шапкой и крестиком, без затемнения).
+            // Порядок слоёв = порядок Esc/scrim: заточка — верхняя.
+            .when_some(self.item_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            .when_some(self.upgrade_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))

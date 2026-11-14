@@ -480,8 +480,6 @@ pub enum Dialog {
     PartyInvite,
     GuildInvite,
     Trade,
-    Item,
-    Upgrade,
     Socket,
     /// M17/F30a: выбор оружия под инкрустацию руны/самоцвета.
     Inscribe,
@@ -491,10 +489,13 @@ pub enum Dialog {
 
 impl AppStore {
     /// Активный диалог (M11.2): экран персонажей — создание/удаление;
-    /// игра — смерть > осмотр > лут > группа > гильдия > сделка > предмет >
-    /// улучшение > инкрустация > выбор цели инкрустации (M17/F30a);
-    /// вне игры/персонажей — None. `create_open` и `delete_open` —
-    /// флаги UI (Root), остальное — состояние store.
+    /// игра — смерть > осмотр > лут > группа > гильдия > сделка >
+    /// инкрустация > выбор цели инкрустации (M17/F30a); вне игры/
+    /// персонажей — None. `create_open` и `delete_open` — флаги UI
+    /// (Root), остальное — состояние store.
+    ///
+    /// M18/F53: описание предмета и окно заточки — попапы (вне
+    /// диспетчера модалок, как окно персонажа и диалог NPC).
     pub fn active_dialog(&self, create_open: bool, delete_open: bool) -> Option<Dialog> {
         match self.screen {
             Screen::Characters => {
@@ -519,10 +520,6 @@ impl AppStore {
                     Some(Dialog::GuildInvite)
                 } else if self.trade.is_some() {
                     Some(Dialog::Trade)
-                } else if self.item_detail.is_some() {
-                    Some(Dialog::Item)
-                } else if self.upgrade.is_some() {
-                    Some(Dialog::Upgrade)
                 } else if self.socketing.is_some() {
                     Some(Dialog::Socket)
                 } else if self.inscribe.is_some() {
@@ -2394,11 +2391,10 @@ mod tests {
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Trade));
         s.trade = None;
 
-        // Лист: предмет > улучшение > инкрустация (ФР-07/09/10).
+        // Лист: инкрустация (ФР-09); описание предмета и заточка —
+        // попапы (M18/F53), вне диспетчера модалок.
         s.item_detail = Some(serde_json::json!({"name": "x"}));
         s.socketing = Some("staff".into());
-        assert_eq!(s.active_dialog(false, false), Some(Dialog::Item));
-        s.item_detail = None;
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Socket));
         s.socketing = None;
         // M17/F30a: выбор цели инкрустации — отдельный диалог.

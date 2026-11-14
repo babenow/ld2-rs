@@ -141,32 +141,14 @@ pub(crate) fn inscribe_target_allowed(insert_type: &str, target_type: &str) -> b
 }
 
 impl Root {
-    /// M11.2: диалоги листа (ФР-07/09/10): предмет/улучшение/инкрустация.
+    /// M11.2: диалоги листа (ФР-07/09/10): инкрустация/выбор цели.
+    /// M18/F53: описание предмета и заточка — попапы (см.
+    /// `item_window`/`upgrade_window`), не Ely-модалки.
     pub(crate) fn sheet_dialog(
         &mut self,
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
-        if let Some(detail) = self.store.item_detail.clone() {
-            let name = detail["name"].as_str().unwrap_or("?").to_string();
-            let body = self.item_view(cx, pal, detail).into_any_element();
-            let close = self.dismiss(cx, |r| r.store.item_detail = None);
-            return Some(
-                Dialog::new("ld2-item", name, close)
-                    .child(body)
-                    .into_any_element(),
-            );
-        }
-        if let Some(view) = self.store.upgrade.clone() {
-            let title = view.item_name.clone();
-            let body = self.upgrade_view(cx, pal, &view).into_any_element();
-            let close = self.dismiss(cx, |r| r.store.upgrade = None);
-            return Some(
-                Dialog::new("ld2-upgrade", title, close)
-                    .child(body)
-                    .into_any_element(),
-            );
-        }
         if let Some(staff_uid) = self.store.socketing.clone() {
             let title = t(self.lang, Key::SocketingTitle).to_string();
             let body = self.socket_view(cx, pal, staff_uid).into_any_element();
@@ -189,6 +171,35 @@ impl Root {
             );
         }
         None
+    }
+
+    /// M18/F53: описание предмета — карточка-попап (как окно
+    /// персонажа): шапка с названием и крестиком, без затемнения.
+    pub(crate) fn item_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let detail = self.store.item_detail.clone()?;
+        let title = detail["name"].as_str().unwrap_or("?").to_string();
+        let body = self.item_view(cx, pal, detail);
+        Some(self.popup_window(window, cx, pal, PopupKind::Item, title, None, body, None))
+    }
+
+    /// M18/F53: окно заточки — карточка-попап (как окно персонажа):
+    /// шапка с названием предмета и крестиком, без затемняющего
+    /// overlay; прогресс-бар и результат — внутри карточки.
+    pub(crate) fn upgrade_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let view = self.store.upgrade.clone()?;
+        let title = view.item_name.clone();
+        let body = self.upgrade_view(cx, pal, &view);
+        Some(self.popup_window(window, cx, pal, PopupKind::Upgrade, title, None, body, None))
     }
 
     /// M17/F30a: список оружия, куда можно инкрустировать руну —
@@ -451,6 +462,17 @@ impl Root {
                         if kind == PopupKind::Npc {
                             tracing::debug!("закрытие диалога NPC: крестик");
                             root.store.npc_dialog = None;
+                        }
+                        // M18/F53: окно заточки и описание предмета —
+                        // гейт рендера — наличие состояния в store.
+                        if kind == PopupKind::Upgrade {
+                            tracing::debug!("закрытие окна заточки: крестик");
+                            root.store.close_upgrade();
+                            root.upgrade_progress = None;
+                        }
+                        if kind == PopupKind::Item {
+                            tracing::debug!("закрытие описания предмета: крестик");
+                            root.store.item_detail = None;
                         }
                         cx.notify();
                     })),
@@ -1157,7 +1179,10 @@ impl Root {
             let mut menu = Menu::new();
             let detail = serde_json::to_value(item).unwrap_or_default();
             menu = menu.item(menu_item(cx, t(lang, Key::MenuDesc), move |this, _cx| {
+                this.store.close_upgrade();
+                this.upgrade_progress = None;
                 this.store.item_detail = Some(detail.clone());
+                this.open_popup(PopupKind::Item);
             }));
             let slot_for_cmd = slot.clone();
             menu = menu.item(menu_item(
@@ -1263,7 +1288,13 @@ impl Root {
             let uid = item.uid.clone();
             let name = item.name.clone();
             menu = menu.item(menu_item(cx, t(lang, Key::UpgradeBtn), move |this, _cx| {
+                // M18/F53: раньше модал-диспетчер показывал одну модалку
+                // за раз — теперь попапы, закрываем соседнее вручную.
+                this.store.item_detail = None;
                 this.store.open_upgrade(uid.clone(), name.clone());
+                // M18/F53: карточка заточки — как окно персонажа
+                // (базовый размер/позиция, без затемнения).
+                this.open_popup(PopupKind::Upgrade);
                 let cmd = UpgradePreview {
                     item_uid: uid.clone(),
                 };
@@ -1287,7 +1318,10 @@ impl Root {
         // Описание / Выбросить.
         let detail = serde_json::to_value(item).unwrap_or_default();
         menu = menu.item(menu_item(cx, t(lang, Key::MenuDesc), move |this, _cx| {
+            this.store.close_upgrade();
+            this.upgrade_progress = None;
             this.store.item_detail = Some(detail.clone());
+            this.open_popup(PopupKind::Item);
         }));
         let uid = item.uid.clone();
         menu = menu.item(menu_item(cx, t(lang, Key::MenuDrop), move |this, _cx| {
