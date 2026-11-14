@@ -2020,6 +2020,26 @@ impl Root {
             }
         }
 
+        // M18/F53: что будет при неудаче — из capability `upgrade.rules`.
+        let fail_rule = self
+            .store
+            .session
+            .as_ref()
+            .and_then(|s| s.features.get("upgrade.rules"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("keep");
+        let fail_text = match fail_rule {
+            "level_down" => "При неудаче: уровень снижается на 1 (не ниже 0).",
+            "break_on_fail" => "При неудаче: предмет разрушается.",
+            _ => "При неудаче: уровень не меняется, предмет сохраняется.",
+        };
+        col = col.child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(fail_text),
+        );
+
         let preview_id = preview["preview_id"]
             .as_str()
             .unwrap_or_default()
