@@ -183,7 +183,17 @@ impl Root {
     ) -> Option<AnyElement> {
         let detail = self.store.item_detail.clone()?;
         let title = detail["name"].as_str().unwrap_or("?").to_string();
-        let body = self.item_view(cx, pal, detail);
+        // M18/F57: контент прокручивается — описание (статы, бонусы,
+        // сокеты, цена) не помещалось в высоту карточки и обрезалось.
+        // Обёртка `flex_grow_1().min_h_0()` занимает остаток тела
+        // попапа (приём окна NPC), ScrollArea даёт полосу.
+        let body = div().flex_grow_1().min_h_0().child(
+            ScrollArea::new("ld2-item-detail")
+                .vertical()
+                .flex_grow_1()
+                .min_h_0()
+                .child(self.item_view(cx, pal, detail)),
+        );
         Some(self.popup_window(window, cx, pal, PopupKind::Item, title, None, body, None))
     }
 
