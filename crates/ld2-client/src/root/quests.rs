@@ -293,7 +293,9 @@ impl Root {
             .map(|s| s.quests.max_active)
             .unwrap_or(10);
 
-        // Левая колонка: список с выделением по клику.
+        // M18/F51: левая колонка — только названия квестов (список для
+        // выбора); бейдж состояния и сводка целей — в правой колонке
+        // (там же цели с прогрессом, награда и действия).
         let mut list = div().flex().flex_col().gap_1().w(px(300.0));
         if items.is_empty() {
             list = list.child(
@@ -307,12 +309,10 @@ impl Root {
         for quest in &items {
             let qid = quest.id.clone();
             let selected = self.selected_quest.as_deref() == Some(quest.id.as_str());
-            let (badge_key, badge_color) = state_badge(quest.state);
-            let mut card = div()
+            let card = div()
                 .id(format!("ld2-quest-{qid}"))
                 .flex()
                 .flex_col()
-                .gap_1()
                 .px_2()
                 .py_1()
                 .rounded_md()
@@ -328,30 +328,9 @@ impl Root {
                 }))
                 .child(
                     div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(rgb(badge_color))
-                                .child(t(lang, badge_key)),
-                        )
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(quest.title.clone().unwrap_or_else(|| quest.id.clone())),
-                        ),
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(quest.title.clone().unwrap_or_else(|| quest.id.clone())),
                 );
-            if !quest.goals.is_empty() {
-                card = card.child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(format!("• {}", goals_summary(quest))),
-                );
-            }
             list = list.child(card);
         }
 
