@@ -178,7 +178,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
             "max_len": 500, "cooldown_s": 1.5 },
   "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
-  "magic": { "rune_recharge": "item", "scroll_requires_target": true,
+  "magic": { "rune_recharge": "time", "scroll_requires_target": true,  // time|item (M18/F58c)
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "quests": { "max_active": 10 },             // M18/F36: лимит текущих квестов
   "characters": [
@@ -427,7 +427,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_TARGET_GONE` | цели нет (умерла/ушла) |
 | `E_NOT_IN_COMBAT` / `E_IN_COMBAT` | бой разрешён/запрещён здесь |
 | `E_COOLDOWN` | действие на кулдауне |
-| `E_NO_CHARGES` | у руны нет зарядов |
+| `E_NO_CHARGES` | у руны нет зарядов (меньше затраты `cost`, M18/F58c) |
 | `E_NOT_ENOUGH_MP` | не хватает маны для каста (D4: руна тратит ману + заряд) |
 | `E_NO_RUNE_SLOT` | предмет без свободного/подходящего сокета |
 | `E_REQUIREMENT_ATTR` | не хватает атрибута/уровня |

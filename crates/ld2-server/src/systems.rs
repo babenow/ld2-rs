@@ -233,10 +233,40 @@ pub fn resource_step(
     (new != cur).then_some(new)
 }
 
+/// M18/F58c (ADR-012 §4): затрата зарядов руны за одно применение —
+/// поле параметров руны `cost` (по умолчанию 1, минимум 1: нулевая
+/// затрата давала бы вечную руну). Применяется и при касте, и при
+/// авто-приёме (F58d) — одна точка чтения.
+pub fn rune_charge_cost(stats: &serde_json::Value) -> i64 {
+    stats
+        .get("cost")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(1)
+        .max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::SkillGate;
+
+    /// M18/F58c: затрата зарядов — поле `cost` руны, дефолт 1, кламп ≥ 1.
+    #[test]
+    fn rune_charge_cost_reads_rune_param() {
+        let stats = |json: &str| serde_json::from_str::<serde_json::Value>(json).expect("json");
+        assert_eq!(rune_charge_cost(&serde_json::json!({})), 1, "без поля — 1");
+        assert_eq!(
+            rune_charge_cost(&stats(r#"{"cost": 3}"#)),
+            3,
+            "явная затрата"
+        );
+        assert_eq!(
+            rune_charge_cost(&stats(r#"{"cost": 0}"#)),
+            1,
+            "0 → кламп 1: руна не бессмысленна"
+        );
+        assert_eq!(rune_charge_cost(&stats(r#"{"cost": -5}"#)), 1);
+    }
 
     fn cfg() -> SkillsSection {
         SkillsSection {

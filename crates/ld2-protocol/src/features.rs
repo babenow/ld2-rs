@@ -120,7 +120,9 @@ fn default_upgrade_duration_s() -> f64 {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MagicConfig {
-    /// Способ восстановления зарядов рун: `item` (масло алхимика), … (D4).
+    /// Способ восстановления зарядов рун (D4; M18/F58c оживил ключ):
+    /// `time` — тикер по серверному `rune_recharge_s`, `item` — только
+    /// извлечением. Клиенту — только для отображения/логики окон.
     pub rune_recharge: String,
     pub scroll_requires_target: bool,
     pub mana: ManaConfig,

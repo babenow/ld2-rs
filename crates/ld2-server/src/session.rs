@@ -3697,7 +3697,7 @@ impl Session {
         };
         let pool = self.state.pool.clone();
 
-        let Some(staff) = (match db::items::find(&pool, &cmd.staff_uid, &char_id).await {
+        let Some(mut staff) = (match db::items::find(&pool, &cmd.staff_uid, &char_id).await {
             Ok(item) => item,
             Err(e) => {
                 warn!("rune_cast (поиск посоха): {e}");
@@ -3730,9 +3730,6 @@ impl Session {
             .get("charges")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
-        if charges <= 0 {
-            return vec![Self::err(seq, ErrorCode::NoCharges, "руна разряжена")];
-        }
         let rune_def_id = slot
             .get("def_id")
             .and_then(|v| v.as_str())
@@ -3747,6 +3744,12 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
         };
+        // M18/F58c (ADR-012 §4): затрата — поле руны `cost` (деф. 1),
+        // зарядов должно хватать на неё целиком.
+        let cost_charges = crate::systems::rune_charge_cost(&rune_def.stats);
+        if charges < cost_charges {
+            return vec![Self::err(seq, ErrorCode::NoCharges, "руна разряжена")];
+        }
         if staff_def.item_type != "staff" || staff_def.sockets == 0 {
             return vec![Self::err(
                 seq,
@@ -3811,13 +3814,36 @@ impl Session {
             serde_json::from_value(staff.sockets.clone()).unwrap_or_default();
         if let Some(slot) = sockets.get_mut(cmd.socket_index as usize) {
             if let Some(r) = slot.get_mut("rune") {
-                r["charges"] = serde_json::json!(charges - 1);
+                r["charges"] = serde_json::json!(charges - cost_charges);
             }
         }
-        if let Err(e) = db::items::set_sockets(&pool, &staff.uid, Value::Array(sockets)).await {
+        let sockets_value = Value::Array(sockets);
+        if let Err(e) = db::items::set_sockets(&pool, &staff.uid, sockets_value.clone()).await {
             warn!("rune_cast (заряды): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        // M18/F58c: клиенту — патч сокетов (иначе заряды на кнопке
+        // отстают до ресинка; сокеты в wire-виде — с `accepts`, §6).
+        staff.sockets = sockets_value;
+        let mut item_patch = serde_json::Map::new();
+        item_patch.insert(
+            "sockets".into(),
+            serde_json::to_value(
+                item_snapshot(&staff, &staff_def)
+                    .sockets
+                    .unwrap_or_default(),
+            )
+            .unwrap_or(Value::Null),
+        );
+        let charge_event = out_event(
+            "evt/item/state",
+            None,
+            serde_json::to_value(ItemState {
+                uid: staff.uid.clone(),
+                patch: item_patch,
+            })
+            .unwrap_or_default(),
+        );
 
         let by_name = self
             .char
@@ -3835,7 +3861,7 @@ impl Session {
             spell: spell.clone(),
             what: CastSource::Rune,
             target: cmd.target_id.clone(),
-            charges_left: Some((charges - 1) as i32),
+            charges_left: Some((charges - cost_charges) as i32),
             mp_left: Some(new_mp),
             ok: true,
             extra: Default::default(),
@@ -3843,6 +3869,9 @@ impl Session {
         let cast_json = event_payload_text("evt/magic/cast", &cast);
 
         let mut mine: Vec<Out> = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        if !matches!(&charge_event, Out::Text(t) if t.is_empty()) {
+            mine.push(charge_event);
+        }
         if let Some(text) = &cast_json {
             mine.push(Out::Text(text.clone()));
         }
@@ -7440,7 +7469,11 @@ fn socket_accepts(slot: &serde_json::Value, index: u32, rune_slots: i64) -> Stri
 }
 
 /// Проводной вид предмета §6: поля инстанса + определение из сида (D26).
-fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> ItemSnapshot {
+/// `pub(crate)`: тикер зарядов (M18/F58c) шлёт патч сокетов клиенту.
+pub(crate) fn item_snapshot(
+    item: &db::items::ItemRow,
+    def: &db::items::ItemDefRow,
+) -> ItemSnapshot {
     ItemSnapshot {
         uid: item.uid.clone(),
         item_type: def.item_type.clone(),
