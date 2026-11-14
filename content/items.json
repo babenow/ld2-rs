@@ -232,7 +232,8 @@
         "damage": 14,
         "school": "storm",
         "charges": 5,
-        "max": 8
+        "max": 8,
+        "cost": 2
       },
       "gold_value": 75
     },

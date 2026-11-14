@@ -40,6 +40,9 @@ pub async fn run(state: SharedState) {
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut stopped = state.shutdown_rx();
     let mut ticks: u64 = 0;
+    // M18/F58c (ADR-012 §4): аккумулятор зарядов рун — по аналогии с
+    // `resource.energy_regen_s`, сек из конфига; считаем в секундах.
+    let mut recharge_acc: f64 = 0.0;
     loop {
         tokio::select! {
             _ = stopped.changed() => break, // request_shutdown (graceful)
@@ -53,6 +56,21 @@ pub async fn run(state: SharedState) {
             regen_step(&state).await;
             crime_expire_step(&state).await;
             craft_finish_step(&state).await;
+            // M18/F58c: заряды рун (режим `time`; `item` — без тикера).
+            recharge_acc += 1.0;
+            let interval_s = state.config.gameplay.magic.rune_recharge_s;
+            if state.config.gameplay.magic.rune_recharge == "time" {
+                let mut steps: u32 = 0;
+                while recharge_acc >= interval_s {
+                    recharge_acc -= interval_s;
+                    steps += 1;
+                }
+                if steps > 0 {
+                    rune_recharge_step(&state, steps).await;
+                }
+            } else {
+                recharge_acc = 0.0;
+            }
         }
     }
     tracing::info!("тик-луп остановлен");
@@ -560,6 +578,103 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
             pool_left: None,
         },
     ))
+}
+
+/// M18/F58c (ADR-012 §4): восстановление зарядов рун — по аналогии с
+/// `regen_step`/`resource.energy_regen_s`: только онлайн-персонажи,
+/// все их предметы с сокетами; `steps` — сколько зарядов начислить
+/// (шаг аккумулятора ≥ 1 с — валидация конфига). Начисляются только
+/// руны с `charges < max`, до потолка; изменения — CAS-записью (не
+/// затираем параллельный каст/вставку) и патчем `evt/item/state`
+/// владельцу (сокеты в wire-виде — с `accepts`, §6).
+async fn rune_recharge_step(state: &SharedState, steps: u32) {
+    let online: Vec<String> = {
+        let world = state.world.lock().expect("мир");
+        world.online_chars()
+    };
+    if online.is_empty() {
+        return;
+    }
+    let rows = match crate::db::items::with_sockets(&state.pool, &online).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!("заряды рун (поиск сокетов): {e}");
+            return;
+        }
+    };
+    for (char_id, mut row) in rows {
+        let mut sockets: Vec<serde_json::Value> =
+            serde_json::from_value(row.sockets.clone()).unwrap_or_default();
+        let mut changed = false;
+        for slot in &mut sockets {
+            let Some(rune) = slot.get_mut("rune") else {
+                continue;
+            };
+            if rune.is_null() {
+                continue;
+            }
+            let charges = rune.get("charges").and_then(|v| v.as_i64()).unwrap_or(0);
+            let max = rune.get("max").and_then(|v| v.as_i64()).unwrap_or(0);
+            if max > charges {
+                rune["charges"] = json!((charges + i64::from(steps)).min(max));
+                changed = true;
+            }
+        }
+        if !changed {
+            continue;
+        }
+        let new_sockets = serde_json::Value::Array(sockets);
+        // CAS: параллельный каст/вставка выигрывают — тогда пропускаем
+        // (следующий интервал догонит по свежим данным).
+        match crate::db::items::set_sockets_if_unchanged(
+            &state.pool,
+            &row.uid,
+            &row.sockets,
+            new_sockets.clone(),
+        )
+        .await
+        {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(e) => {
+                warn!("заряды рун (запись {}): {e}", row.uid);
+                continue;
+            }
+        }
+        row.sockets = new_sockets;
+        // Патч владельцу: сокеты в wire-виде (accepts добирается из def).
+        let Some(def) = (match crate::db::items::def(&state.pool, &row.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("заряды рун (определение {}): {e}", row.def_id);
+                continue;
+            }
+        }) else {
+            continue;
+        };
+        let snapshot = crate::session::item_snapshot(&row, &def);
+        let Some(sockets_wire) = snapshot.sockets else {
+            continue;
+        };
+        let mut patch = serde_json::Map::new();
+        patch.insert(
+            "sockets".into(),
+            serde_json::to_value(&sockets_wire).unwrap_or_default(),
+        );
+        let text = crate::session::event_text(
+            "evt/item/state",
+            None,
+            serde_json::to_value(ld2_protocol::evt::ItemState {
+                uid: row.uid.clone(),
+                patch,
+            })
+            .unwrap_or_default(),
+        );
+        if !text.is_empty() {
+            let world = state.world.lock().expect("мир");
+            world.send_to_char(&char_id, text);
+        }
+    }
 }
 
 /// Ресурс-шаг раз в секунду (M17/F30e; мана — skills.md §2.4):

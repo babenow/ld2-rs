@@ -281,3 +281,24 @@ fn deploy_config_matches_example_except_db_url() {
         diffs[0].1
     );
 }
+
+/// M18/F58c: `rune_recharge` — режим (time|item), а не любая строка:
+/// ключ ожил, опечатка в значении должна падать на старте, а не
+/// молча выключать тикер.
+#[test]
+fn rune_recharge_mode_must_be_known() {
+    let text = edited("rune_recharge = \"time\"", "rune_recharge = \"tim\"");
+    assert_problem(&text, "rune_recharge");
+    let text = edited("rune_recharge = \"time\"", "rune_recharge = \"\"");
+    assert_problem(&text, "rune_recharge");
+}
+
+/// M18/F58c: интервал восстановления заряда — положительные секунды
+/// (тик-луп делит аккумулятор на него — 0/отрицательное зависло бы).
+#[test]
+fn rune_recharge_interval_must_be_positive() {
+    let text = edited("rune_recharge_s = 30.0", "rune_recharge_s = 0.0");
+    assert_problem(&text, "rune_recharge_s");
+    let text = edited("rune_recharge_s = 30.0", "rune_recharge_s = -1.0");
+    assert_problem(&text, "rune_recharge_s");
+}

@@ -232,8 +232,15 @@ pub struct UpgradeSection {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MagicSection {
-    /// Режим перезарядки руны: `item` и др. (ADR-002).
+    /// Режим восстановления зарядов рун (ADR-002, оживлён M18/F58c
+    /// по ADR-012 §4): `time` — тикер по `rune_recharge_s`;
+    /// `item` — прежнее поведение (заряды возвращаются только при
+    /// извлечении руны). Ранее ключ был декоративным.
     pub rune_recharge: String,
+    /// M18/F58c (ADR-012 §4): секунд на восстановление **одного**
+    /// заряда руны — по аналогии с `resource.energy_regen_s`
+    /// (тик-луп, раз в секунду, только онлайн-персонажи).
+    pub rune_recharge_s: f64,
     pub scroll_requires_target: bool,
     pub mana: ManaSection,
 }
@@ -584,8 +591,15 @@ impl Config {
             out.push("gameplay.level.max_level: должен быть ≥ 1".into());
         }
 
-        if self.gameplay.magic.rune_recharge.trim().is_empty() {
-            out.push("gameplay.magic.rune_recharge: не должно быть пустым".into());
+        if !matches!(self.gameplay.magic.rune_recharge.trim(), "time" | "item") {
+            out.push(
+                "gameplay.magic.rune_recharge: ожидается \"time\" или \"item\" (M18/F58c)".into(),
+            );
+        }
+        if !self.gameplay.magic.rune_recharge_s.is_finite()
+            || self.gameplay.magic.rune_recharge_s <= 0.0
+        {
+            out.push("gameplay.magic.rune_recharge_s: должен быть > 0".into());
         }
         if self.gameplay.magic.mana.rune_cost == 0 {
             out.push("gameplay.magic.mana.rune_cost: должен быть ≥ 1".into());

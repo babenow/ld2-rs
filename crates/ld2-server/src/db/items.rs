@@ -62,6 +62,56 @@ pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sql
     .await
 }
 
+/// M18/F58c (ADR-012 §4): предметы с непустыми сокетами у указанных
+/// персонажей — тикер зарядов рун; `character_id` идёт первой колонкой
+/// (адресация патча `evt/item/state` владельцу).
+pub async fn with_sockets(
+    pool: &PgPool,
+    char_ids: &[String],
+) -> Result<Vec<(String, ItemRow)>, sqlx::Error> {
+    if char_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            i32,
+            i32,
+            Option<String>,
+            Value,
+            Option<Value>,
+        ),
+    >(
+        "SELECT character_id, uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses \
+         FROM items WHERE character_id = ANY($1) AND sockets <> '[]'",
+    )
+    .bind(char_ids)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(char_id, uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses)| {
+                (
+                    char_id,
+                    ItemRow {
+                        uid,
+                        def_id,
+                        qty,
+                        upgrade,
+                        equipped_slot,
+                        sockets,
+                        bonuses,
+                    },
+                )
+            },
+        )
+        .collect())
+}
+
 /// Определение предмета; `None` — нет в сиде.
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
@@ -244,6 +294,24 @@ pub async fn set_sockets(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// M18/F58c: запись сокетов «если не изменились» (CAS) — тикер зарядов
+/// читает-пишет инстанс и не должен затирать параллельный каст/вставку
+/// того же предмета. `false` — значение ушло, читаем заново.
+pub async fn set_sockets_if_unchanged(
+    pool: &PgPool,
+    uid: &str,
+    expected: &serde_json::Value,
+    new: serde_json::Value,
+) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query("UPDATE items SET sockets = $3 WHERE uid = $1 AND sockets = $2")
+        .bind(uid)
+        .bind(expected)
+        .bind(new)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
 }
 
 /// Уровень улучшения инстанса (ФР-10; `upgrade` в §6 = def + инстанс).

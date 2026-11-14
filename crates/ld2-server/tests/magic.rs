@@ -797,3 +797,206 @@ async fn gem_goes_into_weapon_socket_by_accepts() {
         "текст называет принимаемое слотом: {ack}"
     );
 }
+
+/// M18/F58c (ADR-012 §4): тикер восстанавливает заряды рун — аналог
+/// `resource.energy_regen_s`, сек из конфига; клиент получает патч
+/// `evt/item/state` с новыми зарядами (не нужно ждать ресинк).
+#[tokio::test]
+async fn rune_charges_regenerate_by_ticker() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.magic.rune_recharge = "time".into();
+            cfg.gameplay.magic.rune_recharge_s = 1.0; // шаг каждую секунду
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let rune_uid = give(&mut c, "rune_fire").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune_uid }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+
+    // Вставлена руна 7/10 (charges из def) → тикер добирает до max;
+    // патч приходит от тикера, а не от вставки (вставка шлёт патч по uid руны).
+    let patch = c
+        .wait(|v| {
+            v["type"] == "evt/item/state"
+                && v["payload"]["uid"] == staff_uid.as_str()
+                && v["payload"]["patch"]["sockets"].is_array()
+        })
+        .await;
+    let charges = patch["payload"]["patch"]["sockets"][0]["rune"]["charges"]
+        .as_i64()
+        .expect("charges в патче");
+    assert!(
+        charges > 7 && charges <= 10,
+        "тикер поднял заряды (7 < charges ≤ 10): {charges}, патч: {patch}"
+    );
+    // Сокеты в патче — wire-виде (§6: есть accepts, нет служебного def_id).
+    assert_eq!(
+        patch["payload"]["patch"]["sockets"][0]["accepts"].as_str(),
+        Some("rune"),
+        "accepts добрался в патч: {patch}"
+    );
+    assert!(
+        patch["payload"]["patch"]["sockets"][0]
+            .get("def_id")
+            .is_none(),
+        "служебное поле не уходит клиенту: {patch}"
+    );
+}
+
+/// M18/F58c: режим `rune_recharge = "item"` — тикера нет, заряды
+/// остаются прежними (ключ больше не декоративен: режим решает).
+#[tokio::test]
+async fn rune_recharge_item_mode_disables_ticker() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.magic.rune_recharge = "item".into();
+            cfg.gameplay.magic.rune_recharge_s = 1.0; // если б тикер шёл — успел бы
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let rune_uid = give(&mut c, "rune_fire").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune_uid }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+
+    // Две секунды тик-лупа: патча зарядов быть не должно, заряды прежние.
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let staff = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь")
+        .iter()
+        .find(|i| i["uid"] == staff_uid)
+        .expect("посох");
+    assert_eq!(
+        staff["sockets"][0]["rune"]["charges"].as_i64(),
+        Some(7),
+        "режим item: заряды не тикают: {staff}"
+    );
+}
+
+/// M18/F58c: прочитать до появления ОБОИХ событий — порядок в потоке
+/// не гарантирован (патч сокетов уходит раньше cast-события).
+async fn wait_cast_and_socket_patch(
+    c: &mut ld2_test_kit::WsClient,
+    staff_uid: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let mut cast = None;
+    let mut patch = None;
+    while cast.is_none() || patch.is_none() {
+        let v = c.recv_json().await;
+        match v["type"].as_str() {
+            Some("evt/magic/cast") if cast.is_none() => cast = Some(v),
+            Some("evt/item/state")
+                if patch.is_none()
+                    && v["payload"]["uid"] == staff_uid
+                    && v["payload"]["patch"]["sockets"].is_array() =>
+            {
+                patch = Some(v)
+            }
+            _ => {}
+        }
+    }
+    (cast.expect("cast"), patch.expect("патч сокетов"))
+}
+
+/// M18/F58c (ADR-012 §4): затрата — поле руны `cost`, а не всегда 1:
+/// «Руна шторма» (cost 2) снимает 2 заряда за каст и требует полной
+/// оплаты (1 заряд < cost → E_NO_CHARGES, даже не смотрит ману).
+#[tokio::test]
+async fn rune_cast_spends_configured_charge_cost() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.magic.mana.rune_cost = 1; // мана не мешает — проверяем заряды
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let rune_uid = give(&mut c, "rune_storm").await; // charges 5, cost 2
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune_uid }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+
+    // Каст #1: 5 → 3 (cost 2), патч сокетов идёт тем же потоком.
+    let seq = c
+        .send(
+            "cmd/magic.rune_cast",
+            json!({ "staff_uid": staff_uid, "socket_index": 0 }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let (cast, patch) = wait_cast_and_socket_patch(&mut c, &staff_uid).await;
+    assert_eq!(cast["payload"]["charges_left"], 3, "cost 2: 5 → 3");
+    assert_eq!(
+        patch["payload"]["patch"]["sockets"][0]["rune"]["charges"].as_i64(),
+        Some(3),
+        "патч сокетов несёт новые заряды: {patch}"
+    );
+
+    // Каст #2: 3 → 1.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let seq = c
+        .send(
+            "cmd/magic.rune_cast",
+            json!({ "staff_uid": staff_uid, "socket_index": 0 }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let (cast, _) = wait_cast_and_socket_patch(&mut c, &staff_uid).await;
+    assert_eq!(cast["payload"]["charges_left"], 1, "cost 2: 3 → 1");
+
+    // Каст #3: 1 заряд < cost 2 → отказ.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let seq = c
+        .send(
+            "cmd/magic.rune_cast",
+            json!({ "staff_uid": staff_uid, "socket_index": 0 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NO_CHARGES",
+        "недостаточно зарядов на cost: {ack}"
+    );
+}
