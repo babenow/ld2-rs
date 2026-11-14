@@ -260,26 +260,26 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::Loading));
         };
-        let mut col = div().flex().flex_col().gap_1().size_full();
-        // M18/F54: каким камнем режем и что он даёт шансу — сверху списка.
-        if let Some(stone) = self.store.sharpen_stone.clone() {
+        // M18/F54: качество камня — фиксированная шапка **над**
+        // списком (не уезжает при прокрутке), строки — в ScrollArea:
+        // предметов больше, чем помещается в карточку.
+        let header = self.store.sharpen_stone.clone().map(|stone| {
             let sign = if stone.quality >= 0 { "+" } else { "" };
-            col = col.child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(pal.panel))
-                    .text_size(px(12.0))
-                    .text_color(rgb(pal.muted))
-                    .child(format!(
-                        "{}: {}{}%",
-                        t(lang, Key::StatQuality),
-                        sign,
-                        stone.quality
-                    )),
-            );
-        }
+            div()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .bg(rgb(pal.panel))
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(format!(
+                    "{}: {}{}%",
+                    t(lang, Key::StatQuality),
+                    sign,
+                    stone.quality
+                ))
+        });
+        let mut list = div().flex().flex_col().gap_1();
         let mut found = false;
         for item in &snap.char.inventory {
             // Все улучшаемые типы (M18/F54: камни — для всех), до потолка.
@@ -292,7 +292,7 @@ impl Root {
             let uid = item.uid.clone();
             let name = item.name.clone();
             let upgrade = item.upgrade;
-            col = col.child(
+            list = list.child(
                 div()
                     .id(format!("ld2-sharpen-{uid}"))
                     .flex()
@@ -330,7 +330,7 @@ impl Root {
             );
         }
         if !found {
-            col = col.child(
+            list = list.child(
                 div()
                     .px_2()
                     .py_1()
@@ -338,7 +338,22 @@ impl Root {
                     .child(t(lang, Key::SharpenNoItems)),
             );
         }
-        col
+        // Шапка (качество камня) закреплена, список прокручивается —
+        // ScrollArea занимает остаток карточки (как окно NPC/персонажа).
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .size_full()
+            .min_h_0()
+            .children(header)
+            .child(
+                ScrollArea::new("ld2-sharpen-list")
+                    .vertical()
+                    .flex_grow_1()
+                    .min_h_0()
+                    .child(list),
+            )
     }
 
     /// M17/F30a: список оружия, куда можно инкрустировать руну —
