@@ -2064,7 +2064,9 @@ impl Root {
         let lang = self.lang;
         let rarity = detail["rarity"].as_str().unwrap_or("common");
         let item_type = detail["type"].as_str().unwrap_or("?");
-        let mut col = div().flex().flex_col().gap_1().child(
+        // M18/F57: справа запас под скроллбар (приём character_left_column)
+        // — иначе индикатор прокрутки наезжал на жирные значения статов.
+        let mut col = div().flex().flex_col().gap_1().pr(px(16.0)).child(
             div()
                 .text_color(rgb(rarity_color(rarity, pal)))
                 .child(format!(
