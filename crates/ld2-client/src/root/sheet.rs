@@ -1855,6 +1855,24 @@ impl Root {
             for (key, value) in stats {
                 // M16/F29e: ключи и значения — на языке игрока
                 // (школы — свои названия; прочие значения — как есть).
+                // M18/F53: `param` — вложенный объект {id: значение};
+                // показываем каждое производное как «Критический удар: 3».
+                if key == "param" {
+                    if let Some(params) = value.as_object() {
+                        for (pid, pval) in params {
+                            let raw = pval
+                                .as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| pval.to_string());
+                            col = col.child(div().child(format!(
+                                "{}: {}",
+                                param_label(lang, pid),
+                                raw
+                            )));
+                        }
+                        continue;
+                    }
+                }
                 let raw = value
                     .as_str()
                     .map(str::to_string)
