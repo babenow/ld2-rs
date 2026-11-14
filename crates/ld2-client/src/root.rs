@@ -73,6 +73,10 @@ enum PopupKind {
     Quests,
     /// M18/F38: окно диалога NPC — как окно персонажа (попап).
     Npc,
+    /// M18: описание предмета — как окно персонажа (попап).
+    Item,
+    /// M18/F53: окно заточки — попап (карточка с шапкой, без затемнения).
+    Upgrade,
 }
 
 impl PopupKind {
@@ -83,6 +87,8 @@ impl PopupKind {
             PopupKind::Backpack => "ld2-bp",
             PopupKind::Quests => "ld2-quests",
             PopupKind::Npc => "ld2-npc",
+            PopupKind::Item => "ld2-item",
+            PopupKind::Upgrade => "ld2-upgrade",
         }
     }
 }
@@ -102,6 +108,9 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
         PopupKind::Quests => {}
         // M18/F38: окно диалога NPC тоже.
         PopupKind::Npc => {}
+        PopupKind::Item => {}
+        // M18/F53: окно заточки — попап.
+        PopupKind::Upgrade => {}
     }
 }
 
@@ -273,6 +282,9 @@ pub struct Root {
     /// M18/F38: окно диалога NPC — геометрия (гейт рендера — наличие
     /// `store.npc_dialog`, см. `npc_window`).
     npc_popup: PopupState,
+    item_popup: PopupState,
+    /// M18/F53: окно заточки — попап (геометрия карточки).
+    upgrade_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
     /// всплывающих окон — закрытие по mouse-up только для настоящего
     /// «клика мимо» (M15/F25e).
@@ -292,6 +304,9 @@ pub struct Root {
     selected_quest: Option<String>,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
     exit_timer: Option<(ExitKind, i64)>,
+    /// M18/F53: прогресс улучшения в диалоге — (uid, preview_id, старт мс,
+    /// длительность мс). Команда `upgrade.start` отправляется по истечении.
+    upgrade_progress: Option<(String, String, i64, i64)>,
     /// M14/F17: открытая карточка навыка — id из снапшота.
     skill_info: Option<String>,
     first_frame: bool,
@@ -494,6 +509,18 @@ impl Root {
                 delta: (60.0, -40.0),
                 ..PopupState::new((640.0, 560.0))
             },
+            item_popup: PopupState {
+                delta: (80.0, -20.0),
+                // M18/F55: фоллбэк до open_popup — в диапазоне
+                // «резиновой» ширины (320..480).
+                ..PopupState::new((400.0, 420.0))
+            },
+            // M18/F53: окно заточки — компактная карточка по центру,
+            // без затемнения (см. open_popup: базовый размер).
+            upgrade_popup: PopupState {
+                delta: (0.0, -40.0),
+                ..PopupState::new((440.0, 360.0))
+            },
             backpack_tab: backpack::BackpackTab::default(),
             quests_tab: quests::QuestsTab::default(),
             selected_quest: None,
@@ -501,6 +528,7 @@ impl Root {
             drag_owner: None,
             viewport: (0.0, 0.0),
             exit_timer: None,
+            upgrade_progress: None,
             skill_info: None,
             first_frame: true,
             guild_input: None,
@@ -606,6 +634,45 @@ impl Root {
             }
         }
 
+        // M18/F53: прогресс улучшения в диалоге — по истечении 3 с
+        // (из настроек сервера) отправляем cmd/upgrade.start; модалка
+        // закроется по evt/upgrade/result.
+        let upgrade_progress_active = self.upgrade_progress.is_some();
+        if let Some((uid, preview_id, _started, ends)) = self.upgrade_progress.clone() {
+            // M18/F54: камень мог выбыть за 3 с прогресса — старт без
+            // него сервер отверг бы; сбрасываем, ничего не отправляя.
+            if self.store.sharpen_stone.is_none() {
+                tracing::debug!("прогресс заточки сброшен: камень выбыл");
+                self.upgrade_progress = None;
+            } else if self.now_ms() >= ends {
+                self.upgrade_progress = None;
+                let cmd = ld2_protocol::cmd::UpgradeStart {
+                    item_uid: uid,
+                    preview_id,
+                };
+                self.send_cmd(&cmd, Act::Upgrade);
+            }
+        }
+        // Если модалка закрыта (Esc/✕) — сбрасываем прогресс.
+        if self.store.upgrade.is_none() && self.store.sharpen_stone.is_none() {
+            self.upgrade_progress = None;
+        }
+
+        // M18/F53: после результата модалка остаётся открытой —
+        // автоматически запрашиваем новое превью для следующего улучшения.
+        if self.store.sharpen_stone.is_some()
+            && self.store.pending != Some(Act::Preview)
+            && self
+                .store
+                .upgrade
+                .as_ref()
+                .is_some_and(|v| v.result.is_some() && v.preview.is_none())
+        {
+            let uid = self.store.upgrade.as_ref().unwrap().item_uid.clone();
+            let cmd = ld2_protocol::cmd::UpgradePreview { item_uid: uid };
+            self.send_cmd(&cmd, Act::Preview);
+        }
+
         // M11.4: новый notice → всплывающий тост Ely (текст в экране
         // остаётся до замены — на время жизни тоста возможен дубль).
         if let Some(notice) = self.store.notice.clone() {
@@ -644,14 +711,17 @@ impl Root {
                             .is_some_and(|until| until > now_ms)
                     })
                 })
-            });
+            })
+            // M18/F53: прогресс улучшения в диалоге.
+            || self.upgrade_progress.is_some();
 
-        if had_events || cd_active || exit_active || inscribe_active {
+        if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
         Duration::from_millis(
-            if had_events || cd_active || exit_active || inscribe_active {
+            if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active
+            {
                 50
             } else {
                 200
@@ -712,7 +782,13 @@ impl Root {
                     }
                 }
                 Effect::Notify(kind) => {
-                    // D7: под флагом настроек (desktop.notify).
+                    // M18/F55: итог заточки рисуется цветом прямо на
+                    // экране заточки — системное уведомление («новое
+                    // окно») для него убрано. Остальные события (D7) —
+                    // под флагом desktop.notify.
+                    if matches!(kind, ld2_core::store::NotifyKind::Upgrade) {
+                        continue;
+                    }
                     if self.config.notify {
                         ld2_core::notify::show(&l10n::notify_body(self.lang, kind));
                     }
@@ -1009,6 +1085,24 @@ impl Root {
         // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
         // настроек/диалога выхода (они ловят Esc сами).
         if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
+            // M18/F54: окно заточки (список предметов или сама заточка) —
+            // верхний слой группы окон; Esc закрывает оба экрана разом.
+            if self.store.sharpen_stone.is_some() || self.store.upgrade.is_some() {
+                tracing::debug!("закрытие окна заточки: Esc");
+                self.store.close_upgrade();
+                self.store.sharpen_stone = None;
+                self.store.sharpen_list = false;
+                self.upgrade_progress = None;
+                cx.notify();
+                return;
+            }
+            // M18/F53: описание предмета — поверх окна заточки.
+            if self.store.item_detail.is_some() {
+                tracing::debug!("закрытие описания предмета: Esc");
+                self.store.item_detail = None;
+                cx.notify();
+                return;
+            }
             // M18/F38: диалог NPC — верхний слой группы окон.
             if self.store.npc_dialog.is_some() {
                 tracing::debug!("закрытие диалога NPC: Esc");
@@ -1201,6 +1295,8 @@ impl Root {
             PopupKind::Backpack => &mut self.backpack_popup,
             PopupKind::Quests => &mut self.quests_popup,
             PopupKind::Npc => &mut self.npc_popup,
+            PopupKind::Item => &mut self.item_popup,
+            PopupKind::Upgrade => &mut self.upgrade_popup,
         }
     }
 
@@ -1211,23 +1307,39 @@ impl Root {
             PopupKind::Backpack => &self.backpack_popup,
             PopupKind::Quests => &self.quests_popup,
             PopupKind::Npc => &self.npc_popup,
+            PopupKind::Item => &self.item_popup,
+            PopupKind::Upgrade => &self.upgrade_popup,
         }
     }
 
     /// M16/F29f: открытие окна — базовый размер (персонаж **выше**:
     /// 760×760; рюкзак 760×560), по центру с клампом под вьюпорт
     /// (drag/resize живут до закрытия) и первая вкладка.
-    fn open_popup(&mut self, kind: PopupKind) {
-        // M18/F33: чистое контекстное меню при каждом открытии (см.
-        // clear_popup_menu).
-        clear_popup_menu(kind, &mut self.bp_menu, &mut self.equip_menu);
-        let (tw, th) = match kind {
+    /// M18/F55: базовый размер карточки для `open_popup`.
+    ///
+    /// Окно описания предмета — **«резиновое»**: ширина считается доли
+    /// вьюпорта (28 %, clamp `320..480`) вместо прежних фиксированных
+    /// 520 px; высота остаётся константой, докрутит resize-grip.
+    /// `clamp` также спасает нулевой viewport до первой отрисовки.
+    /// Остальные окна — константы (как были).
+    fn popup_base_size(kind: PopupKind, viewport: (f32, f32)) -> (f32, f32) {
+        let (vw, _) = viewport;
+        match kind {
             PopupKind::Character => (760.0, 760.0),
             PopupKind::Backpack => (760.0, 560.0),
             PopupKind::Quests => (800.0, 560.0),
             PopupKind::Npc => (640.0, 560.0),
-        };
+            PopupKind::Item => ((vw * 0.28).clamp(320.0, 480.0), 420.0),
+            PopupKind::Upgrade => (440.0, 360.0),
+        }
+    }
+
+    fn open_popup(&mut self, kind: PopupKind) {
+        // M18/F33: чистое контекстное меню при каждом открытии (см.
+        // clear_popup_menu).
+        clear_popup_menu(kind, &mut self.bp_menu, &mut self.equip_menu);
         let (vw, vh) = self.viewport;
+        let (tw, th) = Self::popup_base_size(kind, self.viewport);
         let (w, h) = if vw > 0.0 && vh > 0.0 {
             clamp_char_size(tw, th, vw, vh)
         } else {
@@ -1238,6 +1350,8 @@ impl Root {
             PopupKind::Backpack => (40.0, 40.0),
             PopupKind::Quests => (-40.0, 40.0),
             PopupKind::Npc => (60.0, -40.0),
+            PopupKind::Item => (80.0, -20.0),
+            PopupKind::Upgrade => (0.0, -40.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1254,6 +1368,10 @@ impl Root {
             PopupKind::Quests => self.quests_tab = quests::QuestsTab::default(),
             // M18/F38: окно диалога открывает ack, не open_popup.
             PopupKind::Npc => {}
+            // M18: описание предмета открывает контекстное меню.
+            PopupKind::Item => {}
+            // M18/F53: окно заточки открывает контекстное меню.
+            PopupKind::Upgrade => {}
         }
     }
 
@@ -1356,9 +1474,18 @@ impl Root {
                                     scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
                                 root.popup_scrim_down = false;
                                 if close {
-                                    // Верхнее окно: диалог → квесты →
-                                    // рюкзак → персонаж.
-                                    if root.store.npc_dialog.is_some() {
+                                    // Верхнее окно: заточка → описание →
+                                    // диалог → квесты → рюкзак → персонаж.
+                                    if root.store.sharpen_stone.is_some()
+                                        || root.store.upgrade.is_some()
+                                    {
+                                        root.store.close_upgrade();
+                                        root.store.sharpen_stone = None;
+                                        root.store.sharpen_list = false;
+                                        root.upgrade_progress = None;
+                                    } else if root.store.item_detail.is_some() {
+                                        root.store.item_detail = None;
+                                    } else if root.store.npc_dialog.is_some() {
                                         tracing::debug!("закрытие диалога NPC: скрим");
                                         root.store.npc_dialog = None;
                                         root.npc_popup.open = false;
@@ -1572,6 +1699,14 @@ impl Root {
             Click::UseItem(uid) => {
                 // M14/F4: расходник боя (свиток/зелье) запускает
                 // глобальный кулдаун; лут и прочие предметы — нет.
+                // M18/F54: камень усиления — отдельный ack (Act::Sharpen).
+                let stone = self.store.snapshot.as_ref().and_then(|s| {
+                    s.char
+                        .inventory
+                        .iter()
+                        .find(|i| i.uid == uid && i.item_type == "upgrade_stone")
+                        .map(|i| i.uid.clone())
+                });
                 let combat_item = self.store.snapshot.as_ref().is_some_and(|s| {
                     s.char.inventory.iter().any(|i| {
                         i.uid == uid && matches!(i.item_type.as_str(), "scroll" | "potion")
@@ -1583,9 +1718,18 @@ impl Root {
                 };
                 match self.transport.send(&cmd) {
                     Ok(_) => {
-                        self.store.on_world_sent(Act::Drop);
+                        self.store.on_world_sent(if stone.is_some() {
+                            Act::Sharpen
+                        } else {
+                            Act::Drop
+                        });
                         if combat_item {
                             self.store.begin_global_cooldown(self.now_ms());
+                        }
+                        if stone.is_some() {
+                            // M18/F54: геометрия карточки; гейт рендера —
+                            // sharpen_stone, которое придёт в ack.
+                            self.open_popup(PopupKind::Upgrade);
                         }
                         self.store.entity_detail = None;
                         self.store.clear_loot_confirm();
@@ -3180,10 +3324,9 @@ impl Root {
             ld2_core::store::Dialog::PartyInvite
             | ld2_core::store::Dialog::GuildInvite
             | ld2_core::store::Dialog::Trade => self.social_dialog(cx, pal),
-            ld2_core::store::Dialog::Item
-            | ld2_core::store::Dialog::Upgrade
-            | ld2_core::store::Dialog::Socket
-            | ld2_core::store::Dialog::Inscribe => self.sheet_dialog(cx, pal),
+            ld2_core::store::Dialog::Socket | ld2_core::store::Dialog::Inscribe => {
+                self.sheet_dialog(cx, pal)
+            }
             ld2_core::store::Dialog::Create | ld2_core::store::Dialog::Delete => {
                 self.chars_dialog(cx, pal)
             }
@@ -3271,6 +3414,15 @@ impl Render for Root {
             // M18/F38: окно диалога NPC — верхний слой группы попапов
             // (модалки смерти/осмотра/луута рисуются позже — выше).
             .when_some(self.npc_window(window, cx, &pal), |d, layer| d.child(layer))
+            // M18/F53: описание предмета и окно заточки — попапы
+            // (карточка с шапкой и крестиком, без затемнения).
+            // Порядок слоёв = порядок Esc/scrim: заточка — верхняя.
+            .when_some(self.item_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            .when_some(self.upgrade_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
@@ -3287,6 +3439,41 @@ mod tests {
     use super::*;
 
     /// M18/F33: открытие окна сбрасывает его контекстное меню —
+    /// M18/F55: окно описания предмета «резиновое» — ширина от доли
+    /// вьюпорта (28 %, clamp 320..480), а не прежние фиксированные
+    /// 520 px; остальные окна от вьюпорта не зависят.
+    #[test]
+    fn item_popup_width_follows_viewport() {
+        // Типичный экран: 28 % от 1600 ≈ 448 — уже прежних 520.
+        let (w, h) = Root::popup_base_size(PopupKind::Item, (1600.0, 900.0));
+        assert!((w - 448.0).abs() < 0.01, "28% от 1600 = {w}");
+        assert_eq!(h, 420.0, "высота — константа, докрутит resize-grip");
+
+        // Широкий экран не даёт окну раздуться, узкий — не схлопывает.
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Item, (3000.0, 900.0)).0,
+            480.0,
+            "верхняя граница"
+        );
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Item, (800.0, 600.0)).0,
+            320.0,
+            "нижняя граница"
+        );
+        // Viewport ещё не отрисован (0×0) — clamp даёт валидный размер.
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Item, (0.0, 0.0)).0,
+            320.0,
+            "до первой отрисовки"
+        );
+
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Character, (1000.0, 700.0)),
+            (760.0, 760.0),
+            "персонаж — константа"
+        );
+    }
+
     /// иначе меню, открытое в момент закрытия, появлялось бы само
     /// при следующем открытии (stale-запрос `.manual` + гаснущий
     /// keyed state). Каждое окно сбрасывает только своё меню.

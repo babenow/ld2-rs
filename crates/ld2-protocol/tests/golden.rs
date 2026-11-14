@@ -13,7 +13,7 @@ use ld2_protocol::evt::{
     TradeState,
 };
 use ld2_protocol::features::SessionConfig;
-use ld2_protocol::types::{ItemSnapshot, Mp, Severity};
+use ld2_protocol::types::{ItemSnapshot, Mp, Severity, StoneSelected};
 use ld2_protocol::{Ack, Command, Envelope, ErrorCode};
 
 const TS: &str = "2026-11-03T12:00:00Z";
@@ -44,7 +44,7 @@ const SESSION_START_JSON: &str = r#"{
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
   "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
-  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
+  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "quests": { "max_active": 10 },
@@ -65,6 +65,7 @@ fn session_start_matches_doc_example() {
     assert_eq!(cfg.role, "player");
     // M18/F36: лимит текущих квестов §5.
     assert_eq!(cfg.quests.max_active, 10, "quests.max_active §5");
+    assert!((cfg.upgrade.duration_s - 3.0).abs() < f64::EPSILON);
     let legacy = SESSION_START_JSON
         .replace(r#""role": "player","#, "")
         .replace(r#""quests": { "max_active": 10 },"#, "");
@@ -574,6 +575,33 @@ fn item_bonuses_round_trip() {
 
 /// M18/F34: снапшот старого сервера без `gender` парсится → `male` (§11);
 /// поле в JSON присутствует при сериализации.
+/// M18/F54 (wire): ack выбора камня усиления — дословный выдержка
+/// из `docs/protocol.md` §7 (`item.use` камня). Правка формы ack без
+/// правки типа (или наоборот) ломает этот тест.
+#[test]
+fn stone_selected_ack_matches_doc_example() {
+    const JSON: &str = r#"{ "stone_uid":"i_st1", "quality":5 }"#;
+    let parsed: StoneSelected = serde_json::from_str(JSON).expect("§7 парсится");
+    assert_eq!(parsed.stone_uid, "i_st1");
+    assert_eq!(parsed.quality, 5, "большой камень: +5%");
+
+    // Сериализация — ровно эта форма (сервер отдаёт ack именно так).
+    let encoded = serde_json::to_value(&parsed).expect("сериализация");
+    assert_eq!(
+        encoded,
+        serde_json::from_str::<serde_json::Value>(JSON).unwrap()
+    );
+
+    // Отрицательное качество (малый камень) тоже переживает round-trip.
+    let small: StoneSelected =
+        serde_json::from_str(r#"{ "stone_uid":"i_st0", "quality":-5 }"#).expect("-5 парсится");
+    assert_eq!(small.quality, -5, "малый камень: −5%");
+
+    // Старый сервер без полей → ошибка: поля обязательные (новый ack,
+    // старые клиенты его игнорируют — §11).
+    assert!(serde_json::from_str::<StoneSelected>(r#"{ }"#).is_err());
+}
+
 #[test]
 fn gender_defaults_when_absent() {
     let json = r#"{ "id": "c1", "name": "Ким",

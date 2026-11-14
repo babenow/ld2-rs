@@ -277,7 +277,11 @@ impl Root {
                     .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(snapshot) = &detail {
+                            this.store.close_upgrade();
+                            this.upgrade_progress = None;
                             this.store.item_detail = serde_json::to_value(snapshot).ok();
+                            // M18/F53: описание предмета — карточка-попап.
+                            this.open_popup(PopupKind::Item);
                         }
                         cx.notify();
                     }))

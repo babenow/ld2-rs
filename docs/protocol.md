@@ -177,7 +177,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
   "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
-  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
+  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
   "magic": { "rune_recharge": "item", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "quests": { "max_active": 10 },             // M18/F36: лимит текущих квестов
@@ -291,6 +291,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `combat.flee` | `{}` | `{}` | − | попытка сбежать |
 | `skill.use` | `{skill_id, target_id?}` | `{}` | − | активный навык |
 | `item.use` | `{item_uid, target_id?}` | `{}` | − | зелье/свиток-прочее (M17/F30g: кулдаун `cooldown_s`, дефолт 1 с → `E_COOLDOWN`) |
+| `item.use` (камень) | `{item_uid}` | `{stone_uid, quality}` | − | **M18/F54:** `type=upgrade_stone` — выбирает активный камень усиления (не расходуется); ack несёт uid и качество в процентных пунктах. Следующие `upgrade.preview`/`start` работают с ним, 1 шт. списывается на старте |
 | `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
@@ -299,8 +300,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны посоха |
 | `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) |
 | `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune, char?}` | − | извлечение (цель надета — ack несёт `char`, M18/F32) |
-| `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после» |
-| `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение |
+| `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после»; **M18/F54:** без активного камня → `E_INGREDIENTS`; `chance` уже включает бонус камня × рейты сервера |
+| `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение; **M18/F54:** тратит 1 шт. активного камня (`evt/item/state` qty−1 либо `evt/item/removed`), камень сбрасывается |
 | `craft.list` | `{}` | `{professions[]}` | + | мои профессии: id/ранг/xp |
 | `craft.recipes` | `{profession?}` | `{recipes[]}` | + | список рецептов |
 | `craft.learn` | `{profession_id}` | `{profession}` | − | изучить профессию у NPC |
@@ -544,6 +545,8 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 ### 12.5 Улучшение предмета
 
 ```jsonc
+→ { "v":1, "type":"cmd/item.use", "seq":20, "payload": { "item_uid":"i_st1" } }   // выбрать камень
+← ack { "stone_uid":"i_st1", "quality":5 }
 → { "v":1, "type":"cmd/upgrade.preview", "seq":21, "payload": { "item_uid":"i_17" } }
 ← ack { "preview_id":"pv_7","delta":{"magic":"+2"},"cost":{"gold":300,"materials":{"rune_dust":2}},
         "chance":0.75 }
@@ -552,6 +555,8 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 ← { "v":1, "type":"evt/upgrade/result", "ts":"…", "state_version":1382, "payload":
     { "uid":"i_17","ok":true,"new_upgrade":3,"item_destroyed":false,
       "cost":{"gold":300,"materials":{"rune_dust":2}} } }
+← { "v":1, "type":"evt/item/removed", "ts":"…", "state_version":1383,
+    "payload": { "uid":"i_st1","reason":"consumed" } }   // камень потрачен (M18/F54)
 ← { "v":1, "type":"evt/item/state", "ts":"…", "state_version":1382,
     "payload": { "uid":"i_17","patch": { "upgrade":3 } } }
 ```

@@ -64,6 +64,8 @@ pub enum Act {
     Preview,
     /// `upgrade.start` → результат событием (ФР-10).
     Upgrade,
+    /// M18/F54: `item.use` камня усиления → ack `{stone_uid, quality}`.
+    Sharpen,
     /// `socket.insert`/`socket.extract` → ack несёт посох/руну (§7).
     Socket,
     /// Каст из hotbar (ФР-09) — ошибки в мир (`E_NOT_ENOUGH_MP`…).
@@ -97,6 +99,19 @@ pub struct UpgradeView {
     pub item_name: String,
     /// payload `upgrade.preview`: `{preview_id, delta, cost, chance}`.
     pub preview: Option<serde_json::Value>,
+    /// M18/F53: последний результат `evt/upgrade/result` (модалка не
+    /// закрывается — показываем итог и позволяем улучшать дальше).
+    pub result: Option<serde_json::Value>,
+}
+
+/// M18/F54: выбранный камень усиления — активен, пока сервер его не
+/// снимет (последняя штука потрачена) или игрок не закроет окно.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SharpenStone {
+    pub uid: String,
+    pub name: String,
+    /// Качество в процентных пунктах (`stats.quality`; −5/0/+5).
+    pub quality: i64,
 }
 
 /// Цветовой тип строки журнала мира (ФР-17; палитра §7.4 — в UI).
@@ -186,6 +201,13 @@ pub struct AppStore {
     pub item_detail: Option<serde_json::Value>,
     /// Модалка улучшения (ФР-10).
     pub upgrade: Option<UpgradeView>,
+    /// M18/F54: активный камень усиления.
+    pub sharpen_stone: Option<SharpenStone>,
+    /// M18/F55: окно заточки открыто (экран списка показан) — гейт
+    /// рендера. Переживает расход последнего камня, чтобы «назад»
+    /// возвращал к списку, а не закрывал окно; снимается только при
+    /// закрытии окна (Esc/крестик/скрим).
+    pub sharpen_list: bool,
     /// Открытая инкрустация (ФР-09): uid посоха.
     pub socketing: Option<String>,
     /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
@@ -477,8 +499,6 @@ pub enum Dialog {
     PartyInvite,
     GuildInvite,
     Trade,
-    Item,
-    Upgrade,
     Socket,
     /// M17/F30a: выбор оружия под инкрустацию руны/самоцвета.
     Inscribe,
@@ -488,10 +508,13 @@ pub enum Dialog {
 
 impl AppStore {
     /// Активный диалог (M11.2): экран персонажей — создание/удаление;
-    /// игра — смерть > осмотр > лут > группа > гильдия > сделка > предмет >
-    /// улучшение > инкрустация > выбор цели инкрустации (M17/F30a);
-    /// вне игры/персонажей — None. `create_open` и `delete_open` —
-    /// флаги UI (Root), остальное — состояние store.
+    /// игра — смерть > осмотр > лут > группа > гильдия > сделка >
+    /// инкрустация > выбор цели инкрустации (M17/F30a); вне игры/
+    /// персонажей — None. `create_open` и `delete_open` — флаги UI
+    /// (Root), остальное — состояние store.
+    ///
+    /// M18/F53: описание предмета и окно заточки — попапы (вне
+    /// диспетчера модалок, как окно персонажа и диалог NPC).
     pub fn active_dialog(&self, create_open: bool, delete_open: bool) -> Option<Dialog> {
         match self.screen {
             Screen::Characters => {
@@ -516,10 +539,6 @@ impl AppStore {
                     Some(Dialog::GuildInvite)
                 } else if self.trade.is_some() {
                     Some(Dialog::Trade)
-                } else if self.item_detail.is_some() {
-                    Some(Dialog::Item)
-                } else if self.upgrade.is_some() {
-                    Some(Dialog::Upgrade)
                 } else if self.socketing.is_some() {
                     Some(Dialog::Socket)
                 } else if self.inscribe.is_some() {
@@ -579,6 +598,8 @@ impl AppStore {
             death: None,
             item_detail: None,
             upgrade: None,
+            sharpen_stone: None,
+            sharpen_list: false,
             socketing: None,
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
@@ -718,6 +739,7 @@ impl AppStore {
                 | Act::Equip
                 | Act::Unequip
                 | Act::Drop
+                | Act::Sharpen
                 | Act::Preview
                 | Act::Upgrade
                 | Act::Socket
@@ -866,11 +888,52 @@ impl AppStore {
                     }
                 }
             }
+            Act::Sharpen => {
+                // M18/F54: сервер выбрал камень — запоминаем для окна
+                // заточки (имя берём из снапшота, качество — из ack).
+                if let Some(payload) = ack.payload.as_ref() {
+                    // Типизированный ack (ld2-protocol, golden §7) —
+                    // старая/чужая форма молча игнорируется.
+                    let Ok(sel) =
+                        serde_json::from_value::<ld2_protocol::StoneSelected>(payload.clone())
+                    else {
+                        return vec![];
+                    };
+                    let name = self
+                        .snapshot
+                        .as_ref()
+                        .and_then(|s| {
+                            s.char
+                                .inventory
+                                .iter()
+                                .find(|i| i.uid == sel.stone_uid)
+                                .map(|i| i.name.clone())
+                        })
+                        .unwrap_or_else(|| sel.stone_uid.clone());
+                    self.sharpen_stone = Some(SharpenStone {
+                        uid: sel.stone_uid,
+                        name,
+                        quality: sel.quality,
+                    });
+                    // M18/F55: окно открыто — гейт рендера (список).
+                    self.sharpen_list = true;
+                    // Свежий выбор камня — прошлый результат неактуален.
+                    if let Some(upgrade) = self.upgrade.as_mut() {
+                        upgrade.result = None;
+                        upgrade.preview = None;
+                    }
+                }
+            }
             Act::Preview => {
                 if let (Some(upgrade), Some(payload)) =
                     (self.upgrade.as_mut(), ack.payload.as_ref())
                 {
                     upgrade.preview = Some(payload.clone());
+                    // M18/F55: итог прошлого броска НЕ затираем — он
+                    // должен остаться на экране заточки (зелёным/красным)
+                    // даже после автопревью. Сбрасывается при открытии
+                    // предмета (`open_upgrade`), при смене камня и при
+                    // старте следующего улучшения.
                 }
             }
             Act::Socket => {
@@ -1364,6 +1427,20 @@ impl AppStore {
                         .equip
                         .retain(|_, slot| slot.as_deref() != Some(removed.uid.as_str()));
                 }
+                // M18/F54: активный камень выбыл — снимаем выбор и
+                // гасим превью: оно было посчитано с этим камнем, повторный
+                // старт без нового камня (`E_UPGRADE_PREVIEW_STALE`/`E_…`)
+                // был бы неверным шагом.
+                if self
+                    .sharpen_stone
+                    .as_ref()
+                    .is_some_and(|st| st.uid == removed.uid)
+                {
+                    self.sharpen_stone = None;
+                    if let Some(view) = self.upgrade.as_mut() {
+                        view.preview = None;
+                    }
+                }
                 self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
                 vec![]
             }
@@ -1408,7 +1485,7 @@ impl AppStore {
             "evt/upgrade/result" => {
                 // ФР-10: результат — событием; модалка закрывается.
                 let Ok(result) =
-                    serde_json::from_value::<ld2_protocol::evt::UpgradeResult>(payload)
+                    serde_json::from_value::<ld2_protocol::evt::UpgradeResult>(payload.clone())
                 else {
                     return vec![];
                 };
@@ -1437,7 +1514,14 @@ impl AppStore {
                         format!("Провал улучшения: «{name}» (без изменений)"),
                     );
                 }
-                self.upgrade = None;
+                // M18/F53: модалка не закрывается — сохраняем результат,
+                // сбрасываем превью (следующее улучшение запросит новое).
+                if let Some(view) = self.upgrade.as_mut() {
+                    if view.item_uid == result.uid {
+                        view.result = Some(payload.clone());
+                        view.preview = None;
+                    }
+                }
                 vec![Effect::Notify(NotifyKind::Upgrade)]
             }
             "evt/quest/progress" | "evt/quest/updated" => {
@@ -1785,6 +1869,7 @@ impl AppStore {
             item_uid,
             item_name,
             preview: None,
+            result: None,
         });
     }
 
@@ -2382,11 +2467,10 @@ mod tests {
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Trade));
         s.trade = None;
 
-        // Лист: предмет > улучшение > инкрустация (ФР-07/09/10).
+        // Лист: инкрустация (ФР-09); описание предмета и заточка —
+        // попапы (M18/F53), вне диспетчера модалок.
         s.item_detail = Some(serde_json::json!({"name": "x"}));
         s.socketing = Some("staff".into());
-        assert_eq!(s.active_dialog(false, false), Some(Dialog::Item));
-        s.item_detail = None;
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Socket));
         s.socketing = None;
         // M17/F30a: выбор цели инкрустации — отдельный диалог.
@@ -3754,7 +3838,7 @@ mod tests {
         assert_eq!(view.item_uid, "i_17");
         assert_eq!(view.preview.as_ref().unwrap()["preview_id"], "pv_7");
 
-        // Результат закрывает модалку и пишет лог.
+        // Результат остаётся в модалке (не закрывается) и пишет лог.
         store.apply(evt(
             "evt/upgrade/result",
             serde_json::json!({
@@ -3762,10 +3846,158 @@ mod tests {
                 "item_destroyed": false, "cost": { "gold": 300 }
             }),
         ));
-        assert!(store.upgrade.is_none(), "модалка закрыта по результату");
+        assert!(store.upgrade.is_some(), "модалка остаётся открытой");
+        assert!(
+            store.upgrade.as_ref().unwrap().result.is_some(),
+            "результат сохранён"
+        );
         let last = store.log.back().expect("лог");
         assert_eq!(last.kind, LogKind::Loot);
         assert!(last.text.contains("+3"), "{}", last.text);
+    }
+
+    /// M18/F54: ack выбора камня заполняет активный камень (uid/имя из
+    /// снапшота/качество); удаление камня снимает выбор и гасит превью,
+    /// чтобы не стартовать по неактуальному `preview_id`.
+    /// M18/F55: итог заточки переживает автопревью — после результата
+    /// запрашивается новое превью (для повторного улучшения), и итог
+    /// обязан остаться на экране зелёным/красным, а не исчезнуть.
+    #[test]
+    fn sharpen_result_survives_new_preview() {
+        let mut store = in_game();
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        let ack_preview = |n: u32| {
+            ld2_protocol::Ack::ok_with_payload(
+                n,
+                None,
+                &serde_json::json!({
+                    "preview_id": format!("pv_{n}"),
+                    "delta": { "upgrade": "+3" },
+                    "cost": { "gold": 100 }
+                }),
+            )
+            .unwrap()
+        };
+
+        // Первое превью → результат.
+        store.on_sheet_sent(Act::Preview);
+        store.apply(IngressEvent::Ack(ack_preview(41)));
+        store.apply(evt(
+            "evt/upgrade/result",
+            serde_json::json!({
+                "uid": "i_17", "ok": true, "new_upgrade": 3,
+                "item_destroyed": false, "cost": { "gold": 100 }
+            }),
+        ));
+        assert!(
+            store.upgrade.as_ref().unwrap().result.is_some(),
+            "итог есть"
+        );
+        assert!(
+            store.upgrade.as_ref().unwrap().preview.is_none(),
+            "превью сброшено под автопревью"
+        );
+
+        // Автопревью после результата (M18/F55): итог обязан пережить.
+        store.on_sheet_sent(Act::Preview);
+        store.apply(IngressEvent::Ack(ack_preview(42)));
+
+        let view = store.upgrade.as_ref().expect("окно открыто");
+        assert!(
+            view.preview.is_some(),
+            "новое превью принято — повторная заточка доступна"
+        );
+        assert!(
+            view.result.is_some(),
+            "итог прошлого броска не затёрт новым превью"
+        );
+    }
+
+    /// M18/F55: окно заточки переживает расход последнего камня —
+    /// иначе «назад» (гейт был `stone || upgrade`) закрывал окно вовсе
+    /// (жалоба M18/F55). Гейт — отдельный флаг `sharpen_list`.
+    #[test]
+    fn sharpen_window_outlives_spent_stone() {
+        let mut store = in_game();
+        assert!(!store.sharpen_list, "окно по умолчанию закрыто");
+
+        // Выбор камня открывает окно (экран списка).
+        store.on_sheet_sent(Act::Sharpen);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            51,
+            None,
+            &serde_json::json!({ "stone_uid": "i_17", "quality": 5 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.sharpen_list, "окно открыто выбором камня");
+
+        // Последний камень потрачен → сервер снимает выбор...
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "consumed" }),
+        ));
+        assert!(store.sharpen_stone.is_none(), "камень снят");
+        assert!(
+            store.sharpen_list,
+            "окно обязано пережить расход камня — иначе «назад» его закроет"
+        );
+
+        // «Назад» к списку закрывает только карточку предмета.
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.close_upgrade();
+        assert!(store.upgrade.is_none(), "карточка предмета закрыта");
+        assert!(store.sharpen_list, "список доступен — окно живо");
+
+        // Закрытие окна (крестик/Esc/скрим) — флаг снимается.
+        store.sharpen_list = false;
+        assert!(!store.sharpen_list, "окно закрыто");
+    }
+
+    #[test]
+    fn sharpen_stone_set_by_ack_and_cleared_on_removed() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Sharpen);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            31,
+            None,
+            &serde_json::json!({ "stone_uid": "i_17", "quality": 5 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+
+        let stone = store.sharpen_stone.as_ref().expect("камень выбран");
+        assert_eq!(stone.uid, "i_17");
+        assert_eq!(stone.quality, 5, "качество из ack");
+        assert_eq!(stone.name, "Ясеневый посох", "имя из снапшота");
+
+        // Превью посчитано с камнем — запоминаем, что оно есть.
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.on_sheet_sent(Act::Preview);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            32,
+            None,
+            &serde_json::json!({ "preview_id": "pv_1", "delta": { "upgrade": "+3" } }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.upgrade.as_ref().unwrap().preview.is_some());
+
+        // Камень выбыл → выбор снят, превью погашено (старт был бы
+        // неверным шагом без нового камня).
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "consumed" }),
+        ));
+        assert!(
+            store.sharpen_stone.is_none(),
+            "выбор камня снят по удалению"
+        );
+        assert!(
+            store.upgrade.as_ref().unwrap().preview.is_none(),
+            "превью погашено вместе с камнем"
+        );
+        assert!(store.upgrade.is_some(), "окно заточки само не закрывается");
     }
 
     #[test]
@@ -3778,7 +4010,7 @@ mod tests {
                 "uid": "i_17", "ok": false, "item_destroyed": true, "cost": {}
             }),
         ));
-        assert!(store.upgrade.is_none());
+        assert!(store.upgrade.is_some());
         let last = store.log.back().expect("лог");
         assert_eq!(
             last.kind,

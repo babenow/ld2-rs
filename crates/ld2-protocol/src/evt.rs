@@ -308,6 +308,10 @@ pub struct UpgradeResult {
     pub item_destroyed: Option<bool>,
     #[serde(default)]
     pub cost: JsonMap,
+    /// M18/F53: длительность анимации улучшения, мс (из конфига
+    /// сервера). Клиент показывает прогресс-бар это время.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

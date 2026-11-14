@@ -102,6 +102,9 @@ pub struct GameplaySection {
     /// M18/F39: магазины NPC (наценки/скидки); опциональна.
     #[serde(default)]
     pub shop: ShopSection,
+    /// M18/F54: рейты сервера — коэффициент любых шансов; опциональна.
+    #[serde(default)]
+    pub rates: RatesSection,
 }
 
 /// Лимиты квестов (M18/F36): `max_active` — взятых квестов (фазы
@@ -142,6 +145,23 @@ impl Default for ShopSection {
             max_discount_bp: 5000,
             skill_discounts,
         }
+    }
+}
+
+/// **Рейты сервера** (M18/F54): единый коэффициент шансов — `chance`
+/// умножает любой бросок вероятности (заточка и др.) перед клампом в
+/// `0..=1`. `1.0` — дефолт (шансы как в формуле конфига), `0.0` — все
+/// шансы гарантированно проваливаются. Секция опциональна.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RatesSection {
+    /// Множитель шансов (`0.0..=10.0`).
+    pub chance: f64,
+}
+
+impl Default for RatesSection {
+    fn default() -> Self {
+        Self { chance: 1.0 }
     }
 }
 
@@ -204,6 +224,9 @@ pub struct UpgradeSection {
     pub chance_base: f64,
     /// Снижение шанса за уровень.
     pub chance_per_level: f64,
+    /// Длительность анимации улучшения, сек (M18/F53). Прогресс-бар
+    /// клиента идёт это время; результат приходит после.
+    pub duration_s: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -481,6 +504,13 @@ impl Config {
             ));
         }
 
+        if self.gameplay.upgrade.duration_s <= 0.0 {
+            out.push(format!(
+                "gameplay.upgrade.duration_s: должен быть > 0 (получено: {})",
+                self.gameplay.upgrade.duration_s
+            ));
+        }
+
         if self.gameplay.party_max_members < 2 {
             out.push("gameplay.party_max_members: должен быть ≥ 2".into());
         }
@@ -488,6 +518,14 @@ impl Config {
         // [gameplay.quests] (M18/F36)
         if self.gameplay.quests.max_active == 0 {
             out.push("gameplay.quests.max_active: должен быть ≥ 1".into());
+        }
+
+        // [gameplay.rates] (M18/F54): множитель шансов.
+        if !(0.0..=10.0).contains(&self.gameplay.rates.chance) {
+            out.push(format!(
+                "gameplay.rates.chance: должен быть в 0.0..=10.0 (получено: {})",
+                self.gameplay.rates.chance
+            ));
         }
 
         // [gameplay.shop] (M18/F39)

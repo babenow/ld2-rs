@@ -27,4 +27,5 @@ pub use evt::Event;
 pub use features::SessionConfig;
 pub use types::{
     CharacterState, CrimeStatus, Entity, Hp, ItemSnapshot, LocationSnapshot, Mp, SkillSnapshot,
+    StoneSelected,
 };

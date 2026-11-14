@@ -207,6 +207,7 @@ pub fn session_config(
             max_level: g.upgrade.max_level,
             preview: g.upgrade.preview,
             shows_chance: g.upgrade.shows_chance,
+            duration_s: g.upgrade.duration_s,
         },
         magic: MagicConfig {
             rune_recharge: g.magic.rune_recharge.clone(),

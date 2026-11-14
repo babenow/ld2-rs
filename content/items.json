@@ -305,6 +305,30 @@
       "sockets": 4
     },
     {
+      "id": "sword_1000_true",
+      "type": "weapon",
+      "name": "Меч тысячи истин",
+      "rarity": "legendary",
+      "upgrade": 10,
+      "cooldown_s": 3.0,
+      "stats": {
+        "dmg": "19..31"
+      },
+      "bonuses": [
+        { "kind": "attr", "id": "str", "value": 5 },
+        { "kind": "attr", "id": "dex", "value": 5 },
+        { "kind": "param", "id": "damage", "value": 6 },
+        { "kind": "param", "id": "accuracy", "value": 4, "pct": true },
+        { "kind": "param", "id": "crit_chance", "value": 12, "pct": true },
+        { "kind": "skill", "id": "sword", "value": 1 }
+      ],
+      "gold_value": 3200,
+      "skill": "twohand",
+      "slot": "main_hand",
+      "hands": 2,
+      "sockets": 4
+    },
+    {
       "id": "hammer_battle",
       "type": "weapon",
       "name": "Боевой молот",
@@ -751,6 +775,36 @@
       "upgrade": 0,
       "stats": {},
       "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "stone_upgrade_small",
+      "type": "upgrade_stone",
+      "name": "Малый камень усиления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": { "quality": -5 },
+      "gold_value": 10,
+      "qty": 1
+    },
+    {
+      "id": "stone_upgrade_medium",
+      "type": "upgrade_stone",
+      "name": "Средний камень усиления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": { "quality": 0 },
+      "gold_value": 30,
+      "qty": 1
+    },
+    {
+      "id": "stone_upgrade_large",
+      "type": "upgrade_stone",
+      "name": "Большой камень усиления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": { "quality": 5 },
+      "gold_value": 60,
       "qty": 1
     }
   ]
