@@ -513,10 +513,11 @@ impl Root {
                 delta: (80.0, -20.0),
                 ..PopupState::new((520.0, 420.0))
             },
-            // M18/F53: окно заточки — карточка по центру, без затемнения.
+            // M18/F53: окно заточки — компактная карточка по центру,
+            // без затемнения (см. open_popup: базовый размер).
             upgrade_popup: PopupState {
                 delta: (0.0, -40.0),
-                ..PopupState::new((520.0, 520.0))
+                ..PopupState::new((440.0, 360.0))
             },
             backpack_tab: backpack::BackpackTab::default(),
             quests_tab: quests::QuestsTab::default(),
@@ -1307,7 +1308,7 @@ impl Root {
             PopupKind::Quests => (800.0, 560.0),
             PopupKind::Npc => (640.0, 560.0),
             PopupKind::Item => (520.0, 420.0),
-            PopupKind::Upgrade => (520.0, 520.0),
+            PopupKind::Upgrade => (440.0, 360.0),
         };
         let (vw, vh) = self.viewport;
         let (w, h) = if vw > 0.0 && vh > 0.0 {

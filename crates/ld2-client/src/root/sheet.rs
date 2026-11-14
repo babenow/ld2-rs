@@ -2016,17 +2016,7 @@ impl Root {
                         .child(t(lang, Key::Loading)),
                 );
             }
-            col = col.child(act_btn(
-                cx,
-                t(lang, Key::Exit),
-                pal.panel,
-                pal.text,
-                |this, cx| {
-                    this.store.close_upgrade();
-                    this.upgrade_progress = None;
-                    let _ = cx;
-                },
-            ));
+            // M18/F53: кнопки внизу нет — закрытие крестиком в шапке.
             return col;
         };
 
@@ -2126,18 +2116,8 @@ impl Root {
                     ),
             );
         }
+        // M18/F53: внизу только «Улучшить» — закрытие крестиком в шапке.
         let mut row = div().flex().flex_row().gap_2().mt(px(8.0));
-        row = row.child(act_btn(
-            cx,
-            t(lang, Key::Exit),
-            pal.panel,
-            pal.text,
-            |this, cx| {
-                this.store.close_upgrade();
-                this.upgrade_progress = None;
-                let _ = cx;
-            },
-        ));
         let uid = view.item_uid.clone();
         if can_start {
             row = row.child(act_btn(
