@@ -290,7 +290,8 @@
       "cooldown_s": 3.0,
       "stats": {
         "dmg": "13..26",
-        "param": { "crit_chance": 3 }
+        "param": { "crit_chance": 3 },
+        "rune_sockets": 2
       },
       "bonuses": [
         { "kind": "attr", "id": "str", "value": 3 },
@@ -312,7 +313,8 @@
       "upgrade": 10,
       "cooldown_s": 3.0,
       "stats": {
-        "dmg": "19..31"
+        "dmg": "19..31",
+        "rune_sockets": 2
       },
       "bonuses": [
         { "kind": "attr", "id": "str", "value": 5 },

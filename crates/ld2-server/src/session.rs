@@ -3431,21 +3431,10 @@ impl Session {
                 "в сокет идут руны и самоцветы",
             )];
         }
-        // M18/F32: руны — только в оружие (weapon/staff), самоцветы —
-        // только в броню (armor); окна клиента фильтруют список целей,
-        // сервер — истина (§7).
-        let target_ok = match rune_def.item_type.as_str() {
-            "gem" => staff_def.item_type == "armor",
-            _ => matches!(staff_def.item_type.as_str(), "weapon" | "staff"),
-        };
-        if !target_ok {
-            return vec![Self::err(
-                seq,
-                ErrorCode::NoRuneSlot,
-                "руны вставляются только в оружие, самоцветы — только в броню",
-            )];
-        }
-
+        // M18/F58 (ADR-012): принимает слот — его `accepts`, а не тип
+        // предмета: отсюда самоцветы в оружие (слоты со `accepts: gem`)
+        // и отказ «руна в гемный слот». Правило сверяется после поиска
+        // слота — см. ниже.
         // Ленивая инициализация: пустой массив → слоты по определению.
         let mut sockets: Vec<Value> =
             serde_json::from_value(staff.sockets.clone()).unwrap_or_default();
@@ -3457,6 +3446,22 @@ impl Session {
         };
         if slot.get("rune").is_some_and(|r| !r.is_null()) {
             return vec![Self::err(seq, ErrorCode::NoRuneSlot, "сокет уже занят")];
+        }
+        // M18/F58 (ADR-012): слот принимает только то, что указано в
+        // `accepts`; поля в сырой записи может не быть — тогда считаем
+        // по индексу и `rune_slots` предмета (тот же хелпер, что и в
+        // снапшоте — клиент и сервер видят слот одинаково).
+        let accepts = socket_accepts(slot, cmd.socket_index, rune_slots(&staff_def));
+        if accepts != rune_def.item_type {
+            let takes = match accepts.as_str() {
+                "gem" => "самоцветы",
+                _ => "руны",
+            };
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoRuneSlot,
+                format!("слот принимает только {takes}"),
+            )];
         }
         let charges = rune_def
             .stats
@@ -7401,6 +7406,39 @@ fn content_bonuses(def: &db::items::ItemDefRow) -> Vec<ItemBonus> {
     out
 }
 
+/// M18/F58 (ADR-012): сколько слотов предмета принимают руны —
+/// `stats.rune_sockets` из параметров; дефолт по типу предмета сохраняет
+/// прежнее поведение: броня → 0 (всё под самоцветы), оружие/посох → все
+/// слоты рунные. Общая точка для снапшота и `socket.insert`.
+fn rune_slots(def: &db::items::ItemDefRow) -> i64 {
+    def.stats
+        .get("rune_sockets")
+        .and_then(serde_json::Value::as_i64)
+        .map(|n| n.max(0))
+        .unwrap_or(if def.item_type == "armor" {
+            0
+        } else {
+            i64::from(def.sockets)
+        })
+}
+
+/// M18/F58 (ADR-012): принимает ли слот: его `accepts` либо вычисление
+/// по индексу. В сырой записи (`items.sockets`) поля может не быть —
+/// ленивая инициализация слотов и перезапись при инкрустации его не
+/// ставят; тогда считаем по `rune_slots` (первые N — рунные).
+fn socket_accepts(slot: &serde_json::Value, index: u32, rune_slots: i64) -> String {
+    slot.get("accepts")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if i64::from(index) < rune_slots {
+                "rune".into()
+            } else {
+                "gem".into()
+            }
+        })
+}
+
 /// Проводной вид предмета §6: поля инстанса + определение из сида (D26).
 fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> ItemSnapshot {
     ItemSnapshot {
@@ -7433,19 +7471,10 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
             // поведение). Правится так и raw-запись сокета после
             // инкрустации, где поля нет; миграции БД не требуется.
             if !sockets.is_empty() {
-                let rune_slots = def
-                    .stats
-                    .get("rune_sockets")
-                    .and_then(serde_json::Value::as_i64)
-                    .map(|n| n.max(0))
-                    .unwrap_or(if def.item_type == "armor" {
-                        0
-                    } else {
-                        i64::from(def.sockets)
-                    });
+                let slots = rune_slots(def);
                 for socket in &mut sockets {
                     if socket.accepts.is_none() {
-                        socket.accepts = Some(if i64::from(socket.index) < rune_slots {
+                        socket.accepts = Some(if i64::from(socket.index) < slots {
                             "rune".into()
                         } else {
                             "gem".into()

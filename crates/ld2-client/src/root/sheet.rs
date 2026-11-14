@@ -140,6 +140,28 @@ pub(crate) fn inscribe_target_allowed(insert_type: &str, target_type: &str) -> b
     }
 }
 
+/// M18/F58 (ADR-012): можно ли вставить `insert_type` в предмет — есть
+/// ли **свободный** слот, который его принимает (по `accepts` самого
+/// слота). Отсюда самоцветы в оружие и отказ «руна в гемный слот».
+///
+/// У старого сервера поля `accepts` нет → прежнее правило по типу
+/// предмета (`inscribe_target_allowed`), §11 — клиент фолбэчит.
+pub(crate) fn inscribe_target_possible(insert_type: &str, item: &ItemSnapshot) -> bool {
+    if !matches!(insert_type, "rune" | "gem") {
+        return false;
+    }
+    item.sockets.iter().flatten().any(|socket| {
+        if socket.rune.is_some() {
+            return false; // слот занят
+        }
+        match socket.accepts.as_deref() {
+            Some(accepts) => accepts == insert_type,
+            // Старый сервер: фолбэк — прежнее правило по типу предмета.
+            None => inscribe_target_allowed(insert_type, item.item_type.as_str()),
+        }
+    })
+}
+
 impl Root {
     /// M11.2: диалоги листа (ФР-07/09/10): инкрустация/выбор цели.
     /// M18/F53: описание предмета и заточка — попапы (см.
@@ -407,14 +429,10 @@ impl Root {
             .map(|i| i.item_type.clone())
             .unwrap_or_default();
         for item in &snap.char.inventory {
-            // M18/F32: руна → оружие/посох, самоцвет → броня.
-            if !inscribe_target_allowed(&insert_type, &item.item_type) {
-                continue;
-            }
-            let Some(sockets) = item.sockets.as_ref() else {
-                continue;
-            };
-            if !sockets.iter().any(|s| s.rune.is_none()) {
+            // M18/F58: принимает ли слот предмета (accepts) — заменяет
+            // прежнее правило по типу предмета + проверку свободного
+            // слота; старый сервер — фолбэк (§11).
+            if !inscribe_target_possible(&insert_type, item) {
                 continue;
             }
             found = true;
@@ -2872,6 +2890,101 @@ mod tests {
         assert!(
             !inscribe_target_allowed("potion", "weapon"),
             "не инкрустация"
+        );
+    }
+
+    /// M18/F58 (ADR-012): вставку решает `accepts` слота — отсюда
+    /// самоцветы в оружие и отказ «руна в гемный слот»; у старого
+    /// сервера (поля нет) — прежнее правило по типу предмета.
+    #[test]
+    fn inscribe_target_possible_by_socket_accepts() {
+        use ld2_protocol::types::{ItemSnapshot, Socket};
+
+        let item = |item_type: &str, sockets: Vec<Socket>| ItemSnapshot {
+            slot: None,
+            hands: None,
+            def_id: None,
+            uid: "i_t".into(),
+            item_type: item_type.into(),
+            name: "Тест".into(),
+            rarity: "common".into(),
+            upgrade: 0,
+            stats: Default::default(),
+            requires: None,
+            sockets: Some(sockets),
+            qty: Some(1),
+            gold_value: None,
+            bonuses: None,
+            extra: Default::default(),
+        };
+        let free = |accepts: Option<&str>, index: u32| Socket {
+            index,
+            rune: None,
+            accepts: accepts.map(str::to_string),
+        };
+        let filled = |index: u32| Socket {
+            index,
+            rune: Some(ld2_protocol::types::RuneInfo {
+                name: "Руна".into(),
+                spell: "fire_dart".into(),
+                charges: 1,
+                max: 1,
+                damage: None,
+                def_id: None,
+            }),
+            accepts: Some("rune".into()),
+        };
+
+        // Новый сервер: тип слота решает всё.
+        let sword = item(
+            "weapon",
+            vec![free(Some("gem"), 0), free(Some("rune"), 1), filled(2)],
+        );
+        assert!(
+            inscribe_target_possible("gem", &sword),
+            "самоцвет в оружие — слот accepts:gem (F58)"
+        );
+        assert!(
+            inscribe_target_possible("rune", &sword),
+            "руна в рунный слот"
+        );
+        assert!(
+            !inscribe_target_possible("potion", &sword),
+            "не инкрустация"
+        );
+
+        // Занятый слот не предлагается.
+        let only_filled = item("weapon", vec![filled(0)]);
+        assert!(
+            !inscribe_target_possible("rune", &only_filled),
+            "слот занят"
+        );
+
+        // Гемный слот руне не подходит.
+        let gem_only = item("weapon", vec![free(Some("gem"), 0)]);
+        assert!(
+            !inscribe_target_possible("rune", &gem_only),
+            "руна в гемный слот"
+        );
+
+        // Старый сервер (без accepts) — прежнее правило по типу.
+        let legacy_weapon = item("weapon", vec![free(None, 0)]);
+        assert!(
+            inscribe_target_possible("rune", &legacy_weapon),
+            "фолбэк: руна в оружие"
+        );
+        assert!(
+            !inscribe_target_possible("gem", &legacy_weapon),
+            "фолбэк: самоцвет в оружие — как раньше"
+        );
+        let legacy_armor = item("armor", vec![free(None, 0)]);
+        assert!(
+            inscribe_target_possible("gem", &legacy_armor),
+            "фолбэк: гем в броню"
+        );
+        assert!(
+            !inscribe_target_possible("rune", &legacy_armor),
+            "фолбэк: руна в броню"
         );
     }
 
