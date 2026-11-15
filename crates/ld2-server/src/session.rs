@@ -3745,14 +3745,29 @@ impl Session {
         let Some(rune_def_id) = rune_def_id else {
             return vec![Self::err(seq, ErrorCode::NoRuneSlot, "сокет пуст")];
         };
-        if db::items::count(pool, &char_id).await.unwrap_or(i64::MAX)
-            >= i64::from(self.state.config.gameplay.inventory.slots)
+        // M18 (указание заказчика): извлечённый самоцвет по
+        // возможности идёт в существующий стак — слот не занимает,
+        // лимит проверяем с учётом стака (take_loot_fits).
+        match Self::take_loot_fits(
+            pool,
+            &char_id,
+            &rune_def_id,
+            self.state.config.gameplay.inventory.slots,
+        )
+        .await
         {
-            return vec![Self::err(
-                seq,
-                ErrorCode::InventoryFull,
-                "инвентарь заполнен",
-            )];
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::InventoryFull,
+                    "инвентарь заполнен",
+                )];
+            }
+            Err(e) => {
+                warn!("socket.extract (слоты): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
         }
         *slot = serde_json::json!({ "index": cmd.socket_index, "rune": null });
         if let Err(e) = db::items::set_sockets(pool, &staff.uid, Value::Array(sockets)).await {
@@ -3770,11 +3785,24 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
         };
-        let rune_row = match db::items::insert(pool, &char_id, &rune_def_id, 1).await {
-            Ok(row) => row,
-            Err(e) => {
-                warn!("socket.extract (возврат руны): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        // M18 (указание заказчика): извлечённый **самоцвет** по
+        // возможности складывается в существующий стак (простая
+        // запись — состояние не теряется); руны — прежнее поведение.
+        let rune_row = if rune_def.item_type == "gem" {
+            match db::items::grant_stacking(pool, &char_id, &rune_def_id, 1).await {
+                Ok((row, _stacked)) => row,
+                Err(e) => {
+                    warn!("socket.extract (стак самоцвета): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+        } else {
+            match db::items::insert(pool, &char_id, &rune_def_id, 1).await {
+                Ok(row) => row,
+                Err(e) => {
+                    warn!("socket.extract (возврат руны): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
             }
         };
         let staff_row = match db::items::find(pool, &staff.uid, &char_id).await {

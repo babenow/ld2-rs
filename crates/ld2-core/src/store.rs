@@ -2191,7 +2191,12 @@ fn apply_item_patch(ch: &mut ld2_protocol::types::CharacterState, payload: &serd
     if let Some(rune) = payload.get("rune").filter(|v| !v.is_null()) {
         if let Ok(rune) = serde_json::from_value::<ld2_protocol::types::ItemSnapshot>(rune.clone())
         {
-            if !ch.inventory.iter().any(|i| i.uid == rune.uid) {
+            // M18 (указание заказчика): извлечённый самоцвет может
+            // попасть в существующий стак — запись уже в инвентаре:
+            // обновляем (qty выросло), иначе — добавляем.
+            if let Some(slot) = ch.inventory.iter_mut().find(|i| i.uid == rune.uid) {
+                *slot = rune;
+            } else {
                 ch.inventory.push(rune);
             }
         }
