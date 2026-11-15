@@ -11,15 +11,16 @@ use gpui::{div, prelude::*, Div, SharedString};
 pub(crate) const GEM_FONT: &str = "Symbola";
 
 /// Закрашенная фигура раритета: common ▲ (3 стороны), uncommon ■ (4),
-/// rare ⬟ (5), epic ⬢ (6), legendary — октагон U+2CB4 (8, код от
-/// заказчика). Неизвестный раритет — `None` (без знака).
+/// rare ⬟ (5), epic ⬢ (6), legendary — **BLACK OCTAGON** U+2BC4 (8,
+/// код от заказчика; U+2CB4 был неверен — это коптский знак, выглядит
+/// как руна). Неизвестный раритет — `None` (без знака).
 pub(crate) fn gem_symbol(rarity: &str) -> Option<char> {
     match rarity {
         "common" => Some('\u{25B2}'),
         "uncommon" => Some('\u{25A0}'),
         "rare" => Some('\u{2B1F}'),
         "epic" => Some('\u{2B22}'),
-        "legendary" => Some('\u{2CB4}'),
+        "legendary" => Some('\u{2BC4}'),
         _ => None,
     }
 }
@@ -49,8 +50,8 @@ mod tests {
         assert_eq!(gem_symbol("epic"), Some('\u{2B22}'), "гексагон");
         assert_eq!(
             gem_symbol("legendary"),
-            Some('\u{2CB4}'),
-            "октагон (код заказчика)"
+            Some('\u{2BC4}'),
+            "BLACK OCTAGON (код заказчика)"
         );
         assert_eq!(gem_symbol("mythical"), None, "неизвестный — без знака");
         assert_eq!(gem_symbol(""), None);
