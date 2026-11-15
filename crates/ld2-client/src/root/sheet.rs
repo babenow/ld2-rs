@@ -2724,7 +2724,11 @@ impl Root {
             .char
             .inventory
             .iter()
-            .filter(|i| inscribe_target_allowed(insert_type, &i.item_type))
+            // M18/F58f (баг): принимает слот — его `accepts`, а не тип
+            // предмета (ADR-012): для цели (staff) с gem-слотами в списке
+            // должны быть и самоцветы; заодно — только вставки, которым
+            // есть свободный подходящий слот.
+            .filter(|i| inscribe_target_possible(&i.item_type, &staff))
             // M18/F58f: уже вставленные руны не предлагаем (дубликаты
             // не стакаются — сервер и так откажет, §9).
             .filter(|i| {
