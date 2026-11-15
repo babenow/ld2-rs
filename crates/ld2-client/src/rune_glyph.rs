@@ -11,10 +11,6 @@ use gpui::{div, prelude::*, Div, SharedString};
 /// Семейство шрифта рун (name-таблица `dwarven-runes.ttf`).
 pub(crate) const RUNE_FONT: &str = "Dwarven Runes";
 
-/// Глиф **пустого** руна-слота — любой `a..=z` (подбор визуальный,
-/// F58f может заменить одной правкой константы).
-pub(crate) const EMPTY_SLOT_GLYPH: char = 'a';
-
 /// Резолвер знака руны: **поле `glyph` из контента** (параметры руны,
 /// `stats.glyph` → wire `RuneInfo.glyph`) — если это латинская буква
 /// (глиф шрифта `a..=z`/`A..=Z`); иначе/нет поля — стабильный хеш
@@ -48,9 +44,11 @@ pub(crate) fn glyph_div(glyph: char) -> Div {
         .child(SharedString::from(format!("{glyph}")))
 }
 
-/// Пустой руна-слот.
+/// Пустой руна-слот — **пустой квадрат** (указание заказчика).
+/// Обычный шрифт: Dwarven Runes не содержит квадратов, а □ (U+25A1)
+/// есть в системных шрифтах всех платформ.
 pub(crate) fn empty_slot_glyph_div() -> Div {
-    glyph_div(EMPTY_SLOT_GLYPH)
+    div().child("\u{25A1}")
 }
 
 #[cfg(test)]
