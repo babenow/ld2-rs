@@ -87,6 +87,43 @@ pub struct CombatState {
     pub next_attack_at: i64,
 }
 
+/// M18/F58d (ADR-012 §5): руна в **экипированном** оружии — параметры
+/// авто-приёма для `plan_combat` (синхронный доступ без БД; сборка —
+/// `session::refresh_char_runes` на входе/экипировке/инкрустации/касте).
+#[derive(Debug, Clone)]
+pub struct SocketedRune {
+    /// uid предмета-носителя (запись charges в БД из плана).
+    pub staff_uid: String,
+    pub socket_index: u32,
+    pub def_id: String,
+    pub spell: String,
+    /// Шанс срабатывания при ударе, 0..1 (контент `stats.chance`).
+    pub chance: f64,
+    /// Урон при срабатывании (контент `stats.damage`).
+    pub damage: i64,
+    /// Затрата зарядов (деф 1, `stats.cost`).
+    pub cost: i64,
+    /// Остаток зарядов (кэш синхронизируется с БД при изменениях).
+    pub charges: i64,
+    /// Бафф персонажа при срабатывании (контент `stats.buff`).
+    pub buff: Option<RuneBuff>,
+}
+
+/// M18/F58d: параметры баффа руны (контент `stats.buff`).
+#[derive(Debug, Clone)]
+pub struct RuneBuff {
+    /// Ключ баффа — def_id руны (стаки разных рун не смешиваются).
+    pub kind: String,
+    /// Отображаемое название (сервер — истина, §8).
+    pub title: String,
+    /// Параметр (`accuracy`/`crit_chance`/`armor`/…).
+    pub param: String,
+    pub value: i64,
+    pub pct: bool,
+    pub duration_s: i64,
+    pub max_stacks: i32,
+}
+
 /// Состояние мира, общее для всех соединений.
 #[derive(Default)]
 pub struct World {
@@ -108,6 +145,9 @@ pub struct World {
     /// M17/F30g: период атаки персонажа, мс — из `cooldown_s`
     /// оружия в правой руке; `None` → конфиг `combat.attack_interval_s`.
     char_attack: HashMap<String, i64>,
+    /// M18/F58d (ADR-012 §5): руны экипированного оружия — авто-приёмы
+    /// в `plan_combat` (как `char_hits`: вход/экипировка/инкрустация).
+    char_runes: HashMap<String, Vec<SocketedRune>>,
     corpse_seq: u64,
 }
 
@@ -140,6 +180,34 @@ impl World {
     /// M17/F30g: текущий период атаки, мс (`None` — из конфига).
     pub fn char_attack_ms(&self, char_id: &str) -> Option<i64> {
         self.char_attack.get(char_id).copied()
+    }
+
+    /// M18/F58d: руны экипированного оружия (пусто — не экипировано
+    /// или руны без `chance` не участвуют в авто-приёме).
+    pub fn char_runes(&self, char_id: &str) -> &[SocketedRune] {
+        self.char_runes
+            .get(char_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// M18/F58d: заменить кэш рун персонажа (сборка — `refresh_char_runes`).
+    pub fn set_char_runes(&mut self, char_id: &str, runes: Vec<SocketedRune>) {
+        if runes.is_empty() {
+            self.char_runes.remove(char_id);
+        } else {
+            self.char_runes.insert(char_id.to_string(), runes);
+        }
+    }
+
+    /// M18/F58d: расход зарядов в кэше (план авто-приёма; БД — в
+    /// `tick_once` по `Plan::rune_work`).
+    pub fn spend_char_rune(&mut self, char_id: &str, socket_index: u32, charges: i64) {
+        if let Some(runes) = self.char_runes.get_mut(char_id) {
+            if let Some(rune) = runes.iter_mut().find(|r| r.socket_index == socket_index) {
+                rune.charges = charges;
+            }
+        }
     }
 
     /// Загрузить живых мобов из сида (вызывается после content-сида).

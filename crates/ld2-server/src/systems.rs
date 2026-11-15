@@ -233,6 +233,13 @@ pub fn resource_step(
     (new != cur).then_some(new)
 }
 
+/// M18/F58d (ADR-012 §5): сработал ли авто-приём руны — `chance`
+/// (0..1 из контента `stats.chance`) против броска `roll` [0,1).
+/// Чистая функция: детерминирована юнит-тестами, бросок — снаружи.
+pub fn rune_proc_roll(chance: f64, roll: f64) -> bool {
+    chance > 0.0 && roll < chance
+}
+
 /// M18/F58c (ADR-012 §4): затрата зарядов руны за одно применение —
 /// поле параметров руны `cost` (по умолчанию 1, минимум 1: нулевая
 /// затрата давала бы вечную руну). Применяется и при касте, и при
@@ -249,6 +256,19 @@ pub fn rune_charge_cost(stats: &serde_json::Value) -> i64 {
 mod tests {
     use super::*;
     use crate::config::SkillGate;
+
+    /// M18/F58d: шанс авто-приёма — 0 никогда, 1 всегда, граница
+    /// строго `< chance` (roll = chance не срабатывает).
+    #[test]
+    fn rune_proc_roll_uses_chance_bounds() {
+        assert!(!rune_proc_roll(0.0, 0.0), "ноль шанса не срабатывает");
+        assert!(rune_proc_roll(1.0, 0.0), "гарантия");
+        assert!(rune_proc_roll(1.0, 0.999), "гарантия у верхней границы");
+        assert!(rune_proc_roll(0.5, 0.49), "ниже шанса");
+        assert!(!rune_proc_roll(0.5, 0.5), "равно шансу — промах");
+        assert!(!rune_proc_roll(-1.0, 0.0), "некорректный шанс");
+        assert!(!rune_proc_roll(f64::NAN, 0.0), "NaN не срабатывает");
+    }
 
     /// M18/F58c: затрата зарядов — поле `cost` руны, дефолт 1, кламп ≥ 1.
     #[test]

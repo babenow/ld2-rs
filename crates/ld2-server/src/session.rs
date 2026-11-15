@@ -3541,6 +3541,8 @@ impl Session {
             warn!("socket.insert (запись): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        // M18/F58d: кэш рун (charges/параметры) — пересборка.
+        refresh_char_runes(&self.state, &char_id).await;
 
         // Руна расходуется (стак −1 либо удаление).
         let mut outs = Vec::new();
@@ -3679,6 +3681,8 @@ impl Session {
             warn!("socket.extract (запись): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        // M18/F58d: кэш рун — пересборка ПОСЛЕ записи (слот очищен).
+        refresh_char_runes(&self.state, &char_id).await;
         let Some(rune_def) = (match db::items::def(pool, &rune_def_id).await {
             Ok(def) => def,
             Err(e) => {
@@ -3865,6 +3869,8 @@ impl Session {
             warn!("rune_cast (заряды): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        // M18/F58d: кэш рун — charges изменились.
+        refresh_char_runes(&self.state, &char_id).await;
         // M18/F58c: клиенту — патч сокетов (иначе заряды на кнопке
         // отстают до ресинка; сокеты в wire-виде — с `accepts`, §6).
         staff.sockets = sockets_value;
@@ -7654,6 +7660,84 @@ fn attr_genitive(id: &str) -> &str {
     }
 }
 
+/// M18/F58d (ADR-012 §5): пересобрать кэш рун экипированного оружия
+/// в `world` — из raw-сокетов `main_hand` + параметров рун (`stats`:
+/// `chance`/`damage`/`cost`/`buff`). Руны без `chance` в авто-приём
+/// не участвуют. Вызывается на входе, экипировке, инкрустации/извлечении,
+/// касте и из тикера зарядов (charges в кэше должен совпадать с БД).
+pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_id: &str) {
+    use crate::world::{RuneBuff, SocketedRune};
+
+    let Some(main) = db::items::find_equipped_in_slot(&state.pool, char_id, "main_hand")
+        .await
+        .ok()
+        .flatten()
+    else {
+        let mut world = state.world.lock().expect("мир");
+        world.set_char_runes(char_id, Vec::new());
+        return;
+    };
+    let slots: Vec<Value> = serde_json::from_value(main.sockets.clone()).unwrap_or_default();
+    let mut runes: Vec<SocketedRune> = Vec::new();
+    for slot in &slots {
+        let Some(rune) = slot.get("rune").filter(|r| !r.is_null()) else {
+            continue;
+        };
+        let Some(rune_def_id) = slot.get("def_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(Some(rune_def)) = db::items::def(&state.pool, rune_def_id).await else {
+            continue;
+        };
+        // Шанс — контент-параметр: без него руна не участвует в
+        // авто-приёме (прежние руны продолжают работать кастом).
+        let Some(chance) = rune_def.stats.get("chance").and_then(|v| v.as_f64()) else {
+            continue;
+        };
+        if !chance.is_finite() || chance <= 0.0 {
+            continue;
+        }
+        let buff = rune_def
+            .stats
+            .get("buff")
+            .and_then(|b| b.as_object())
+            .map(|b| RuneBuff {
+                kind: rune_def.id.clone(),
+                title: rune_def.name.clone(),
+                param: b
+                    .get("param")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                value: b.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                pct: b.get("pct").and_then(|v| v.as_bool()).unwrap_or(false),
+                duration_s: b.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(10),
+                max_stacks: b.get("max_stacks").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
+            });
+        runes.push(SocketedRune {
+            staff_uid: main.uid.clone(),
+            socket_index: slot.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            def_id: rune_def.id.clone(),
+            spell: rune
+                .get("spell")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            chance,
+            damage: rune_def
+                .stats
+                .get("damage")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
+            cost: crate::systems::rune_charge_cost(&rune_def.stats),
+            charges: rune.get("charges").and_then(|v| v.as_i64()).unwrap_or(0),
+            buff,
+        });
+    }
+    let mut world = state.world.lock().expect("мир");
+    world.set_char_runes(char_id, runes);
+}
+
 impl Session {
     /// M17/F30f: обновить «чем бьёт» в мире — по экипированному
     /// оружию (main_hand); без него — «руками». Вызывается при входе
@@ -7679,9 +7763,13 @@ impl Session {
         let attack_ms = def
             .as_ref()
             .map(|d| (d.cooldown_s.max(0.001) * 1000.0).round() as i64);
-        let mut world = self.state.world.lock().expect("мир");
-        world.set_char_hits_as(char_id, hits);
-        world.set_char_attack_ms(char_id, attack_ms);
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.set_char_hits_as(char_id, hits);
+            world.set_char_attack_ms(char_id, attack_ms);
+        }
+        // M18/F58d: то же оружие — источник рун для авто-приёма.
+        refresh_char_runes(&self.state, char_id).await;
     }
 
     /// M17/F30g: гейт кулдауна предмета (cooldown_s, дефолт 1 с) —
