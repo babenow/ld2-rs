@@ -238,7 +238,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "requires": { "attr": { "int": 12 }, "profession": null, "level": null },
   "sockets": [ { "index": 0, "accepts": "rune",              // M18/F58 (ADR-012): тип слота: rune|gem; аддитивно
                     "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12,
-                              "glyph": "f" } },                // M18/F58f: знак руны (контент stats.glyph); аддитивно
+                              "glyph": "f",                   // M18/F58f: знак руны (контент stats.glyph); аддитивно
+                              "detail": ["+12 к урону"] } },  // подпись слота (что даёт); сервер-строки §8
                { "index": 1, "accepts": "rune", "rune": null } ],   // старый сервер поля не шлёт → клиент фолбэчит
   "slot": "main_hand", "hands": 2,         // M17/F30b: слот предмета (ring/artifact —
                                             // псевдослоты пар) и руки (2 — двуручник)

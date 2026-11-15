@@ -265,6 +265,12 @@ async fn socket_insert_cast_extract_flow() {
     assert_eq!(rune["spell"], "fire_dart");
     // M18/F58f: знак руны — контент-поле glyph, копируется в сокет.
     assert_eq!(rune["glyph"], "f", "glyph из параметров руны: {ack}");
+    // M18/F58f: подпись слота (что даёт) — серверные строки из params.
+    let detail = rune["detail"].as_array().expect("detail в сокете");
+    assert!(
+        detail.iter().any(|l| l.as_str() == Some("+12 к урону")),
+        "урон в подписи: {detail:?}"
+    );
     let removed = c.wait_event("evt/item/removed").await;
     assert_eq!(removed["payload"]["uid"], rune_uid, "руна израсходована");
 

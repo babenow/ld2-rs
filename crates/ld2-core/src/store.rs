@@ -4069,6 +4069,7 @@ mod tests {
             charges: 5,
             max: 5,
             glyph: None,
+            detail: None,
         });
         store.apply(evt(
             "evt/item/state",
