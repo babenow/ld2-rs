@@ -29,6 +29,7 @@ use ld2_protocol::cmd::{
 use ld2_protocol::types::{CharacterState, ItemSnapshot, Severity, SkillSnapshot};
 
 use crate::palette::Palette;
+use crate::rune_glyph;
 use ely::buttons::IconButton;
 use ely::forms::{Choice, Input, Select};
 use ely::layout::ScrollArea;
@@ -2220,14 +2221,50 @@ impl Root {
         }
         if let Some(sockets) = detail["sockets"].as_array() {
             for socket in sockets {
+                // M18/F58f: знаки рунных слотов — глифы шрифта Dwarven
+                // Runes (rune_glyph); слоты самоцветов — прежние ◈/○.
+                let is_rune_slot = socket["accepts"].as_str() != Some("gem");
                 if let Some(rune) = socket["rune"].as_object() {
                     // M17/F30c: самоцвет — без зарядов (заряды у рун).
-                    let label = if rune["spell"].as_str().is_some_and(|s| s.is_empty()) {
-                        format!("◈ {}", rune["name"])
+                    let glyph = rune_glyph::rune_glyph_div(rune["name"].as_str().unwrap_or("rune"));
+                    let label = if is_rune_slot {
+                        if rune["spell"].as_str().is_some_and(|s| s.is_empty()) {
+                            rune["name"].as_str().unwrap_or("").to_string()
+                        } else {
+                            format!(
+                                "{}: {}/{}",
+                                rune["name"].as_str().unwrap_or(""),
+                                rune["charges"].as_i64().unwrap_or(0),
+                                rune["max"].as_i64().unwrap_or(0)
+                            )
+                        }
                     } else {
-                        format!("◈ {}: {}/{}", rune["name"], rune["charges"], rune["max"])
+                        rune["name"].as_str().unwrap_or("").to_string()
                     };
-                    col = col.child(div().child(label));
+                    col = col.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_1()
+                            .items_baseline()
+                            .child(if is_rune_slot {
+                                glyph
+                            } else {
+                                div().child("◈")
+                            })
+                            .child(div().child(label)),
+                    );
+                } else if is_rune_slot {
+                    let glyph = rune_glyph::empty_slot_glyph_div();
+                    col = col.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_1()
+                            .items_baseline()
+                            .child(glyph)
+                            .child(div().text_color(rgb(pal.muted)).child("—")),
+                    );
                 } else {
                     col = col.child(div().text_color(rgb(pal.muted)).child("○ —"));
                 }
@@ -2503,11 +2540,25 @@ impl Root {
         let mut col = div().flex().flex_col().gap_1();
         for socket in staff.sockets.iter().flatten() {
             let mut row = div().flex().flex_row().gap_2().items_center();
-            row = row.child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(format!("◈ {}", socket.index)),
-            );
+            // M18/F58f: маркер руна-слота — глиф Dwarven Runes
+            // (пустой слот — свой глиф); слот самоцвета — прежний ◈.
+            if socket.accepts.as_deref() == Some("gem") {
+                row = row.child(
+                    div()
+                        .text_color(rgb(pal.muted))
+                        .child(format!("◈ {}", socket.index)),
+                );
+            } else {
+                row = row.child(match &socket.rune {
+                    Some(rune) => rune_glyph::rune_glyph_div(&rune.name),
+                    None => rune_glyph::empty_slot_glyph_div(),
+                });
+                row = row.child(
+                    div()
+                        .text_color(rgb(pal.muted))
+                        .child(socket.index.to_string()),
+                );
+            }
             match &socket.rune {
                 Some(rune) => {
                     let index = socket.index;

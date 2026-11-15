@@ -6,6 +6,7 @@
 
 mod palette;
 mod root;
+mod rune_glyph;
 
 use std::borrow::Cow;
 use std::time::Duration;
@@ -100,10 +101,13 @@ fn main() -> anyhow::Result<()> {
             }
             cx.refresh_windows();
 
-            // §13: embedded-шрифт с кириллицей (PT Sans, OFL) — без системных.
+            // §13: embedded-шрифты — без системных: PT Sans (кириллица,
+            // OFL) + M18/F58f: Dwarven Runes — глифы рун a–z для знаков
+            // руна-слотов (assets/fonts/dwarven-runes.ttf).
             let fonts = [
                 Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Regular.ttf").as_slice()),
                 Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Bold.ttf").as_slice()),
+                Cow::Borrowed(include_bytes!("../assets/fonts/dwarven-runes.ttf").as_slice()),
             ];
             if let Err(e) = cx.text_system().add_fonts(fonts.into()) {
                 tracing::warn!("не удалось загрузить шрифты: {e:#}");
