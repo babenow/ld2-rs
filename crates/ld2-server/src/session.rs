@@ -3472,7 +3472,9 @@ impl Session {
         if sockets.is_empty() {
             sockets = Self::empty_sockets_list(staff_def.sockets);
         }
-        let Some(slot) = sockets.get_mut(cmd.socket_index as usize) else {
+        // Фаза проверок — immutable (занят/accepts/дубликат); запись
+        // ниже переопределяет `slot` как mutable (M18/F58f).
+        let Some(slot) = sockets.get(cmd.socket_index as usize) else {
             return vec![Self::err(seq, ErrorCode::NoRuneSlot, "нет такого сокета")];
         };
         if slot.get("rune").is_some_and(|r| !r.is_null()) {
@@ -3494,6 +3496,23 @@ impl Session {
                 format!("слот принимает только {takes}"),
             )];
         }
+        // M18/F58f: дубликаты рун не стакаются (указание заказчика) —
+        // одна и та же руна не может стоять в двух слотах предмета;
+        // гемы не ограничиваются. После accepts: «не тот слот» важнее
+        // «дубликата».
+        if rune_def.item_type == "rune"
+            && sockets
+                .iter()
+                .any(|s| s.get("def_id").and_then(|v| v.as_str()) == Some(rune_def.id.as_str()))
+        {
+            return vec![Self::err(
+                seq,
+                ErrorCode::DuplicateRune,
+                "эта руна уже вставлена в предмет",
+            )];
+        }
+        // Индекс проверен выше — запись безопасна.
+        let slot = &mut sockets[cmd.socket_index as usize];
         let charges = rune_def
             .stats
             .get("charges")

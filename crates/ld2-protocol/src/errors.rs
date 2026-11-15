@@ -50,6 +50,9 @@ pub enum ErrorCode {
     NoCharges,
     NotEnoughMp,
     NoRuneSlot,
+    /// M18/F58f: та же руна уже вставлена в предмет — дубликаты не
+    /// стакаются (указание заказчика; §11.2: новый код совместим).
+    DuplicateRune,
     RequirementAttr,
     Profession,
     InventoryFull,
@@ -108,6 +111,7 @@ impl ErrorCode {
             Self::NoCharges => "E_NO_CHARGES",
             Self::NotEnoughMp => "E_NOT_ENOUGH_MP",
             Self::NoRuneSlot => "E_NO_RUNE_SLOT",
+            Self::DuplicateRune => "E_DUPLICATE_RUNE",
             Self::RequirementAttr => "E_REQUIREMENT_ATTR",
             Self::Profession => "E_PROFESSION",
             Self::InventoryFull => "E_INVENTORY_FULL",
@@ -164,6 +168,7 @@ impl FromStr for ErrorCode {
             "E_NO_CHARGES" => Self::NoCharges,
             "E_NOT_ENOUGH_MP" => Self::NotEnoughMp,
             "E_NO_RUNE_SLOT" => Self::NoRuneSlot,
+            "E_DUPLICATE_RUNE" => Self::DuplicateRune,
             "E_REQUIREMENT_ATTR" => Self::RequirementAttr,
             "E_PROFESSION" => Self::Profession,
             "E_INVENTORY_FULL" => Self::InventoryFull,
