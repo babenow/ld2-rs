@@ -15,8 +15,8 @@
 
 use ely::overlays::Dialog;
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, Context, Div, DragMoveEvent, EmptyView, MouseButton,
-    SharedString, Window,
+    div, prelude::*, px, rgb, rgba, AnyElement, Context, Div, DragMoveEvent, EmptyView,
+    MouseButton, SharedString, Window,
 };
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{
@@ -1362,6 +1362,10 @@ impl Root {
                 .border_1()
                 .border_color(rgb(pal.border))
                 .cursor_pointer()
+                // M18 (указание заказчика): подсветка при наведении —
+                // ниже, по веткам: пустой слот — общий selection,
+                // занятый — тоном редкости предмета; клик (ЛКМ/ПКМ) —
+                // контекстное меню (ContextMenu ниже).
                 .child(
                     div()
                         .text_size(px(12.0))
@@ -1381,22 +1385,15 @@ impl Root {
                 let blocked = slot == "off_hand" && twohand;
                 row = row.child(
                     div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(div().flex_grow_1())
-                        .child(
-                            div()
-                                .text_size(px(12.0))
-                                .text_color(rgb(if blocked { pal.warn } else { pal.muted }))
-                                .child(if blocked {
-                                    t(lang, Key::SlotBlocked)
-                                } else {
-                                    t(lang, Key::EmptySlot)
-                                }),
-                        ),
+                        .text_size(px(12.0))
+                        .text_color(rgb(if blocked { pal.warn } else { pal.muted }))
+                        .child(if blocked {
+                            t(lang, Key::SlotBlocked)
+                        } else {
+                            t(lang, Key::EmptySlot)
+                        }),
                 );
+                row = row.hover(|st| st.bg(rgb(pal.selection)));
                 rows.push(row.into_any_element());
                 continue;
             };
@@ -1404,15 +1401,34 @@ impl Root {
             // Отступ-заполнитель прижимает предмет к правому краю.
             // M18/F58f: подпись как в рюкзаке (указание заказчика) —
             // слоты второй строкой под названием (`item_label_stack`).
-            row = row.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .items_center()
-                    .child(div().flex_grow_1())
-                    .child(item_label_stack(item, color)),
-            );
+            // M18 (указание заказчика): карточка одетого предмета —
+            // ниже названия слота идёт **название предмета**, ниже —
+            // **столбцы самоцветов/рун** (иконки слотов отдельной
+            // строкой, левым краем).
+            let mut name_line = div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .items_baseline()
+                .text_color(rgb(color))
+                .child(div().child(item.name.clone()));
+            if item.upgrade > 0 {
+                name_line = name_line.child(div().child(format!("+{}", item.upgrade)));
+            }
+            if let Some(qty) = item.qty.filter(|q| *q > 1) {
+                name_line = name_line.child(div().child(format!("×{qty}")));
+            }
+            row = row.child(name_line);
+            if let Some(sockets) = item.sockets.as_ref().filter(|s| !s.is_empty()) {
+                row = row.child(
+                    div()
+                        .text_color(rgb(color))
+                        .child(socket_icons_row(item.item_type.as_str(), sockets)),
+                );
+            }
+            // M18 (указание заказчика): подсветка карточки — тоном
+            // редкости предмета (полупрозрачный, текст читаем).
+            row = row.hover(move |st| st.bg(rgba((0x55u32 << 24) | color)));
             // Меню предмета (F29d): Описание и Снять — вместо кнопок.
             let mut menu = Menu::new();
             let detail = serde_json::to_value(item).unwrap_or_default();
