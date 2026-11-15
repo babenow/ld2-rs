@@ -1212,3 +1212,62 @@ async fn duplicate_rune_is_rejected_in_same_item() {
         .send("cmd/state.resync", json!({ "last_state_version": 1 }))
         .await;
 }
+
+/// M18/F58f (ADR-012): самоцвет в **надетом оружии** даёт бонус
+/// атрибутов (раньше считалась только броня — статы «не прибавлялись»);
+/// снятие оружия снимает бонус.
+#[tokio::test]
+async fn gem_in_equipped_weapon_boosts_attrs() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // 4 слота, rune_sockets = 2 → слоты2 и 3 принимают самоцветы.
+    let sword = give(&mut c, "sword_1000_true").await;
+    let gem = give(&mut c, "gem_str").await; // +3 str
+
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": sword, "slot": "main_hand" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "надевание: {ack}");
+    let base = ack["payload"]["char"]["attrs"]["str"]
+        .as_i64()
+        .expect("базовая сила");
+
+    // Гем в gem-слот надетого оружия — бонус сразу в ack.
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": sword, "socket_index": 2, "rune_uid": gem }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "самоцвет в оружии: {ack}");
+    assert_eq!(
+        ack["payload"]["char"]["attrs"]["str"],
+        base + 3,
+        "бонус самоцвета из оружия: {ack}"
+    );
+
+    // Извлекли самоцвет из НАДЕТОГО оружия — бонус снят (оружие
+    // остаётся, `char` в ack как у брони).
+    let seq = c
+        .send(
+            "cmd/socket.extract",
+            json!({ "staff_uid": sword, "socket_index": 2 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "извлечение: {ack}");
+    assert_eq!(
+        ack["payload"]["char"]["attrs"]["str"], base,
+        "бонус снят: {ack}"
+    );
+}
