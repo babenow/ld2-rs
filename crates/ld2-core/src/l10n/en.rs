@@ -135,6 +135,7 @@ pub(super) fn t(key: Key) -> &'static str {
         NoStatuses => "No active statuses",
         BuffsHeader => "Buffs",
         NoBuffs => "No active buffs",
+        BackpackUsage => "Slots: {used}/{total}",
         RuneProcChance => "Proc chance",
         EffectBleed => "Bleed",
         EffectStun => "Stun",
