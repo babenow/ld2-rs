@@ -499,7 +499,6 @@ pub enum Dialog {
     PartyInvite,
     GuildInvite,
     Trade,
-    Socket,
     /// M17/F30a: выбор оружия под инкрустацию руны/самоцвета.
     Inscribe,
     Create,
@@ -509,7 +508,8 @@ pub enum Dialog {
 impl AppStore {
     /// Активный диалог (M11.2): экран персонажей — создание/удаление;
     /// игра — смерть > осмотр > лут > группа > гильдия > сделка >
-    /// инкрустация > выбор цели инкрустации (M17/F30a); вне игры/
+    /// выбор цели инкрустации (M17/F30a); окно сокетов (инкрустация
+    /// через меню оружия) — popup, вне диспетчера (M18); вне игры/
     /// персонажей — None. `create_open` и `delete_open` — флаги UI
     /// (Root), остальное — состояние store.
     ///
@@ -539,8 +539,6 @@ impl AppStore {
                     Some(Dialog::GuildInvite)
                 } else if self.trade.is_some() {
                     Some(Dialog::Trade)
-                } else if self.socketing.is_some() {
-                    Some(Dialog::Socket)
                 } else if self.inscribe.is_some() {
                     // M17/F30a: окно «Куда инкрустировать…».
                     Some(Dialog::Inscribe)
@@ -2500,8 +2498,9 @@ mod tests {
         // Лист: инкрустация (ФР-09); описание предмета и заточка —
         // попапы (M18/F53), вне диспетчера модалок.
         s.item_detail = Some(serde_json::json!({"name": "x"}));
+        // M18: окно сокетов — popup (вне диспетчера модалок).
         s.socketing = Some("staff".into());
-        assert_eq!(s.active_dialog(false, false), Some(Dialog::Socket));
+        assert_eq!(s.active_dialog(false, false), None, "сокетинг — popup");
         s.socketing = None;
         // M17/F30a: выбор цели инкрустации — отдельный диалог.
         s.inscribe = Some("rune_1".into());
