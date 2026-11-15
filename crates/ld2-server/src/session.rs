@@ -1240,9 +1240,11 @@ impl Session {
             .map(|slot| (slot.clone(), None))
             .collect();
         let mut inventory = Vec::new();
-        // M17/F30c: raw-сокеты надетой брони — из них считаются
-        // бонусы самоцветов (правило контента, вручную).
-        let mut armor_sockets: Vec<Value> = Vec::new();
+        // M17/F30c: raw-сокеты надетой экипировки — из них считаются
+        // бонусы самоцветов (правило контента, вручную). M18/F58f
+        // (ADR-012): самоцветы разрешены и в оружии — бонус берётся
+        // из любой надетой экипировки, не только брони.
+        let mut equipped_sockets: Vec<Value> = Vec::new();
         for item in db::items::inventory(pool, &row.id).await? {
             let Some(def) = db::items::def(pool, &item.def_id).await? else {
                 warn!("нет определения {} для предмета {}", item.def_id, item.uid);
@@ -1250,16 +1252,17 @@ impl Session {
             };
             if let Some(slot) = &item.equipped_slot {
                 equip.insert(slot.clone(), Some(item.uid.clone()));
-                if def.item_type == "armor" {
-                    armor_sockets.push(item.sockets.clone());
+                if def.sockets > 0 {
+                    equipped_sockets.push(item.sockets.clone());
                 }
             }
             inventory.push(item_snapshot(&item, &def));
         }
-        // M17/F30c: самоцветы в сокетах надетой брони улучшают
+        // M17/F30c: самоцветы в сокетах надетой экипировки улучшают
         // основные характеристики — бонус в снапшот-attrs (виден в
-        // «Атрибутах»/«Параметрах», участвует в требованиях и гейтах).
-        for sockets_json in &armor_sockets {
+        // «Атрибутах»/«Параметрах», участвует в требованиях и гейтах);
+        // руны и прочие вставки отсекаются ниже по типу определения.
+        for sockets_json in &equipped_sockets {
             let sockets: Vec<Value> =
                 serde_json::from_value(sockets_json.clone()).unwrap_or_default();
             for socket in sockets {
