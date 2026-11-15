@@ -2824,16 +2824,21 @@ pub(crate) fn item_label_stack(item: &ItemSnapshot, color: u32) -> Div {
     }
     // Слоты — вплотную под названием (без промежутка), тем же
     // цветом, что и предмет (указание заказчика).
+    //
+    // M18/F58f (ADR-012 «делегаты списков»): вторая строка есть
+    // **всегда** — у предметов без слотов невидимый заполнитель той же
+    // высоты (□ как пустой слот, `invisible`): строки рюкзака одинаковой
+    // высоты, а не «рваные» (одна строка vs две).
     let mut col = div().flex().flex_col().child(row);
-    if let Some(sockets) = &item.sockets {
-        if !sockets.is_empty() {
-            col = col.child(
-                div()
-                    .text_color(rgb(color))
-                    .child(socket_icons_row(item.item_type.as_str(), sockets)),
-            );
-        }
-    }
+    let second = match &item.sockets {
+        Some(sockets) if !sockets.is_empty() => div()
+            .text_color(rgb(color))
+            .child(socket_icons_row(item.item_type.as_str(), sockets)),
+        // Невидимый дубль высоты строки иконок (тот же символ, что
+        // пустой руна-слот — идентичная линейная высота).
+        _ => div().invisible().child("\u{25A1}"),
+    };
+    col = col.child(second);
     col
 }
 
