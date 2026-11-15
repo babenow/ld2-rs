@@ -364,12 +364,7 @@ impl Root {
                         this.send_cmd(&cmd, Act::Preview);
                         cx.notify();
                     }))
-                    .child(
-                        div()
-                            .flex_grow_1()
-                            .text_color(rgb(rarity_color(&item.rarity, pal)))
-                            .child(format!("{} {}", item.name, badges(item))),
-                    )
+                    .child(item_label_row(item, rarity_color(&item.rarity, pal)))
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
@@ -455,11 +450,7 @@ impl Root {
                         this.start_inscribe(rune.clone(), uid.clone());
                         cx.notify();
                     }))
-                    .child(
-                        div()
-                            .text_color(rgb(rarity_color(&item.rarity, pal)))
-                            .child(format!("{} {}", item.name, badges(item))),
-                    ),
+                    .child(item_label_row(item, rarity_color(&item.rarity, pal))),
             );
         }
         if !found {
@@ -1368,13 +1359,9 @@ impl Root {
             };
             let color = rarity_color(&item.rarity, pal);
             // Отступ-заполнитель прижимает предмет к правому краю.
-            row =
-                row.child(div().flex_grow_1())
-                    .child(div().text_color(rgb(color)).child(format!(
-                        "{} {}",
-                        item.name,
-                        badges(item)
-                    )));
+            row = row
+                .child(div().flex_grow_1())
+                .child(item_label_row(item, color));
             // Меню предмета (F29d): Описание и Снять — вместо кнопок.
             let mut menu = Menu::new();
             let detail = serde_json::to_value(item).unwrap_or_default();
@@ -2085,7 +2072,21 @@ impl Root {
         let item_type = detail["type"].as_str().unwrap_or("?");
         // M18/F57: справа запас под скроллбар (приём character_left_column)
         // — иначе индикатор прокрутки наезжал на жирные значения статов.
-        let mut col = div().flex().flex_col().gap_1().pr(px(16.0)).child(
+        let mut col = div().flex().flex_col().gap_1().pr(px(16.0));
+        // M18/F58f: у рун — глиф предмета сразу под названием (шапка
+        // окна), вверху тела (указание заказчика).
+        if item_type == "rune" {
+            let name = detail["name"].as_str().unwrap_or("rune");
+            let glyph = detail["stats"].get("glyph").and_then(|v| v.as_str());
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_baseline()
+                    .child(crate::rune_glyph::glyph_div_for(glyph, name)),
+            );
+        }
+        col = col.child(
             div()
                 .text_color(rgb(rarity_color(rarity, pal)))
                 .child(format!(
@@ -2095,6 +2096,15 @@ impl Root {
                     detail["upgrade"].as_i64().unwrap_or(0)
                 )),
         );
+        // M18/F58f: слоты — вторая строка под «редкость · тип · +N»,
+        // руна-слот первым; иконки различают руны и самоцветы.
+        if let Ok(sockets) =
+            serde_json::from_value::<Vec<ld2_protocol::types::Socket>>(detail["sockets"].clone())
+        {
+            if !sockets.is_empty() {
+                col = col.child(socket_icons_row(item_type, &sockets));
+            }
+        }
         if let Some(stats) = detail["stats"].as_object() {
             for (key, value) in stats {
                 // M16/F29e: ключи и значения — на языке игрока
@@ -2667,21 +2677,96 @@ fn xp_kv_row(pal: &Palette, label: &str, value: &str) -> Div {
         )
 }
 
-/// Бейджи плитки: +N, сокеты ◈○, количество ×N (паритет egui).
-pub(crate) fn badges(item: &ItemSnapshot) -> String {
-    let mut parts: Vec<String> = Vec::new();
+/// M18/F58f: как рисовать слот — **рунный знаком руны** (шрифт
+/// Dwarven Runes), слот самоцвета — прежними ◈/○. Пустой рунный слот
+/// отличим от пустого слота самоцвета (требование заказчика).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SlotIcon {
+    /// Рунный слот: `Some(glyph)` — заполнен (глиф руны), `None` — пуст.
+    Rune(Option<char>),
+    /// Слот самоцвета: `true` — заполнен (◈), `false` — пуст (○).
+    Gem(bool),
+}
+
+/// M18/F58f: иконка слота. `accepts` из wire решает; у старого сервера
+/// (поля нет) — фолбэк по типу предмета (как в инкрустации, §11):
+/// броня — самоцветы, прочее — руны.
+pub(crate) fn slot_icon(item_type: &str, socket: &ld2_protocol::types::Socket) -> SlotIcon {
+    // Неизвестное/отсутствующее значение — фолбэк по типу (§11).
+    let is_gem = match socket.accepts.as_deref() {
+        Some("gem") => true,
+        Some("rune") => false,
+        _ => item_type == "armor",
+    };
+    if is_gem {
+        SlotIcon::Gem(socket.rune.is_some())
+    } else {
+        SlotIcon::Rune(
+            socket
+                .rune
+                .as_ref()
+                .map(|r| crate::rune_glyph::resolve_glyph(r.glyph.as_deref(), &r.name)),
+        )
+    }
+}
+
+/// M18/F58f: ряд иконок слотов — **руна-слоты первыми** (требование
+/// UI), далее слоты самоцветов; внутри группы — порядок `index`.
+pub(crate) fn socket_icons_row(item_type: &str, sockets: &[ld2_protocol::types::Socket]) -> Div {
+    let mut rune_slots: Vec<&ld2_protocol::types::Socket> = Vec::new();
+    let mut gem_slots: Vec<&ld2_protocol::types::Socket> = Vec::new();
+    for s in sockets {
+        match s.accepts.as_deref() {
+            Some("gem") => gem_slots.push(s),
+            // Рунный (и неизвестный/отсутствующий — фолбэк §11) —
+            // старый сервер: сохраняем прежний порядок.
+            _ => rune_slots.push(s),
+        }
+    }
+    let mut row = div().flex().flex_row().gap_1().items_center();
+    for s in rune_slots.into_iter().chain(gem_slots) {
+        row = row.child(slot_icon_div(item_type, s));
+    }
+    row
+}
+
+/// M18/F58f: одна иконка слота (глиф руны шрифтом Dwarven Runes либо ◈/○).
+fn slot_icon_div(item_type: &str, socket: &ld2_protocol::types::Socket) -> Div {
+    match slot_icon(item_type, socket) {
+        SlotIcon::Rune(Some(glyph)) => crate::rune_glyph::glyph_div(glyph),
+        SlotIcon::Rune(None) => crate::rune_glyph::empty_slot_glyph_div(),
+        SlotIcon::Gem(true) => div().child("◈"),
+        SlotIcon::Gem(false) => div().child("○"),
+    }
+}
+
+/// M18/F58f: бейджи строкой-рядом: +N, иконки слотов, ×N (паритет
+/// egui; слоты нарисованы Div'ами — смешанные шрифты, §13).
+pub(crate) fn badges_row(item: &ItemSnapshot) -> Div {
+    let mut row = div().flex().flex_row().gap_1().items_center();
     if item.upgrade > 0 {
-        parts.push(format!("+{}", item.upgrade));
+        row = row.child(div().child(format!("+{}", item.upgrade)));
     }
     if let Some(sockets) = &item.sockets {
-        let filled = sockets.iter().filter(|s| s.rune.is_some()).count();
-        let empty = sockets.len() - filled;
-        parts.push(format!("{}{}", "◈".repeat(filled), "○".repeat(empty)));
+        row = row.child(socket_icons_row(item.item_type.as_str(), sockets));
     }
     if let Some(qty) = item.qty.filter(|q| *q > 1) {
-        parts.push(format!("×{qty}"));
+        row = row.child(div().child(format!("×{qty}")));
     }
-    parts.join(" ")
+    row
+}
+
+/// M18/F58f: подпись предмета в списках: название + бейджи (ряд Div'ов
+/// — слоты рун рисуются их шрифтом).
+pub(crate) fn item_label_row(item: &ItemSnapshot, color: u32) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .gap_1()
+        .items_center()
+        .text_color(rgb(color))
+        .child(div().child(item.name.clone()))
+        .child(badges_row(item))
 }
 
 /// Редкость → цвет (палитра §7.4).
@@ -2926,6 +3011,65 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M18/F58f: иконка слота — рунный слот даёт глиф руны (из поля
+    /// glyph, фолбэк — хеш имени), слот самоцвета — ◈/○; у старого
+    /// сервера без `accepts` — фолбэк по типу предмета (§11).
+    #[test]
+    fn slot_icon_distinguishes_runes_and_gems() {
+        use ld2_protocol::types::{RuneInfo, Socket};
+        let sock = |accepts: Option<&str>, filled: bool| Socket {
+            index: 0,
+            accepts: accepts.map(str::to_string),
+            rune: filled.then(|| RuneInfo {
+                name: "Руна огня".into(),
+                spell: "fire_dart".into(),
+                charges: 7,
+                max: 10,
+                damage: None,
+                def_id: None,
+                glyph: Some("f".into()),
+            }),
+        };
+
+        // Рунный слот: заполненный — глиф из контента (f), пустой — None.
+        assert_eq!(
+            slot_icon("weapon", &sock(Some("rune"), true)),
+            SlotIcon::Rune(Some('f')),
+            "заполненный рунный — глиф поля glyph"
+        );
+        assert_eq!(
+            slot_icon("weapon", &sock(Some("rune"), false)),
+            SlotIcon::Rune(None),
+            "пустой рунный — отличается от пустого самоцвета"
+        );
+        // Слот самоцвета: заполненный ◈, пустой ○.
+        assert_eq!(
+            slot_icon("armor", &sock(Some("gem"), true)),
+            SlotIcon::Gem(true)
+        );
+        assert_eq!(
+            slot_icon("armor", &sock(Some("gem"), false)),
+            SlotIcon::Gem(false)
+        );
+        // Старый сервер без accepts: фолбэк по типу — броня = самоцвет,
+        // оружие = руна.
+        assert_eq!(
+            slot_icon("armor", &sock(None, false)),
+            SlotIcon::Gem(false),
+            "фолбэк: броня — слоты самоцветов"
+        );
+        assert_eq!(
+            slot_icon("weapon", &sock(None, true)),
+            SlotIcon::Rune(Some('f')),
+            "фолбэк: оружие — рунные слоты"
+        );
+        // Неизвестное значение accepts — как отсутствующее (§11).
+        assert_eq!(
+            slot_icon("armor", &sock(Some("mystery"), false)),
+            SlotIcon::Gem(false)
+        );
+    }
 
     /// M18/F32: руна идёт только в оружие (weapon/staff), самоцвет —
     /// только в броню (armor); неизвестный тип вставки — ничего.

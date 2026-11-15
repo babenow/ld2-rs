@@ -18,7 +18,7 @@ use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
-use super::sheet::{badges, rarity_color, rarity_label};
+use super::sheet::{rarity_color, rarity_label};
 use super::{scrollable_tab, PopupKind, Root};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
@@ -315,23 +315,13 @@ impl Root {
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(pal.selection)))
                 .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
-                .child({
-                    // M18/F58f: у рун перед названием — их глиф
-                    // (шрифт Dwarven Runes); прочие предметы как раньше.
-                    let label = div()
-                        .text_color(rgb(rarity_color(&item.rarity, pal)))
-                        .child(format!("{} {}", item.name, badges(item)));
-                    match crate::rune_glyph::item_glyph(item) {
-                        Some(glyph) => div()
-                            .flex()
-                            .flex_row()
-                            .gap_1()
-                            .items_center()
-                            .child(glyph)
-                            .child(label),
-                        None => label,
-                    }
-                });
+                // M18/F58f: подпись = название + бейджи; слоты рун в
+                // бейджах — их глифами (глиф перед названием убран по
+                // указанию заказчика).
+                .child(super::sheet::item_label_row(
+                    item,
+                    rarity_color(&item.rarity, pal),
+                ));
             // ЛКМ — меню (после перетаскивания gpui подавляет клик; на
             // всякий случай — guard по активному drag), ПКМ — меню.
             let tile = tile
