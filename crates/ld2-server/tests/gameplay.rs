@@ -194,11 +194,14 @@ async fn inventory_loot_equip_use_drop() {
     // M18/F58f: подбираем деф БЕЗ стака в рюкзаке (potion_heal) —
     // однотипное dagger_knife в стак сложилось бы (новая фича: рюкзак
     // вмещает стаки; покрыто в tests/stacking.rs).
+    // Столько, сколько slots в шаблоне конфига (M18: база 100 стаков).
+    let slots = i32::try_from(cfg.gameplay.inventory.slots).unwrap_or(100);
     sqlx::query(
         "INSERT INTO items (character_id, def_id) \
-         SELECT $1, 'dagger_knife' FROM generate_series(1, 40)",
+         SELECT $1, 'dagger_knife' FROM generate_series(1, $2)",
     )
     .bind(&char_id)
+    .bind(slots)
     .execute(&pool)
     .await
     .expect("заполнить слоты");
