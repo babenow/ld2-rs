@@ -139,7 +139,9 @@ const SNAPSHOT_JSON: &str = r#"{
     "crime": { "statuses": [ { "kind": "murderer", "severity": "high",
                                "expires_at": 1762150000 } ] },
     "quests": [ { "id": "q_boars", "state": "active",
-                  "goals": [ { "text": "Кабанов убито", "cur": 2, "need": 5 } ] } ]
+                  "goals": [ { "text": "Кабанов убито", "cur": 2, "need": 5 } ] } ],
+    "buffs": [ { "kind": "rune_marksman", "title": "Меткость",
+                 "stacks": 2, "expires_at": 1762140341 } ]
   },
   "location": { "id": "l_forest", "name": "Черный лес", "flags": ["pvp"],
                 "text": "Сосны давят тьмою…",
@@ -165,6 +167,12 @@ fn snapshot_matches_doc_example() {
         snap.char.gender, "male",
         "M18/F34: пол в снапшоте (без поля старого сервера → male)"
     );
+    // M18/F58d (ADR-012 §6): баффы рун — стак + таймер.
+    assert_eq!(snap.char.buffs.len(), 1, "бафф в §6-примере");
+    assert_eq!(snap.char.buffs[0].kind, "rune_marksman");
+    assert_eq!(snap.char.buffs[0].title, "Меткость");
+    assert_eq!(snap.char.buffs[0].stacks, 2);
+    assert_eq!(snap.char.buffs[0].expires_at, 1762140341);
     assert_eq!(
         snap.char.mp,
         Mp { cur: 45, max: 60 },

@@ -295,6 +295,21 @@ pub struct ProfessionSnapshot {
     pub extra: JsonMap,
 }
 
+/// M18/F58d (ADR-012 §6): активный бафф персонажа — руна-приём
+/// наложила эффект (стак + таймер). `kind` — идентификатор (ключ
+/// перевода/кэша), `title` — отображаемое название (сервер — истина,
+/// §8), `stacks` — от1 до `max_stacks` из параметров руны.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuffState {
+    pub kind: String,
+    pub title: String,
+    pub stacks: u32,
+    /// Epoch-секунды снятия.
+    pub expires_at: i64,
+    #[serde(flatten, default)]
+    pub extra: JsonMap,
+}
+
 /// Блок статусов преступности в снапшоте (§4.8.2).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct CrimeState {
@@ -413,6 +428,10 @@ pub struct CharacterState {
     pub crime: CrimeState,
     #[serde(default)]
     pub quests: Vec<QuestState>,
+    /// M18/F58d (ADR-012 §6): активные баффы рун (стак + таймер);
+    /// старый сервер без поля → пусто (§11).
+    #[serde(default)]
+    pub buffs: Vec<BuffState>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }

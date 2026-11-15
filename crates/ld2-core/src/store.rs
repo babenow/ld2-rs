@@ -1708,6 +1708,26 @@ impl AppStore {
                 self.guild_log.push(w.entry);
                 vec![]
             }
+            "evt/char/buffs" => {
+                // M18/F58d (ADR-012 §6): полная замена списка баффов рун.
+                let Ok(update) = serde_json::from_value::<ld2_protocol::evt::CharBuffs>(payload)
+                else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    snap.char.buffs = update.buffs.clone();
+                }
+                if !update.buffs.is_empty() {
+                    let titles: Vec<&str> = update.buffs.iter().map(|b| b.title.as_str()).collect();
+                    self.push_log(
+                        LogKind::System,
+                        format!("Бафф: {} ×{}", titles.join(", "), {
+                            update.buffs.iter().map(|b| b.stacks).max().unwrap_or(1)
+                        }),
+                    );
+                }
+                vec![]
+            }
             "evt/crime/status" => {
                 let Ok(update) = serde_json::from_value::<CrimeStatusUpdate>(payload) else {
                     return vec![];
@@ -4225,6 +4245,34 @@ mod tests {
             store.item_cd_bar("scroll_frost", 100_000),
             None,
             "без duration — бара нет"
+        );
+    }
+
+    #[test]
+    fn char_buffs_full_replacement() {
+        let mut store = in_game();
+        // M18/F58d: полная замена списка баффов (паттерн evt/crime/status).
+        let expires = local_epoch() + 30;
+        store.apply(evt(
+            "evt/char/buffs",
+            serde_json::json!({
+                "buffs": [
+                    { "kind": "rune_marksman", "title": "Меткость",
+                      "stacks": 2, "expires_at": expires }
+                ]
+            }),
+        ));
+        let buffs = &store.snapshot.as_ref().unwrap().char.buffs;
+        assert_eq!(buffs.len(), 1);
+        assert_eq!(buffs[0].kind, "rune_marksman");
+        assert_eq!(buffs[0].stacks, 2);
+        assert_eq!(buffs[0].expires_at, expires, "срок сервера не изменён");
+
+        // Пустой список — снятие всех баффов.
+        store.apply(evt("evt/char/buffs", serde_json::json!({ "buffs": [] })));
+        assert!(
+            store.snapshot.as_ref().unwrap().char.buffs.is_empty(),
+            "пустая замена снимает баффы"
         );
     }
 

@@ -1323,6 +1323,9 @@ impl Session {
         Ok(CharacterState {
             id: row.id.clone(),
             name: row.name.clone(),
+            // M18/F58d (ADR-012 §6): активные баффы рун — из БД (F58d-2),
+            // пока всегда пусто.
+            buffs: Vec::new(),
             // M17/F30b: класс для правил экипировки на клиенте (F30e —
             // ресурс боя).
             profile: Some(row.profile.clone()),

@@ -431,6 +431,8 @@ pub fn character(id: &str, name: &str) -> CharacterState {
     CharacterState {
         id: id.into(),
         name: name.into(),
+        // M18/F58d: баффов нет — пусто (заполняется тикером рун).
+        buffs: Vec::new(),
         profile: Some("warrior".into()),
         gender: "male".into(),
         attrs: BTreeMap::from([("str".to_string(), 14i64), ("int".to_string(), 9i64)]),
