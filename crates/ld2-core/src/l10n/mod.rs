@@ -175,8 +175,9 @@ pub enum Key {
     NoBuffs,
     // M18/F58f: заполненность рюкзака в статус-баре (новая фича)
     BackpackUsage,
-    // M18: окно выбора вставки (руна/самоцвет) для слота — как магазин
-    PickInsert,
+    // M18: подсказка выбора в слот окна инкрустации (по типу слота)
+    PickRune,
+    PickGem,
     // M18/F58f: описание руны — шанс авто-приёма и эффекты вместо JSON
     RuneProcChance,
     EffectBleed,
@@ -725,7 +726,8 @@ mod tests {
         Key::BuffsHeader,
         Key::NoBuffs,
         Key::BackpackUsage,
-        Key::PickInsert,
+        Key::PickRune,
+        Key::PickGem,
         Key::RuneProcChance,
         Key::EffectBleed,
         Key::EffectStun,

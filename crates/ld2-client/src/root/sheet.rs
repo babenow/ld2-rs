@@ -691,11 +691,6 @@ impl Root {
                             tracing::debug!("закрытие окна сокетов: крестик");
                             root.store.close_socketing();
                             root.socket_pick = None;
-                            root.pick_popup.open = false;
-                        }
-                        if kind == PopupKind::Pick {
-                            tracing::debug!("закрытие окна выбора вставки: крестик");
-                            root.socket_pick = None;
                         }
                         cx.notify();
                     })),
@@ -2734,14 +2729,32 @@ impl Root {
         pal: &Palette,
     ) -> Option<AnyElement> {
         let staff_uid = self.store.socketing.clone()?;
+        // M18 (указание заказчика): окно «Инкрустация» — две страницы
+        // (слоты → выбор вставки), на второй — кнопка «Назад» в шапке
+        // (паттерн окна заточки).
         let title = t(self.lang, Key::SocketingTitle).to_string();
+        let lang = self.lang;
+        let leading = self.socket_pick.is_some().then(|| {
+            div().child(
+                IconButton::new("ld2-socket-back", IconName::ArrowLeft)
+                    .tooltip(t(lang, Key::BtnBack))
+                    .on_click(cx.listener(|root, _, _, cx| {
+                        root.socket_pick = None;
+                        cx.notify();
+                    })),
+            )
+        });
+        let inner = match self.socket_pick {
+            Some(index) => self.pick_list_view(cx, pal, staff_uid, index),
+            None => self.socket_view(cx, pal, staff_uid),
+        };
         // Обёртка-флекс-колонка под ScrollArea — приём item_window (M18/F57).
         let body = div().flex().flex_col().flex_grow_1().min_h_0().child(
             ScrollArea::new("ld2-socketing-scroll")
                 .vertical()
                 .flex_grow_1()
                 .min_h_0()
-                .child(self.socket_view(cx, pal, staff_uid)),
+                .child(inner),
         );
         Some(self.popup_window(
             window,
@@ -2749,7 +2762,7 @@ impl Root {
             pal,
             PopupKind::Socketing,
             title,
-            None,
+            leading,
             body,
             None,
         ))
@@ -2759,22 +2772,35 @@ impl Root {
     /// самоцветов для выбранного слота, **по типу магазина в диалогах**
     /// (строки: слева предмет — справа действие); клик по строке —
     /// процесс инкрустации в этот слот, окно закрывается.
-    pub(crate) fn pick_window(
+    pub(crate) fn pick_list_view(
         &mut self,
-        window: &mut Window,
         cx: &mut Context<'_, Self>,
         pal: &Palette,
-    ) -> Option<AnyElement> {
+        staff_uid: String,
+        index: u32,
+    ) -> Div {
         let lang = self.lang;
-        let (staff_uid, index) = self.socket_pick.clone()?;
-        let snap = self.store.snapshot.clone()?;
-        let staff = snap
+        let Some(snap) = self.store.snapshot.clone() else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        let Some(staff) = snap
             .char
             .inventory
             .iter()
-            .find(|i| i.uid == staff_uid)?
-            .clone();
-        let socket = staff.sockets.iter().flatten().find(|s| s.index == index)?;
+            .find(|i| i.uid == staff_uid)
+            .cloned()
+        else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        let Some(socket) = staff.sockets.iter().flatten().find(|s| s.index == index) else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::NoRunes));
+        };
         // Список: принимает ли слот вставку (accepts; §11 — фолбэк по
         // типу цели), для рун — без уже вставленных (дубликаты).
         let inserts: Vec<ItemSnapshot> = snap
@@ -2838,21 +2864,11 @@ impl Root {
                         };
                         this.send_cmd(&cmd, Act::Socket);
                         this.socket_pick = None;
-                        this.pick_popup.open = false;
                         cx.notify();
                     })),
             );
         }
-
-        let title = t(lang, Key::PickInsert).to_string();
-        let body = div().flex().flex_col().flex_grow_1().min_h_0().child(
-            ScrollArea::new("ld2-pick-scroll")
-                .vertical()
-                .flex_grow_1()
-                .min_h_0()
-                .child(col),
-        );
-        Some(self.popup_window(window, cx, pal, PopupKind::Pick, title, None, body, None))
+        col
     }
 
     pub(crate) fn socket_view(
@@ -2904,13 +2920,18 @@ impl Root {
         for socket in staff.sockets.iter().flatten() {
             let mut row = div().flex().flex_row().gap_2().items_center();
             // M18/F58f: маркер руна-слота — глиф Dwarven Runes
-            // (пустой слот — свой глиф); слот самоцвета — прежний ◈.
+            // (пустой слот — свой глиф); слот самоцвета — ◈, а у
+            // **инкрустированного** — знак его раритета (Symbola):
+            // указание заказчика — глиф по рангу рядом со selfцветом.
             if socket.accepts.as_deref() == Some("gem") {
-                row = row.child(
-                    div()
-                        .text_color(rgb(pal.muted))
-                        .child(format!("◈ {}", socket.index)),
-                );
+                let marker = match &socket.rune {
+                    Some(rune) => match rune.rarity.as_deref() {
+                        Some(rarity) => crate::gem_glyph::gem_symbol_div(rarity),
+                        None => div().child("◈"),
+                    },
+                    None => div().child(format!("◈ {}", socket.index)),
+                };
+                row = row.child(marker);
             } else {
                 row = row.child(match &socket.rune {
                     Some(rune) => rune_glyph::glyph_div_for(rune.glyph.as_deref(), &rune.name),
@@ -2972,19 +2993,38 @@ impl Root {
                         // открывает **новое окно** со списком самоцветов
                         // или рун для этого слота (по типу магазина в
                         // диалогах) — `pick_window`.
-                        let pick_target = staff.uid.clone();
+                        // M18 (указание заказчика): подсказка — по типу
+                        // слота (самоцвет/руна), не многоточие.
+                        let hint = match socket.accepts.as_deref() {
+                            Some("gem") => t(lang, Key::PickGem),
+                            Some(_) => t(lang, Key::PickRune),
+                            None => t(
+                                lang,
+                                if staff.item_type == "armor" {
+                                    Key::PickGem
+                                } else {
+                                    Key::PickRune
+                                },
+                            ),
+                        };
                         row = row
                             .cursor_pointer()
                             .hover(|st| st.bg(rgb(pal.selection)))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _, _, cx| {
-                                    this.socket_pick = Some((pick_target.clone(), index));
-                                    this.open_popup(PopupKind::Pick);
+                                    // Вторая страница окна — список вставок
+                                    // этого слота (кнопка «Назад» в шапке).
+                                    this.socket_pick = Some(index);
                                     cx.notify();
                                 }),
                             )
-                            .child(div().text_color(rgb(pal.muted)).child("\u{2026}"));
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(pal.muted))
+                                    .child(hint),
+                            );
                     }
                 }
             }
