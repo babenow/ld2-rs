@@ -4,6 +4,7 @@
 //! Логика игры — в `ld2-core` (D12): здесь только gpui-рендер, опрос
 //! ingress-канала транспорта и исполнение эффектов (см. [`crate::root`]).
 
+mod gem_glyph;
 mod palette;
 mod root;
 mod rune_glyph;
@@ -103,11 +104,13 @@ fn main() -> anyhow::Result<()> {
 
             // §13: embedded-шрифты — без системных: PT Sans (кириллица,
             // OFL) + M18/F58f: Dwarven Runes — глифы рун a–z для знаков
-            // руна-слотов (assets/fonts/dwarven-runes.ttf).
+            // руна-слотов (assets/fonts/dwarven-runes.ttf) + Symbola —
+            // знаки раритета самоцветов (assets/fonts/symbola.ttf).
             let fonts = [
                 Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Regular.ttf").as_slice()),
                 Cow::Borrowed(include_bytes!("../assets/fonts/PT_Sans-Web-Bold.ttf").as_slice()),
                 Cow::Borrowed(include_bytes!("../assets/fonts/dwarven-runes.ttf").as_slice()),
+                Cow::Borrowed(include_bytes!("../assets/fonts/symbola.ttf").as_slice()),
             ];
             if let Err(e) = cx.text_system().add_fonts(fonts.into()) {
                 tracing::warn!("не удалось загрузить шрифты: {e:#}");

@@ -134,7 +134,8 @@ const SNAPSHOT_JSON: &str = r#"{
                      "sockets": [ { "index": 0, "accepts": "rune",
                        "rune": { "name": "Руна огня",
                        "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12,
-                       "glyph": "f", "detail": ["+12 к урону"] } },
+                       "glyph": "f", "detail": ["+12 к урону"],
+                       "rarity": "uncommon" } },
                                   { "index": 1, "accepts": "rune", "rune": null } ] } ],
     "crime": { "statuses": [ { "kind": "murderer", "severity": "high",
                                "expires_at": 1762150000 } ] },
@@ -232,6 +233,12 @@ fn snapshot_matches_doc_example() {
         sockets[0].rune.as_ref().and_then(|r| r.detail.as_deref()),
         Some(&["+12 к урону".to_string()][..]),
         "detail руны в §6-примере"
+    );
+    // M18/F58f: раритет вставленного — знак самоцвета по раритету.
+    assert_eq!(
+        sockets[0].rune.as_ref().and_then(|r| r.rarity.as_deref()),
+        Some("uncommon"),
+        "rarity в §6-примере"
     );
     let staff = &snap.char.inventory[0];
     let sockets = staff.sockets.as_ref().expect("сокеты посоха");

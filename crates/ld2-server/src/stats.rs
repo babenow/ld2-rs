@@ -369,6 +369,7 @@ mod tests {
                     def_id: None,
                     glyph: None,
                     detail: None,
+                    rarity: None,
                 }),
                 accepts: Some("rune".into()),
             }])

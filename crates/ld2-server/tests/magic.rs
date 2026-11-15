@@ -265,6 +265,8 @@ async fn socket_insert_cast_extract_flow() {
     assert_eq!(rune["spell"], "fire_dart");
     // M18/F58f: знак руны — контент-поле glyph, копируется в сокет.
     assert_eq!(rune["glyph"], "f", "glyph из параметров руны: {ack}");
+    // M18/F58f: раритет вставленного — знак самоцвета по раритету.
+    assert_eq!(rune["rarity"], "uncommon", "rarity из контента: {ack}");
     // M18/F58f: подпись слота (что даёт) — серверные строки из params.
     let detail = rune["detail"].as_array().expect("detail в сокете");
     assert!(
