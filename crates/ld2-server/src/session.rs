@@ -3482,16 +3482,28 @@ impl Session {
         // M17/F30a: damage руны пишется в сокет — прибавляется к урону
         // оружия (stats::derive) и попадает в снапшот.
         let damage = rune_def.stats.get("damage").and_then(|v| v.as_i64());
+        // M18/F58f: настраиваемый знак руны — поле `glyph` её параметров
+        // (одна латинская буква — глиф Dwarven Runes); без поля клиент
+        // фолбэчит хешем имени.
+        let glyph = rune_def
+            .stats
+            .get("glyph")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let mut rune_obj = serde_json::json!({
+            "name": rune_def.name,
+            "spell": spell,
+            "charges": charges,
+            "max": max,
+            "damage": damage,
+        });
+        if let Some(g) = glyph {
+            rune_obj["glyph"] = serde_json::json!(g);
+        }
         *slot = serde_json::json!({
             "index": cmd.socket_index,
             "def_id": rune_def.id,
-            "rune": {
-                "name": rune_def.name,
-                "spell": spell,
-                "charges": charges,
-                "max": max,
-                "damage": damage,
-            }
+            "rune": rune_obj
         });
         let sockets_value = Value::Array(sockets);
         if let Err(e) = db::items::set_sockets(pool, &staff.uid, sockets_value).await {

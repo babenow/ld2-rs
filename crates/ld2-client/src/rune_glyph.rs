@@ -15,6 +15,21 @@ pub(crate) const RUNE_FONT: &str = "Dwarven Runes";
 /// F58f может заменить одной правкой константы).
 pub(crate) const EMPTY_SLOT_GLYPH: char = 'a';
 
+/// Резолвер знака руны: **поле `glyph` из контента** (параметры руны,
+/// `stats.glyph` → wire `RuneInfo.glyph`) — если это латинская буква
+/// (глиф шрифта `a..=z`/`A..=Z`); иначе/нет поля — стабильный хеш
+/// имени (старые руны/сервер без поля, §11).
+pub(crate) fn resolve_glyph(glyph: Option<&str>, key: &str) -> char {
+    glyph
+        .and_then(|g| g.chars().find(|c| c.is_ascii_alphabetic()))
+        .unwrap_or_else(|| rune_glyph(key))
+}
+
+/// Div со знаком руны из контента (с фолбэком на хеш имени).
+pub(crate) fn glyph_div_for(glyph: Option<&str>, key: &str) -> Div {
+    glyph_div(resolve_glyph(glyph, key))
+}
+
 /// Стабильный рунный глиф по ключу (def_id/имя руны): djb2 → `a..=z`.
 /// Одинаковый ключ всегда даёт одинаковый знак — у каждой руны своя
 /// метка в описании и в списке инкрустации.
@@ -31,11 +46,6 @@ pub(crate) fn glyph_div(glyph: char) -> Div {
     div()
         .font_family(RUNE_FONT)
         .child(SharedString::from(format!("{glyph}")))
-}
-
-/// Заполненный руна-слот: глиф по ключу руны (def_id или имя).
-pub(crate) fn rune_glyph_div(key: &str) -> Div {
-    glyph_div(rune_glyph(key))
 }
 
 /// Пустой руна-слот.
@@ -55,6 +65,24 @@ mod tests {
             assert!(g.is_ascii_lowercase(), "глиф {g:?} вне a..=z для {key:?}");
             assert_eq!(g, rune_glyph(key), "детерминирован: {key:?}");
         }
+    }
+
+    /// Поле `glyph` из контента имеет приоритет; мусорное значение
+    /// (не латинская буква) и отсутствие поля → фолбэк на хеш имени.
+    #[test]
+    fn resolve_glyph_prefers_content_field() {
+        assert_eq!(resolve_glyph(Some("x"), "Руна огня"), 'x');
+        assert_eq!(resolve_glyph(Some("F"), "Руна огня"), 'F');
+        // Не буква (кириллица/символ) — хеш имени.
+        assert_eq!(
+            resolve_glyph(Some("ф"), "rune_fire"),
+            rune_glyph("rune_fire")
+        );
+        assert_eq!(
+            resolve_glyph(Some(""), "rune_fire"),
+            rune_glyph("rune_fire")
+        );
+        assert_eq!(resolve_glyph(None, "rune_fire"), rune_glyph("rune_fire"));
     }
 
     /// Разные руны, как правило, получают разные знаки (для ключей из

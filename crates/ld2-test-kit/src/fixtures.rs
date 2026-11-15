@@ -333,6 +333,7 @@ pub fn staff_item() -> ItemSnapshot {
                     max: 10,
                     damage: None,
                     def_id: None,
+                    glyph: None,
                 }),
                 accepts: Some("rune".into()),
             },

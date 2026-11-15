@@ -2226,7 +2226,11 @@ impl Root {
                 let is_rune_slot = socket["accepts"].as_str() != Some("gem");
                 if let Some(rune) = socket["rune"].as_object() {
                     // M17/F30c: самоцвет — без зарядов (заряды у рун).
-                    let glyph = rune_glyph::rune_glyph_div(rune["name"].as_str().unwrap_or("rune"));
+                    // M18/F58f: знак — контент-поле `glyph`, фолбэк — хеш.
+                    let glyph = rune_glyph::glyph_div_for(
+                        rune["glyph"].as_str(),
+                        rune["name"].as_str().unwrap_or("rune"),
+                    );
                     let label = if is_rune_slot {
                         if rune["spell"].as_str().is_some_and(|s| s.is_empty()) {
                             rune["name"].as_str().unwrap_or("").to_string()
@@ -2550,7 +2554,7 @@ impl Root {
                 );
             } else {
                 row = row.child(match &socket.rune {
-                    Some(rune) => rune_glyph::rune_glyph_div(&rune.name),
+                    Some(rune) => rune_glyph::glyph_div_for(rune.glyph.as_deref(), &rune.name),
                     None => rune_glyph::empty_slot_glyph_div(),
                 });
                 row = row.child(
@@ -2982,6 +2986,7 @@ mod tests {
                 max: 1,
                 damage: None,
                 def_id: None,
+                glyph: None,
             }),
             accepts: Some("rune".into()),
         };

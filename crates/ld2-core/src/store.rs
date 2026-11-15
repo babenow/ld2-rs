@@ -4048,6 +4048,7 @@ mod tests {
             spell: "ice_shard".into(),
             charges: 5,
             max: 5,
+            glyph: None,
         });
         store.apply(evt(
             "evt/item/state",

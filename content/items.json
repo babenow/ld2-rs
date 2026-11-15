@@ -216,7 +216,8 @@
         "damage": 10,
         "school": "frost",
         "charges": 6,
-        "max": 8
+        "max": 8,
+        "glyph": "n"
       },
       "gold_value": 60
     },
@@ -233,7 +234,8 @@
         "school": "storm",
         "charges": 5,
         "max": 8,
-        "cost": 2
+        "cost": 2,
+        "glyph": "m"
       },
       "gold_value": 75
     },
@@ -691,7 +693,8 @@
         "damage": 12,
         "school": "fire",
         "charges": 7,
-        "max": 10
+        "max": 10,
+        "glyph": "f"
       },
       "gold_value": 40
     },
