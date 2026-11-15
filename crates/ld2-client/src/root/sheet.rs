@@ -1414,6 +1414,27 @@ impl Root {
                     this.send_cmd(&cmd, Act::Unequip);
                 },
             ));
+            // M18 (указание заказчика): пункт «Инкрустация» — и в
+            // разделе экипировки окна персонажа, если у вещи есть
+            // слоты (пустые или занятые); тот же popup, что рюкзак.
+            if item
+                .sockets
+                .as_ref()
+                .is_some_and(|sockets| !sockets.is_empty())
+            {
+                let uid = item.uid.clone();
+                menu = menu.item(menu_item(
+                    cx,
+                    t(lang, Key::BtnSocketing),
+                    move |this, _cx| {
+                        this.store.item_detail = None;
+                        this.store.close_upgrade();
+                        this.upgrade_progress = None;
+                        this.store.open_socketing(uid.clone());
+                        this.open_popup(PopupKind::Socketing);
+                    },
+                ));
+            }
             // Запрос меню: левый и правый клик по строке (номер растёт —
             // Ely переоткрывает; в manual-режиме host-правый клик выключен).
             let request = match &self.equip_menu {
@@ -1502,9 +1523,14 @@ impl Root {
         }
 
         // M18 (указание заказчика): пункт «Инкрустация» — в разделе
-        // экипировки (после «Надеть»), если у предмета есть слоты
-        // рун или самоцветов (сокеты есть — показываем).
-        if item.sockets.is_some() {
+        // экипировки (после «Надеть»), если есть слоты рун или
+        // самоцветов — **свободные или занятые** (любой слот слотом;
+        // пустой список — не показываем).
+        let has_sockets = item
+            .sockets
+            .as_ref()
+            .is_some_and(|sockets| !sockets.is_empty());
+        if has_sockets {
             let uid = item.uid.clone();
             menu = menu.item(menu_item(
                 cx,
@@ -2924,21 +2950,31 @@ impl Root {
             // **инкрустированного** — знак его раритета (Symbola):
             // указание заказчика — глиф по рангу рядом со selfцветом.
             if socket.accepts.as_deref() == Some("gem") {
+                // M18 (указание заказчика): **пустой** слот после
+                // извлечения камня — пустой кружочек (как у рунного),
+                // а не ромбик ◈ (читался как занятый).
                 let marker = match &socket.rune {
                     Some(rune) => match rune.rarity.as_deref() {
                         Some(rarity) => crate::gem_glyph::gem_symbol_div(rarity),
                         None => div().child("◈"),
                     },
-                    None => div().child(format!("◈ {}", socket.index)),
+                    None => div().child("\u{25CB}"),
                 };
                 row = row.child(marker);
+                if socket.rune.is_none() {
+                    row = row.child(
+                        div()
+                            .text_color(rgb(pal.muted))
+                            .child(socket.index.to_string()),
+                    );
+                }
             } else {
                 row = row.child(match &socket.rune {
                     Some(rune) => rune_glyph::glyph_div_for(rune.glyph.as_deref(), &rune.name),
-                    // M18 (указание заказчика): пустой рунный слот в
-                    // окне инкрустации — **пустой кружочек** (в рюкзаке
-                    // и описании остаётся □, как договаривались).
-                    None => div().child("\u{25CB}"),
+                    // M18 (указание заказчика): пустой рунный слот —
+                    // **пустой квадратик** (снова; пустой самоцветный —
+                    // кружочек, см. ветку gem слота).
+                    None => rune_glyph::empty_slot_glyph_div(),
                 });
                 row = row.child(
                     div()

@@ -1271,3 +1271,43 @@ async fn gem_in_equipped_weapon_boosts_attrs() {
         "бонус снят: {ack}"
     );
 }
+
+/// M18 (указание заказчика): извлечённый самоцвет по возможности
+/// складывается в существующий стак (не отдельная запись), клиент
+/// обновляет qty существующей записи.
+#[tokio::test]
+async fn gem_extract_stacks_into_existing() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // Две отдельные записи одного самоцвета (scenario give не стакует).
+    let gem1 = give(&mut c, "gem_str").await;
+    let gem2 = give(&mut c, "gem_str").await;
+
+    // Вставили первый — его запись списана; в рюкзаке остаётся gem2.
+    let armor = give(&mut c, "armor_bronze").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": armor, "socket_index": 0, "rune_uid": gem1 }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "вставка");
+
+    // Извлечение — в стак gem2: uid существующей записи, qty = 2.
+    let seq = c
+        .send(
+            "cmd/socket.extract",
+            json!({ "staff_uid": armor, "socket_index": 0 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "извлечение: {ack}");
+    let rune = &ack["payload"]["rune"];
+    assert_eq!(rune["uid"], gem2, "слито в существующий стак: {ack}");
+    assert_eq!(rune["qty"], 2, "qty стака выросло: {ack}");
+}
