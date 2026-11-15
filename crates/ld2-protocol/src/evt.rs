@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::features::SessionConfig;
 use crate::types::{
-    CharacterState, CrimeLogEntry, CrimeStatus, Entity, GuildState, Hp, ItemSnapshot, JsonMap,
-    LocationSnapshot, PartyState, ProfessionSnapshot, QuestState,
+    BuffState, CharacterState, CrimeLogEntry, CrimeStatus, Entity, GuildState, Hp, ItemSnapshot,
+    JsonMap, LocationSnapshot, PartyState, ProfessionSnapshot, QuestState,
 };
 
 /// Событие: wire-`type` (`evt/<domain>.<event>`) и (де)сериализация payload'а.
@@ -348,6 +348,16 @@ pub struct QuestUpdated {
     pub quest: QuestState,
 }
 
+// ─── баффы рун (M18/F58d, ADR-012 §6) ───────────────────────────────────────
+
+/// **Полная замена** списка активных баффов (стак/таймер — как
+/// `evt/crime/status`; клиент пересчитывает отображение целиком).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharBuffs {
+    #[serde(default)]
+    pub buffs: Vec<BuffState>,
+}
+
 // ─── преступность (§10, ФР-11) ───────────────────────────────────────────────
 
 /// **Полная замена** списка активных статусов (клиент не пересчитывает blend).
@@ -495,6 +505,7 @@ impl_events!(
     (CraftProfession, "evt/craft/profession"),
     (QuestProgress, "evt/quest/progress"),
     (QuestUpdated, "evt/quest/updated"),
+    (CharBuffs, "evt/char/buffs"),
     (CrimeStatusUpdate, "evt/crime/status"),
     (CrimeAdded, "evt/crime/added"),
     (CrimeRemoved, "evt/crime/removed"),
@@ -518,6 +529,7 @@ mod tests {
             StateSnapshot::TYPE,
             CharXp::TYPE,
             MagicCast::TYPE,
+            CharBuffs::TYPE,
             CrimeStatusUpdate::TYPE,
             GuildLog::TYPE,
             SessionConfig::TYPE,

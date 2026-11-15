@@ -1313,16 +1313,47 @@ impl Session {
                 skill.rank = (i64::from(skill.rank) + *bonus).max(0) as u32;
             }
         }
-        let derived = crate::stats::derive(
+        let mut derived = crate::stats::derive(
             &attrs,
             &skills,
             &equipped,
             self.state.config.gameplay.combat.base_damage,
         );
+        // M18/F58d (ADR-012 §6): активные баффы рун — из БД; применяются
+        // к параметрам той же механикой, что бонусы предметов.
+        let now = crate::time::now_epoch();
+        let buff_rows = match db::buffs::active(pool, &row.id, now).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("баффы {}: {e}", row.id);
+                Vec::new()
+            }
+        };
+        let buffs: Vec<ld2_protocol::types::BuffState> = buff_rows
+            .iter()
+            .map(
+                |(kind, title, stacks, expires_at, ..)| ld2_protocol::types::BuffState {
+                    kind: kind.clone(),
+                    title: title.clone(),
+                    stacks: (*stacks).max(0) as u32,
+                    expires_at: *expires_at,
+                    extra: Default::default(),
+                },
+            )
+            .collect();
+        crate::stats::apply_buffs(
+            &mut derived,
+            &buff_rows
+                .iter()
+                .map(|(_, _, stacks, _, param, value, pct)| (param.clone(), *value, *pct, *stacks))
+                .collect::<Vec<_>>(),
+        );
 
         Ok(CharacterState {
             id: row.id.clone(),
             name: row.name.clone(),
+            // M18/F58d (ADR-012 §6): активные баффы рун (стак + таймер).
+            buffs,
             // M17/F30b: класс для правил экипировки на клиенте (F30e —
             // ресурс боя).
             profile: Some(row.profile.clone()),

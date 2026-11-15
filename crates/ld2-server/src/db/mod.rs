@@ -10,6 +10,7 @@
 //! репозиторий персонажей появится в фазе «персонажи».
 
 pub mod accounts;
+pub mod buffs;
 pub mod characters;
 pub mod chat;
 pub mod craft;

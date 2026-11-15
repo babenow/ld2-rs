@@ -253,6 +253,10 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 { "id": "sword", "name": "Владение мечом", "description": "+2% физ. урона мечом",
   "rank": 3, "xp": 612, "xp_to_next": 480 }      // description опционально (M14/F17)
 
+// BuffState (M18/F58d, ADR-012 §6): активный бафф руны в char.buffs
+{ "kind": "rune_marksman", "title": "Меткость",     // kind — ключ, title — для UI
+  "stacks": 2, "expires_at": 1762140341 }           // стак 1..=max_stacks, epoch-сек
+
 // CrimeStatus
 { "kind": "murderer", "severity": "high", "expires_at": 1762150000 }
 
@@ -385,6 +389,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ### Преступность (см. §10)
 | Событие | Payload | Назначение |
 |---|---|---|
+| `evt/char/buffs` | `{ buffs: [BuffState] }` | M18/F58d: полная замена списка баффов рун (стак/таймер) |
 | `evt/crime/status` | `{ statuses: [CrimeStatus], log_hint }` | **полная замена** списка статусов |
 | `evt/crime/added` | `{ status, log_entry }` | новый срок (дополняет журнал) |
 | `evt/crime/removed` | `{ kind }` | статус истёк (fallback: клиент снимает по `expires_at`) |
