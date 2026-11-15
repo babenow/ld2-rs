@@ -79,9 +79,6 @@ enum PopupKind {
     Upgrade,
     /// M18: окно сокетов (инкрустация через меню оружия) — popup.
     Socketing,
-    /// M18: окно выбора вставки (список рун/самоцветов слота) — popup,
-    /// по типу окна магазина в диалогах (указание заказчика).
-    Pick,
 }
 
 impl PopupKind {
@@ -95,7 +92,6 @@ impl PopupKind {
             PopupKind::Item => "ld2-item",
             PopupKind::Upgrade => "ld2-upgrade",
             PopupKind::Socketing => "ld2-socket",
-            PopupKind::Pick => "ld2-pick",
         }
     }
 }
@@ -120,8 +116,6 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
         PopupKind::Upgrade => {}
         // M18: окно сокетов контекстных меню не использует.
         PopupKind::Socketing => {}
-        // M18: окно выбора вставки — по клику по слоту.
-        PopupKind::Pick => {}
     }
 }
 
@@ -296,11 +290,9 @@ pub struct Root {
     item_popup: PopupState,
     /// M18: окно сокетов (инкрустация через меню оружия) — popup.
     socket_popup: PopupState,
-    /// M18: окно выбора вставки (список по слоту).
-    pick_popup: PopupState,
-    /// M18: выбор вставки — (цель, индекс слота); окно списка
-    /// открывается по клику по пустому слоту (как магазин в диалогах).
-    socket_pick: Option<(String, u32)>,
+    /// M18: вторая страница окна инкрустации — выбранный слот
+    /// (список вставок); `None` — страница слотов.
+    socket_pick: Option<u32>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
     upgrade_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
@@ -537,11 +529,6 @@ impl Root {
             socket_popup: PopupState {
                 delta: (0.0, -40.0),
                 ..PopupState::new((440.0, 420.0))
-            },
-            // M18: окно выбора вставки — поверх окна сокетов.
-            pick_popup: PopupState {
-                delta: (0.0, -80.0),
-                ..PopupState::new((400.0, 420.0))
             },
             socket_pick: None,
             // M18/F53: окно заточки — компактная карточка по центру,
@@ -1136,20 +1123,16 @@ impl Root {
                 cx.notify();
                 return;
             }
-            // M18: окно выбора вставки — верхний слой (над сокетами).
-            if self.socket_pick.is_some() {
-                tracing::debug!("закрытие окна выбора вставки: Esc");
-                self.socket_pick = None;
-                self.pick_popup.open = false;
-                cx.notify();
-                return;
-            }
-            // M18: окно сокетов — верхний слой группы попапов.
+            // M18: окно сокетов — верхний слой группы попапов; Esc
+            // сначала возвращает со второй страницы к списку слотов.
             if self.store.socketing.is_some() {
+                if self.socket_pick.is_some() {
+                    self.socket_pick = None;
+                    cx.notify();
+                    return;
+                }
                 tracing::debug!("закрытие окна сокетов: Esc");
                 self.store.close_socketing();
-                self.pick_popup.open = false;
-                self.socket_pick = None;
                 self.socket_popup.open = false;
                 cx.notify();
                 return;
@@ -1356,7 +1339,6 @@ impl Root {
             PopupKind::Item => &mut self.item_popup,
             PopupKind::Upgrade => &mut self.upgrade_popup,
             PopupKind::Socketing => &mut self.socket_popup,
-            PopupKind::Pick => &mut self.pick_popup,
         }
     }
 
@@ -1370,7 +1352,6 @@ impl Root {
             PopupKind::Item => &self.item_popup,
             PopupKind::Upgrade => &self.upgrade_popup,
             PopupKind::Socketing => &self.socket_popup,
-            PopupKind::Pick => &self.pick_popup,
         }
     }
 
@@ -1394,7 +1375,6 @@ impl Root {
             PopupKind::Item => ((vw * 0.28).clamp(320.0, 480.0), 420.0),
             PopupKind::Upgrade => (440.0, 360.0),
             PopupKind::Socketing => (440.0, 420.0),
-            PopupKind::Pick => (400.0, 420.0),
         }
     }
 
@@ -1417,7 +1397,6 @@ impl Root {
             PopupKind::Item => (80.0, -20.0),
             PopupKind::Upgrade => (0.0, -40.0),
             PopupKind::Socketing => (0.0, -40.0),
-            PopupKind::Pick => (0.0, -80.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1440,9 +1419,6 @@ impl Root {
             PopupKind::Upgrade => {}
             // M18: окно сокетов открывает контекстное меню.
             PopupKind::Socketing => {}
-            // M18: окно выбора вставки открывает клик по слоту
-            // (`socket_pick` ставится до open_popup — не сбрасывать).
-            PopupKind::Pick => {}
         }
     }
 
@@ -1548,14 +1524,13 @@ impl Root {
                                     // Верхнее окно: сокеты → заточка →
                                     // описание → диалог → квесты → рюкзак →
                                     // персонаж.
-                                    if root.socket_pick.is_some() {
-                                        root.socket_pick = None;
-                                        root.pick_popup.open = false;
-                                    } else if root.store.socketing.is_some() {
-                                        root.store.close_socketing();
-                                        root.socket_pick = None;
-                                        root.socket_popup.open = false;
-                                        root.pick_popup.open = false;
+                                    if root.store.socketing.is_some() {
+                                        if root.socket_pick.is_some() {
+                                            root.socket_pick = None;
+                                        } else {
+                                            root.store.close_socketing();
+                                            root.socket_popup.open = false;
+                                        }
                                     } else if root.store.sharpen_stone.is_some()
                                         || root.store.upgrade.is_some()
                                     {
@@ -3504,10 +3479,6 @@ impl Render for Root {
             // M18: окно сокетов (инкрустация через меню оружия) —
             // popup-диалог, как другие окна (карточка с крестиком).
             .when_some(self.socket_window(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M18: окно выбора вставки — поверх окна сокетов.
-            .when_some(self.pick_window(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
