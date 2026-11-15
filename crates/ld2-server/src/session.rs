@@ -7435,20 +7435,23 @@ fn content_bonuses(def: &db::items::ItemDefRow) -> Vec<ItemBonus> {
     out
 }
 
-/// M18/F58 (ADR-012): сколько слотов предмета принимают руны —
-/// `stats.rune_sockets` из параметров; дефолт по типу предмета сохраняет
-/// прежнее поведение: броня → 0 (всё под самоцветы), оружие/посох → все
-/// слоты рунные. Общая точка для снапшота и `socket.insert`.
+/// M18/F58 (ADR-012, уточнение заказчика): сколько слотов предмета
+/// принимают руны — **отдельная колонка определения**
+/// (`item_defs.rune_sockets`, как `sockets`), а не поле в `stats`;
+/// `NULL` — не указано → дефолт по типу предмета сохраняет прежнее
+/// поведение: броня → 0 (всё под самоцветы), оружие/посох → все слоты
+/// рунные. Общая точка для снапшота и `socket.insert`.
 fn rune_slots(def: &db::items::ItemDefRow) -> i64 {
-    def.stats
-        .get("rune_sockets")
-        .and_then(serde_json::Value::as_i64)
-        .map(|n| n.max(0))
-        .unwrap_or(if def.item_type == "armor" {
-            0
-        } else {
-            i64::from(def.sockets)
-        })
+    match def.rune_sockets {
+        Some(n) => i64::from(n).max(0),
+        None => {
+            if def.item_type == "armor" {
+                0
+            } else {
+                i64::from(def.sockets)
+            }
+        }
+    }
 }
 
 /// M18/F58 (ADR-012): принимает ли слот: его `accepts` либо вычисление
@@ -7499,10 +7502,10 @@ pub(crate) fn item_snapshot(
                     serde_json::from_value(serde_json::Value::Array(list)).unwrap_or_default();
             }
             // M18/F58 (ADR-012): тип слота добираем при отправке —
-            // `stats.rune_sockets` предмета (0 = весь под самоцветы),
-            // дефолт по типу: броня → gem, оружие/посох → rune (прежнее
+            // `item_defs.rune_sockets` предмета (NULL = не указано →
+            // дефолт по типу: броня → gem, оружие/посох → rune, прежнее
             // поведение). Правится так и raw-запись сокета после
-            // инкрустации, где поля нет; миграции БД не требуется.
+            // инкрустации, где поля нет.
             if !sockets.is_empty() {
                 let slots = rune_slots(def);
                 for socket in &mut sockets {

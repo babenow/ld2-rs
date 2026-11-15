@@ -37,6 +37,9 @@ pub struct ItemDefRow {
     pub qty: i32,
     /// Количество сокетов посоха (ADR-002) — ленивая инициализация.
     pub sockets: i32,
+    /// M18/F58 (ADR-012, уточнение заказчика): сколько слотов
+    /// принимают руны; `NULL` — не указано → дефолт по типу предмета.
+    pub rune_sockets: Option<i32>,
     /// M17/F30b: слот предмета (main_hand/off_hand/head/…; ring/artifact —
     /// псевдослоты пар); `None` — не экипируется.
     pub slot: Option<String>,
@@ -116,7 +119,7 @@ pub async fn with_sockets(
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
         "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
-                slot, hands, skill, cooldown_s, bonuses \
+                rune_sockets, slot, hands, skill, cooldown_s, bonuses \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)

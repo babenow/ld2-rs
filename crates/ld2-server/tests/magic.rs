@@ -680,7 +680,7 @@ async fn sockets_persist_across_server_restart() {
 
 /// M18/F58 (ADR-012): сервер проставляет `accepts` в снапшоте — тип
 /// слота реально доходит до клиента. Дефолт по типу предмета (когда
-/// `stats.rune_sockets` не задан): броня → `gem`, оружие/посох → `rune`
+/// `rune_sockets` не задан): броня → `gem`, оружие/посох → `rune`
 /// — прежнее поведение правил инкрустации сохраняется.
 #[tokio::test]
 async fn snapshot_carries_socket_accepts() {
@@ -727,7 +727,7 @@ async fn snapshot_carries_socket_accepts() {
 }
 
 /// M18/F58 (ADR-012): слот принимает по `accepts` — гемы в оружие
-/// разрешены там, где слот под самоцветы (`stats.rune_sockets` делит
+/// разрешены там, где слот под самоцветы (`rune_sockets` делит
 /// слоты: первые рунные, остальные под самоцветы).
 #[tokio::test]
 async fn gem_goes_into_weapon_socket_by_accepts() {

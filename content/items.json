@@ -291,8 +291,7 @@
       "cooldown_s": 3.0,
       "stats": {
         "dmg": "13..26",
-        "param": { "crit_chance": 3 },
-        "rune_sockets": 2
+        "param": { "crit_chance": 3 }
       },
       "bonuses": [
         { "kind": "attr", "id": "str", "value": 3 },
@@ -304,7 +303,8 @@
       "skill": "twohand",
       "slot": "main_hand",
       "hands": 2,
-      "sockets": 4
+      "sockets": 4,
+      "rune_sockets": 2
     },
     {
       "id": "sword_1000_true",
@@ -314,8 +314,7 @@
       "upgrade": 10,
       "cooldown_s": 3.0,
       "stats": {
-        "dmg": "19..31",
-        "rune_sockets": 2
+        "dmg": "19..31"
       },
       "bonuses": [
         { "kind": "attr", "id": "str", "value": 5 },
@@ -329,7 +328,8 @@
       "skill": "twohand",
       "slot": "main_hand",
       "hands": 2,
-      "sockets": 4
+      "sockets": 4,
+      "rune_sockets": 2
     },
     {
       "id": "hammer_battle",
