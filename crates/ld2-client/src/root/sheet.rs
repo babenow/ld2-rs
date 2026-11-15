@@ -2102,7 +2102,12 @@ impl Root {
             serde_json::from_value::<Vec<ld2_protocol::types::Socket>>(detail["sockets"].clone())
         {
             if !sockets.is_empty() {
-                col = col.child(socket_icons_row(item_type, &sockets));
+                // Цвет слотов — как у предмета (rarity-цвет строки).
+                col = col.child(
+                    div()
+                        .text_color(rgb(rarity_color(rarity, pal)))
+                        .child(socket_icons_row(item_type, &sockets)),
+                );
             }
         }
         if let Some(stats) = detail["stats"].as_object() {
@@ -2773,10 +2778,16 @@ pub(crate) fn item_label_stack(item: &ItemSnapshot, color: u32) -> Div {
     if let Some(qty) = item.qty.filter(|q| *q > 1) {
         row = row.child(div().child(format!("×{qty}")));
     }
-    let mut col = div().flex().flex_col().gap_1().child(row);
+    // Слоты — вплотную под названием (без промежутка), тем же
+    // цветом, что и предмет (указание заказчика).
+    let mut col = div().flex().flex_col().child(row);
     if let Some(sockets) = &item.sockets {
         if !sockets.is_empty() {
-            col = col.child(socket_icons_row(item.item_type.as_str(), sockets));
+            col = col.child(
+                div()
+                    .text_color(rgb(color))
+                    .child(socket_icons_row(item.item_type.as_str(), sockets)),
+            );
         }
     }
     col
@@ -3094,6 +3105,16 @@ mod tests {
         assert_eq!(
             slot_icon("armor", &sock(Some("mystery"), false)),
             SlotIcon::Gem(false)
+        );
+        // Занятый рунный слот — РОВНО глиф (не ◈, не квадрат):
+        // пустой (□) и занятый (глиф руны) различимы.
+        let occupied = slot_icon("weapon", &sock(Some("rune"), true));
+        let empty = slot_icon("weapon", &sock(Some("rune"), false));
+        assert_eq!(occupied, SlotIcon::Rune(Some('f')));
+        assert_ne!(
+            format!("{occupied:?}"),
+            format!("{empty:?}"),
+            "занят ≠ пуст"
         );
     }
 
