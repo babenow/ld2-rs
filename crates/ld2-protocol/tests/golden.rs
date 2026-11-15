@@ -133,7 +133,8 @@ const SNAPSHOT_JSON: &str = r#"{
                      "rarity": "rare", "upgrade": 2, "stats": {},
                      "sockets": [ { "index": 0, "accepts": "rune",
                        "rune": { "name": "Руна огня",
-                       "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
+                       "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12,
+                       "glyph": "f" } },
                                   { "index": 1, "accepts": "rune", "rune": null } ] } ],
     "crime": { "statuses": [ { "kind": "murderer", "severity": "high",
                                "expires_at": 1762150000 } ] },
@@ -210,6 +211,13 @@ fn snapshot_matches_doc_example() {
         sockets[1].accepts.as_deref(),
         Some("rune"),
         "accepts пустого слота"
+    );
+    // M18/F58f: настраиваемый знак руны (контент-поле glyph) доходит
+    // до клиента; поле аддитивно (§11).
+    assert_eq!(
+        sockets[0].rune.as_ref().and_then(|r| r.glyph.as_deref()),
+        Some("f"),
+        "glyph руны в §6-примере"
     );
     let staff = &snap.char.inventory[0];
     let sockets = staff.sockets.as_ref().expect("сокеты посоха");
@@ -549,6 +557,14 @@ fn socket_accepts_optional_for_old_server() {
     assert!(
         sockets[0].accepts.is_none(),
         "accepts отсутствует → клиент фолбэчит по типу предмета"
+    );
+    assert!(
+        sockets[0]
+            .rune
+            .as_ref()
+            .and_then(|r| r.glyph.as_deref())
+            .is_none(),
+        "glyph отсутствует → клиент фолбэчит хешем имени руны"
     );
 }
 

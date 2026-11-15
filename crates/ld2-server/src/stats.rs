@@ -341,6 +341,7 @@ mod tests {
                     max: 10,
                     damage: Some(damage),
                     def_id: None,
+                    glyph: None,
                 }),
                 accepts: Some("rune".into()),
             }])

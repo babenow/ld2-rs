@@ -108,6 +108,12 @@ pub struct RuneInfo {
     /// M17/F30g: определение руны — ключ кулдауна каста на клиенте.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub def_id: Option<String>,
+    /// M18/F58f: настраиваемый знак руны — контент-поле `glyph`
+    /// (параметры руны, `stats.glyph`); латинская буква `a..=z`/`A..=Z`
+    /// — глиф шрифта Dwarven Runes. Аддитивно §11: поля нет у сервера
+    /// или руны → клиент фолбэчит стабильным хешем имени руны.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
 }
 
 /// Сокет посоха: `rune: null` — свободный (`◈◈○` в UI, ФР-09).
