@@ -2273,7 +2273,10 @@ impl Root {
                     } else {
                         rune["name"].as_str().unwrap_or("").to_string()
                     };
-                    col = col.child(
+                    // M18/F58f: под занятым слотом — подробности, что
+                    // даёт вставка (урон/шанс/бафф/эффект/трата; сервер
+                    // формирует строки, §8).
+                    let mut cell = div().flex().flex_col().child(
                         div()
                             .flex()
                             .flex_row()
@@ -2286,6 +2289,17 @@ impl Root {
                             })
                             .child(div().child(label)),
                     );
+                    if let Some(details) = rune["detail"].as_array() {
+                        for line in details.iter().filter_map(|d| d.as_str()) {
+                            cell = cell.child(
+                                div()
+                                    .pl(px(20.0))
+                                    .text_color(rgb(pal.muted))
+                                    .child(line.to_string()),
+                            );
+                        }
+                    }
+                    col = col.child(cell);
                 } else if is_rune_slot {
                     let glyph = rune_glyph::empty_slot_glyph_div();
                     col = col.child(
@@ -3084,6 +3098,7 @@ mod tests {
                 damage: None,
                 def_id: None,
                 glyph: Some("f".into()),
+                detail: None,
             }),
         };
         let occupied = socket_with("Руна огня");
@@ -3127,6 +3142,7 @@ mod tests {
                 damage: None,
                 def_id: None,
                 glyph: Some("f".into()),
+                detail: None,
             }),
         };
 
@@ -3239,6 +3255,7 @@ mod tests {
                 damage: None,
                 def_id: None,
                 glyph: None,
+                detail: None,
             }),
             accepts: Some("rune".into()),
         };

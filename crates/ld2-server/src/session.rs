@@ -3550,6 +3550,13 @@ impl Session {
         if let Some(g) = glyph {
             rune_obj["glyph"] = serde_json::json!(g);
         }
+        // M18/F58f: подпись занятого слота — что даёт вставка (урон/
+        // шанс/бафф/эффект/трата; самоцвет — атрибут) — для окна
+        // информации (§8: строки формирует сервер).
+        let detail = crate::systems::slot_detail_lines(&rune_def.item_type, &rune_def.stats);
+        if !detail.is_empty() {
+            rune_obj["detail"] = serde_json::json!(detail);
+        }
         *slot = serde_json::json!({
             "index": cmd.socket_index,
             "def_id": rune_def.id,
