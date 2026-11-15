@@ -2443,7 +2443,14 @@ impl Root {
                             .child(if is_rune_slot {
                                 glyph
                             } else {
-                                div().child("◈")
+                                // M18/F58f (правка заказчика): занятый
+                                // самоцвет — знак его раритета (Symbola);
+                                // старый сервер без rarity — прежний ◈
+                                // (§11).
+                                match rune.get("rarity").and_then(|v| v.as_str()) {
+                                    Some(rarity) => crate::gem_glyph::gem_symbol_div(rarity),
+                                    None => div().child("◈"),
+                                }
                             })
                             .child(div().child(label)),
                     );
