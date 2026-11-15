@@ -2787,14 +2787,25 @@ impl Root {
                     ));
                 }
                 None => {
-                    if runes.is_empty() {
+                    // M18/F58f (баг «слот принимает только руны»): слот
+                    // принимает по СВОЕМУ accepts — в рунный слот не
+                    // предлагаем самоцветы и наоборот (ADR-012); у старого
+                    // сервера поля нет — фолбэк по типу цели (§11).
+                    let slot_inserts: Vec<&ItemSnapshot> = runes
+                        .iter()
+                        .filter(|i| match socket.accepts.as_deref() {
+                            Some(accepts) => i.item_type == accepts,
+                            None => inscribe_target_allowed(&i.item_type, staff.item_type.as_str()),
+                        })
+                        .collect();
+                    if slot_inserts.is_empty() {
                         row = row.child(
                             div()
                                 .text_color(rgb(pal.muted))
                                 .child(t(lang, Key::NoRunes)),
                         );
                     }
-                    for rune in &runes {
+                    for rune in &slot_inserts {
                         let index = socket.index;
                         let suid = staff.uid.clone();
                         let ruid = rune.uid.clone();
