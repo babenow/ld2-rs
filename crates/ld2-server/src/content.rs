@@ -916,6 +916,19 @@ mod tests {
                 }
             }
 
+            // M18/F58f: у оружия/посохов со слотами `rune_sockets`
+            // обязан быть указан явно (указание заказчика): деление
+            // слотов на рунные/самоцветы — из контента, не из дефолта.
+            if matches!(item.item_type.as_str(), "weapon" | "staff")
+                && item.sockets > 0
+                && item.rune_sockets.is_none()
+            {
+                panic!(
+                    "нет явного rune_sockets у оружия/посоха {} (sockets: {})",
+                    item.id, item.sockets
+                );
+            }
+
             // M18/F58d: бафф авто-приёма — param из известных, срок и
             // лимит стаков положительные (ADR-012 §6).
             if let Some(buff) = item.stats.get("buff") {
