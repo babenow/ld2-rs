@@ -1365,19 +1365,18 @@ impl Root {
             // M18 (указание заказчика): цвет редкости занятого слота —
             // для выделения и контрастных текстов (группа ниже).
             let card_color = item.as_ref().map(|i| rarity_color(&i.rarity, pal));
-            let group = format!("ld2-equip-card-{slot}");
             // M18 (указание заказчика): карточка слота — вертикально:
             // **название слота в верхней строке**, предмет ниже (правым
             // краем); кнопки «Снять»/«Описание» — в контекстном меню.
             // M18: id обязателен для hover-состояния (gpui отслеживает
             // наведение у идентифицированных элементов — подсветка
             // карточки; без id работал только mouse_down).
-            // min_h — одинаковая высота карточек (указание заказчика);
-            // group — выделение цветом предмета раскидывается на детей
-            // через group_hover (label/название/столбцы — контрастные).
+            // min_h + stretch — одинаковые высота/ширина карточек;
+            // выделение цветом предмета раскидывается на детей через
+            // наследование text_color (label/название/столбцы —
+            // контрастные при hover карточки).
             let mut row = div()
                 .id(format!("ld2-equip-card-{slot}"))
-                .group(group.clone())
                 // Одинаковые высота и ширина карточек (указание
                 // заказчика): min_h + stretch поперёк колонки.
                 .min_h(px(76.0))
@@ -1397,17 +1396,17 @@ impl Root {
                 // Подсветка: пустой слот — общий selection, занятый —
                 // цветом предмета (ветки ниже); клик — контекстное меню.
                 ;
-            // Label слота: muted; при выделении карточки (группа) —
-            // контрастный к цвету предмета (указание заказчика).
-            let mut label = div()
-                .text_size(px(12.0))
-                .text_color(rgb(pal.muted))
-                .child(slot_label(lang, slot));
-            if let Some(c) = card_color {
-                label =
-                    label.group_hover(&group, move |st| st.text_color(rgb(contrasting_text(c))));
+            // Label слота (указание заказчика): при выделении карточки
+            // — контрастный. Механизм — наследование от hover-стиля
+            // карточки (работает для детей без своего text_color;
+            // group_hover НЕ перекрывал собственный цвет label): у
+            // занятого слота label без своего цвета (normal — цвет
+            // редкости, hover — противоположный), у пустого — muted.
+            let mut label = div().text_size(px(12.0));
+            if card_color.is_none() {
+                label = label.text_color(rgb(pal.muted));
             }
-            row = row.child(label);
+            row = row.child(label.child(slot_label(lang, slot)));
             let Some(item) = item else {
                 // M17/F30b: левая рука закрыта, пока в правой двуручник.
                 let twohand = snap
@@ -1445,14 +1444,13 @@ impl Root {
             // ниже названия слота идёт **название предмета**, ниже —
             // **столбцы самоцветов/рун** (иконки слотов отдельной
             // строкой, левым краем).
+            // Название: без своего цвета — normal (цвет редкости) и
+            // hover (противоположный) наследуются от карточки.
             let mut name_line = div()
                 .flex()
                 .flex_row()
                 .gap_1()
                 .items_baseline()
-                .group_hover(&group, move |st| {
-                    st.text_color(rgb(contrasting_text(color)))
-                })
                 .child(div().child(item.name.clone()));
             if item.upgrade > 0 {
                 name_line = name_line.child(div().child(format!("+{}", item.upgrade)));
@@ -1464,13 +1462,7 @@ impl Root {
             if let Some(sockets) = item.sockets.as_ref().filter(|s| !s.is_empty()) {
                 // Цвет слотов наследуется от карточки (цвет редкости);
                 // при выделении (группа) — контрастный.
-                row = row.child(
-                    div()
-                        .group_hover(&group, move |st| {
-                            st.text_color(rgb(contrasting_text(color)))
-                        })
-                        .child(socket_icons_row(item.item_type.as_str(), sockets)),
-                );
+                row = row.child(div().child(socket_icons_row(item.item_type.as_str(), sockets)));
             }
             // M18 (указание заказчика): выделение карточки — **цветом
             // предмета** (полный), название — противоположным к нему
