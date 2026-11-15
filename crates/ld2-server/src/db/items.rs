@@ -251,13 +251,17 @@ pub async fn loot_taken_exists(
 
 /// Взять лут одной транзакцией (D27): журнал взятого + инвентарь.
 /// `None` — уже взят (→ `E_ITEM_GONE`); `Some(row)` — новый инстанс.
+/// M18/F58f: подбор лута — однотипное в существующий простой стак
+/// (рюкзак вмещает стаки), иначе новая запись. `(row, stacked)`:
+/// `true` — прибавка в стак (qty обновлён), `false` — новая запись;
+/// `None` — лут уже собран.
 pub async fn take_loot_tx(
     pool: &PgPool,
     loot_uid: &str,
     char_id: &str,
     def_id: &str,
     qty: i64,
-) -> Result<Option<ItemRow>, sqlx::Error> {
+) -> Result<Option<(ItemRow, bool)>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let taken: Option<String> = sqlx::query_scalar(
         "INSERT INTO loot_taken (uid, character_id) VALUES ($1, $2) \
@@ -269,6 +273,34 @@ pub async fn take_loot_tx(
     .await?;
     if taken.is_none() {
         return Ok(None); // tx откатывается при дропе
+    }
+    // Стак: та же селекция, что в grant_stacking (простая запись).
+    let existing: Option<(String, i32)> = sqlx::query_as(
+        "SELECT uid, qty FROM items WHERE character_id = $1 AND def_id = $2 \
+         AND upgrade = 0 AND sockets = '[]'::jsonb \
+         AND (bonuses IS NULL OR bonuses::text IN ('[]', 'null', '{}')) \
+         ORDER BY created_at, uid LIMIT 1",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((uid, cur)) = existing {
+        sqlx::query("UPDATE items SET qty = $2 WHERE uid = $1")
+            .bind(&uid)
+            .bind(i64::from(cur) + qty)
+            .execute(&mut *tx)
+            .await?;
+        let row = sqlx::query_as::<_, ItemRow>(
+            "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses \
+             FROM items WHERE uid = $1 AND character_id = $2",
+        )
+        .bind(&uid)
+        .bind(char_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        return Ok(Some((row, true)));
     }
     let row = sqlx::query_as::<_, ItemRow>(
         "INSERT INTO items (character_id, def_id, qty, sort_order) \
@@ -282,7 +314,7 @@ pub async fn take_loot_tx(
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(Some(row))
+    Ok(Some((row, false)))
 }
 
 /// Записать сокеты посоха (insert/extract рун, ADR-002).
@@ -423,7 +455,11 @@ pub async fn insert_by_type(
     let Some(def_id) = def_id else {
         return Ok(None);
     };
-    insert(pool, char_id, &def_id, qty).await.map(Some)
+    // M18/F58f: квестовые награды и крафт — в существующий простой
+    // стак (рюкзак вмещает стаки, а не предметы).
+    grant_stacking(pool, char_id, &def_id, qty)
+        .await
+        .map(|(row, _)| Some(row))
 }
 
 /// Строка предмета по uid **без** проверки владельца (сделки: предмет
@@ -440,14 +476,63 @@ pub async fn find_any(pool: &PgPool, uid: &str) -> Result<Option<ItemRow>, sqlx:
 /// F29a: выдать `qty` в существующий стак `def_id` (самый старый)
 /// либо новым стаком — монеты при подборе/начислении не съедают
 /// слоты. `true` — добавлено в существий стак (клиенту патч `qty`).
+/// M18/F58f: есть ли «простой» стак предмета (для решения «нужен ли
+/// свободный слот» — стак не занимает место).
+pub async fn stackable_exists(
+    pool: &PgPool,
+    char_id: &str,
+    def_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM items WHERE character_id = $1 AND def_id = $2 \
+         AND upgrade = 0 AND sockets = '[]'::jsonb \
+         AND (bonuses IS NULL OR bonuses::text IN ('[]', 'null', '{}'))",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n > 0)
+}
+
+/// M18/F58f (новая фича): рюкзак вмещает **стаки**, а не предметы —
+/// однотипное кладётся в существующий простой стак; если стака нет,
+/// нужен свободный слот (`slots` — лимит из конфига). `None` —
+/// инвентарь заполнен. `(row, stacked)`: `true` — прибавка в стак.
+pub async fn grant_stacking_limited(
+    pool: &PgPool,
+    char_id: &str,
+    def_id: &str,
+    qty: i64,
+    slots: i64,
+) -> Result<Option<(ItemRow, bool)>, sqlx::Error> {
+    if stackable_exists(pool, char_id, def_id).await? {
+        return grant_stacking(pool, char_id, def_id, qty).await.map(Some);
+    }
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM items WHERE character_id = $1")
+        .bind(char_id)
+        .fetch_one(pool)
+        .await?;
+    if n >= slots {
+        return Ok(None);
+    }
+    insert(pool, char_id, def_id, qty)
+        .await
+        .map(|row| Some((row, false)))
+}
+
 pub async fn grant_stacking(
     pool: &PgPool,
     char_id: &str,
     def_id: &str,
     qty: i64,
 ) -> Result<(ItemRow, bool), sqlx::Error> {
+    // M18/F58f: складываем только в «простой» стак (без состояния) —
+    // инкрустированный/улучшенный экземпляр остаётся отдельной записью.
     let existing: Option<(String, i32)> = sqlx::query_as(
         "SELECT uid, qty FROM items WHERE character_id = $1 AND def_id = $2 \
+         AND upgrade = 0 AND sockets = '[]'::jsonb \
+         AND (bonuses IS NULL OR bonuses::text IN ('[]', 'null', '{}')) \
          ORDER BY created_at, uid LIMIT 1",
     )
     .bind(char_id)
