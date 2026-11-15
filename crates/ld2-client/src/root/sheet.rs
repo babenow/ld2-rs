@@ -2155,15 +2155,26 @@ impl Root {
                     .child(crate::rune_glyph::glyph_div_for(glyph, name)),
             );
         }
+        // M18/F58f: у рун уровень заточки в описании не нужен
+        // (указание заказчика) — только «редкость · тип».
+        let header = if item_type == "rune" {
+            format!(
+                "{} · {}",
+                rarity_label(lang, rarity),
+                type_label(lang, item_type)
+            )
+        } else {
+            format!(
+                "{} · {} · +{}",
+                rarity_label(lang, rarity),
+                type_label(lang, item_type),
+                detail["upgrade"].as_i64().unwrap_or(0)
+            )
+        };
         col = col.child(
             div()
                 .text_color(rgb(rarity_color(rarity, pal)))
-                .child(format!(
-                    "{} · {} · +{}",
-                    rarity_label(lang, rarity),
-                    type_label(lang, item_type),
-                    detail["upgrade"].as_i64().unwrap_or(0)
-                )),
+                .child(header),
         );
         // M18/F58f: слоты — вторая строка под «редкость · тип · +N»,
         // руна-слот первым; иконки различают руны и самоцветы.
@@ -2180,6 +2191,19 @@ impl Root {
             }
         }
         if let Some(stats) = detail["stats"].as_object() {
+            // M18/F58f: строка-пара «label: value» в стиле статов окна.
+            let kv = |label: String, value: String| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .child(div().text_color(rgb(pal.muted)).child(label))
+                    .child(div().font_weight(gpui::FontWeight::BOLD).child(value))
+            };
             for (key, value) in stats {
                 // M16/F29e: ключи и значения — на языке игрока
                 // (школы — свои названия; прочие значения — как есть).
@@ -2216,6 +2240,54 @@ impl Root {
                         }
                         continue;
                     }
+                }
+                // M18/F58f: описание рун (указание заказчика) — без
+                // технического glyph, шанс — в процентах, бафф/эффект —
+                // читаемые строки вместо JSON.
+                if key == "glyph" {
+                    continue;
+                }
+                if key == "chance" {
+                    let pct = (value.as_f64().unwrap_or(0.0) * 100.0).round() as i64;
+                    col = col.child(kv(
+                        t(lang, Key::RuneProcChance).to_string(),
+                        format!("{pct}%"),
+                    ));
+                    continue;
+                }
+                if key == "buff" {
+                    if let Some(b) = value.as_object() {
+                        let param = b.get("param").and_then(|v| v.as_str()).unwrap_or("");
+                        let val = b.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let dur = b.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let stacks = b.get("max_stacks").and_then(|v| v.as_i64()).unwrap_or(1);
+                        col = col.child(kv(
+                            param_label(lang, param),
+                            format!("+{val} · {} · ×{stacks}", format_duration(lang, dur)),
+                        ));
+                    }
+                    continue;
+                }
+                if key == "effect" {
+                    if let Some(e) = value.as_object() {
+                        let kind = e.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                        let val = e.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let dur = format_duration(
+                            lang,
+                            e.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(0),
+                        );
+                        let (label, val_s) = match kind {
+                            "bleed" => (
+                                t(lang, Key::EffectBleed).to_string(),
+                                format!("{val}{} · {dur}", t(lang, Key::PerSecond)),
+                            ),
+                            "stun" => (t(lang, Key::EffectStun).to_string(), dur.clone()),
+                            "root" => (t(lang, Key::EffectRoot).to_string(), dur.clone()),
+                            other => (other.to_string(), dur),
+                        };
+                        col = col.child(kv(label, val_s));
+                    }
+                    continue;
                 }
                 let raw = value
                     .as_str()
