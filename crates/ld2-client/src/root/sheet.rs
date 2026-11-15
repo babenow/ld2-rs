@@ -132,6 +132,19 @@ const LEARN_CATALOG: [(&str, Key); 7] = [
 /// M18/F32: типы целей инкрустации — руна идёт только в оружие
 /// (`weapon`/`staff`), самоцвет (`gem`) — только в броню (`armor`).
 /// Общая для окна «Куда инкрустировать…» и окна сокетов; сервер
+/// M18/F58f: дубликаты рун не стакаются (указание заказчика) — есть
+/// ли в сокетах предмета руна с таким именем (сервер откажет
+/// `E_DUPLICATE_RUNE`, §9; фильтр списка — чтобы не предлагать).
+pub(crate) fn rune_already_inserted<'a>(
+    name: &str,
+    sockets: impl IntoIterator<Item = &'a ld2_protocol::types::Socket>,
+) -> bool {
+    sockets
+        .into_iter()
+        .filter_map(|s| s.rune.as_ref())
+        .any(|r| r.name == name)
+}
+
 /// проверяет то же правило (`socket.insert`, истина §7).
 pub(crate) fn inscribe_target_allowed(insert_type: &str, target_type: &str) -> bool {
     match insert_type {
@@ -2553,6 +2566,12 @@ impl Root {
             .inventory
             .iter()
             .filter(|i| inscribe_target_allowed(insert_type, &i.item_type))
+            // M18/F58f: уже вставленные руны не предлагаем (дубликаты
+            // не стакаются — сервер и так откажет, §9).
+            .filter(|i| {
+                insert_type != "rune"
+                    || !rune_already_inserted(&i.name, staff.sockets.iter().flatten())
+            })
             .cloned()
             .collect();
 
@@ -3048,6 +3067,48 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M18/F58f: дубликаты рун — вставленная руна больше не
+    /// предлагается для этого предмета; чужие имена не трогаются.
+    #[test]
+    fn rune_already_inserted_detects_duplicates() {
+        use ld2_protocol::types::{RuneInfo, Socket};
+        let socket_with = |rune_name: &str| Socket {
+            index: 0,
+            accepts: Some("rune".into()),
+            rune: Some(RuneInfo {
+                name: rune_name.into(),
+                spell: "fire_dart".into(),
+                charges: 7,
+                max: 10,
+                damage: None,
+                def_id: None,
+                glyph: Some("f".into()),
+            }),
+        };
+        let occupied = socket_with("Руна огня");
+        let free = Socket {
+            index: 1,
+            accepts: Some("rune".into()),
+            rune: None,
+        };
+        let sockets = [occupied, free];
+        assert!(
+            rune_already_inserted("Руна огня", sockets.iter()),
+            "вставленная руна найдена"
+        );
+        assert!(
+            !rune_already_inserted("Руна мороза", sockets.iter()),
+            "другая руна не блокируется"
+        );
+        // Пустые слоты ничего не блокируют.
+        let empty = [Socket {
+            index: 1,
+            accepts: Some("rune".into()),
+            rune: None,
+        }];
+        assert!(!rune_already_inserted("Руна огня", empty.iter()));
+    }
 
     /// M18/F58f: иконка слота — рунный слот даёт глиф руны (из поля
     /// glyph, фолбэк — хеш имени), слот самоцвета — ◈/○; у старого

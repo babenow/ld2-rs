@@ -436,6 +436,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_NO_CHARGES` | у руны нет зарядов (меньше затраты `cost`, M18/F58c) |
 | `E_NOT_ENOUGH_MP` | не хватает маны для каста (D4: руна тратит ману + заряд) |
 | `E_NO_RUNE_SLOT` | предмет без свободного/подходящего сокета |
+| `E_DUPLICATE_RUNE` | та же руна уже вставлена в предмет (не стакается, M18/F58f) |
 | `E_REQUIREMENT_ATTR` | не хватает атрибута/уровня |
 | `E_PROFESSION` | нет требуемой профессии |
 | `E_INVENTORY_FULL` | инвентарь заполнен |

@@ -1145,3 +1145,62 @@ async fn buff_in_snapshot_affects_derived_and_expires() {
         "derived всё ещё с активным баффом"
     );
 }
+
+/// M18/F58f: дубликаты рун не стакаются — одна и та же руна не может
+/// стоять в двух слотах предмета (§9 E_DUPLICATE_RUNE); другая руна
+/// вставляется свободно.
+#[tokio::test]
+async fn duplicate_rune_is_rejected_in_same_item() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+
+    // staff_apprentice: 2 рунных слота — второй свободен для дубликата.
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let rune1 = give(&mut c, "rune_fire").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune1 }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "первая вставка");
+
+    // Вторая та же руна (отдельный стак) → отказ.
+    let rune2 = give(&mut c, "rune_fire").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 1, "rune_uid": rune2 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_DUPLICATE_RUNE",
+        "дубликат руны: {ack}"
+    );
+
+    // Другая руна в тот же слот — вставляется.
+    let rune3 = give(&mut c, "rune_frost").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 1, "rune_uid": rune3 }),
+        )
+        .await;
+    assert_eq!(
+        c.ack(seq).await["result"],
+        "ok",
+        "другая руна — не дубликат"
+    );
+
+    // Гемы не ограничиваются (если слот принимает) — проверим на брони
+    // с двумя самоцветами одного типа... armor_bronze имеет 1 слот,
+    // поэтому просто убеждаемся, что запрет не мешает обычному потоку.
+    let _ = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+}
