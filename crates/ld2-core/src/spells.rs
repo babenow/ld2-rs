@@ -10,6 +10,13 @@ pub fn spell_key(id: &str) -> Option<Key> {
         "fire_dart" => Some(Key::SpellFireDart),
         "frost_bolt" => Some(Key::SpellFrostBolt),
         "storm_bolt" => Some(Key::SpellStormBolt),
+        // M18/F58d: руны воина/лучника (ADR-012 §5).
+        "precision" => Some(Key::SpellPrecision),
+        "fury" => Some(Key::SpellFury),
+        "fortitude" => Some(Key::SpellFortitude),
+        "hemorrhage" => Some(Key::SpellHemorrhage),
+        "concussion" => Some(Key::SpellConcussion),
+        "entangle" => Some(Key::SpellEntangle),
         _ => None,
     }
 }
@@ -21,7 +28,17 @@ mod tests {
     /// M17/F30f: каждому известному заклинанию соответствует ключ.
     #[test]
     fn every_known_spell_has_key() {
-        for id in ["fire_dart", "frost_bolt", "storm_bolt"] {
+        for id in [
+            "fire_dart",
+            "frost_bolt",
+            "storm_bolt",
+            "precision",
+            "fury",
+            "fortitude",
+            "hemorrhage",
+            "concussion",
+            "entangle",
+        ] {
             assert!(spell_key(id).is_some(), "имя: {id}");
         }
         assert!(spell_key("mystery").is_none(), "неизвестное — None");

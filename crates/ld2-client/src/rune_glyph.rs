@@ -53,6 +53,17 @@ pub(crate) fn empty_slot_glyph_div() -> Div {
     glyph_div(EMPTY_SLOT_GLYPH)
 }
 
+/// M18/F58f: глиф предмета-руны для списков (рюкзак) — `Some` только
+/// для `type == "rune"`; знак — контент-поле `stats.glyph`, без него
+/// фолбэк хешем имени. Нерунные предметы — `None` (строка без глифа).
+pub(crate) fn item_glyph(item: &ld2_protocol::types::ItemSnapshot) -> Option<Div> {
+    if item.item_type != "rune" {
+        return None;
+    }
+    let glyph = item.stats.get("glyph").and_then(|v| v.as_str());
+    Some(glyph_div_for(glyph, &item.name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +94,51 @@ mod tests {
             rune_glyph("rune_fire")
         );
         assert_eq!(resolve_glyph(None, "rune_fire"), rune_glyph("rune_fire"));
+    }
+
+    /// Глиф предмета: только для рун; контент-поле имеет приоритет.
+    #[test]
+    fn item_glyph_only_for_runes() {
+        use ld2_protocol::types::ItemSnapshot;
+        let item = |item_type: &str, glyph: Option<&str>| {
+            let mut stats = serde_json::Map::new();
+            if let Some(g) = glyph {
+                stats.insert("glyph".into(), serde_json::json!(g));
+            }
+            ItemSnapshot {
+                uid: "i_t".into(),
+                item_type: item_type.into(),
+                name: "Тест".into(),
+                rarity: "common".into(),
+                upgrade: 0,
+                stats,
+                requires: None,
+                sockets: None,
+                slot: None,
+                hands: None,
+                qty: Some(1),
+                gold_value: None,
+                bonuses: None,
+                def_id: None,
+                extra: Default::default(),
+            }
+        };
+        assert!(
+            item_glyph(&item("rune", Some("x"))).is_some(),
+            "руна с полем"
+        );
+        assert!(
+            item_glyph(&item("rune", None)).is_some(),
+            "руна без поля — фолбэк-хеш"
+        );
+        assert!(
+            item_glyph(&item("gem", Some("x"))).is_none(),
+            "самоцвет — без рунного глифа"
+        );
+        assert!(
+            item_glyph(&item("potion", None)).is_none(),
+            "зелье — без глифа"
+        );
     }
 
     /// Разные руны, как правило, получают разные знаки (для ключей из

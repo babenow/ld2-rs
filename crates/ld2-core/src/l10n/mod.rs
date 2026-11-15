@@ -459,6 +459,13 @@ pub enum Key {
     SpellFireDart,
     SpellFrostBolt,
     SpellStormBolt,
+    // M18/F58d: руны воина/лучника (ADR-012 §5).
+    SpellPrecision,
+    SpellFury,
+    SpellFortitude,
+    SpellHemorrhage,
+    SpellConcussion,
+    SpellEntangle,
     // M17/F30e: название ресурса класса (полоса слева)
     RageLabel,
     EnergyLabel,
@@ -955,6 +962,13 @@ mod tests {
         Key::SpellFireDart,
         Key::SpellFrostBolt,
         Key::SpellStormBolt,
+        // M18/F58d: руны воина/лучника
+        Key::SpellPrecision,
+        Key::SpellFury,
+        Key::SpellFortitude,
+        Key::SpellHemorrhage,
+        Key::SpellConcussion,
+        Key::SpellEntangle,
         // M17/F30e: ресурсы по классам
         Key::RageLabel,
         Key::EnergyLabel,

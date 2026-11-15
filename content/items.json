@@ -699,6 +699,114 @@
       "gold_value": 40
     },
     {
+      "id": "rune_marksman",
+      "type": "rune",
+      "name": "Руна меткости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "precision",
+        "damage": 8,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "p",
+        "buff": { "param": "accuracy", "value": 6, "duration_s": 12, "max_stacks": 3 }
+      },
+      "gold_value": 55
+    },
+    {
+      "id": "rune_fury",
+      "type": "rune",
+      "name": "Руна ярости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "fury",
+        "damage": 10,
+        "chance": 0.25,
+        "charges": 6,
+        "max": 8,
+        "glyph": "r",
+        "buff": { "param": "crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2 }
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_warding",
+      "type": "rune",
+      "name": "Руна стойкости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "fortitude",
+        "damage": 6,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "g",
+        "buff": { "param": "armor", "value": 10, "duration_s": 15, "max_stacks": 3 }
+      },
+      "gold_value": 55
+    },
+    {
+      "id": "rune_bloodletter",
+      "type": "rune",
+      "name": "Руна кровотечения",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hemorrhage",
+        "damage": 7,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "b",
+        "effect": { "kind": "bleed", "value": 3, "duration_s": 6 }
+      },
+      "gold_value": 80
+    },
+    {
+      "id": "rune_stunning",
+      "type": "rune",
+      "name": "Руна оглушения",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "concussion",
+        "damage": 6,
+        "chance": 0.25,
+        "charges": 5,
+        "max": 8,
+        "glyph": "s",
+        "effect": { "kind": "stun", "duration_s": 3 }
+      },
+      "gold_value": 85
+    },
+    {
+      "id": "rune_binding",
+      "type": "rune",
+      "name": "Руна опутывания",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "entangle",
+        "damage": 6,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "v",
+        "effect": { "kind": "root", "duration_s": 5 }
+      },
+      "gold_value": 80
+    },
+    {
       "id": "scroll_frost",
       "type": "scroll",
       "name": "Свиток мороза",
