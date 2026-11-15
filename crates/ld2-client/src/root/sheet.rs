@@ -133,6 +133,23 @@ const LEARN_CATALOG: [(&str, Key); 7] = [
 /// M18/F32: типы целей инкрустации — руна идёт только в оружие
 /// (`weapon`/`staff`), самоцвет (`gem`) — только в броню (`armor`).
 /// Общая для окна «Куда инкрустировать…» и окна сокетов; сервер
+/// M18/F58f (баг «инкрустация через меню камня»): первый свободный
+/// слот, который **принимает** тип вставки по `accepts` (ADR-012:
+/// самоцвет — только в gem-слот, руна — в рунный). У старого сервера
+/// поля нет — прежнее поведение: первый свободный (§11).
+pub(crate) fn first_compatible_socket(
+    sockets: &[ld2_protocol::types::Socket],
+    insert_type: &str,
+) -> Option<usize> {
+    sockets.iter().position(|s| {
+        s.rune.is_none()
+            && match s.accepts.as_deref() {
+                Some(accepts) => accepts == insert_type,
+                None => true,
+            }
+    })
+}
+
 /// M18/F58f: дубликаты рун не стакаются (указание заказчика) — есть
 /// ли в сокетах предмета руна с таким именем (сервер откажет
 /// `E_DUPLICATE_RUNE`, §9; фильтр списка — чтобы не предлагать).
@@ -3269,6 +3286,50 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M18/F58f: под инкрустацию выбирается слот, принимающий тип
+    /// вставки — самоцвет не идёт в рунный слот (баг меню камня).
+    #[test]
+    fn first_compatible_socket_respects_accepts() {
+        use ld2_protocol::types::{RuneInfo, Socket};
+        let slot = |index: u32, accepts: Option<&str>, filled: bool| Socket {
+            index,
+            accepts: accepts.map(str::to_string),
+            rune: filled.then(|| RuneInfo {
+                name: "x".into(),
+                spell: String::new(),
+                charges: 1,
+                max: 1,
+                damage: None,
+                def_id: None,
+                glyph: None,
+                detail: None,
+                rarity: None,
+            }),
+        };
+        // Оружие: rune, rune, gem — гем идёт в слот2, руна в свободный0.
+        let weapon = [
+            slot(0, Some("rune"), false),
+            slot(1, Some("rune"), false),
+            slot(2, Some("gem"), false),
+        ];
+        assert_eq!(first_compatible_socket(&weapon, "gem"), Some(2));
+        assert_eq!(first_compatible_socket(&weapon, "rune"), Some(0));
+        // Занятый слот пропускается.
+        let weapon = [
+            slot(0, Some("rune"), true),
+            slot(1, Some("rune"), false),
+            slot(2, Some("gem"), false),
+        ];
+        assert_eq!(first_compatible_socket(&weapon, "rune"), Some(1));
+        // Старый сервер без accepts: первый свободный (§11).
+        let legacy = [slot(0, None, false), slot(1, None, false)];
+        assert_eq!(first_compatible_socket(&legacy, "gem"), Some(0));
+        // Подходящего слота нет — None.
+        let rune_only = [slot(0, Some("rune"), true)];
+        assert_eq!(first_compatible_socket(&rune_only, "gem"), None);
+        assert_eq!(first_compatible_socket(&[], "rune"), None);
+    }
 
     /// M18/F58f: дубликаты рун — вставленная руна больше не
     /// предлагается для этого предмета; чужие имена не трогаются.
