@@ -4080,6 +4080,7 @@ mod tests {
             max: 5,
             glyph: None,
             detail: None,
+            rarity: None,
         });
         store.apply(evt(
             "evt/item/state",

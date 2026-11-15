@@ -2154,6 +2154,12 @@ impl Root {
                     .items_baseline()
                     .child(crate::rune_glyph::glyph_div_for(glyph, name)),
             );
+        } else if item_type == "gem" {
+            // M18/F58f: у самоцвета — знак раритета под названием
+            // (указание заказчика: рюкзак и описание).
+            col = col.child(div().flex().flex_row().items_baseline().child(
+                crate::gem_glyph::gem_symbol_div(detail["rarity"].as_str().unwrap_or("")),
+            ));
         }
         // M18/F58f: у рун уровень заточки в описании не нужен
         // (указание заказчика) — только «редкость · тип».
@@ -2861,8 +2867,14 @@ fn xp_kv_row(pal: &Palette, label: &str, value: &str) -> Div {
 pub(crate) enum SlotIcon {
     /// Рунный слот: `Some(glyph)` — заполнен (глиф руны), `None` — пуст.
     Rune(Option<char>),
-    /// Слот самоцвета: `true` — заполнен (◈), `false` — пуст (○).
-    Gem(bool),
+    /// Слот самоцвета: `filled` — заполнен; `rarity` — раритет
+    /// вставленного (wire `RuneInfo.rarity`): есть → знак раритета
+    /// (Symbola), нет (старый сервер/запись, §11) → прежний ◈;
+    /// пустой слот → ○.
+    Gem {
+        filled: bool,
+        rarity: Option<String>,
+    },
 }
 
 /// M18/F58f: иконка слота. `accepts` из wire решает; у старого сервера
@@ -2876,7 +2888,10 @@ pub(crate) fn slot_icon(item_type: &str, socket: &ld2_protocol::types::Socket) -
         _ => item_type == "armor",
     };
     if is_gem {
-        SlotIcon::Gem(socket.rune.is_some())
+        SlotIcon::Gem {
+            filled: socket.rune.is_some(),
+            rarity: socket.rune.as_ref().and_then(|r| r.rarity.clone()),
+        }
     } else {
         SlotIcon::Rune(
             socket
@@ -2912,8 +2927,17 @@ fn slot_icon_div(item_type: &str, socket: &ld2_protocol::types::Socket) -> Div {
     match slot_icon(item_type, socket) {
         SlotIcon::Rune(Some(glyph)) => crate::rune_glyph::glyph_div(glyph),
         SlotIcon::Rune(None) => crate::rune_glyph::empty_slot_glyph_div(),
-        SlotIcon::Gem(true) => div().child("◈"),
-        SlotIcon::Gem(false) => div().child("○"),
+        // Занятый самоцвет — знак его раритета (Symbola); у старого
+        // сервера без поля rarity — прежний ◈ (§11).
+        SlotIcon::Gem {
+            filled: true,
+            rarity: Some(r),
+        } => crate::gem_glyph::gem_symbol_div(&r),
+        SlotIcon::Gem {
+            filled: true,
+            rarity: None,
+        } => div().child("◈"),
+        SlotIcon::Gem { filled: false, .. } => div().child("○"),
     }
 }
 
@@ -2942,8 +2966,13 @@ pub(crate) fn item_label_stack(item: &ItemSnapshot, color: u32) -> Div {
         .flex_row()
         .gap_1()
         .items_center()
-        .text_color(rgb(color))
-        .child(div().child(item.name.clone()));
+        .text_color(rgb(color));
+    // M18/F58f: у самоцвета — знак раритета (Symbola) перед названием
+    // (указание заказчика: рюкзак и описание).
+    if item.item_type == "gem" {
+        row = row.child(crate::gem_glyph::gem_symbol_div(&item.rarity));
+    }
+    row = row.child(div().child(item.name.clone()));
     if item.upgrade > 0 {
         row = row.child(div().child(format!("+{}", item.upgrade)));
     }
@@ -3243,6 +3272,7 @@ mod tests {
                 def_id: None,
                 glyph: Some("f".into()),
                 detail: None,
+                rarity: None,
             }),
         };
         let occupied = socket_with("Руна огня");
@@ -3287,6 +3317,7 @@ mod tests {
                 def_id: None,
                 glyph: Some("f".into()),
                 detail: None,
+                rarity: None,
             }),
         };
 
@@ -3301,20 +3332,46 @@ mod tests {
             SlotIcon::Rune(None),
             "пустой рунный — отличается от пустого самоцвета"
         );
-        // Слот самоцвета: заполненный ◈, пустой ○.
-        assert_eq!(
-            slot_icon("armor", &sock(Some("gem"), true)),
-            SlotIcon::Gem(true)
-        );
+        // Слот самоцвета: пустой ○; занятый — раритет из wire (тут
+        // None — фолбэк §11) либо знак раритета, если поле есть.
         assert_eq!(
             slot_icon("armor", &sock(Some("gem"), false)),
-            SlotIcon::Gem(false)
+            SlotIcon::Gem {
+                filled: false,
+                rarity: None
+            }
+        );
+        let with_rarity = Socket {
+            index: 0,
+            accepts: Some("gem".into()),
+            rune: Some(RuneInfo {
+                name: "Самоцвет силы".into(),
+                spell: String::new(),
+                charges: 0,
+                max: 0,
+                damage: None,
+                def_id: None,
+                glyph: None,
+                detail: None,
+                rarity: Some("rare".into()),
+            }),
+        };
+        assert_eq!(
+            slot_icon("armor", &with_rarity),
+            SlotIcon::Gem {
+                filled: true,
+                rarity: Some("rare".into())
+            },
+            "занятый самоцвет несёт раритет для знака"
         );
         // Старый сервер без accepts: фолбэк по типу — броня = самоцвет,
         // оружие = руна.
         assert_eq!(
             slot_icon("armor", &sock(None, false)),
-            SlotIcon::Gem(false),
+            SlotIcon::Gem {
+                filled: false,
+                rarity: None
+            },
             "фолбэк: броня — слоты самоцветов"
         );
         assert_eq!(
@@ -3325,7 +3382,10 @@ mod tests {
         // Неизвестное значение accepts — как отсутствующее (§11).
         assert_eq!(
             slot_icon("armor", &sock(Some("mystery"), false)),
-            SlotIcon::Gem(false)
+            SlotIcon::Gem {
+                filled: false,
+                rarity: None
+            }
         );
         // Занятый рунный слот — РОВНО глиф (не ◈, не квадрат):
         // пустой (□) и занятый (глиф руны) различимы.
@@ -3400,6 +3460,7 @@ mod tests {
                 def_id: None,
                 glyph: None,
                 detail: None,
+                rarity: None,
             }),
             accepts: Some("rune".into()),
         };

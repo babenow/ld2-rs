@@ -335,6 +335,7 @@ pub fn staff_item() -> ItemSnapshot {
                     def_id: None,
                     glyph: None,
                     detail: None,
+                    rarity: None,
                 }),
                 accepts: Some("rune".into()),
             },
