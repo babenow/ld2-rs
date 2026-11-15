@@ -690,7 +690,12 @@ impl Root {
                         if kind == PopupKind::Socketing {
                             tracing::debug!("закрытие окна сокетов: крестик");
                             root.store.close_socketing();
-                            root.socket_slot = None;
+                            root.socket_pick = None;
+                            root.pick_popup.open = false;
+                        }
+                        if kind == PopupKind::Pick {
+                            tracing::debug!("закрытие окна выбора вставки: крестик");
+                            root.socket_pick = None;
                         }
                         cx.notify();
                     })),
@@ -1501,6 +1506,26 @@ impl Root {
             }
         }
 
+        // M18 (указание заказчика): пункт «Инкрустация» — в разделе
+        // экипировки (после «Надеть»), если у предмета есть слоты
+        // рун или самоцветов (сокеты есть — показываем).
+        if item.sockets.is_some() {
+            let uid = item.uid.clone();
+            menu = menu.item(menu_item(
+                cx,
+                t(lang, Key::BtnSocketing),
+                move |this, _cx| {
+                    // Окно сокетов — popup-диалог (аналогично
+                    // описанию/заточке); соседние попапы закрываем.
+                    this.store.item_detail = None;
+                    this.store.close_upgrade();
+                    this.upgrade_progress = None;
+                    this.store.open_socketing(uid.clone());
+                    this.open_popup(PopupKind::Socketing);
+                },
+            ));
+        }
+
         // Улучшение (ФР-10): до максимума из конфига сервера.
         // M18/F54: сервер требует активный камень — пункт показываем
         // только когда камень уже выбран (иначе `E_INGREDIENTS`).
@@ -1528,25 +1553,6 @@ impl Root {
                 };
                 this.send_cmd(&cmd, Act::Preview);
             }));
-        }
-
-        // Инкрустация (ФР-09): предмет с сокетами — посох или меч
-        // (M17/F30a: сокеты у любого оружия).
-        if item.sockets.is_some() {
-            let uid = item.uid.clone();
-            menu = menu.item(menu_item(
-                cx,
-                t(lang, Key::BtnSocketing),
-                move |this, _cx| {
-                    // M18: окно сокетов — popup-диалог (аналогично
-                    // описанию/заточке); соседние попапы закрываем.
-                    this.store.item_detail = None;
-                    this.store.close_upgrade();
-                    this.upgrade_progress = None;
-                    this.store.open_socketing(uid.clone());
-                    this.open_popup(PopupKind::Socketing);
-                },
-            ));
         }
 
         // Описание / Выбросить.
@@ -2749,6 +2755,106 @@ impl Root {
         ))
     }
 
+    /// M18 (указание заказчика): окно выбора вставки — список рун или
+    /// самоцветов для выбранного слота, **по типу магазина в диалогах**
+    /// (строки: слева предмет — справа действие); клик по строке —
+    /// процесс инкрустации в этот слот, окно закрывается.
+    pub(crate) fn pick_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let lang = self.lang;
+        let (staff_uid, index) = self.socket_pick.clone()?;
+        let snap = self.store.snapshot.clone()?;
+        let staff = snap
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == staff_uid)?
+            .clone();
+        let socket = staff.sockets.iter().flatten().find(|s| s.index == index)?;
+        // Список: принимает ли слот вставку (accepts; §11 — фолбэк по
+        // типу цели), для рун — без уже вставленных (дубликаты).
+        let inserts: Vec<ItemSnapshot> = snap
+            .char
+            .inventory
+            .iter()
+            .filter(|i| match socket.accepts.as_deref() {
+                Some(accepts) => i.item_type == accepts,
+                None => inscribe_target_allowed(&i.item_type, staff.item_type.as_str()),
+            })
+            .filter(|i| {
+                i.item_type != "rune"
+                    || !rune_already_inserted(&i.name, staff.sockets.iter().flatten())
+            })
+            .cloned()
+            .collect();
+
+        // Строки в стиле магазина (game::shop_view): панель, подсветка
+        // наведения, клик по строке → действие.
+        let mut col = div().flex().flex_col().gap_1().flex_grow_1().min_h_0();
+        if inserts.is_empty() {
+            col = col.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::NoRunes)),
+            );
+        }
+        for item in &inserts {
+            let pick = item.uid.clone();
+            let pick_staff = staff_uid.clone();
+            let row_id = format!("ld2-pick-{}", item.uid);
+            col = col.child(
+                div()
+                    .id(row_id)
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .cursor_pointer()
+                    .hover(move |st| st.bg(rgb(pal.selection)))
+                    .child(item_label_row(item, rarity_color(&item.rarity, pal)))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(pal.muted))
+                            .child(t(lang, Key::InsertRune)),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        // Процесс инкрустации: вставка в выбранный слот.
+                        let cmd = SocketInsert {
+                            staff_uid: pick_staff.clone(),
+                            socket_index: index,
+                            rune_uid: pick.clone(),
+                        };
+                        this.send_cmd(&cmd, Act::Socket);
+                        this.socket_pick = None;
+                        this.pick_popup.open = false;
+                        cx.notify();
+                    })),
+            );
+        }
+
+        let title = t(lang, Key::PickInsert).to_string();
+        let body = div().flex().flex_col().flex_grow_1().min_h_0().child(
+            ScrollArea::new("ld2-pick-scroll")
+                .vertical()
+                .flex_grow_1()
+                .min_h_0()
+                .child(col),
+        );
+        Some(self.popup_window(window, cx, pal, PopupKind::Pick, title, None, body, None))
+    }
+
     pub(crate) fn socket_view(
         &mut self,
         cx: &mut Context<'_, Self>,
@@ -2816,8 +2922,6 @@ impl Root {
                         .child(socket.index.to_string()),
                 );
             }
-            // M18: строки-список под выбранным слотом (вставки).
-            let mut extra: Vec<Div> = Vec::new();
             match &socket.rune {
                 Some(rune) => {
                     let index = socket.index;
@@ -2864,70 +2968,27 @@ impl Root {
                                 .child(t(lang, Key::NoRunes)),
                         );
                     } else {
-                        // M18 (новая фича): клик по пустому слоту открывает
-                        // список вставок только для ЭТОГО слота (по
-                        // accepts); повторный клик — закрывает.
-                        let selected = self.socket_slot == Some(index);
+                        // M18 (указание заказчика): клик по пустому слоту
+                        // открывает **новое окно** со списком самоцветов
+                        // или рун для этого слота (по типу магазина в
+                        // диалогах) — `pick_window`.
+                        let pick_target = staff.uid.clone();
                         row = row
                             .cursor_pointer()
                             .hover(|st| st.bg(rgb(pal.selection)))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _, _, cx| {
-                                    this.socket_slot = if this.socket_slot == Some(index) {
-                                        None
-                                    } else {
-                                        Some(index)
-                                    };
+                                    this.socket_pick = Some((pick_target.clone(), index));
+                                    this.open_popup(PopupKind::Pick);
                                     cx.notify();
                                 }),
-                            );
-                        if !selected {
-                            row = row.child(div().text_color(rgb(pal.muted)).child("\u{2026}"));
-                        }
-                        // M18: под выбранным слотом — список подходящих
-                        // вставок; нажатие → процесс инкрустации (вставка
-                        // в этот слот, список закрывается).
-                        if selected {
-                            let mut line = div().flex().flex_row().gap_1().items_center();
-                            for rune in &slot_inserts {
-                                let suid = staff.uid.clone();
-                                let ruid = rune.uid.clone();
-                                let label = format!("{}: {}", t(lang, Key::InsertRune), rune.name);
-                                line = line.child(act_btn(
-                                    cx,
-                                    label,
-                                    pal.accent,
-                                    pal.accent_text,
-                                    move |this, cx| {
-                                        let cmd = SocketInsert {
-                                            staff_uid: suid.clone(),
-                                            socket_index: index,
-                                            rune_uid: ruid.clone(),
-                                        };
-                                        this.send_cmd(&cmd, Act::Socket);
-                                        this.socket_slot = None;
-                                        let _ = cx;
-                                    },
-                                ));
-                            }
-                            extra.push(div().flex().flex_row().gap_1().items_center().child(line));
-                        }
+                            )
+                            .child(div().text_color(rgb(pal.muted)).child("\u{2026}"));
                     }
                 }
             }
             col = col.child(row);
-            for line in extra {
-                col = col.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_1()
-                        .items_center()
-                        .pl(px(24.0))
-                        .child(line),
-                );
-            }
         }
 
         col = col.child(act_btn(
