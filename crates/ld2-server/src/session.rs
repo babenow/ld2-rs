@@ -2284,20 +2284,6 @@ impl Session {
             let Some(def_id) = slot else {
                 return vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")];
             };
-            match db::items::count(&pool, char_id).await {
-                Ok(n) if n >= i64::from(self.state.config.gameplay.inventory.slots) => {
-                    return vec![Self::err(
-                        seq,
-                        ErrorCode::InventoryFull,
-                        "инвентарь заполнен",
-                    )];
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    warn!("take_loot (слоты): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                }
-            }
             let Some(def) = (match db::items::def(&pool, &def_id).await {
                 Ok(def) => def,
                 Err(e) => {
@@ -2311,6 +2297,30 @@ impl Session {
                     "нет определения предмета",
                 )];
             };
+            // M18/F58f (новая фича): рюкзак вмещает **стаки** — простой
+            // стак уже есть → место не нужно; иначе проверяем слот
+            // ДО изъятия лута (иначе при полном лут бы пропал).
+            match Self::take_loot_fits(
+                &pool,
+                char_id,
+                &def_id,
+                self.state.config.gameplay.inventory.slots,
+            )
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::InventoryFull,
+                        "инвентарь заполнен",
+                    )];
+                }
+                Err(e) => {
+                    warn!("take_loot (слоты): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
             // Изъятие из памяти: None — кто-то успел раньше (гонок нет —
             // обработка последовательна, но проверка честная).
             let took = {
@@ -2320,23 +2330,21 @@ impl Session {
             if took.is_none() {
                 return vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")];
             }
-            // F29a: монеты складываются в существующий стак (патч
-            // qty), обычные предметы — новым инстансом.
-            let (row, stacked) = if def.item_type == db::items::MONEY_TYPE {
-                match db::items::grant_stacking(&pool, char_id, &def_id, i64::from(def.qty)).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!("take_loot (стак монет): {e}");
-                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                    }
-                }
-            } else {
-                match db::items::insert(&pool, char_id, &def_id, i64::from(def.qty)).await {
-                    Ok(row) => (row, false),
-                    Err(e) => {
-                        warn!("take_loot (insert): {e}");
-                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                    }
+            // M18/F58f: всё складывается в простой стак (монеты —
+            // как раньше, F29a); слот занят только новой записью
+            // (место проверено выше). Событие — патч qty либо added.
+            let (row, stacked) = match db::items::grant_stacking(
+                &pool,
+                char_id,
+                &def_id,
+                i64::from(def.qty),
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("take_loot (стак): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                 }
             };
             let ev = if stacked {
@@ -2384,20 +2392,6 @@ impl Session {
         let Some(def_id) = defs.get(idx).cloned() else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого лута")];
         };
-        match db::items::count(&pool, char_id).await {
-            Ok(n) if n >= i64::from(self.state.config.gameplay.inventory.slots) => {
-                return vec![Self::err(
-                    seq,
-                    ErrorCode::InventoryFull,
-                    "инвентарь заполнен",
-                )];
-            }
-            Ok(_) => {}
-            Err(e) => {
-                warn!("take_loot (слоты): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }
         let Some(def) = (match db::items::def(&pool, &def_id).await {
             Ok(def) => def,
             Err(e) => {
@@ -2411,18 +2405,53 @@ impl Session {
                 "нет определения предмета",
             )];
         };
+        // M18/F58f: лимит по стакам (простой стак — место не нужно).
+        match Self::take_loot_fits(
+            &pool,
+            char_id,
+            &def_id,
+            self.state.config.gameplay.inventory.slots,
+        )
+        .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::InventoryFull,
+                    "инвентарь заполнен",
+                )];
+            }
+            Err(e) => {
+                warn!("take_loot (слоты): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
         match db::items::take_loot_tx(&pool, loot_uid, char_id, &def_id, i64::from(def.qty)).await {
             Ok(None) => vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")],
-            Ok(Some(row)) => {
+            Ok(Some((row, stacked))) => {
                 let item = item_snapshot(&row, &def);
-                let mut outs = vec![
-                    Self::ack_payload(seq, &serde_json::json!({})),
+                // M18/F58f: стак → патч qty (как у монет), новая запись → added.
+                let ev = if stacked {
+                    let mut patch = serde_json::Map::new();
+                    patch.insert("qty".into(), serde_json::json!(row.qty));
+                    out_event(
+                        "evt/item/state",
+                        None,
+                        serde_json::to_value(ItemState {
+                            uid: row.uid.clone(),
+                            patch,
+                        })
+                        .unwrap_or_default(),
+                    )
+                } else {
                     out_event(
                         "evt/item/added",
                         None,
                         serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
-                    ),
-                ];
+                    )
+                };
+                let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({})), ev];
                 // ФР-11: лут с трупа **игрока** → статус «Мародёр» (§10).
                 if entity.was_player.unwrap_or(false) {
                     if let Some((_, text)) = self.apply_crime(char_id, "marauder").await {
@@ -2436,6 +2465,23 @@ impl Session {
                 vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
             }
         }
+    }
+
+    /// M18/F58f: поместится ли подбираемое в рюкзак — **по стакам**:
+    /// «простой» однотипный стак есть → место не нужно (складываем);
+    /// иначе — свободный слот. `false` — инвентарь заполнен (вызывающий
+    /// возвращает `InventoryFull`), `Err` — ошибка БД.
+    async fn take_loot_fits(
+        pool: &sqlx::PgPool,
+        char_id: &str,
+        def_id: &str,
+        slots: u32,
+    ) -> Result<bool, sqlx::Error> {
+        if db::items::stackable_exists(pool, char_id, def_id).await? {
+            return Ok(true);
+        }
+        let n = db::items::count(pool, char_id).await?;
+        Ok(n < i64::from(slots))
     }
 
     /// `cmd/item.equip` (§7): слот — из конфига (D25), требования — из

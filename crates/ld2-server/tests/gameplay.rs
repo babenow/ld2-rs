@@ -191,6 +191,9 @@ async fn inventory_loot_equip_use_drop() {
     let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
 
     // Лимит слотов (D25): забиваем инвентарь → взятие лута блокируется.
+    // M18/F58f: подбираем деф БЕЗ стака в рюкзаке (potion_heal) —
+    // однотипное dagger_knife в стак сложилось бы (новая фича: рюкзак
+    // вмещает стаки; покрыто в tests/stacking.rs).
     sqlx::query(
         "INSERT INTO items (character_id, def_id) \
          SELECT $1, 'dagger_knife' FROM generate_series(1, 40)",
@@ -209,15 +212,12 @@ async fn inventory_loot_equip_use_drop() {
     assert_eq!(ack["result"], "ok", "осмотр трупа: {ack}");
     assert_eq!(ack["payload"]["was_player"], true);
     let seq = c
-        .send(
-            "cmd/item.use",
-            json!({ "item_uid": ack["payload"]["loot"][0]["uid"] }),
-        )
+        .send("cmd/item.use", json!({ "item_uid": "loot:cor_9:1" }))
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(
         ack["error"]["code"], "E_INVENTORY_FULL",
-        "слоты заняты: {ack}"
+        "слоты заняты (чужой def не складывается): {ack}"
     );
 
     // Освобождаем — и идёт основной флоу.
