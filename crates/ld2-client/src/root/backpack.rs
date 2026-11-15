@@ -315,10 +315,9 @@ impl Root {
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(pal.selection)))
                 .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
-                // M18/F58f: подпись = название + бейджи; слоты рун в
-                // бейджах — их глифами (глиф перед названием убран по
-                // указанию заказчика).
-                .child(super::sheet::item_label_row(
+                // M18/F58f: подпись в две строки — слоты под названием
+                // (указание заказчика); слоты рун — их глифы.
+                .child(super::sheet::item_label_stack(
                     item,
                     rarity_color(&item.rarity, pal),
                 ));

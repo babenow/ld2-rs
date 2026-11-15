@@ -2756,6 +2756,32 @@ pub(crate) fn badges_row(item: &ItemSnapshot) -> Div {
     row
 }
 
+/// M18/F58f: подпись предмета в **рюкзаке** — строка1: название,
+/// +N, ×N; строка2: иконки слотов (указание заказчика: слоты — на
+/// новую строку). Слоты — Div'ами: руны их шрифтом.
+pub(crate) fn item_label_stack(item: &ItemSnapshot, color: u32) -> Div {
+    let mut row = div()
+        .flex()
+        .flex_row()
+        .gap_1()
+        .items_center()
+        .text_color(rgb(color))
+        .child(div().child(item.name.clone()));
+    if item.upgrade > 0 {
+        row = row.child(div().child(format!("+{}", item.upgrade)));
+    }
+    if let Some(qty) = item.qty.filter(|q| *q > 1) {
+        row = row.child(div().child(format!("×{qty}")));
+    }
+    let mut col = div().flex().flex_col().gap_1().child(row);
+    if let Some(sockets) = &item.sockets {
+        if !sockets.is_empty() {
+            col = col.child(socket_icons_row(item.item_type.as_str(), sockets));
+        }
+    }
+    col
+}
+
 /// M18/F58f: подпись предмета в списках: название + бейджи (ряд Div'ов
 /// — слоты рун рисуются их шрифтом).
 pub(crate) fn item_label_row(item: &ItemSnapshot, color: u32) -> Div {
