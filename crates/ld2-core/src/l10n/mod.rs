@@ -170,6 +170,9 @@ pub enum Key {
     TakeLoot,
     LootPlayerWarn,
     NoStatuses,
+    // M18/F58f: активные баффы рун в окне персонажа (ADR-012 §6)
+    BuffsHeader,
+    NoBuffs,
     JournalEmpty,
     DurHm,
     DurMs,
@@ -709,6 +712,8 @@ mod tests {
         Key::TakeLoot,
         Key::LootPlayerWarn,
         Key::NoStatuses,
+        Key::BuffsHeader,
+        Key::NoBuffs,
         Key::JournalEmpty,
         Key::DurHm,
         Key::DurMs,

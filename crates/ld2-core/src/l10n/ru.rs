@@ -133,6 +133,8 @@ pub(super) fn t(key: Key) -> &'static str {
         TakeLoot => "Забрать",
         LootPlayerWarn => "Забрать лут трупа ИГРОКА? Вы получите статус «Мародёр»",
         NoStatuses => "Активных статусов нет",
+        BuffsHeader => "Баффы",
+        NoBuffs => "Активных баффов нет",
         JournalEmpty => "Журнал пока пуст",
         DurHm => "{h}ч{m}м",
         DurMs => "{m}м{s}с",
