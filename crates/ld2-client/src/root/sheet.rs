@@ -884,7 +884,7 @@ impl Root {
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(360.0))
+            .w(px(420.0))
             .min_h_0()
             .child(
                 ScrollArea::new("ld2-char-left")
@@ -1346,25 +1346,24 @@ impl Root {
             let item = uid
                 .as_ref()
                 .and_then(|u| snap.char.inventory.iter().find(|i| i.uid == *u));
-            // M16/F29d: подпись слева, предмет — по правому краю;
-            // кнопки «Снять»/«Описание» убраны в контекстное меню.
+            // M18 (указание заказчика): карточка слота — вертикально:
+            // **название слота в верхней строке**, предмет ниже (правым
+            // краем); кнопки «Снять»/«Описание» — в контекстном меню.
             let mut row = div()
                 .flex()
-                .flex_row()
-                .gap_2()
-                .items_center()
+                .flex_col()
+                .gap_1()
                 .px_2()
                 .py_1()
                 .rounded_md()
                 .bg(rgb(pal.panel))
-                // M18 (фича): каждый слот визуально заметен — рамка
-                // в цвете границ панели.
+                // Каждый слот визуально заметен — рамка в цвете
+                // границ панели.
                 .border_1()
                 .border_color(rgb(pal.border))
                 .cursor_pointer()
                 .child(
                     div()
-                        .w(px(72.0))
                         .text_size(px(12.0))
                         .text_color(rgb(pal.muted))
                         .child(slot_label(lang, slot)),
@@ -1382,14 +1381,21 @@ impl Root {
                 let blocked = slot == "off_hand" && twohand;
                 row = row.child(
                     div()
-                        .flex_grow_1()
-                        .text_size(px(12.0))
-                        .text_color(rgb(if blocked { pal.warn } else { pal.muted }))
-                        .child(if blocked {
-                            t(lang, Key::SlotBlocked)
-                        } else {
-                            t(lang, Key::EmptySlot)
-                        }),
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .items_center()
+                        .child(div().flex_grow_1())
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(rgb(if blocked { pal.warn } else { pal.muted }))
+                                .child(if blocked {
+                                    t(lang, Key::SlotBlocked)
+                                } else {
+                                    t(lang, Key::EmptySlot)
+                                }),
+                        ),
                 );
                 rows.push(row.into_any_element());
                 continue;
@@ -1398,9 +1404,15 @@ impl Root {
             // Отступ-заполнитель прижимает предмет к правому краю.
             // M18/F58f: подпись как в рюкзаке (указание заказчика) —
             // слоты второй строкой под названием (`item_label_stack`).
-            row = row
-                .child(div().flex_grow_1())
-                .child(item_label_stack(item, color));
+            row = row.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .child(div().flex_grow_1())
+                    .child(item_label_stack(item, color)),
+            );
             // Меню предмета (F29d): Описание и Снять — вместо кнопок.
             let mut menu = Menu::new();
             let detail = serde_json::to_value(item).unwrap_or_default();
