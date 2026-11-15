@@ -3083,15 +3083,10 @@ impl Root {
                 row = row.child(match &socket.rune {
                     Some(rune) => rune_glyph::glyph_div_for(rune.glyph.as_deref(), &rune.name),
                     // M18 (указание заказчика): пустой рунный слот —
-                    // **пустой квадратик** (снова; пустой самоцветный —
-                    // кружочек, см. ветку gem слота).
+                    // **пустой квадратик**; индекс слота рядом с рунами
+                    // не показывается (как и возле занятых рун).
                     None => rune_glyph::empty_slot_glyph_div(),
                 });
-                row = row.child(
-                    div()
-                        .text_color(rgb(pal.muted))
-                        .child(socket.index.to_string()),
-                );
             }
             match &socket.rune {
                 Some(rune) => {
