@@ -2935,7 +2935,10 @@ impl Root {
             } else {
                 row = row.child(match &socket.rune {
                     Some(rune) => rune_glyph::glyph_div_for(rune.glyph.as_deref(), &rune.name),
-                    None => rune_glyph::empty_slot_glyph_div(),
+                    // M18 (указание заказчика): пустой рунный слот в
+                    // окне инкрустации — **пустой кружочек** (в рюкзаке
+                    // и описании остаётся □, как договаривались).
+                    None => div().child("\u{25CB}"),
                 });
                 row = row.child(
                     div()
