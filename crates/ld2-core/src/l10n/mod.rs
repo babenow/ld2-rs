@@ -173,6 +173,8 @@ pub enum Key {
     // M18/F58f: активные баффы рун в окне персонажа (ADR-012 §6)
     BuffsHeader,
     NoBuffs,
+    // M18/F58f: заполненность рюкзака в статус-баре (новая фича)
+    BackpackUsage,
     // M18/F58f: описание руны — шанс авто-приёма и эффекты вместо JSON
     RuneProcChance,
     EffectBleed,
@@ -720,6 +722,7 @@ mod tests {
         Key::NoStatuses,
         Key::BuffsHeader,
         Key::NoBuffs,
+        Key::BackpackUsage,
         Key::RuneProcChance,
         Key::EffectBleed,
         Key::EffectStun,

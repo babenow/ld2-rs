@@ -135,6 +135,7 @@ pub(super) fn t(key: Key) -> &'static str {
         NoStatuses => "Активных статусов нет",
         BuffsHeader => "Баффы",
         NoBuffs => "Активных баффов нет",
+        BackpackUsage => "Слотов: {used}/{total}",
         RuneProcChance => "Шанс приёма",
         EffectBleed => "Кровотечение",
         EffectStun => "Оглушение",
