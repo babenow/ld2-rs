@@ -2169,6 +2169,16 @@ pub fn filter_active_statuses(statuses: &[CrimeStatus], now: i64) -> Vec<CrimeSt
         .collect()
 }
 
+/// M18/F58f (ADR-012 §6): активные баффы рун — снятые/просроченные не
+/// показываются (сервер присылает только активные, но локальный отсчёт
+/// может отстать; §1.1 now = локальное + offset).
+pub fn filter_active_buffs(
+    buffs: &[ld2_protocol::types::BuffState],
+    now: i64,
+) -> Vec<&ld2_protocol::types::BuffState> {
+    buffs.iter().filter(|b| b.expires_at > now).collect()
+}
+
 /// Применение `payload` ack'а `socket.*`: `{staff, rune?}` → инвентарь.
 fn apply_item_patch(ch: &mut ld2_protocol::types::CharacterState, payload: &serde_json::Value) {
     if let Some(staff) = payload.get("staff").filter(|v| !v.is_null()) {
@@ -4391,6 +4401,32 @@ mod tests {
         assert!(store.crime_log_loaded);
         assert_eq!(store.crime_log.len(), 1);
         assert_eq!(store.crime_log[0].delta_s, 3471);
+    }
+
+    #[test]
+    fn filter_active_buffs_hides_expired() {
+        use ld2_protocol::types::BuffState;
+        let now = 1_000;
+        let buffs = vec![
+            BuffState {
+                kind: "rune_marksman".into(),
+                title: "Меткость".into(),
+                stacks: 2,
+                expires_at: now + 30,
+                extra: Default::default(),
+            },
+            BuffState {
+                kind: "rune_rage".into(),
+                title: "Ярость".into(),
+                stacks: 1,
+                expires_at: now,
+                extra: Default::default(),
+            },
+        ];
+        let active = filter_active_buffs(&buffs, now);
+        assert_eq!(active.len(), 1, "просроченный не показывается");
+        assert_eq!(active[0].kind, "rune_marksman");
+        assert!(filter_active_buffs(&[], now).is_empty());
     }
 
     #[test]

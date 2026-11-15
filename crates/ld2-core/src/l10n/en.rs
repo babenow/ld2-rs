@@ -133,6 +133,8 @@ pub(super) fn t(key: Key) -> &'static str {
         TakeLoot => "Take",
         LootPlayerWarn => "Take PLAYER corpse loot? This grants the Marauder status",
         NoStatuses => "No active statuses",
+        BuffsHeader => "Buffs",
+        NoBuffs => "No active buffs",
         JournalEmpty => "Journal is empty",
         DurHm => "{h}h {m}m",
         DurMs => "{m}m {s}s",

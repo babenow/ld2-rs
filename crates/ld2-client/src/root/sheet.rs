@@ -20,7 +20,8 @@ use gpui::{
 };
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{
-    crime_kind_title, filter_active_statuses, local_epoch, Act, Screen, UpgradeView,
+    crime_kind_title, filter_active_buffs, filter_active_statuses, local_epoch, Act, Screen,
+    UpgradeView,
 };
 use ld2_protocol::cmd::{
     CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave, GuildRankSet,
@@ -862,6 +863,9 @@ impl Root {
         col = col.child(self.character_xp_block(pal));
         col = col.child(self.equip_block(cx, pal));
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
+        // M18/F58f: активные баффы рун — над статусами (ADR-012 §6).
+        col = col.child(self.buffs_block(pal));
+        col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
         col = col.child(self.statuses_block(cx, pal));
         div()
             .flex()
@@ -1547,6 +1551,56 @@ impl Root {
 
     /// M15/F25: статусы со временем + журнал нарушений — низ левой
     /// колонки (перенос из вкладки «Статусы» по правилу дубликатов).
+    /// M18/F58f (ADR-012 §6): активные баффы рун — название (серверная
+    /// строка §8), стак и обратный отсчёт до снятия (по серверным срокам
+    /// как у статусов: now = локальное + offset, §1.1).
+    fn buffs_block(&self, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let mut col = div().flex().flex_col().gap_1().child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(t(lang, Key::BuffsHeader)),
+        );
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return col.child(
+                div()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::Loading)),
+            );
+        };
+        let now = local_epoch() + self.store.time_offset;
+        let active = filter_active_buffs(&snap.char.buffs, now);
+        if active.is_empty() {
+            return col.child(
+                div()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::NoBuffs)),
+            );
+        }
+        for buff in active {
+            let left = buff.expires_at - now;
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .child(div().child(buff.title.clone()))
+                    .child(
+                        div()
+                            .text_color(rgb(pal.accent))
+                            .child(format!("×{}", buff.stacks)),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(pal.muted))
+                            .child(format_duration(lang, left)),
+                    ),
+            );
+        }
+        col
+    }
+
     fn statuses_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let Some(snap) = self.store.snapshot.clone() else {
