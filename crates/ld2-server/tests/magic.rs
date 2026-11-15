@@ -1002,3 +1002,146 @@ async fn rune_cast_spends_configured_charge_cost() {
         "недостаточно зарядов на cost: {ack}"
     );
 }
+
+/// M18/F58d (ADR-012 §6): бафф из БД доходит до клиента в
+/// `char.buffs`, влияет на `derived` и снимается тикером с полной
+/// заменой `evt/char/buffs`.
+#[tokio::test]
+async fn buff_in_snapshot_affects_derived_and_expires() {
+    use ld2_server::db;
+
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.magic.rune_recharge_s = 1.0;
+        })
+        .await
+    );
+    let (mut c, _login, char_id) = in_world(&ws).await;
+
+    // Снимок до баффа — базовая точность.
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let base_accuracy = snap["payload"]["char"]["derived"]["accuracy"]
+        .as_i64()
+        .expect("accuracy до баффа");
+    assert!(
+        snap["payload"]["char"]["buffs"]
+            .as_array()
+            .is_none_or(|b| b.is_empty()),
+        "до баффа список пуст"
+    );
+
+    // Накладываем бафф напрямую в БД (процесс наложения — F58d-3).
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("пул");
+    let now = ld2_server::time::now_epoch();
+    db::buffs::apply(
+        &pool,
+        &char_id,
+        "rune_marksman",
+        "Меткость",
+        "accuracy",
+        6,
+        false,
+        60, // длительность, с
+        3,  // max_stacks
+        now,
+    )
+    .await
+    .expect("бафф наложен");
+    db::buffs::apply(
+        &pool,
+        &char_id,
+        "rune_marksman",
+        "Меткость",
+        "accuracy",
+        6,
+        false,
+        60,
+        3,
+        now,
+    )
+    .await
+    .expect("второй стак");
+    pool.close().await;
+
+    // Ресинк: бафф в char.buffs, derived вырос ровно на value×стаков.
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let buffs = snap["payload"]["char"]["buffs"]
+        .as_array()
+        .expect("buffs в снапшоте");
+    assert_eq!(buffs.len(), 1, "один бафф: {buffs:?}");
+    assert_eq!(buffs[0]["kind"], "rune_marksman");
+    assert_eq!(buffs[0]["stacks"], 2, "два наложения → 2 стака");
+    let buffed = snap["payload"]["char"]["derived"]["accuracy"]
+        .as_i64()
+        .expect("accuracy с баффом");
+    assert_eq!(
+        buffed,
+        base_accuracy + 12,
+        "бафф accuracy 6 × 2 стака применён к derived"
+    );
+
+    // Короткий бафф: тикер (раз в секунду) снимает и шлёт полную
+    // замену evt/char/buffs (паттерн evt/crime/status).
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("пул");
+    db::buffs::apply(
+        &pool,
+        &char_id,
+        "rune_warmaster",
+        "Ярость",
+        "damage",
+        4,
+        false,
+        1, // снимется на первом же тике
+        1,
+        ld2_server::time::now_epoch(),
+    )
+    .await
+    .expect("короткий бафф");
+    pool.close().await;
+
+    // Полная замена: истёкший снят, активный marksman остаётся.
+    let removed = c
+        .wait(|v| {
+            v["type"] == "evt/char/buffs"
+                && v["payload"]["buffs"]
+                    .as_array()
+                    .is_some_and(|b| b.iter().all(|x| x["kind"] != "rune_warmaster"))
+                && v["payload"]["buffs"]
+                    .as_array()
+                    .is_some_and(|b| !b.is_empty())
+        })
+        .await;
+    let rest = removed["payload"]["buffs"].as_array().expect("список");
+    assert_eq!(rest.len(), 1, "только warmaster снят: {removed}");
+    assert_eq!(rest[0]["kind"], "rune_marksman", "активный остался");
+
+    // Ресинк: marksman активен (derived с баффом), warmaster снят.
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let buffs = snap["payload"]["char"]["buffs"]
+        .as_array()
+        .expect("buffs после тикера");
+    assert_eq!(buffs.len(), 1, "остался только активный: {buffs:?}");
+    assert_eq!(buffs[0]["kind"], "rune_marksman");
+    assert_eq!(
+        snap["payload"]["char"]["derived"]["accuracy"].as_i64(),
+        Some(base_accuracy + 12),
+        "derived всё ещё с активным баффом"
+    );
+}

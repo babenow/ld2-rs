@@ -55,6 +55,7 @@ pub async fn run(state: SharedState) {
             // и готовность крафт-джобов (M12.6).
             regen_step(&state).await;
             crime_expire_step(&state).await;
+            buff_expire_step(&state).await;
             craft_finish_step(&state).await;
             // M18/F58c: заряды рун (режим `time`; `item` — без тикера).
             recharge_acc += 1.0;
@@ -726,6 +727,59 @@ async fn regen_step(state: &SharedState) {
         );
         let world = state.world.lock().expect("мир");
         world.send_to_char(char_id, text);
+    }
+}
+
+/// M18/F58d (ADR-012 §6): снятие истёкших баффов рун раз в секунду —
+/// клиенту шлётся **полная замена** списка `evt/char/buffs` (паттерн
+/// `evt/crime/status`); только онлайн-персонажи (как `regen_step`).
+async fn buff_expire_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let online: Vec<String> = {
+        let world = state.world.lock().expect("мир");
+        world.online_chars()
+    };
+    for char_id in online {
+        let expired = match crate::db::buffs::expire(&state.pool, &char_id, now).await {
+            Ok(kinds) => kinds,
+            Err(e) => {
+                warn!("баффы (истечение {char_id}): {e}");
+                continue;
+            }
+        };
+        if expired.is_empty() {
+            continue;
+        }
+        // Полная замена: оставшиеся активные баффы.
+        let rest = match crate::db::buffs::active(&state.pool, &char_id, now).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("баффы (список {char_id}): {e}");
+                continue;
+            }
+        };
+        let buffs: Vec<ld2_protocol::types::BuffState> = rest
+            .iter()
+            .map(
+                |(kind, title, stacks, expires_at, ..)| ld2_protocol::types::BuffState {
+                    kind: kind.clone(),
+                    title: title.clone(),
+                    stacks: (*stacks).max(0) as u32,
+                    expires_at: *expires_at,
+                    extra: Default::default(),
+                },
+            )
+            .collect();
+        let text = crate::session::event_text(
+            "evt/char/buffs",
+            None,
+            serde_json::to_value(ld2_protocol::evt::CharBuffs { buffs }).unwrap_or_default(),
+        );
+        if text.is_empty() {
+            continue;
+        }
+        let world = state.world.lock().expect("мир");
+        world.send_to_char(&char_id, text);
     }
 }
 

@@ -190,6 +190,32 @@ fn apply_param_bonuses(params: &mut DerivedParams, equipped: &[ItemSnapshot]) {
             }
         }
     }
+    apply_maps(params, &flat, &pct);
+}
+
+/// M18/F58d (ADR-012 §6): активные баффы рун применяются к параметрам
+/// той же механикой, что бонусы предметов: `value × стаков` (плоское)
+/// или `pct × стаков` (процент к итогу).
+pub fn apply_buffs(params: &mut DerivedParams, buffs: &[(String, i64, bool, i32)]) {
+    if buffs.is_empty() {
+        return;
+    }
+    let mut flat: BTreeMap<&str, i64> = BTreeMap::new();
+    let mut pct: BTreeMap<&str, i64> = BTreeMap::new();
+    for (param, value, is_pct, stacks) in buffs {
+        let total = value * i64::from((*stacks).max(1));
+        if *is_pct {
+            *pct.entry(param.as_str()).or_insert(0) += total;
+        } else {
+            *flat.entry(param.as_str()).or_insert(0) += total;
+        }
+    }
+    apply_maps(params, &flat, &pct);
+}
+
+/// Ядро применения `flat`/`pct`-маппинга к параметрам (общее для
+/// бонусов предметов и баффов рун).
+fn apply_maps(params: &mut DerivedParams, flat: &BTreeMap<&str, i64>, pct: &BTreeMap<&str, i64>) {
     if flat.is_empty() && pct.is_empty() {
         return;
     }
@@ -384,6 +410,32 @@ mod tests {
             d.dodge >= 0 && d.crit_chance >= 0,
             "нет отрицательных шансов"
         );
+    }
+
+    /// M18/F58d (ADR-012 §6): баффы рун применяются к параметрам той же
+    /// механикой, что бонусы предметов: value×стаков, pct×стаков.
+    #[test]
+    fn buffs_apply_flat_and_percent_by_stacks() {
+        let attrs = attrs10();
+        let base = derive(&attrs, &[], &[], 10);
+        let flat = vec![("accuracy".to_string(), 5i64, false, 2i32)];
+        let mut d = base.clone();
+        apply_buffs(&mut d, &flat);
+        assert_eq!(d.accuracy, base.accuracy + 10, "плоское × стаков");
+        // Проценты — к итогу после плоских.
+        let pct = vec![("armor".to_string(), 10i64, true, 3i32)];
+        let mut d = base.clone();
+        apply_buffs(&mut d, &pct);
+        assert!(
+            d.armor as f64 >= (base.armor as f64) * 1.3 - 1.0,
+            "pct × стаков к итогу: {} vs {}",
+            d.armor,
+            base.armor
+        );
+        // Пустой список — без изменений.
+        let mut d = base.clone();
+        apply_buffs(&mut d, &[]);
+        assert_eq!(d, base, "нет баффов — нет изменений");
     }
 
     /// M18/F47/ADR-010: бонусы надетых предметов — плоские прибавляются
