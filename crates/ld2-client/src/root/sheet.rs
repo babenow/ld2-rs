@@ -2255,23 +2255,30 @@ impl Root {
                 if let Some(rune) = socket["rune"].as_object() {
                     // M17/F30c: самоцвет — без зарядов (заряды у рун).
                     // M18/F58f: знак — контент-поле `glyph`, фолбэк — хеш.
-                    let glyph = rune_glyph::glyph_div_for(
-                        rune["glyph"].as_str(),
-                        rune["name"].as_str().unwrap_or("rune"),
-                    );
+                    // Доступ к Map — только через `.get()`: индексация
+                    // отсутствующего ключа у serde_json::Map паникует
+                    // («no entry found for key» — вылет при открытии
+                    // описания).
+                    let name = rune.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let glyph =
+                        rune_glyph::glyph_div_for(rune.get("glyph").and_then(|v| v.as_str()), name);
                     let label = if is_rune_slot {
-                        if rune["spell"].as_str().is_some_and(|s| s.is_empty()) {
-                            rune["name"].as_str().unwrap_or("").to_string()
+                        if rune
+                            .get("spell")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| s.is_empty())
+                        {
+                            name.to_string()
                         } else {
                             format!(
                                 "{}: {}/{}",
-                                rune["name"].as_str().unwrap_or(""),
-                                rune["charges"].as_i64().unwrap_or(0),
-                                rune["max"].as_i64().unwrap_or(0)
+                                name,
+                                rune.get("charges").and_then(|v| v.as_i64()).unwrap_or(0),
+                                rune.get("max").and_then(|v| v.as_i64()).unwrap_or(0)
                             )
                         }
                     } else {
-                        rune["name"].as_str().unwrap_or("").to_string()
+                        name.to_string()
                     };
                     // M18/F58f: под занятым слотом — подробности, что
                     // даёт вставка (урон/шанс/бафф/эффект/трата; сервер
@@ -2289,7 +2296,11 @@ impl Root {
                             })
                             .child(div().child(label)),
                     );
-                    if let Some(details) = rune["detail"].as_array() {
+                    // `.get`, а не `rune["detail"]`: у serde_json::Map
+                    // индексация отсутствующего ключа паникует (в
+                    // отличие от Value → Null) — вылет при открытии
+                    // описания рун без подписи (M18/F58f).
+                    if let Some(details) = rune.get("detail").and_then(|d| d.as_array()) {
                         for line in details.iter().filter_map(|d| d.as_str()) {
                             cell = cell.child(
                                 div()
