@@ -1376,9 +1376,11 @@ impl Root {
             };
             let color = rarity_color(&item.rarity, pal);
             // Отступ-заполнитель прижимает предмет к правому краю.
+            // M18/F58f: подпись как в рюкзаке (указание заказчика) —
+            // слоты второй строкой под названием (`item_label_stack`).
             row = row
                 .child(div().flex_grow_1())
-                .child(item_label_row(item, color));
+                .child(item_label_stack(item, color));
             // Меню предмета (F29d): Описание и Снять — вместо кнопок.
             let mut menu = Menu::new();
             let detail = serde_json::to_value(item).unwrap_or_default();
