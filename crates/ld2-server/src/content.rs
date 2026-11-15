@@ -93,6 +93,12 @@ pub struct ContentItemDef {
     /// Количество сокетов (посохи, ADR-002) — создаются при вставке.
     #[serde(default)]
     pub sockets: u32,
+    /// M18/F58 (ADR-012, уточнение заказчика): сколько слотов
+    /// принимают руны — **отдельное поле определения** (как
+    /// `sockets`), а не в `stats`. `None` — не указано → дефолт по
+    /// типу: броня 0, оружие/посох — все слоты.
+    #[serde(default)]
+    pub rune_sockets: Option<i32>,
     /// M17/F30g: кулдаун использования/скорость атаки, с
     /// (дефолт 1.0 — «по умолчанию 1 сек»).
     #[serde(default)]
@@ -355,13 +361,14 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         let stats = serde_json::Value::Object(item.stats.clone());
         let requires = serde_json::to_value(&item.requires).unwrap_or(serde_json::Value::Null);
         sqlx::query(
-            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, slot, hands, cooldown_s, bonuses) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
+            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, rune_sockets, slot, hands, cooldown_s, bonuses) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
              ON CONFLICT (id) DO UPDATE SET \
                item_type = EXCLUDED.item_type, name = EXCLUDED.name, rarity = EXCLUDED.rarity, \
                upgrade = EXCLUDED.upgrade, stats = EXCLUDED.stats, requires = EXCLUDED.requires, \
                gold_value = EXCLUDED.gold_value, qty = EXCLUDED.qty, skill = EXCLUDED.skill, \
-               sockets = EXCLUDED.sockets, slot = EXCLUDED.slot, hands = EXCLUDED.hands, \
+               sockets = EXCLUDED.sockets, rune_sockets = EXCLUDED.rune_sockets, \
+               slot = EXCLUDED.slot, hands = EXCLUDED.hands, \
                cooldown_s = EXCLUDED.cooldown_s, bonuses = EXCLUDED.bonuses",
         )
         .bind(&item.id)
@@ -375,6 +382,7 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         .bind(item.qty.unwrap_or(1))
         .bind(&item.skill)
         .bind(i64::from(item.sockets))
+        .bind(item.rune_sockets)
         .bind(&item.slot)
         .bind(item.hands.unwrap_or(1))
         .bind(item.cooldown_s.unwrap_or(1.0))
