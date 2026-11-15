@@ -451,6 +451,18 @@ fn plan_combat(
                     new_charges,
                     buff: rune.buff.clone(),
                 });
+                // M18/F58d: эффект на цель (стен/кровотечение/корни) —
+                // состояние мира, применяется сразу в плане.
+                if let Some(effect) = &rune.effect {
+                    world.apply_rune_effect(
+                        &target,
+                        &effect.kind,
+                        effect.value,
+                        effect.duration_s,
+                        &char_id,
+                        now_ms,
+                    );
+                }
                 let Some(new_hp) = world.damage_mob(&target, rune.damage) else {
                     break; // цель исчезла
                 };
@@ -537,6 +549,58 @@ fn plan_combat(
         }
     }
 
+    // ── M18/F58d: кровотечение (DoT рун) — тик раз в секунду ──────────
+    for (mob_id, dps, _next_at, src) in world.bleeding_mobs(now_ms) {
+        let Some((loc, mob_name)) = world.mob_loc_name(&mob_id) else {
+            continue;
+        };
+        world.advance_bleed_tick(&mob_id, now_ms);
+        let Some(hp) = world.damage_mob(&mob_id, dps) else {
+            continue;
+        };
+        // Строка DoT — всем в локации.
+        let dot_hit = CombatHit {
+            source: src.clone().unwrap_or_default(),
+            source_name: src
+                .as_ref()
+                .and_then(|id| world.char_name(id))
+                .unwrap_or_default(),
+            target: mob_id.clone(),
+            target_name: mob_name.clone(),
+            kind: CombatKind::Rune,
+            amount: dps,
+            crit: false,
+            miss: false,
+            text: format!("{mob_name} кровоточит: **{dps}**"),
+            extra: Default::default(),
+        };
+        for addr in world.chars_in_location(&loc) {
+            push_event(&mut plan, &addr, "evt/combat/hit", &dot_hit);
+        }
+        push_event(
+            &mut plan,
+            &src.clone().unwrap_or_default(),
+            "evt/entity/hp",
+            &EntityHp {
+                entity_id: mob_id.clone(),
+                hp: Hp {
+                    cur: hp,
+                    max: world.mob_max_hp(&mob_id),
+                },
+            },
+        );
+        if hp == 0 {
+            // Добил DoT — XP и квесты источнику руны.
+            if let Some(attacker) = src.as_deref() {
+                if let Some(kill) =
+                    mob_kill_effects(world, &mut plan.events, &mob_id, &loc, attacker, skills_cfg)
+                {
+                    plan.xp.push(kill);
+                }
+            }
+        }
+    }
+
     // ── атаки агрессивных мобов (по локациям с персонажами) ────────────
     let aggro_targets: Vec<(String, String)> = world
         .locations_with_players()
@@ -551,6 +615,10 @@ fn plan_combat(
         .collect();
     for (mob_id, loc) in aggro_targets {
         if world.mob_next_attack(&mob_id).unwrap_or(0) > now_ms {
+            continue;
+        }
+        // M18/F58d: стан руной — моб не атакует, пока не истёк.
+        if world.mob_stunned(&mob_id, now_ms) {
             continue;
         }
         world.set_mob_next_attack(&mob_id, now_ms + attack_interval_ms);

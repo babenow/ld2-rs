@@ -394,6 +394,13 @@ pub(super) fn t(key: Key) -> &'static str {
         SpellFireDart => "Струя пламени",
         SpellFrostBolt => "Ледяя стрела",
         SpellStormBolt => "Удар шторма",
+        // M18/F58d: руны воина/лучника (ADR-012 §5).
+        SpellPrecision => "Меткий удар",
+        SpellFury => "Ярость",
+        SpellFortitude => "Стойкость",
+        SpellHemorrhage => "Кровотечение",
+        SpellConcussion => "Оглушение",
+        SpellEntangle => "Опутывание",
         RageLabel => "Адреналин",
         EnergyLabel => "Энергия",
         MenuInscribe => "Инкрустировать",

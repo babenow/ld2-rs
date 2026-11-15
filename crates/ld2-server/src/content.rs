@@ -916,6 +916,57 @@ mod tests {
                 }
             }
 
+            // M18/F58d: бафф авто-приёма — param из известных, срок и
+            // лимит стаков положительные (ADR-012 §6).
+            if let Some(buff) = item.stats.get("buff") {
+                let b = buff.as_object().expect("stats.buff — объект");
+                let param = b.get("param").and_then(|v| v.as_str()).unwrap_or("");
+                assert!(
+                    PARAMS.contains(&param),
+                    "неизвестный param {param:?} в stats.buff у {}",
+                    item.id
+                );
+                assert_ne!(
+                    b.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                    0,
+                    "value ≠ 0 в stats.buff у {}",
+                    item.id
+                );
+                assert!(
+                    b.get("duration_s").and_then(|v| v.as_f64()).unwrap_or(0.0) > 0.0,
+                    "duration_s > 0 в stats.buff у {}",
+                    item.id
+                );
+                assert!(
+                    b.get("max_stacks").and_then(|v| v.as_i64()).unwrap_or(0) >= 1,
+                    "max_stacks ≥ 1 в stats.buff у {}",
+                    item.id
+                );
+            }
+            // M18/F58d: эффект на моба — только известные kind
+            // (стан/кровотечение/корни); bleed требует value (урон/сек).
+            if let Some(effect) = item.stats.get("effect") {
+                let e = effect.as_object().expect("stats.effect — объект");
+                let kind = e.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                assert!(
+                    matches!(kind, "stun" | "root" | "bleed"),
+                    "неизвестный effect.kind {kind:?} у {}",
+                    item.id
+                );
+                assert!(
+                    e.get("duration_s").and_then(|v| v.as_f64()).unwrap_or(0.0) > 0.0,
+                    "duration_s > 0 в stats.effect у {}",
+                    item.id
+                );
+                if kind == "bleed" {
+                    assert!(
+                        e.get("value").and_then(|v| v.as_i64()).unwrap_or(0) >= 1,
+                        "bleed требует value ≥ 1 (урон/сек) у {}",
+                        item.id
+                    );
+                }
+            }
+
             // M18/F58f: знак руны — поле `glyph` (одна латинская буква
             // — глиф шрифта Dwarven Runes); без него клиент фолбэчит
             // хешем имени, но контент рун обязан задавать знак явно.

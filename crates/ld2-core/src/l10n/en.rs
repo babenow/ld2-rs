@@ -394,6 +394,13 @@ pub(super) fn t(key: Key) -> &'static str {
         SpellFireDart => "Flame Dart",
         SpellFrostBolt => "Frostbolt",
         SpellStormBolt => "Stormbolt",
+        // M18/F58d: warrior/archer runes (ADR-012 §5).
+        SpellPrecision => "Precise Strike",
+        SpellFury => "Fury",
+        SpellFortitude => "Fortitude",
+        SpellHemorrhage => "Hemorrhage",
+        SpellConcussion => "Concussion",
+        SpellEntangle => "Entangle",
         RageLabel => "Adrenaline",
         EnergyLabel => "Energy",
         MenuInscribe => "Inscribe",

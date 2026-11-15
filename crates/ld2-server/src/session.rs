@@ -7714,6 +7714,19 @@ pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_i
                 duration_s: b.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(10),
                 max_stacks: b.get("max_stacks").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
             });
+        // M18/F58d: эффект на моба (stats.effect): stun/root/bleed.
+        let effect = rune_def
+            .stats
+            .get("effect")
+            .and_then(|e| e.as_object())
+            .and_then(|e| {
+                let kind = e.get("kind")?.as_str()?.to_string();
+                Some(crate::world::RuneEffect {
+                    kind,
+                    value: e.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                    duration_s: e.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(5),
+                })
+            });
         runes.push(SocketedRune {
             staff_uid: main.uid.clone(),
             socket_index: slot.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
@@ -7732,6 +7745,7 @@ pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_i
             cost: crate::systems::rune_charge_cost(&rune_def.stats),
             charges: rune.get("charges").and_then(|v| v.as_i64()).unwrap_or(0),
             buff,
+            effect,
         });
     }
     let mut world = state.world.lock().expect("мир");

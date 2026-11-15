@@ -315,11 +315,23 @@ impl Root {
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(pal.selection)))
                 .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
-                .child(
-                    div()
+                .child({
+                    // M18/F58f: у рун перед названием — их глиф
+                    // (шрифт Dwarven Runes); прочие предметы как раньше.
+                    let label = div()
                         .text_color(rgb(rarity_color(&item.rarity, pal)))
-                        .child(format!("{} {}", item.name, badges(item))),
-                );
+                        .child(format!("{} {}", item.name, badges(item)));
+                    match crate::rune_glyph::item_glyph(item) {
+                        Some(glyph) => div()
+                            .flex()
+                            .flex_row()
+                            .gap_1()
+                            .items_center()
+                            .child(glyph)
+                            .child(label),
+                        None => label,
+                    }
+                });
             // ЛКМ — меню (после перетаскивания gpui подавляет клик; на
             // всякий случай — guard по активному drag), ПКМ — меню.
             let tile = tile
