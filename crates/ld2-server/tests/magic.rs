@@ -1145,3 +1145,194 @@ async fn buff_in_snapshot_affects_derived_and_expires() {
         "derived всё ещё с активным баффом"
     );
 }
+
+/// M18/F58d (ADR-012 §5): авто-приём руны при ударе — шанс из
+/// контента, урон по мобу, расход зарядов (БД+патч) и наложение баффа
+/// (`stats.buff` → char_buffs → evt/char/buffs).
+#[tokio::test]
+async fn rune_auto_proc_fires_damage_spends_and_buffs() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+
+    // Временный контент: руна огня получает chance=1.0 и бафф точности.
+    let src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let tmp = std::env::temp_dir().join(format!("ld2-rune-proc-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).expect("temp content");
+    for entry in std::fs::read_dir(&src).expect("content dir") {
+        let entry = entry.expect("entry");
+        std::fs::copy(entry.path(), tmp.join(entry.file_name())).expect("copy");
+    }
+    let items_path = tmp.join("items.json");
+    let mut items: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&items_path).expect("items.json"))
+            .expect("parse items");
+    let rune = items["items"]
+        .as_array_mut()
+        .expect("items")
+        .iter_mut()
+        .find(|i| i["id"] == "rune_fire")
+        .expect("rune_fire");
+    rune["stats"]["chance"] = serde_json::json!(1.0); // гарантированное срабатывание
+    rune["stats"]["buff"] = serde_json::json!({
+        "param": "accuracy", "value": 5, "duration_s": 60, "max_stacks": 3
+    });
+    std::fs::write(
+        &items_path,
+        serde_json::to_string_pretty(&items).expect("ser"),
+    )
+    .expect("write items");
+
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.world.content_dir = tmp.clone();
+            cfg.gameplay.magic.mana.rune_cost = 1;
+        })
+        .await
+    );
+    let (mut c, _login, char_id) = in_world_profile(&ws, "mage").await;
+
+    // Оружие с руной: вставляем и надеваем (кэш рун собирается при
+    // экипировке — refresh_char_hits_as → refresh_char_runes).
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let rune_uid = give(&mut c, "rune_fire").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune_uid }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "инкрустация");
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": staff_uid, "slot": "main_hand" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "экипировка: {ack}");
+
+    // К волку — в лес (m_3 в l_forest).
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "переход: {ack}");
+
+    // Атака: тик-луп бьёт — с шансом 1.0 первый удар гарантированно
+    // срабатывает авто-приём.
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "атака: {ack}");
+
+    // Один проход: события первого удара идут подряд — рунный hit
+    // (из плана), затем из tick_once: патч сокетов и бафф-замена
+    // (порядок в пределах тика не гарантирован → собираем всё вместе).
+    let mut rune_hit: Option<serde_json::Value> = None;
+    let mut buffs: Option<serde_json::Value> = None;
+    let mut patch: Option<serde_json::Value> = None;
+    let mut patch2: Option<serde_json::Value> = None;
+    let mut after: Option<serde_json::Value> = None; // 2-й удар ИЛИ конец боя
+    while rune_hit.is_none()
+        || buffs.is_none()
+        || patch.is_none()
+        || (patch2.is_none() && after.is_none())
+    {
+        let v = c.recv_json().await;
+        match v["type"].as_str() {
+            Some("evt/combat/hit") if rune_hit.is_none() && v["payload"]["kind"] == "rune" => {
+                rune_hit = Some(v)
+            }
+            Some("evt/char/buffs")
+                if buffs.is_none()
+                    && !v["payload"]["buffs"]
+                        .as_array()
+                        .is_none_or(|a| a.is_empty()) =>
+            {
+                buffs = Some(v)
+            }
+            Some("evt/item/state")
+                if patch.is_none()
+                    && v["payload"]["uid"] == staff_uid.as_str()
+                    && v["payload"]["patch"]["sockets"].is_array() =>
+            {
+                patch = Some(v)
+            }
+            // Второй удар (заряды 5) — либо конец боя, если волк пал
+            // от базы+урона руны за первый удар.
+            Some("evt/item/state")
+                if patch.is_some()
+                    && patch2.is_none()
+                    && v["payload"]["uid"] == staff_uid.as_str()
+                    && v["payload"]["patch"]["sockets"]
+                        .as_array()
+                        .is_some_and(|ss| ss[0]["rune"]["charges"].as_i64() == Some(5)) =>
+            {
+                patch2 = Some(v.clone())
+            }
+            Some("evt/combat/end") | Some("evt/corpse/created") if after.is_none() => {
+                after = Some(v.clone())
+            }
+            _ => {}
+        }
+    }
+    let hit = rune_hit.expect("рунный hit");
+    assert_eq!(
+        hit["payload"]["amount"].as_i64(),
+        Some(12),
+        "урон руны огня из контента: {hit}"
+    );
+
+    // Бафф наложен → полная замена списка.
+    let buffs = buffs.expect("evt/char/buffs");
+    let list = buffs["payload"]["buffs"].as_array().expect("buffs");
+    assert_eq!(list.len(), 1, "бафф наложен: {buffs}");
+    assert_eq!(list[0]["kind"], "rune_fire", "ключ — def_id руны");
+    assert_eq!(list[0]["title"], "Руна огня");
+    assert_eq!(list[0]["stacks"], 1);
+    assert!(
+        list[0]["expires_at"].as_i64().unwrap_or(0) > ld2_server::time::now_epoch(),
+        "срок в будущем: {buffs}"
+    );
+
+    // Патч сокетов: заряды израсходованы (7 → 6).
+    let patch = patch.expect("патч сокетов");
+    assert_eq!(
+        patch["payload"]["patch"]["sockets"][0]["rune"]["charges"].as_i64(),
+        Some(6),
+        "заряды потрачены авто-приёмом: {patch}"
+    );
+
+    // Кэш рун пересобран и совпадает с БД: второй удар снова сработал
+    // (заряды 5), либо волк (18 hp) пал от базы+12 за первый удар —
+    // тогда фиксируем конец боя (в том же тике, до патчей).
+    if let Some(p2) = patch2 {
+        assert_eq!(
+            p2["payload"]["patch"]["sockets"][0]["rune"]["charges"].as_i64(),
+            Some(5),
+            "второй удар потратил заряд из синхронизированного кэша"
+        );
+    } else {
+        let end = after.expect("2-й удар либо конец боя");
+        assert!(
+            matches!(
+                end["type"].as_str(),
+                Some("evt/combat/end") | Some("evt/corpse/created")
+            ),
+            "конец боя: {end}"
+        );
+        eprintln!("моб пал за один удар — второй удар не состоялся");
+    }
+
+    // Стоп-бой: моб умер или выходим — не важно; главное — механика прошла.
+    let _ = c.send("cmd/combat.stop", json!({})).await;
+    drop(c);
+
+    // Каталог контента — за пределами репозитория.
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = char_id;
+}

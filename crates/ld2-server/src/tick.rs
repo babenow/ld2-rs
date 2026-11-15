@@ -105,6 +105,9 @@ async fn tick_once(state: &SharedState) {
             world.send_to_char(&addr, text);
         }
     }
+    // M18/F58d: авто-приёмы рун — расход зарядов в БД (CAS) +
+    // наложение баффов + патчи клиенту.
+    apply_rune_work(state, &plan.rune_work).await;
     // 3) XP убийств — в БД и событием (D27); квесты-«убийства» (ФР-12).
     for work in &plan.xp {
         if let Some(text) = grant_kill_xp(state, work).await {
@@ -121,6 +124,138 @@ async fn tick_once(state: &SharedState) {
     }
     plan.events.clear();
     let _ = &mut plan;
+}
+
+/// M18/F58d (ADR-012 §5): применить сработавшие авто-приёмы —
+/// расход зарядов в БД CAS-записью (параллельный каст/тикер выигрывают
+/// → кэш пересобирается), наложение баффов (`db::buffs::apply` со
+/// стаками) и рассылка: патч сокетов владельцу + полная замена
+/// `evt/char/buffs` после наложений.
+async fn apply_rune_work(state: &SharedState, work: &[RuneWork]) {
+    if work.is_empty() {
+        return;
+    }
+    let now = crate::time::now_epoch();
+    // Персонажи, чей список баффов изменился → одна полная замена на каждого.
+    let mut buffs_dirty: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for w in work {
+        // ── расход зарядов в БД ────────────────────────────────────────
+        let row = match crate::db::items::find(&state.pool, &w.staff_uid, &w.char_id).await {
+            Ok(Some(row)) => row,
+            Ok(None) => continue,
+            Err(e) => {
+                warn!("авто-приём (поиск {}): {e}", w.staff_uid);
+                continue;
+            }
+        };
+        let mut sockets: Vec<serde_json::Value> =
+            serde_json::from_value(row.sockets.clone()).unwrap_or_default();
+        let Some(slot) = sockets.get_mut(w.socket_index as usize) else {
+            continue;
+        };
+        if let Some(r) = slot.get_mut("rune") {
+            r["charges"] = json!(w.new_charges);
+        }
+        let new_sockets = serde_json::Value::Array(sockets);
+        match crate::db::items::set_sockets_if_unchanged(
+            &state.pool,
+            &w.staff_uid,
+            &row.sockets,
+            new_sockets.clone(),
+        )
+        .await
+        {
+            Ok(true) => {
+                // Патч сокетов владельцу (wire-виде — accepts из def).
+                let mut updated = row.clone();
+                updated.sockets = new_sockets;
+                if let Ok(Some(def)) = crate::db::items::def(&state.pool, &updated.def_id).await {
+                    let snapshot = crate::session::item_snapshot(&updated, &def);
+                    if let Some(sockets_wire) = snapshot.sockets {
+                        let mut patch = serde_json::Map::new();
+                        patch.insert(
+                            "sockets".into(),
+                            serde_json::to_value(&sockets_wire).unwrap_or_default(),
+                        );
+                        let text = crate::session::event_text(
+                            "evt/item/state",
+                            None,
+                            serde_json::to_value(ld2_protocol::evt::ItemState {
+                                uid: w.staff_uid.clone(),
+                                patch,
+                            })
+                            .unwrap_or_default(),
+                        );
+                        if !text.is_empty() {
+                            let world = state.world.lock().expect("мир");
+                            world.send_to_char(&w.char_id, text);
+                        }
+                    }
+                }
+            }
+            Ok(false) => {
+                // Гонка с кастом/тикером: кэш мог разойтись — пересборка.
+                crate::session::refresh_char_runes(state, &w.char_id).await;
+            }
+            Err(e) => warn!("авто-приём (запись {}): {e}", w.staff_uid),
+        }
+
+        // ── наложение баффа ────────────────────────────────────────────
+        if let Some(buff) = &w.buff {
+            let res = crate::db::buffs::apply(
+                &state.pool,
+                &w.char_id,
+                &buff.kind,
+                &buff.title,
+                &buff.param,
+                buff.value,
+                buff.pct,
+                buff.duration_s,
+                buff.max_stacks,
+                now,
+            )
+            .await;
+            match res {
+                Ok(()) => {
+                    buffs_dirty.insert(w.char_id.clone());
+                }
+                Err(e) => warn!("авто-приём (бафф {}): {e}", buff.kind),
+            }
+        }
+    }
+
+    // Полная замена списка баффов — по одному на персонажа.
+    for char_id in buffs_dirty {
+        let rows = match crate::db::buffs::active(&state.pool, &char_id, now).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("баффы (список {char_id}): {e}");
+                continue;
+            }
+        };
+        let buffs: Vec<ld2_protocol::types::BuffState> = rows
+            .iter()
+            .map(
+                |(kind, title, stacks, expires_at, ..)| ld2_protocol::types::BuffState {
+                    kind: kind.clone(),
+                    title: title.clone(),
+                    stacks: (*stacks).max(0) as u32,
+                    expires_at: *expires_at,
+                    extra: Default::default(),
+                },
+            )
+            .collect();
+        let text = crate::session::event_text(
+            "evt/char/buffs",
+            None,
+            serde_json::to_value(ld2_protocol::evt::CharBuffs { buffs }).unwrap_or_default(),
+        );
+        if text.is_empty() {
+            continue;
+        }
+        let world = state.world.lock().expect("мир");
+        world.send_to_char(&char_id, text);
+    }
 }
 
 /// Рассылка адресатам (§2.4: порядок внутри канала сохраняется).
@@ -151,6 +286,18 @@ pub(crate) struct KillXp {
     pub(crate) target: Option<String>,
 }
 
+/// M18/F58d: отложенная работа авто-приёма руны — применяется в
+/// `tick_once` (у плана нет доступа к БД): расход зарядов + бафф.
+struct RuneWork {
+    char_id: String,
+    /// uid оружия-носителя (запись charges).
+    staff_uid: String,
+    socket_index: u32,
+    new_charges: i64,
+    /// Наложить бафф персонажа (`stats.buff` руны).
+    buff: Option<crate::world::RuneBuff>,
+}
+
 #[derive(Default)]
 struct Plan {
     /// (адресат — char_id, JSON конверта).
@@ -160,6 +307,8 @@ struct Plan {
     /// M17/F30e: нанесённый персонажами урон → прирост ярости (БД
     /// применяется в `tick_once`, у плана нет доступа к БД).
     char_hits: Vec<(String, i64)>,
+    /// M18/F58d: сработавшие авто-приёмы рун (БД — в `tick_once`).
+    rune_work: Vec<RuneWork>,
 }
 
 fn plan_combat(
@@ -271,7 +420,114 @@ fn plan_combat(
             },
         );
 
-        if hp == 0 {
+        // M18/F58d (ADR-012 §5): авто-приёмы рун — шанс при ударе
+        // (кэш рун экипированного оружия); урон + отложенная работа
+        // (расход зарядов, бафф) в `Plan::rune_work` — БД в `tick_once`.
+        let mut mob_hp = hp;
+        let mut killed_by_rune = false;
+        if mob_hp > 0 {
+            let procs = world.char_runes(&char_id).to_vec();
+            for rune in procs {
+                if rune.charges < rune.cost {
+                    continue; // нет зарядов → не срабатывает (ADR-012 §5)
+                }
+                let mut buf = [0u8; 8];
+                // [0,1): u64::MAX + 1.0 как знаменатель (иначе 1.0 ∈ диапазону).
+                let roll = if getrandom::fill(&mut buf).is_ok() {
+                    (u64::from_le_bytes(buf) as f64) / (u64::MAX as f64 + 1.0)
+                } else {
+                    1.0 // нет CSPRNG → не срабатывает
+                };
+                if !crate::systems::rune_proc_roll(rune.chance, roll) {
+                    continue;
+                }
+                // Сработало: заряды — сразу в кэш, БД/бафф — в tick_once.
+                let new_charges = rune.charges - rune.cost;
+                world.spend_char_rune(&char_id, rune.socket_index, new_charges);
+                plan.rune_work.push(RuneWork {
+                    char_id: char_id.clone(),
+                    staff_uid: rune.staff_uid.clone(),
+                    socket_index: rune.socket_index,
+                    new_charges,
+                    buff: rune.buff.clone(),
+                });
+                let Some(new_hp) = world.damage_mob(&target, rune.damage) else {
+                    break; // цель исчезла
+                };
+                mob_hp = new_hp;
+                // Строка рунного удара — как при касте (§8).
+                let rune_hit = |text: String| CombatHit {
+                    source: char_id.clone(),
+                    source_name: source_name.clone(),
+                    target: target.clone(),
+                    target_name: mob_name.clone(),
+                    kind: CombatKind::Rune,
+                    amount: rune.damage,
+                    crit: false,
+                    miss: false,
+                    text,
+                    extra: Default::default(),
+                };
+                push_event(
+                    &mut plan,
+                    &char_id,
+                    "evt/combat/hit",
+                    &rune_hit(crate::combat_log::spell_hit_text(
+                        &rune.spell,
+                        &source_name,
+                        &mob_name,
+                        rune.damage,
+                        true,
+                    )),
+                );
+                for addr in world.chars_in_location(&loc) {
+                    if addr == char_id {
+                        continue;
+                    }
+                    push_event(
+                        &mut plan,
+                        &addr,
+                        "evt/combat/hit",
+                        &rune_hit(crate::combat_log::spell_hit_text(
+                            &rune.spell,
+                            &source_name,
+                            &mob_name,
+                            rune.damage,
+                            false,
+                        )),
+                    );
+                }
+                push_event(
+                    &mut plan,
+                    &char_id,
+                    "evt/entity/hp",
+                    &EntityHp {
+                        entity_id: target.clone(),
+                        hp: Hp {
+                            cur: mob_hp,
+                            max: mob_max,
+                        },
+                    },
+                );
+                if mob_hp == 0 {
+                    // Руна добила — общий путь смерти (M12.5b).
+                    killed_by_rune = true;
+                    if let Some(kill) = mob_kill_effects(
+                        world,
+                        &mut plan.events,
+                        &target,
+                        &loc,
+                        &char_id,
+                        skills_cfg,
+                    ) {
+                        plan.xp.push(kill);
+                    }
+                    break;
+                }
+            }
+        }
+
+        if mob_hp == 0 && !killed_by_rune {
             // Общий путь смерти моба (атака и заклинания, M12.5b).
             if let Some(kill) =
                 mob_kill_effects(world, &mut plan.events, &target, &loc, &char_id, skills_cfg)
