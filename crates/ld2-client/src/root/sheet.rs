@@ -1338,6 +1338,9 @@ impl Root {
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(t(lang, Key::EquipLabel)),
         );
+        // M18 (фича): строки собираем — ниже раскладываем в две
+        // колонки одинаковой высоты.
+        let mut rows: Vec<AnyElement> = Vec::new();
         for slot in &equip_slots {
             let uid = snap.char.equip.get(slot).cloned().flatten();
             let item = uid
@@ -1354,6 +1357,10 @@ impl Root {
                 .py_1()
                 .rounded_md()
                 .bg(rgb(pal.panel))
+                // M18 (фича): каждый слот визуально заметен — рамка
+                // в цвете границ панели.
+                .border_1()
+                .border_color(rgb(pal.border))
                 .cursor_pointer()
                 .child(
                     div()
@@ -1384,7 +1391,7 @@ impl Root {
                             t(lang, Key::EmptySlot)
                         }),
                 );
-                col = col.child(row);
+                rows.push(row.into_any_element());
                 continue;
             };
             let color = rarity_color(&item.rarity, pal);
@@ -1461,8 +1468,31 @@ impl Root {
                         }),
                     ),
                 );
-            col = col.child(row);
+            rows.push(row.into_any_element());
         }
+
+        // M18 (фича): две колонки одинаковой высоты — ряд растягивает
+        // обе колонки до самой длинной (flex stretch), ширины — равные
+        // (flex_grow); слоты идут по порядку: левая половина, правая.
+        let half = rows.len().div_ceil(2);
+        let mut left = div().flex().flex_col().gap_1().min_w_0().flex_grow_1();
+        let mut right = div().flex().flex_col().gap_1().min_w_0().flex_grow_1();
+        for (i, row) in rows.into_iter().enumerate() {
+            if i < half {
+                left = left.child(row);
+            } else {
+                right = right.child(row);
+            }
+        }
+        col = col.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_stretch()
+                .child(left)
+                .child(right),
+        );
 
         col
     }
