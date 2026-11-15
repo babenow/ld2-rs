@@ -203,16 +203,7 @@ impl Root {
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
-        if let Some(staff_uid) = self.store.socketing.clone() {
-            let title = t(self.lang, Key::SocketingTitle).to_string();
-            let body = self.socket_view(cx, pal, staff_uid).into_any_element();
-            let close = self.dismiss(cx, |r| r.store.close_socketing());
-            return Some(
-                Dialog::new("ld2-socket", title, close)
-                    .child(body)
-                    .into_any_element(),
-            );
-        }
+        // M18: окно сокетов — popup (`socket_window`), не модалка.
         // M17/F30a: выбор оружия под инкрустацию руны (пункт меню руны).
         if let Some(rune_uid) = self.store.inscribe.clone() {
             let title = t(self.lang, Key::InscribePick).to_string();
@@ -695,6 +686,11 @@ impl Root {
                         if kind == PopupKind::Item {
                             tracing::debug!("закрытие описания предмета: крестик");
                             root.store.item_detail = None;
+                        }
+                        if kind == PopupKind::Socketing {
+                            tracing::debug!("закрытие окна сокетов: крестик");
+                            root.store.close_socketing();
+                            root.socket_slot = None;
                         }
                         cx.notify();
                     })),
@@ -1542,7 +1538,13 @@ impl Root {
                 cx,
                 t(lang, Key::BtnSocketing),
                 move |this, _cx| {
+                    // M18: окно сокетов — popup-диалог (аналогично
+                    // описанию/заточке); соседние попапы закрываем.
+                    this.store.item_detail = None;
+                    this.store.close_upgrade();
+                    this.upgrade_progress = None;
                     this.store.open_socketing(uid.clone());
+                    this.open_popup(PopupKind::Socketing);
                 },
             ));
         }
@@ -2717,6 +2719,36 @@ impl Root {
     }
 
     /// Инкрустация посоха (ФР-09).
+    /// M18: окно сокетов (инкрустация через меню оружия) — popup-диалог
+    /// с шапкой и крестиком (раньше — модалка модал-диспетчера).
+    pub(crate) fn socket_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let staff_uid = self.store.socketing.clone()?;
+        let title = t(self.lang, Key::SocketingTitle).to_string();
+        // Обёртка-флекс-колонка под ScrollArea — приём item_window (M18/F57).
+        let body = div().flex().flex_col().flex_grow_1().min_h_0().child(
+            ScrollArea::new("ld2-socketing-scroll")
+                .vertical()
+                .flex_grow_1()
+                .min_h_0()
+                .child(self.socket_view(cx, pal, staff_uid)),
+        );
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Socketing,
+            title,
+            None,
+            body,
+            None,
+        ))
+    }
+
     pub(crate) fn socket_view(
         &mut self,
         cx: &mut Context<'_, Self>,
@@ -2784,6 +2816,8 @@ impl Root {
                         .child(socket.index.to_string()),
                 );
             }
+            // M18: строки-список под выбранным слотом (вставки).
+            let mut extra: Vec<Div> = Vec::new();
             match &socket.rune {
                 Some(rune) => {
                     let index = socket.index;
@@ -2822,32 +2856,78 @@ impl Root {
                             None => inscribe_target_allowed(&i.item_type, staff.item_type.as_str()),
                         })
                         .collect();
+                    let index = socket.index;
                     if slot_inserts.is_empty() {
                         row = row.child(
                             div()
                                 .text_color(rgb(pal.muted))
                                 .child(t(lang, Key::NoRunes)),
                         );
-                    }
-                    for rune in &slot_inserts {
-                        let index = socket.index;
-                        let suid = staff.uid.clone();
-                        let ruid = rune.uid.clone();
-                        let label = format!("{}: {}", t(lang, Key::InsertRune), rune.name);
-                        row =
-                            row.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
-                                let cmd = SocketInsert {
-                                    staff_uid: suid.clone(),
-                                    socket_index: index,
-                                    rune_uid: ruid.clone(),
-                                };
-                                this.send_cmd(&cmd, Act::Socket);
-                                let _ = cx;
-                            }));
+                    } else {
+                        // M18 (новая фича): клик по пустому слоту открывает
+                        // список вставок только для ЭТОГО слота (по
+                        // accepts); повторный клик — закрывает.
+                        let selected = self.socket_slot == Some(index);
+                        row = row
+                            .cursor_pointer()
+                            .hover(|st| st.bg(rgb(pal.selection)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.socket_slot = if this.socket_slot == Some(index) {
+                                        None
+                                    } else {
+                                        Some(index)
+                                    };
+                                    cx.notify();
+                                }),
+                            );
+                        if !selected {
+                            row = row.child(div().text_color(rgb(pal.muted)).child("\u{2026}"));
+                        }
+                        // M18: под выбранным слотом — список подходящих
+                        // вставок; нажатие → процесс инкрустации (вставка
+                        // в этот слот, список закрывается).
+                        if selected {
+                            let mut line = div().flex().flex_row().gap_1().items_center();
+                            for rune in &slot_inserts {
+                                let suid = staff.uid.clone();
+                                let ruid = rune.uid.clone();
+                                let label = format!("{}: {}", t(lang, Key::InsertRune), rune.name);
+                                line = line.child(act_btn(
+                                    cx,
+                                    label,
+                                    pal.accent,
+                                    pal.accent_text,
+                                    move |this, cx| {
+                                        let cmd = SocketInsert {
+                                            staff_uid: suid.clone(),
+                                            socket_index: index,
+                                            rune_uid: ruid.clone(),
+                                        };
+                                        this.send_cmd(&cmd, Act::Socket);
+                                        this.socket_slot = None;
+                                        let _ = cx;
+                                    },
+                                ));
+                            }
+                            extra.push(div().flex().flex_row().gap_1().items_center().child(line));
+                        }
                     }
                 }
             }
             col = col.child(row);
+            for line in extra {
+                col = col.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_1()
+                        .items_center()
+                        .pl(px(24.0))
+                        .child(line),
+                );
+            }
         }
 
         col = col.child(act_btn(

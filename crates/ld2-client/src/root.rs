@@ -77,6 +77,8 @@ enum PopupKind {
     Item,
     /// M18/F53: окно заточки — попап (карточка с шапкой, без затемнения).
     Upgrade,
+    /// M18: окно сокетов (инкрустация через меню оружия) — popup.
+    Socketing,
 }
 
 impl PopupKind {
@@ -89,6 +91,7 @@ impl PopupKind {
             PopupKind::Npc => "ld2-npc",
             PopupKind::Item => "ld2-item",
             PopupKind::Upgrade => "ld2-upgrade",
+            PopupKind::Socketing => "ld2-socket",
         }
     }
 }
@@ -111,6 +114,8 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
         PopupKind::Item => {}
         // M18/F53: окно заточки — попап.
         PopupKind::Upgrade => {}
+        // M18: окно сокетов контекстных меню не использует.
+        PopupKind::Socketing => {}
     }
 }
 
@@ -283,6 +288,10 @@ pub struct Root {
     /// `store.npc_dialog`, см. `npc_window`).
     npc_popup: PopupState,
     item_popup: PopupState,
+    /// M18: окно сокетов (инкрустация через меню оружия) — popup.
+    socket_popup: PopupState,
+    /// M18: выбранный в окне сокетов слот (раскрывает список вставок).
+    socket_slot: Option<u32>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
     upgrade_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
@@ -515,6 +524,12 @@ impl Root {
                 // «резиновой» ширины (320..480).
                 ..PopupState::new((400.0, 420.0))
             },
+            // M18: окно сокетов — карточка по центру (как заточка).
+            socket_popup: PopupState {
+                delta: (0.0, -40.0),
+                ..PopupState::new((440.0, 420.0))
+            },
+            socket_slot: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
             upgrade_popup: PopupState {
@@ -1107,6 +1122,15 @@ impl Root {
                 cx.notify();
                 return;
             }
+            // M18: окно сокетов — верхний слой группы попапов.
+            if self.store.socketing.is_some() {
+                tracing::debug!("закрытие окна сокетов: Esc");
+                self.store.close_socketing();
+                self.socket_slot = None;
+                self.socket_popup.open = false;
+                cx.notify();
+                return;
+            }
             // M18/F53: описание предмета — поверх окна заточки.
             if self.store.item_detail.is_some() {
                 tracing::debug!("закрытие описания предмета: Esc");
@@ -1308,6 +1332,7 @@ impl Root {
             PopupKind::Npc => &mut self.npc_popup,
             PopupKind::Item => &mut self.item_popup,
             PopupKind::Upgrade => &mut self.upgrade_popup,
+            PopupKind::Socketing => &mut self.socket_popup,
         }
     }
 
@@ -1320,6 +1345,7 @@ impl Root {
             PopupKind::Npc => &self.npc_popup,
             PopupKind::Item => &self.item_popup,
             PopupKind::Upgrade => &self.upgrade_popup,
+            PopupKind::Socketing => &self.socket_popup,
         }
     }
 
@@ -1342,6 +1368,7 @@ impl Root {
             PopupKind::Npc => (640.0, 560.0),
             PopupKind::Item => ((vw * 0.28).clamp(320.0, 480.0), 420.0),
             PopupKind::Upgrade => (440.0, 360.0),
+            PopupKind::Socketing => (440.0, 420.0),
         }
     }
 
@@ -1363,6 +1390,7 @@ impl Root {
             PopupKind::Npc => (60.0, -40.0),
             PopupKind::Item => (80.0, -20.0),
             PopupKind::Upgrade => (0.0, -40.0),
+            PopupKind::Socketing => (0.0, -40.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1383,6 +1411,9 @@ impl Root {
             PopupKind::Item => {}
             // M18/F53: окно заточки открывает контекстное меню.
             PopupKind::Upgrade => {}
+            // M18: окно сокетов открывает контекстное меню; при каждом
+            // открытии — чистый выбор слота.
+            PopupKind::Socketing => self.socket_slot = None,
         }
     }
 
@@ -1485,9 +1516,14 @@ impl Root {
                                     scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
                                 root.popup_scrim_down = false;
                                 if close {
-                                    // Верхнее окно: заточка → описание →
-                                    // диалог → квесты → рюкзак → персонаж.
-                                    if root.store.sharpen_stone.is_some()
+                                    // Верхнее окно: сокеты → заточка →
+                                    // описание → диалог → квесты → рюкзак →
+                                    // персонаж.
+                                    if root.store.socketing.is_some() {
+                                        root.store.close_socketing();
+                                        root.socket_slot = None;
+                                        root.socket_popup.open = false;
+                                    } else if root.store.sharpen_stone.is_some()
                                         || root.store.upgrade.is_some()
                                     {
                                         root.store.close_upgrade();
@@ -3335,9 +3371,7 @@ impl Root {
             ld2_core::store::Dialog::PartyInvite
             | ld2_core::store::Dialog::GuildInvite
             | ld2_core::store::Dialog::Trade => self.social_dialog(cx, pal),
-            ld2_core::store::Dialog::Socket | ld2_core::store::Dialog::Inscribe => {
-                self.sheet_dialog(cx, pal)
-            }
+            ld2_core::store::Dialog::Inscribe => self.sheet_dialog(cx, pal),
             ld2_core::store::Dialog::Create | ld2_core::store::Dialog::Delete => {
                 self.chars_dialog(cx, pal)
             }
@@ -3432,6 +3466,11 @@ impl Render for Root {
                 d.child(layer)
             })
             .when_some(self.upgrade_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M18: окно сокетов (инкрустация через меню оружия) —
+            // popup-диалог, как другие окна (карточка с крестиком).
+            .when_some(self.socket_window(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
