@@ -833,13 +833,24 @@ impl Root {
     /// сокет (индекс по свежему снапшоту; сервер валидирует — занятый
     /// слот/нет сокетов → тост через notice).
     fn finish_inscribe(&mut self, rune_uid: String, target_uid: String) {
-        let index = self
-            .store
-            .snapshot
+        // M18/F58f (баг «не работает инкрустация через меню камня»):
+        // слот — первый свободный, **принимающий тип вставки**
+        // (accepts, ADR-012): иначе самоцвет шёл в рунный слот и
+        // сервер отвечал «слот принимает только руны».
+        let snapshot = self.store.snapshot.clone();
+        let insert_type = snapshot
+            .as_ref()
+            .and_then(|s| s.char.inventory.iter().find(|i| i.uid == rune_uid))
+            .map(|i| i.item_type.clone());
+        let index = snapshot
             .as_ref()
             .and_then(|s| s.char.inventory.iter().find(|i| i.uid == target_uid))
             .and_then(|item| item.sockets.as_ref())
-            .and_then(|sockets| sockets.iter().position(|s| s.rune.is_none()));
+            .and_then(|sockets| {
+                insert_type
+                    .as_deref()
+                    .and_then(|t| sheet::first_compatible_socket(sockets, t))
+            });
         let Some(index) = index else {
             self.store.notice = Some(t(self.lang, Key::InscribeNoWeapons).to_string());
             return;
