@@ -774,7 +774,11 @@ impl World {
         mut snapshot: ld2_protocol::types::LocationSnapshot,
     ) -> ld2_protocol::types::LocationSnapshot {
         use ld2_protocol::types::EntityKind::*;
-        snapshot.entities.retain(|e| e.kind != Monster);
+        // Мобы и ресурсы живут в мире (content-строка — только сид):
+        // снимок не должен дублировать их и показывать убитых/скрытых.
+        snapshot
+            .entities
+            .retain(|e| !matches!(e.kind, Monster | Resource));
         let loc_id = snapshot.id.clone();
         let mut mobs: Vec<&LiveMob> = self
             .mobs

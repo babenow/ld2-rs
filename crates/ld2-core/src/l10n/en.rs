@@ -151,6 +151,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ObjectsLabel => "Items",
         GatherBtn => "Gather",
         PickUpBtn => "Pick up",
+        ContainersLabel => "Chests",
         RuneProcChance => "Proc chance",
         EffectBleed => "Bleed",
         EffectStun => "Stun",

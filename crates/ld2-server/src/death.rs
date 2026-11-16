@@ -73,7 +73,12 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
 
     // Локация спавна (снимок §6).
     let location = match crate::db::locations::get(pool, &target).await {
-        Ok(Some(row)) => row.snapshot(),
+        Ok(Some(row)) => {
+            // Оверлей живого мира (M20): ресурсы/трупы/наземные — из
+            // памяти, контент-строка только как сид.
+            let world = state.world.lock().expect("мир");
+            world.build_location(row.snapshot())
+        }
         _ => crate::session::stub_location(&target),
     };
 

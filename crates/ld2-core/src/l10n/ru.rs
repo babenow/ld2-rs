@@ -151,6 +151,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ObjectsLabel => "Предметы",
         GatherBtn => "Собрать",
         PickUpBtn => "Подобрать",
+        ContainersLabel => "Сундуки",
         RuneProcChance => "Шанс приёма",
         EffectBleed => "Кровотечение",
         EffectStun => "Оглушение",

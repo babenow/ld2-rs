@@ -195,6 +195,7 @@ pub enum Key {
     ObjectsLabel,
     GatherBtn,
     PickUpBtn,
+    ContainersLabel,
     // M18/F58f: описание руны — шанс авто-приёма и эффекты вместо JSON
     RuneProcChance,
     EffectBleed,
@@ -758,6 +759,7 @@ mod tests {
         Key::ObjectsLabel,
         Key::GatherBtn,
         Key::PickUpBtn,
+        Key::ContainersLabel,
         Key::RuneProcChance,
         Key::EffectBleed,
         Key::EffectStun,

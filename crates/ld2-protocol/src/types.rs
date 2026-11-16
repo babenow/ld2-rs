@@ -36,6 +36,9 @@ pub enum EntityKind {
     Object,
     /// M20/F20b: объект-ресурс (жила/дерево/трава) — `cmd/resource.gather`.
     Resource,
+    /// M20/F20c: контейнер (сундук) — лут `loot:<entity>:<idx>`
+    /// однократно на персонажа (паритет трупа).
+    Container,
 }
 
 /// Строка в `location.entities` (§6). `was_player` — ключевой маркер трупа

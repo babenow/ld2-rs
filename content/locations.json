@@ -150,6 +150,20 @@
           ]
         },
         {
+          "id": "cont_forest_chest",
+          "kind": "container",
+          "name": "Потрёпанный сундук",
+          "loot": [
+            "gold_coin",
+            "potion_heal",
+            "herb"
+          ],
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          }
+        },
+        {
           "id": "r_forest_herb",
           "kind": "resource",
           "name": "Трава",

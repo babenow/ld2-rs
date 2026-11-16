@@ -849,6 +849,8 @@ impl Root {
             // M20/F20b: объекты-ресурсы и предметы на земле.
             (Key::ResourcesLabel, EntityKind::Resource),
             (Key::ObjectsLabel, EntityKind::Object),
+            // M20/F20c: контейнеры (сундуки) — лут осмотром.
+            (Key::ContainersLabel, EntityKind::Container),
         ] {
             let group: Vec<Entity> = loc
                 .entities
@@ -928,6 +930,10 @@ impl Root {
                             // подобрать (как «Подобрать» в меню).
                             Some(EntityKind::Object) if ground => {
                                 this.on_click(Click::UseItem(id.clone()), cx);
+                            }
+                            // M20/F20c: сундук — осмотр (лут-список).
+                            Some(EntityKind::Container) => {
+                                this.on_click(Click::Examine(id.clone()), cx);
                             }
                             _ => {}
                         }
