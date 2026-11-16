@@ -78,6 +78,11 @@
               "id": "r_errand_bye",
               "text": "Хорошо, позже зайду.",
               "next": null
+            },
+            {
+              "id": "r_back_l_errand",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -95,6 +100,11 @@
               "id": "r_pack_bye",
               "text": "Понятно.",
               "next": null
+            },
+            {
+              "id": "r_back_l_pack",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -109,6 +119,11 @@
               "id": "r_female_bye",
               "text": "Спасибо за совет.",
               "next": null
+            },
+            {
+              "id": "r_back_l_female",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -125,6 +140,11 @@
               "id": "r_vet_bye",
               "text": "Спасибо!",
               "next": null
+            },
+            {
+              "id": "r_back_l_veteran",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         }
@@ -191,6 +211,11 @@
             {
               "id": "r_bye_l_hist_start",
               "text": "Пока."
+            },
+            {
+              "id": "r_back_l_hist_start",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -211,6 +236,11 @@
             {
               "id": "r_bye_l_hist_wars",
               "text": "Пока."
+            },
+            {
+              "id": "r_back_l_hist_wars",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -221,6 +251,11 @@
             {
               "id": "r_hist_wall_end",
               "text": "Ясно. Спасибо за рассказ."
+            },
+            {
+              "id": "r_back_l_hist_wall",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -231,6 +266,11 @@
             {
               "id": "r_hist_mage_end",
               "text": "Интересно."
+            },
+            {
+              "id": "r_back_l_hist_mage",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -241,6 +281,11 @@
             {
               "id": "r_hist_name_end",
               "text": "Смешно."
+            },
+            {
+              "id": "r_back_l_hist_name",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -261,6 +306,11 @@
             {
               "id": "r_bye_l_rats",
               "text": "Пока."
+            },
+            {
+              "id": "r_back_l_rats",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -271,6 +321,11 @@
             {
               "id": "r_rats_giant_end",
               "text": "Я загляну."
+            },
+            {
+              "id": "r_back_l_rats_giant",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -281,6 +336,11 @@
             {
               "id": "r_rats_how_end",
               "text": "Понятно."
+            },
+            {
+              "id": "r_back_l_rats_how",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -301,6 +361,11 @@
             {
               "id": "r_bye_l_crafts",
               "text": "Пока."
+            },
+            {
+              "id": "r_back_l_crafts",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -311,6 +376,11 @@
             {
               "id": "r_crafts_forge_end",
               "text": "Смешно сказано."
+            },
+            {
+              "id": "r_back_l_crafts_forge",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -321,6 +391,11 @@
             {
               "id": "r_crafts_alchemy_end",
               "text": "Спасибо."
+            },
+            {
+              "id": "r_back_l_crafts_alchemy",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -331,6 +406,11 @@
             {
               "id": "r_city_end",
               "text": "Понятно."
+            },
+            {
+              "id": "r_back_l_city",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ]
         },
@@ -341,6 +421,11 @@
             {
               "id": "r_rumors_end",
               "text": "Учту."
+            },
+            {
+              "id": "r_back_l_rumors",
+              "text": "К началу разговора.",
+              "next": "l_hello"
             }
           ],
           "every_s": 600
