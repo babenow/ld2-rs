@@ -1388,28 +1388,18 @@ impl Root {
                     .child(slot_label(lang, slot)),
             );
             let Some(item) = item else {
-                // M17/F30b: левая рука закрыта, пока в правой двуручник.
-                let twohand = snap
-                    .char
-                    .equip
-                    .get("main_hand")
-                    .cloned()
-                    .flatten()
-                    .and_then(|u| snap.char.inventory.iter().find(|i| i.uid == u))
-                    .is_some_and(|i| i.hands.unwrap_or(1) >= 2);
-                let blocked = slot == "off_hand" && twohand;
+                // M18 (указание заказчика): пустые слоты — **не
+                // подсвечиваются** и выглядят disabled (приглушены);
+                // «Заблокировано двуручным оружием» больше нет — слот
+                // показывается как обычный пустой (метка слота сверху
+                // повторяет слот оружия).
                 row = row.child(
                     div()
                         .text_size(px(12.0))
-                        .text_color(rgb(if blocked { pal.warn } else { pal.muted }))
-                        .child(if blocked {
-                            t(lang, Key::SlotBlocked)
-                        } else {
-                            t(lang, Key::EmptySlot)
-                        }),
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::EmptySlot)),
                 );
-                // Выделение — только рамка (указание заказчика).
-                row = row.hover(|st| st.border_color(rgb(pal.accent)));
+                row = row.opacity(0.55);
                 if matches!(slot.as_str(), "main_hand" | "off_hand") {
                     hand_rows.push(row.into_any_element());
                 } else {
