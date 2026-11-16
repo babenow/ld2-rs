@@ -208,8 +208,8 @@ pub(super) fn t(key: Key) -> &'static str {
         ProfWoodcutting => "Лесозаготовка",
         ProfSkinning => "Снятие шкур",
         ProfLeatherworking => "Кожевенное дело",
-        ProfFishing => "Рыбалка",
-        ProfMedic => "Лекарь",
+        ProfFishing => "Рыболовство",
+        ProfMedic => "Лечение",
         ProfJeweler => "Ювелирное дело",
         // M8: чат
         ChLabel => "Чат",
