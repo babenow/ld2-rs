@@ -48,6 +48,10 @@ pub enum TransportError {
 #[derive(Debug, Clone)]
 pub struct TransportConfig {
     pub host: String,
+    /// M19 (§15): домен discovery — если задан, адрес берётся из
+    /// well-known-документа (кэш — на время работы транспорта);
+    /// `None` — прямой режим через `host`.
+    pub domain: Option<String>,
     pub refresh_token: Option<String>,
     pub ack_timeout: Duration,
     pub backoff_base: Duration,
@@ -59,11 +63,42 @@ impl TransportConfig {
     pub fn new(host: impl Into<String>) -> Self {
         Self {
             host: host.into(),
+            domain: None,
             refresh_token: None,
             ack_timeout: DEFAULT_ACK_TIMEOUT,
             backoff_base: DEFAULT_BACKOFF_BASE,
             backoff_max: DEFAULT_BACKOFF_MAX,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+        }
+    }
+
+    /// M19 (§15): подключение через discovery-домен (ADR-013).
+    pub fn with_domain(mut self, domain: Option<String>) -> Self {
+        self.domain = domain.filter(|d| !d.trim().is_empty());
+        self
+    }
+}
+
+/// M19 (§15): код провала discovery — локализуется в store
+/// (`Key::Disc*`, §15-ошибки понятны без подключения).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveFailCode {
+    Unreachable,
+    BadDoc,
+    Contract,
+    MinClient,
+    Insecure,
+}
+
+impl From<&crate::discovery::ResolveError> for ResolveFailCode {
+    fn from(e: &crate::discovery::ResolveError) -> Self {
+        use crate::discovery::ResolveError as E;
+        match e {
+            E::Unreachable(_) => Self::Unreachable,
+            E::BadBody(_) | E::BadDomain(_) => Self::BadDoc,
+            E::IncompatibleContract { .. } => Self::Contract,
+            E::MinClient { .. } => Self::MinClient,
+            E::InsecureAddress(_) => Self::Insecure,
         }
     }
 }
@@ -81,6 +116,9 @@ pub enum TransportStatus {
     AuthExpired,
     /// Транспорт остановлен (close/падение потока).
     Stopped,
+    /// M19 (§15): discovery не прошёл — подключения нет (ретраи по
+    /// backoff продолжаются, документ может быть исправлен).
+    ResolveFailed(ResolveFailCode),
 }
 
 /// Причина провала команды без ответа.
@@ -200,4 +238,45 @@ pub(crate) fn now_rfc3339() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResolveFailCode;
+    use crate::discovery::ResolveError;
+
+    /// M19 (§15): каждый отказ резолва маппится в свой код статуса
+    /// (локализуется в store ключами `Disc*`).
+    #[test]
+    fn resolve_errors_map_to_status_codes() {
+        let unreachable = ResolveError::Unreachable("таймаут".into());
+        assert_eq!(
+            ResolveFailCode::from(&unreachable),
+            ResolveFailCode::Unreachable
+        );
+
+        let bad_body = ResolveError::BadBody("нет address".into());
+        assert_eq!(ResolveFailCode::from(&bad_body), ResolveFailCode::BadDoc);
+
+        let bad_domain = ResolveError::BadDomain(" ".into());
+        assert_eq!(ResolveFailCode::from(&bad_domain), ResolveFailCode::BadDoc);
+
+        let contract = ResolveError::IncompatibleContract {
+            server: 2,
+            client: 1,
+        };
+        assert_eq!(ResolveFailCode::from(&contract), ResolveFailCode::Contract);
+
+        let min_client = ResolveError::MinClient {
+            need: "9.0.0".into(),
+            have: "0.17.0".into(),
+        };
+        assert_eq!(
+            ResolveFailCode::from(&min_client),
+            ResolveFailCode::MinClient
+        );
+
+        let insecure = ResolveError::InsecureAddress("ws://evil/ws".into());
+        assert_eq!(ResolveFailCode::from(&insecure), ResolveFailCode::Insecure);
+    }
 }

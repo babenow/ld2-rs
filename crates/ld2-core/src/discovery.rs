@@ -12,6 +12,10 @@ use ld2_protocol::DiscoveryDoc;
 /// Таймаут запроса документа (маленький: это первый шаг подключения).
 const DOC_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Release-сборка (паритет клиента `!debug_assertions`): guard §8 —
+/// http/внешний `ws://` разрешены только в dev (ADR-013).
+pub const RELEASE: bool = !cfg!(debug_assertions);
+
 /// Ошибки резолва (protocol.md §15; тексты → l10n клиента по коду).
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {

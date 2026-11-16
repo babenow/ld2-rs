@@ -178,6 +178,14 @@ pub enum Key {
     // M18: подсказка выбора в слот окна инкрустации (по типу слота)
     PickRune,
     PickGem,
+    // M19: discovery подключения (§15): поле домена и ошибки резолва
+    SettingsDomain,
+    DiscUnreachable,
+    DiscBadDoc,
+    DiscContract,
+    DiscMinClient,
+    DiscInsecure,
+    StatusResolveFailed,
     // M18/F58f: описание руны — шанс авто-приёма и эффекты вместо JSON
     RuneProcChance,
     EffectBleed,
@@ -728,6 +736,13 @@ mod tests {
         Key::BackpackUsage,
         Key::PickRune,
         Key::PickGem,
+        Key::SettingsDomain,
+        Key::DiscUnreachable,
+        Key::DiscBadDoc,
+        Key::DiscContract,
+        Key::DiscMinClient,
+        Key::DiscInsecure,
+        Key::StatusResolveFailed,
         Key::RuneProcChance,
         Key::EffectBleed,
         Key::EffectStun,

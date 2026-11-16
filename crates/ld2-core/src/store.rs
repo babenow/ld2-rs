@@ -665,6 +665,21 @@ impl AppStore {
     fn apply_status(&mut self, status: TransportStatus) -> Vec<Effect> {
         let auth_expired = matches!(status, TransportStatus::AuthExpired);
         let stopped = matches!(status, TransportStatus::Stopped);
+        // M19 (§15): discovery-отказ — понятная причина без подключения
+        // (текст по ключу; ретраи транспорта продолжаются).
+        if let TransportStatus::ResolveFailed(code) = &status {
+            use crate::l10n::{t, Key, Lang};
+            let key = match code {
+                crate::transport::ResolveFailCode::Unreachable => Key::DiscUnreachable,
+                crate::transport::ResolveFailCode::BadDoc => Key::DiscBadDoc,
+                crate::transport::ResolveFailCode::Contract => Key::DiscContract,
+                crate::transport::ResolveFailCode::MinClient => Key::DiscMinClient,
+                crate::transport::ResolveFailCode::Insecure => Key::DiscInsecure,
+            };
+            self.notice = Some(t(Lang::Ru, key).to_string());
+            self.transport = status;
+            return vec![];
+        }
         self.transport = status;
         if auth_expired {
             // §4.5: access/refresh истёк → экран входа, токен из keyring.
