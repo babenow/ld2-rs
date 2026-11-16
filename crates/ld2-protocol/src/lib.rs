@@ -11,6 +11,7 @@
 //! В M0 — только конверт-заглушка.
 
 pub mod cmd;
+pub mod discovery;
 pub mod envelope;
 pub mod errors;
 pub mod evt;
@@ -19,6 +20,7 @@ pub mod spells;
 pub mod types;
 
 pub use cmd::Command;
+pub use discovery::DiscoveryDoc;
 pub use envelope::{
     Ack, AckError, AckResult, Envelope, ACK_TYPE, MAX_MESSAGE_BYTES, PROTOCOL_VERSION,
 };
