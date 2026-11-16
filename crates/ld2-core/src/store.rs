@@ -97,6 +97,10 @@ pub enum Act {
     /// `cmd/resource.gather` (M20/F20b) — ошибки (нет ресурса/ранг/
     /// инструмент) → world_error.
     Gather,
+    /// `cmd/craft.rank_up` (M21) — ack {profession}; ошибки тостом.
+    CraftRankUp,
+    /// `cmd/craft.reset` (M21) — сброс профессии: убрать из снапшота.
+    ProfessionReset,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -781,6 +785,8 @@ impl AppStore {
                 Act::DialogChoice | Act::DialogSubmit => self.notice = Some(msg),
                 // Добыча (M20/F20b): отказы — в мир (как Examine/Move).
                 Act::Gather => self.world_error = Some(msg),
+                // Профессии (M21): ранг/сброс — тосты (у тренера/граница).
+                Act::CraftRankUp | Act::ProfessionReset => self.notice = Some(msg),
             }
             return vec![];
         }
@@ -882,6 +888,16 @@ impl AppStore {
                     }
                 }
             }
+            Act::ProfessionReset => {
+                // M21: после сброса — убрать профессию из снапшота
+                // (слот основной освобождается).
+                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
+                {
+                    if let Some(id) = payload["profession_id"].as_str() {
+                        snap.char.professions.retain(|p| p.id != id);
+                    }
+                }
+            }
             Act::Craft => {
                 // §7: ack несёт список рецептов.
                 if let Some(payload) = ack.payload.as_ref() {
@@ -902,7 +918,7 @@ impl AppStore {
                     }
                 }
             }
-            Act::Learn => {
+            Act::Learn | Act::CraftRankUp => {
                 // §7: ack {profession} — добавляем/обновляем в снапшоте.
                 if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
                 {

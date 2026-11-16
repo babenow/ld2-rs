@@ -35,6 +35,211 @@ async fn give_gold(c: &mut ld2_test_kit::WsClient, amount: i64) {
     assert_eq!(c.ack(seq).await["result"], "ok");
 }
 
+/// Золото персонажа (сумма стаков монет) — проверка цен M21.
+async fn gold_of(db_url: &str, char_id: &str) -> i64 {
+    let cfg = common::test_config(db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    let gold: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(i.qty), 0) FROM items i \
+         JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = 'money'",
+    )
+    .bind(char_id)
+    .fetch_one(&pool)
+    .await
+    .expect("золото");
+    pool.close().await;
+    gold
+}
+
+/// Прямая установка прогресса профессии (уровень/ранг) — условие
+/// границы ранга без гринда (M21).
+async fn set_prof(db_url: &str, char_id: &str, profession: &str, level: i32, rank: i32) {
+    let cfg = common::test_config(db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    sqlx::query(
+        "UPDATE character_professions SET level = $1, rank = $2, xp = 0 \
+         WHERE character_id = $3 AND profession_id = $4",
+    )
+    .bind(level)
+    .bind(rank)
+    .bind(char_id)
+    .bind(profession)
+    .execute(&pool)
+    .await
+    .expect("прогресс профессии");
+    pool.close().await;
+}
+
+/// Привести квест в состояние `turn_in` (цели выполняются SQL'ем).
+async fn set_quest_state(db_url: &str, char_id: &str, quest: &str, state: &str) {
+    let cfg = common::test_config(db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    sqlx::query("UPDATE character_quests SET state = $3 WHERE character_id = $1 AND quest_id = $2")
+        .bind(char_id)
+        .bind(quest)
+        .bind(state)
+        .execute(&pool)
+        .await
+        .expect("состояние квеста");
+    pool.close().await;
+}
+
+/// M21: повышение ранга — у тренера, по границе уровней и за
+/// геометрическую плату `200 × 1.5^ранг`; обучение —500 з.
+#[tokio::test]
+async fn rank_up_at_trainer_needs_level_and_gold() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+    give_gold(&mut c, 3000).await;
+
+    // Обучение Снятию шкур — дорогая цена профессии (500 з.).
+    let seq = c
+        .send("cmd/craft.learn", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "learn skinning");
+    c.wait_event("evt/craft/profession").await;
+    assert_eq!(gold_of(&db_url, &char_id).await, 2500, "обучение500");
+
+    // Уровень0 < 50 → граница не набрана.
+    let seq = c
+        .send("cmd/craft.rank_up", json!({ "profession_id": "skinning" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_LEVEL_REQUIRED", "граница: {ack}");
+
+    // Вне деревни тренера нет (проверка тренера раньше границы).
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    let seq = c
+        .send("cmd/craft.rank_up", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_NO_TRAINER",
+        "без тренера"
+    );
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_south" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в деревню");
+
+    // Уровень50 → ранг2 за300 з.
+    set_prof(&db_url, &char_id, "skinning", 50, 1).await;
+    let seq = c
+        .send("cmd/craft.rank_up", json!({ "profession_id": "skinning" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "ранг2: {ack}");
+    assert_eq!(ack["payload"]["profession"]["rank"], 2);
+    assert_eq!(
+        ack["payload"]["profession"]["level"], 50,
+        "уровень не тронут"
+    );
+    c.wait_event("evt/craft/profession").await;
+    assert_eq!(gold_of(&db_url, &char_id).await, 2200, "ранг2 —300 з.");
+
+    // Граница100 не набрана.
+    let seq = c
+        .send("cmd/craft.rank_up", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_LEVEL_REQUIRED",
+        "граница100"
+    );
+
+    // До верха: ранг4 + уровень200 → «Мастер» за1013 з.; дальше — потолок.
+    set_prof(&db_url, &char_id, "skinning", 200, 4).await;
+    let seq = c
+        .send("cmd/craft.rank_up", json!({ "profession_id": "skinning" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "ранг5: {ack}");
+    assert_eq!(ack["payload"]["profession"]["rank"], 5);
+    c.wait_event("evt/craft/profession").await;
+    assert_eq!(gold_of(&db_url, &char_id).await, 1_187, "ранг5 —1013 з.");
+    let seq = c
+        .send("cmd/craft.rank_up", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_RANK_CAP",
+        "высший ранг"
+    );
+}
+
+/// M21: награда квеста «повышение ранга» — та же граница уровней,
+/// но без золота («Волчья беда» → +1 ранг Снятия шкур).
+#[tokio::test]
+async fn quest_rank_up_reward_respects_level_gate() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+    give_gold(&mut c, 1000).await;
+
+    // Награда требует изученной профессии.
+    let seq = c
+        .send("cmd/quest.accept", json!({ "quest_id": "q_wolf_hunt" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "приём квеста");
+    set_quest_state(&db_url, &char_id, "q_wolf_hunt", "turn_in").await;
+
+    // Не изучена → отказ (квест остаётся «к сдаче»).
+    let seq = c
+        .send("cmd/quest.turn_in", json!({ "quest_id": "q_wolf_hunt" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_PROFESSION",
+        "награда: профессия не изучена"
+    );
+
+    let seq = c
+        .send("cmd/craft.learn", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "learn skinning");
+    c.wait_event("evt/craft/profession").await;
+
+    // Уровень0 < 50 → сдача блокирована границей.
+    let seq = c
+        .send("cmd/quest.turn_in", json!({ "quest_id": "q_wolf_hunt" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_LEVEL_REQUIRED",
+        "граница награды"
+    );
+
+    // Уровень50 → сдача проходит: квест done, ранг2 без траты золота.
+    let gold_before = gold_of(&db_url, &char_id).await;
+    set_prof(&db_url, &char_id, "skinning", 50, 1).await;
+    let seq = c
+        .send("cmd/quest.turn_in", json!({ "quest_id": "q_wolf_hunt" }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "сдача: {ack}");
+    assert_eq!(ack["payload"]["quest"]["state"], "done", "квест завершён");
+    let prof = c.wait_event("evt/craft/profession").await;
+    assert_eq!(prof["payload"]["profession"]["id"], "skinning");
+    assert_eq!(prof["payload"]["profession"]["rank"], 2, "ранг наградой");
+    assert_eq!(prof["payload"]["profession"]["level"], 50, "уровень цел");
+    assert_eq!(
+        gold_of(&db_url, &char_id).await,
+        gold_before,
+        "награда-ранг бесплатна"
+    );
+}
+
 #[tokio::test]
 async fn learn_profession_with_limit() {
     let Some(db_url) = common::test_url() else {
@@ -53,14 +258,18 @@ async fn learn_profession_with_limit() {
     // M14: обучение у тренера платное — даём золото (2 × 100).
     give_gold(&mut c, 1000).await;
 
-    // Вторичная профессия лимит не занимает.
+    // Вторичная профессия (M21: Кулинария) лимит не занимает.
     let seq = c
-        .send("cmd/craft.learn", json!({ "profession_id": "herbalist" }))
+        .send("cmd/craft.learn", json!({ "profession_id": "cook" }))
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "вторичная: {ack}");
-    assert_eq!(ack["payload"]["profession"]["id"], "herbalist");
+    assert_eq!(ack["payload"]["profession"]["id"], "cook");
     assert_eq!(ack["payload"]["profession"]["rank"], 1);
+    assert_eq!(
+        ack["payload"]["profession"]["level"], 0,
+        "стартовый уровень"
+    );
     c.wait_event("evt/craft/profession").await;
 
     // Первая первичная — ок.
@@ -89,7 +298,7 @@ async fn learn_profession_with_limit() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok");
     let list = ack["payload"]["professions"].as_array().expect("список");
-    assert_eq!(list.len(), 2, "herbalist + alchemist: {list:?}");
+    assert_eq!(list.len(), 2, "cook + alchemist: {list:?}");
 
     // Снапшот несёт изученные профессии.
     let seq = c
@@ -286,14 +495,17 @@ async fn craft_job_finishes_and_survives_restart() {
     assert_eq!(made[0]["qty"], 2, "output 1 × qty 2");
     let item_uid = made[0]["uid"].as_str().expect("uid").to_string();
 
-    // Предмет в инвентаре + XP профессии (65 × 2 = 130 → ранг 2).
+    // M21: 130 XP → уровень ≥3 (остаток переносится); ранг без
+    // тренера остаётся1.
     let prof = c2.wait_event("evt/craft/profession").await;
     assert_eq!(prof["payload"]["profession"]["id"], "alchemist");
     let rank = prof["payload"]["profession"]["rank"].as_i64().unwrap_or(0);
+    let level = prof["payload"]["profession"]["level"].as_i64().unwrap_or(0);
     let xp = prof["payload"]["profession"]["xp"].as_i64().unwrap_or(0);
+    assert_eq!(rank, 1, "ранг без тренера не растёт: {prof}");
     assert!(
-        rank >= 2 || xp >= 65,
-        "XP за 2 крафта (rank={rank}, xp={xp}): {prof}"
+        level >= 3,
+        "уровень за 2 крафта (level={level}, xp={xp}): {prof}"
     );
 
     let seq = c2

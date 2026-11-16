@@ -219,6 +219,20 @@ pub struct SocketExtract {
     pub socket_index: u32,
 }
 
+/// M21: повышение ранга профессии **у тренера** — уровень набран до
+/// границы ранга, золото по прогрессии; ack несёт `{profession}`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CraftRankUp {
+    pub profession_id: String,
+}
+
+/// Окно профессий: сброс изученной профессии — прогресс теряется,
+/// слот основной профессии освобождается; ack несёт `profession_id`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CraftReset {
+    pub profession_id: String,
+}
+
 /// M20/F20b: добыча ресурса — взять 1 единицу из объекта-ресурса
 /// (инструмент и ранг профессии проверяет сервер).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -486,6 +500,8 @@ impl_commands!(
     (CraftList, "cmd/craft.list", true),
     (CraftRecipes, "cmd/craft.recipes", true),
     (CraftLearn, "cmd/craft.learn", false),
+    (CraftReset, "cmd/craft.reset", false),
+    (CraftRankUp, "cmd/craft.rank_up", false),
     (CraftStart, "cmd/craft.start", false),
     (QuestList, "cmd/quest.list", true),
     (QuestAccept, "cmd/quest.accept", false),

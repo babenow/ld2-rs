@@ -7,12 +7,12 @@ use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
     AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, ChatDelete, ChatSend,
-    CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo, GuildBrowse,
-    GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip, ItemMove,
-    ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcReply, NpcTalk,
-    PartyAccept, PartyInvite, PartyKick, ResourceGather, ShopBuy, ShopList, SkillTrain, SkillUse,
-    SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose,
-    TradeSetGold, UpgradePreview, UpgradeStart,
+    CombatAttack, CraftLearn, CraftRankUp, CraftRecipes, CraftReset, CraftStart, CrimeLog,
+    EntityInfo, GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet,
+    ItemDrop, ItemEquip, ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast,
+    MagicScrollCast, NpcReply, NpcTalk, PartyAccept, PartyInvite, PartyKick, ResourceGather,
+    ShopBuy, ShopList, SkillTrain, SkillUse, SocketExtract, SocketInsert, StateResync,
+    TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -71,6 +71,9 @@ pub struct Session {
     sharpen_stone: Option<String>,
     /// Кулдаун чата (`chat.cooldown_s`, ФР-13): момент последнего сообщения.
     last_chat_at: Option<std::time::Instant>,
+    /// M21: переход «повышение ранга» наградой квеста — данные
+    /// применяются после `set_state(done)` (граница проверена до).
+    pending_rank_up: Option<(String, i64, i32, i32)>,
 }
 
 /// Превью улучшения (одно на соединение; уровень изменился → stale).
@@ -109,6 +112,7 @@ impl Session {
             location_id: None,
             preview_state: None,
             sharpen_stone: None,
+            pending_rank_up: None,
             last_chat_at: None,
         }
     }
@@ -207,6 +211,8 @@ impl Session {
             "cmd/craft.list" => self.craft_list(seq).await,
             "cmd/craft.recipes" => self.craft_recipes(env, seq).await,
             "cmd/craft.learn" => self.craft_learn(env, seq).await,
+            "cmd/craft.reset" => self.craft_reset(env, seq).await,
+            "cmd/craft.rank_up" => self.craft_rank_up(env, seq).await,
             "cmd/craft.start" => self.craft_start(env, seq).await,
             // квесты (ФР-12, M12.6)
             "cmd/quest.list" => self.quest_list(seq).await,
@@ -1380,7 +1386,9 @@ impl Session {
             professions: match db::professions::learned(pool, &row.id).await {
                 Ok(rows) => rows
                     .iter()
-                    .map(|(id, xp, rank)| self.profession_snapshot(id, *xp, *rank))
+                    .map(|(id, xp, rank, level)| {
+                        self.profession_snapshot(id, *xp, *rank, *level as u32)
+                    })
                     .collect(),
                 Err(e) => {
                     warn!("профессии {}: {e}", row.id);
@@ -2880,8 +2888,8 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::ToolMissing, "нужен инструмент")];
             }
         }
-        // 3) ранг профессии (профессия должна быть изучена).
-        let mut prof_xp: Option<(String, i64, i32)> = None;
+        // 3) ранг/уровень профессии (профессия должна быть изучена).
+        let mut prof_xp: Option<(String, i64, i32, i32)> = None;
         if let Some(prof) = &node.profession {
             let learned = match db::professions::learned(pool, &char_id).await {
                 Ok(v) => v,
@@ -2890,9 +2898,9 @@ impl Session {
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                 }
             };
-            match learned.iter().find(|(id, _, _)| id == prof) {
-                Some((_, xp, rank)) if *rank >= node.min_rank => {
-                    prof_xp = Some((prof.clone(), *xp, *rank));
+            match learned.iter().find(|(id, _, _, _)| id == prof) {
+                Some((_, xp, rank, level)) if *rank >= node.min_rank => {
+                    prof_xp = Some((prof.clone(), *xp, *rank, *level));
                 }
                 Some(_) => {
                     return vec![Self::err(
@@ -2974,30 +2982,30 @@ impl Session {
             )
         });
         // 7) XP профессии (паритет крафта) → снапшот себе.
-        if let Some((prof, xp_old, rank)) = prof_xp {
+        if let Some((prof, xp_old, rank, level)) = prof_xp {
             let cfg = &self.state.config.gameplay.professions;
             let gain = cfg.xp_per_craft_base + cfg.xp_per_craft_per_rank * i64::from(rank);
-            let (xp_new, rank_new) = crate::systems::profession_xp_apply(cfg, xp_old + gain, rank);
-            if let Err(e) = db::professions::grant_xp(pool, &char_id, &prof, xp_new, rank_new).await
+            // M21: опыт растит УРОВЕНЬ; ранг меняет только тренер/квест.
+            let (xp_new, level_new) =
+                crate::systems::profession_level_up(cfg, xp_old, level.max(0) as u32, gain);
+            if let Err(e) = db::professions::grant_progress(
+                pool,
+                &char_id,
+                &prof,
+                xp_new,
+                rank,
+                level_new as i32,
+            )
+            .await
             {
                 warn!("gather (XP профессии {char_id}): {e}");
             } else {
-                let rank_u32 = rank_new.max(1) as u32;
-                let xp_to_next = if rank_u32 >= cfg.rank_max {
-                    0
-                } else {
-                    ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank_new)).round() as i64
-                };
+                let snapshot =
+                    crate::systems::profession_snapshot(cfg, &prof, xp_new, rank, level_new);
                 let text = event_payload_text(
                     "evt/craft/profession",
                     &CraftProfession {
-                        profession: ld2_protocol::types::ProfessionSnapshot {
-                            id: prof,
-                            rank: rank_u32,
-                            xp: xp_new,
-                            xp_to_next,
-                            extra: Default::default(),
-                        },
+                        profession: snapshot,
                     },
                 );
                 if let Some(text) = text {
@@ -6866,21 +6874,157 @@ impl Session {
     // ── профессии и крафт (ФР-08, M12.6) ───────────────────────────────────
 
     /// Профессия персонажа → снапшот §6 (`xp_to_next` из конфига, D25).
-    fn profession_snapshot(&self, id: &str, xp: i64, rank: i32) -> ProfessionSnapshot {
+    fn profession_snapshot(&self, id: &str, xp: i64, rank: i32, level: u32) -> ProfessionSnapshot {
+        // M21: общая сборка (уровень/ранг/extra) — в systems.
+        crate::systems::profession_snapshot(
+            &self.state.config.gameplay.professions,
+            id,
+            xp,
+            rank,
+            level,
+        )
+    }
+
+    /// Окно профессий: сброс изученной профессии — прогресс теряется,
+    /// слот основной освобождается; ack несёт `profession_id`
+    /// (`E_PROFESSION` — не изучена).
+    async fn craft_reset(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CraftReset>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        match db::professions::forget(&self.state.pool, &char_id, &cmd.profession_id).await {
+            Ok(true) => vec![Self::ack_payload(
+                seq,
+                &serde_json::json!({ "profession_id": cmd.profession_id }),
+            )],
+            Ok(false) => {
+                vec![Self::err(
+                    seq,
+                    ErrorCode::Profession,
+                    "профессия не изучена",
+                )]
+            }
+            Err(e) => {
+                warn!("craft.reset ({}): {e}", cmd.profession_id);
+                vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
+            }
+        }
+    }
+
+    /// M21: повышение ранга **у тренера** (`cmd/craft.rank_up`) —
+    /// уровень набран до границы (`E_LEVEL_REQUIRED`), высший ранг →
+    /// `E_RANK_CAP`, золото по прогрессии `200 × 1.5^ранг`
+    /// (`E_INGREDIENTS`); ack несёт `{profession}` + событие.
+    async fn craft_rank_up(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<CraftRankUp>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let location = self.current_location(&char_id).await;
+        let pool = &self.state.pool;
+        // Тренер по этой профессии в локации (E_NO_TRAINER).
+        let trainer = match trainers::trainer_price(
+            pool,
+            &location,
+            trainers::TrainerKind::Profession,
+            &cmd.profession_id,
+        )
+        .await
+        {
+            Ok(price) => price,
+            Err(e) => {
+                warn!("rank_up (тренер): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if trainer.is_none() {
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoTrainer,
+                "здесь нет тренера по этой профессии",
+            )];
+        }
+        // Изучена → (xp, rank, level).
+        let learned = match db::professions::learned(pool, &char_id).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("rank_up (профессии): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let Some((_, xp, rank, level)) = learned
+            .into_iter()
+            .find(|(id, _, _, _)| id == &cmd.profession_id)
+        else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Profession,
+                "профессия не изучена",
+            )];
+        };
         let cfg = &self.state.config.gameplay.professions;
         let rank_u32 = rank.max(1) as u32;
-        let xp_to_next = if rank_u32 >= cfg.rank_max {
-            0
-        } else {
-            ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64
-        };
-        ProfessionSnapshot {
-            id: id.to_string(),
-            rank: rank_u32,
-            xp,
-            xp_to_next,
-            extra: Default::default(),
+        if rank_u32 >= crate::systems::profession_rank_max(cfg) {
+            return vec![Self::err(seq, ErrorCode::RankCap, "достигнут высший ранг")];
         }
+        // Граница следующего ранга: level ≥ rank × span.
+        let need_level = rank_u32.saturating_mul(cfg.rank_span);
+        if (level.max(0) as u32) < need_level {
+            return vec![Self::err(
+                seq,
+                ErrorCode::LevelRequired,
+                format!("нужен уровень {need_level} для ранга {}", rank_u32 + 1),
+            )];
+        }
+        // Золото по прогрессии (200 × 1.5^ранг) — та же касса, что и
+        // обучение (монеты-стаки, F29a).
+        let cost = crate::systems::profession_rank_up_cost(cfg, rank_u32);
+        let price = trainers::TrainerPrice {
+            gold_base: cost,
+            gold_per_rank: 0,
+            items: Vec::new(),
+        };
+        let money_events = match self.pay_trainer(seq, &char_id, &price, cost).await {
+            Ok(events) => events,
+            Err(e) => return vec![e],
+        };
+        let new_rank = rank + 1;
+        if let Err(e) =
+            db::professions::grant_progress(pool, &char_id, &cmd.profession_id, xp, new_rank, level)
+                .await
+        {
+            warn!("rank_up ({}): {e}", cmd.profession_id);
+            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        }
+        let snapshot =
+            self.profession_snapshot(&cmd.profession_id, xp, new_rank, level.max(0) as u32);
+        let mut outs = vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "profession": snapshot }),
+        )];
+        outs.push(out_event(
+            "evt/craft/profession",
+            None,
+            serde_json::to_value(CraftProfession {
+                profession: snapshot,
+            })
+            .unwrap_or_default(),
+        ));
+        outs.extend(money_events);
+        outs
     }
 
     /// `cmd/craft.list` (§7): мои профессии `{professions[]}`.
@@ -6901,7 +7045,7 @@ impl Session {
         };
         let professions: Vec<ProfessionSnapshot> = rows
             .iter()
-            .map(|(id, xp, rank)| self.profession_snapshot(id, *xp, *rank))
+            .map(|(id, xp, rank, level)| self.profession_snapshot(id, *xp, *rank, *level as u32))
             .collect();
         vec![Self::ack_payload(
             seq,
@@ -6969,10 +7113,12 @@ impl Session {
         // Профессии живут в character_professions, а не в character_skills.
         match db::professions::learned(pool, &char_id).await {
             Ok(rows) => {
-                if let Some((_, xp, rank)) =
-                    rows.into_iter().find(|(id, _, _)| id == &cmd.profession_id)
+                if let Some((_, xp, rank, level)) = rows
+                    .into_iter()
+                    .find(|(id, _, _, _)| id == &cmd.profession_id)
                 {
-                    let snapshot = self.profession_snapshot(&cmd.profession_id, xp, rank);
+                    let snapshot =
+                        self.profession_snapshot(&cmd.profession_id, xp, rank, level as u32);
                     return vec![Self::ack_payload(
                         seq,
                         &serde_json::json!({ "profession": snapshot }),
@@ -7040,7 +7186,7 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         }
-        let snapshot = self.profession_snapshot(&cmd.profession_id, 0, 1);
+        let snapshot = self.profession_snapshot(&cmd.profession_id, 0, 1, 0);
         let mut outs = vec![Self::ack_payload(
             seq,
             &serde_json::json!({ "profession": snapshot }),
@@ -7101,8 +7247,8 @@ impl Session {
         };
         let prof_rank = learned
             .iter()
-            .find(|(id, _, _)| *id == recipe.profession)
-            .map(|(_, _, rank)| *rank)
+            .find(|(id, _, _, _)| *id == recipe.profession)
+            .map(|(_, _, rank, _)| *rank)
             .unwrap_or(0);
         if prof_rank < recipe.rank {
             return vec![Self::err(
@@ -7862,6 +8008,9 @@ impl Session {
         let row = progress.iter().find(|(id, _, _)| *id == quest_id);
 
         let mut outs = Vec::new();
+        // M21: событие награды-ранга — отправляется ПОСЛЕ ack (иначе
+        // клиент, ждущий ack, поглощает событие раньше времени).
+        let mut rank_up_evt: Option<ProfessionSnapshot> = None;
         match op {
             "accept" => {
                 // M18/F36: лимит текущих квестов — из конфига сервера
@@ -7896,6 +8045,55 @@ impl Session {
                 if state != "turn_in" {
                     return vec![Self::err(seq, ErrorCode::Internal, "цели ещё не выполнены")];
                 }
+                // M21: награда «повышение ранга» — та же граница
+                // уровней (ранг — без золота и тренера); проверка ДО
+                // выдачи: квест остаётся «к сдаче» до набора уровня.
+                let reward_rank_up = def
+                    .4
+                    .get("rank_up")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                if let Some(prof_id) = reward_rank_up {
+                    let learned = match db::professions::learned(pool, &char_id).await {
+                        Ok(rows) => rows,
+                        Err(e) => {
+                            warn!("quest (rank_up профессии): {e}");
+                            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                        }
+                    };
+                    match learned.into_iter().find(|(id, _, _, _)| *id == prof_id) {
+                        None => {
+                            return vec![Self::err(
+                                seq,
+                                ErrorCode::Profession,
+                                "награда: профессия не изучена",
+                            )];
+                        }
+                        Some((_, xp, rank, level)) => {
+                            let cfg = &self.state.config.gameplay.professions;
+                            let rank_u32 = rank.max(1) as u32;
+                            if rank_u32 >= crate::systems::profession_rank_max(cfg) {
+                                // Высший ранг достигнут — награда
+                                // деградирует, квест сдаётся (без
+                                // изменения pending).
+                            } else {
+                                let need_level = rank_u32.saturating_mul(cfg.rank_span);
+                                if (level.max(0) as u32) < need_level {
+                                    return vec![Self::err(
+                                        seq,
+                                        ErrorCode::LevelRequired,
+                                        format!(
+                                            "награда: нужен уровень {need_level} для ранга {}",
+                                            rank_u32 + 1
+                                        ),
+                                    )];
+                                }
+                                // Применяем после set_state (ниже).
+                                self.pending_rank_up = Some((prof_id, xp, rank + 1, level));
+                            }
+                        }
+                    }
+                }
                 // Награда: XP в пул (D3/D4) + предметы (слоты — из конфига).
                 let reward_xp = def.4.get("xp").and_then(|x| x.as_i64()).unwrap_or(0);
                 let reward_items: Vec<(String, i64)> = def
@@ -7929,6 +8127,19 @@ impl Session {
                 if let Err(e) = db::quests::set_state(pool, &char_id, &quest_id, "done").await {
                     warn!("quest (done): {e}");
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+                // M21: применить награду-ранг (граница проверена выше).
+                if let Some((prof_id, xp, new_rank, level)) = self.pending_rank_up.take() {
+                    if let Err(e) = db::professions::grant_progress(
+                        pool, &char_id, &prof_id, xp, new_rank, level,
+                    )
+                    .await
+                    {
+                        warn!("quest (rank_up {prof_id}): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                    rank_up_evt =
+                        Some(self.profession_snapshot(&prof_id, xp, new_rank, level.max(0) as u32));
                 }
             }
             _ => {
@@ -7967,6 +8178,14 @@ impl Session {
                     snap.xp_pool = row.xp_pool;
                 }
             }
+        }
+        // M21: награда-ранг — событие после ack (см. объявление выше).
+        if let Some(profession) = rank_up_evt {
+            outs.push(out_event(
+                "evt/craft/profession",
+                None,
+                serde_json::to_value(CraftProfession { profession }).unwrap_or_default(),
+            ));
         }
         outs
     }

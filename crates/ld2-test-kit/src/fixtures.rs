@@ -463,6 +463,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
         professions: vec![ProfessionSnapshot {
             id: "scribe".into(),
             rank: 2,
+            level: 0,
             xp: 140,
             xp_to_next: 200,
             extra: Default::default(),

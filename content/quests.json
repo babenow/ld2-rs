@@ -7,8 +7,8 @@
       "goals": [
         { "type": "kill", "target": "m_3", "need": 1, "text": "Убить волка в Чёрном лесу" }
       ],
-      "reward": { "xp": 100, "items": [ { "type": "potion_heal", "qty": 1 } ] },
-      "reward_label": "100 XP в пул + Зелье лечения"
+      "reward": { "xp": 100, "items": [ { "type": "potion_heal", "qty": 1 } ], "rank_up": "skinning" },
+      "reward_label": "100 XP в пул + Зелье лечения +1 ранг Снятия шкур"
     }
   ]
 }

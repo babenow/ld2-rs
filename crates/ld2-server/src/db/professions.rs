@@ -2,8 +2,9 @@
 
 use sqlx::PgPool;
 
-/// Изученная профессия `(profession_id, xp, rank)`.
-pub type LearnedRow = (String, i64, i32);
+/// Изученная профессия `(profession_id, xp, rank, level)` — M21:
+/// уровень (0..max_level) и ранг (границы по уровням) разделены.
+pub type LearnedRow = (String, i64, i32, i32);
 
 /// Профессия из сида `(id, name, prof_type)`.
 pub type ProfRow = (String, String, String);
@@ -18,7 +19,7 @@ pub async fn content(pool: &PgPool) -> Result<Vec<ProfRow>, sqlx::Error> {
 /// Изученные профессии персонажа (для снапшота и `craft.list`).
 pub async fn learned(pool: &PgPool, char_id: &str) -> Result<Vec<LearnedRow>, sqlx::Error> {
     sqlx::query_as::<_, LearnedRow>(
-        "SELECT profession_id, xp, rank FROM character_professions \
+        "SELECT profession_id, xp, rank, level FROM character_professions \
          WHERE character_id = $1 ORDER BY profession_id",
     )
     .bind(char_id)
@@ -51,24 +52,44 @@ pub async fn learn(pool: &PgPool, char_id: &str, profession_id: &str) -> Result<
     Ok(result.rows_affected() == 1)
 }
 
-/// Вклад XP в профессию (апсерт) → `(xp, rank)` после применения.
-pub async fn grant_xp(
+/// Забыть профессию (сброс из окна профессий): `false` — не изучена.
+pub async fn forget(
+    pool: &PgPool,
+    char_id: &str,
+    profession_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query(
+        "DELETE FROM character_professions \
+         WHERE character_id = $1 AND profession_id = $2",
+    )
+    .bind(char_id)
+    .bind(profession_id)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() == 1)
+}
+
+/// M21: записать прогресс профессии (уровень/ранг/XP, апсерт) —
+/// рост уровня (крафт/добыча) и повышение ранга (тренер/награда).
+pub async fn grant_progress(
     pool: &PgPool,
     char_id: &str,
     profession_id: &str,
     xp: i64,
     rank: i32,
+    level: i32,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO character_professions (character_id, profession_id, xp, rank) \
-         VALUES ($1, $2, $3, $4) \
+        "INSERT INTO character_professions (character_id, profession_id, xp, rank, level) \
+         VALUES ($1, $2, $3, $4, $5) \
          ON CONFLICT (character_id, profession_id) DO UPDATE SET \
-           xp = EXCLUDED.xp, rank = EXCLUDED.rank",
+           xp = EXCLUDED.xp, rank = EXCLUDED.rank, level = EXCLUDED.level",
     )
     .bind(char_id)
     .bind(profession_id)
     .bind(xp)
     .bind(rank)
+    .bind(level)
     .execute(pool)
     .await?;
     Ok(())

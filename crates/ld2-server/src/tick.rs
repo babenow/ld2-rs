@@ -1426,35 +1426,30 @@ async fn profession_xp_step(
     let learned = crate::db::professions::learned(&state.pool, char_id)
         .await
         .ok()?;
-    let (xp, rank) = learned
+    let (xp, rank, level) = learned
         .iter()
-        .find(|(id, _, _)| *id == recipe.profession)
-        .map(|(_, x, r)| (*x, *r))
-        .unwrap_or((0, 1));
-    let mut xp = xp;
-    xp += gain;
+        .find(|(id, _, _, _)| *id == recipe.profession)
+        .map(|(_, x, r, l)| (*x, *r, *l))
+        .unwrap_or((0, 1, 0));
     let cfg = &state.config.gameplay.professions;
-    // Рост ранга (паритетный helper — M20/F20b).
-    let (xp, rank) = crate::systems::profession_xp_apply(cfg, xp, rank);
-    if let Err(e) =
-        crate::db::professions::grant_xp(&state.pool, char_id, &recipe.profession, xp, rank).await
+    // M21: опыт растит УРОВЕНЬ (остаток переносится, потолок —
+    // max_level); ранг меняет только тренер/награда квеста.
+    let (xp, level_new) = crate::systems::profession_level_up(cfg, xp, level.max(0) as u32, gain);
+    if let Err(e) = crate::db::professions::grant_progress(
+        &state.pool,
+        char_id,
+        &recipe.profession,
+        xp,
+        rank,
+        level_new as i32,
+    )
+    .await
     {
         warn!("крафт (XP профессии {char_id}): {e}");
         return None;
     }
-    let rank_u32 = rank.max(1) as u32;
-    let xp_to_next = if rank_u32 >= cfg.rank_max {
-        0
-    } else {
-        ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64
-    };
-    let snapshot = ld2_protocol::types::ProfessionSnapshot {
-        id: recipe.profession.clone(),
-        rank: rank_u32,
-        xp,
-        xp_to_next,
-        extra: Default::default(),
-    };
+    let snapshot =
+        crate::systems::profession_snapshot(cfg, &recipe.profession, xp, rank, level_new);
     let text = crate::session::event_text(
         "evt/craft/profession",
         None,

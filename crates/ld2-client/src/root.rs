@@ -20,6 +20,7 @@ mod chars;
 mod chat;
 mod dialog;
 mod game;
+mod professions;
 mod quantity;
 mod quests;
 mod register;
@@ -85,6 +86,8 @@ enum PopupKind {
     Quantity,
     /// M20: окно игрового диалога (заготовка: страницы/ввод).
     Dialog,
+    /// M21: окно профессий (отдельное, подобно квестам).
+    Professions,
 }
 
 impl PopupKind {
@@ -100,6 +103,7 @@ impl PopupKind {
             PopupKind::Socketing => "ld2-socket",
             PopupKind::Quantity => "ld2-quantity",
             PopupKind::Dialog => "ld2-dialog",
+            PopupKind::Professions => "ld2-professions",
         }
     }
 }
@@ -128,6 +132,8 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
         PopupKind::Quantity => {}
         // M20: игровой диалог открывает `evt/dialog/open`.
         PopupKind::Dialog => {}
+        // M21: окно профессий контекстных меню не использует.
+        PopupKind::Professions => {}
     }
 }
 
@@ -193,6 +199,8 @@ pub(crate) enum Click {
     ToggleInventory,
     /// M18/F36: открыть/закрыть окно квестов (кнопка в шапке).
     ToggleQuests,
+    /// M21: окно профессий (кнопка в шапке/хоткей).
+    ToggleProfessions,
     Theme(&'static str),
     ChatLimit(i64),
     /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
@@ -327,6 +335,10 @@ pub struct Root {
     dialog_inputs: Option<(String, DialogTextFields)>,
     /// M20: id последнего открытого диалога — сброс страницы/полей.
     dialog_seen: Option<String>,
+    /// M21: окно профессий — popup (отдельное, как квесты).
+    professions_popup: PopupState,
+    /// M21: вооружённая кнопка «Сбросить» (второй клик — cmd/craft.reset).
+    prof_reset_armed: Option<String>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
     upgrade_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
@@ -593,6 +605,11 @@ impl Root {
             dialog_values: std::collections::HashMap::new(),
             dialog_inputs: None,
             dialog_seen: None,
+            professions_popup: PopupState {
+                delta: (0.0, -30.0),
+                ..PopupState::new((620.0, 560.0))
+            },
+            prof_reset_armed: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
             upgrade_popup: PopupState {
@@ -1226,6 +1243,14 @@ impl Root {
                 cx.notify();
                 return;
             }
+            // M21: окно профессий (заготовка сброса гаснет вместе).
+            if self.professions_popup.open {
+                tracing::debug!("закрытие окна профессий: Esc");
+                self.professions_popup.open = false;
+                self.prof_reset_armed = None;
+                cx.notify();
+                return;
+            }
             // M18/F38: диалог NPC — верхний слой группы окон.
             if self.store.npc_dialog.is_some() {
                 tracing::debug!("закрытие диалога NPC: Esc");
@@ -1283,6 +1308,17 @@ impl Root {
             } else {
                 self.open_popup(PopupKind::Quests);
             }
+            cx.notify();
+            return;
+        }
+        // M21: хоткей окна профессий («p» — кнопка в шапке дублирует).
+        if keystroke_matches(&self.config.hotkeys.open_professions, ks) {
+            if self.professions_popup.open {
+                self.professions_popup.open = false;
+            } else {
+                self.open_popup(PopupKind::Professions);
+            }
+            self.prof_reset_armed = None;
             cx.notify();
             return;
         }
@@ -1423,6 +1459,7 @@ impl Root {
             PopupKind::Socketing => &mut self.socket_popup,
             PopupKind::Quantity => &mut self.quantity_popup,
             PopupKind::Dialog => &mut self.dialog_popup,
+            PopupKind::Professions => &mut self.professions_popup,
         }
     }
 
@@ -1438,6 +1475,7 @@ impl Root {
             PopupKind::Socketing => &self.socket_popup,
             PopupKind::Quantity => &self.quantity_popup,
             PopupKind::Dialog => &self.dialog_popup,
+            PopupKind::Professions => &self.professions_popup,
         }
     }
 
@@ -1463,6 +1501,7 @@ impl Root {
             PopupKind::Socketing => (440.0, 420.0),
             PopupKind::Quantity => (400.0, 280.0),
             PopupKind::Dialog => (560.0, 460.0),
+            PopupKind::Professions => (620.0, 560.0),
         }
     }
 
@@ -1487,6 +1526,7 @@ impl Root {
             PopupKind::Socketing => (0.0, -40.0),
             PopupKind::Quantity => (0.0, -60.0),
             PopupKind::Dialog => (0.0, -40.0),
+            PopupKind::Professions => (0.0, -30.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1513,6 +1553,8 @@ impl Root {
             PopupKind::Quantity => {}
             // M20: окно диалога открывает `evt/dialog/open`.
             PopupKind::Dialog => {}
+            // M21: окно профессий открывает кнопка/хоткей.
+            PopupKind::Professions => {}
         }
     }
 
@@ -1583,11 +1625,13 @@ impl Root {
     fn popup_scrim(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
         let npc_open = self.store.npc_dialog.is_some();
         let dialog_open = self.store.dialog.is_some();
+        let professions_open = self.professions_popup.open;
         if !self.char_popup.open
             && !self.backpack_popup.open
             && !self.quests_popup.open
             && !npc_open
             && !dialog_open
+            && !professions_open
         {
             return None;
         }
@@ -1642,6 +1686,10 @@ impl Root {
                                     } else if root.store.dialog.is_some() {
                                         tracing::debug!("закрытие игрового диалога: скрим");
                                         root.close_game_dialog();
+                                    } else if root.professions_popup.open {
+                                        tracing::debug!("закрытие окна профессий: скрим");
+                                        root.professions_popup.open = false;
+                                        root.prof_reset_armed = None;
                                     } else if root.store.npc_dialog.is_some() {
                                         tracing::debug!("закрытие диалога NPC: скрим");
                                         root.store.npc_dialog = None;
@@ -1721,6 +1769,15 @@ impl Root {
                 } else {
                     self.open_popup(PopupKind::Quests);
                 }
+                cx.notify();
+            }
+            Click::ToggleProfessions => {
+                if self.professions_popup.open {
+                    self.professions_popup.open = false;
+                } else {
+                    self.open_popup(PopupKind::Professions);
+                }
+                self.prof_reset_armed = None;
                 cx.notify();
             }
             Click::Theme(theme) => {
@@ -2134,6 +2191,16 @@ impl Root {
                             pal.panel,
                             pal.text,
                             Click::ToggleQuests,
+                        )
+                    }))
+                    // M21: кнопка профессий рядом с «Квесты».
+                    .children(self.store.snapshot.as_ref().map(|_| {
+                        btn(
+                            cx,
+                            t(lang, Key::ProfessionsTab),
+                            pal.panel,
+                            pal.text,
+                            Click::ToggleProfessions,
                         )
                     })),
             )
@@ -2831,7 +2898,7 @@ struct HotkeyRowSpec {
 
 /// Все ремаппингуемые действия: навигация/цикл (ФР-19) + боевые
 /// панели (M14/F4, цифры 1–6 — Esc занят диалогами).
-const HOTKEY_ROWS: [HotkeyRowSpec; 14] = [
+const HOTKEY_ROWS: [HotkeyRowSpec; 15] = [
     HotkeyRowSpec {
         id: "ld2-hk-nav-up",
         label: Key::HkNavUp,
@@ -2915,6 +2982,12 @@ const HOTKEY_ROWS: [HotkeyRowSpec; 14] = [
         label: Key::HkOpenQuests,
         get: |hk| hk.open_quests.as_str(),
         set: |hk, v| hk.open_quests = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-professions",
+        label: Key::HkOpenProfessions,
+        get: |hk| hk.open_professions.as_str(),
+        set: |hk, v| hk.open_professions = v,
     },
 ];
 
@@ -3655,6 +3728,10 @@ impl Render for Root {
             .when_some(self.dialog_window(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
+            // M21: окно профессий — поверх окна диалога.
+            .when_some(self.professions_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
@@ -3748,8 +3825,8 @@ mod tests {
     fn hotkey_rows_cover_nav_and_six_actions() {
         assert_eq!(
             HOTKEY_ROWS.len(),
-            14,
-            "навигация/цикл + 6 действий + окна персонажа/рюкзака/квестов"
+            15,
+            "навигация/цикл + 6 действий + окна персонажа/рюкзака/квестов/профессий"
         );
         let ids: std::collections::HashSet<_> = HOTKEY_ROWS.iter().map(|r| r.id).collect();
         assert_eq!(ids.len(), HOTKEY_ROWS.len(), "id строк уникальны");
@@ -3766,6 +3843,7 @@ mod tests {
         assert_eq!((HOTKEY_ROWS[11].get)(&hk), "c", "окно персонажа (M15/F25)");
         assert_eq!((HOTKEY_ROWS[12].get)(&hk), "i", "окно рюкзака (M16/F29b)");
         assert_eq!((HOTKEY_ROWS[13].get)(&hk), "j", "окно квестов (M18/F36)");
+        assert_eq!((HOTKEY_ROWS[14].get)(&hk), "p", "окно профессий (M21)");
 
         // Сеттер переписывает только своё поле.
         let mut hk = Hotkeys::default();

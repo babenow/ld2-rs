@@ -3,27 +3,84 @@
 use crate::config::{LevelSection, SkillsSection, UpgradeSection};
 
 /// Порог ранга: `round(base_xp × growth^rank)` (skills.md §2.2, D25).
-/// M20/F20b: применить XP профессии (паритет крафта): рост ранга,
-/// пока хватает порога и не достигнут потолка → `(xp, rank)`.
-pub fn profession_xp_apply(
+/// M21: порог **уровня** профессии: `round(base × growth^L)` — каждый
+/// уровень дороже (согласованная формула `40 × 1.02^L`).
+pub fn profession_level_xp(cfg: &crate::config::ProfessionsSection, level: u32) -> i64 {
+    ((cfg.level_xp_base as f64) * cfg.level_xp_growth.powi(level as i32)).round() as i64
+}
+
+/// M21: начислить XP профессии с **автоматическим ростом уровня** —
+/// остаток переносится на следующий уровень; на `max_level` опыт
+/// перестаёт копиться (→0). Ранг не меняется (его даёт тренер или
+/// награда квеста). → `(xp, level)`.
+pub fn profession_level_up(
     cfg: &crate::config::ProfessionsSection,
     xp: i64,
-    rank: i32,
-) -> (i64, i32) {
-    let mut xp = xp;
-    let mut rank = rank;
-    loop {
-        if rank as u32 >= cfg.rank_max {
-            break;
-        }
-        let need = ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64;
+    level: u32,
+    gain: i64,
+) -> (i64, u32) {
+    if level >= cfg.max_level {
+        return (0, cfg.max_level);
+    }
+    let mut xp = (xp + gain).max(0);
+    let mut level = level;
+    while level < cfg.max_level {
+        let need = profession_level_xp(cfg, level);
         if xp < need {
             break;
         }
         xp -= need;
-        rank += 1;
+        level += 1;
     }
-    (xp, rank)
+    if level >= cfg.max_level {
+        xp = 0; // потолок: опыт не копится
+    }
+    (xp, level)
+}
+
+/// M21: снимок профессии для wire (§6): `xp_to_next` — порог
+/// **уровня** (0 на потолке), `extra` несёт `rank_span` и — до
+/// высшего ранга — цену повышения у тренера (`rank_up_gold`).
+pub fn profession_snapshot(
+    cfg: &crate::config::ProfessionsSection,
+    id: &str,
+    xp: i64,
+    rank: i32,
+    level: u32,
+) -> ld2_protocol::types::ProfessionSnapshot {
+    let rank_u32 = rank.max(1) as u32;
+    let xp_to_next = if level >= cfg.max_level {
+        0
+    } else {
+        profession_level_xp(cfg, level)
+    };
+    let mut extra = serde_json::Map::new();
+    extra.insert("rank_span".into(), serde_json::json!(cfg.rank_span));
+    if rank_u32 < profession_rank_max(cfg) {
+        extra.insert(
+            "rank_up_gold".into(),
+            serde_json::json!(profession_rank_up_cost(cfg, rank_u32)),
+        );
+    }
+    ld2_protocol::types::ProfessionSnapshot {
+        id: id.to_string(),
+        rank: rank_u32,
+        level,
+        xp,
+        xp_to_next,
+        extra,
+    }
+}
+
+/// M21: производный потолок ранга: `ceil(max_level / rank_span)` (=5).
+pub fn profession_rank_max(cfg: &crate::config::ProfessionsSection) -> u32 {
+    cfg.max_level.div_ceil(cfg.rank_span.max(1)).max(1)
+}
+
+/// M21: цена повышения ранга у тренера: `round(base × growth^ранг)`
+/// (`200 × 1.5^ранг` →300/450/675/1013).
+pub fn profession_rank_up_cost(cfg: &crate::config::ProfessionsSection, rank: u32) -> i64 {
+    ((cfg.rank_up_gold_base as f64) * cfg.rank_up_gold_growth.powi(rank as i32)).round() as i64
 }
 
 pub fn xp_to_next(rank: u32, cfg: &SkillsSection) -> i64 {
@@ -458,6 +515,66 @@ mod tests {
             kill_xp_per_difficulty: 6,
             active: Default::default(),
         }
+    }
+
+    /// Конфиг профессий для юнит-тестов M21 (значения из example).
+    fn prof_cfg() -> crate::config::ProfessionsSection {
+        crate::config::ProfessionsSection {
+            xp_per_craft_base: 40,
+            xp_per_craft_per_rank: 25,
+            fail_xp_ratio: 0.2,
+            level_xp_base: 40,
+            level_xp_growth: 1.02,
+            max_level: 250,
+            rank_span: 50,
+            rank_up_gold_base: 200,
+            rank_up_gold_growth: 1.5,
+        }
+    }
+
+    /// M21: формула уровня `round(40 × 1.02^L)` — растёт монотонно.
+    #[test]
+    fn profession_level_curve_grows() {
+        let cfg = prof_cfg();
+        assert_eq!(profession_level_xp(&cfg, 0), 40, "L0");
+        assert_eq!(profession_level_xp(&cfg, 1), 41, "L1");
+        assert_eq!(profession_level_xp(&cfg, 50), 108, "L50");
+        assert_eq!(profession_level_xp(&cfg, 100), 290, "L100");
+        let (a, b) = (
+            profession_level_xp(&cfg, 150),
+            profession_level_xp(&cfg, 151),
+        );
+        assert!(b > a, "каждый уровень дороже: {a} → {b}");
+        let top = profession_level_xp(&cfg, 249);
+        assert!((5_000..=6_000).contains(&top), "потолочный уровень: {top}");
+    }
+
+    /// M21: уровень растёт автоматически с переносом остатка; на
+    /// max_level опыт перестаёт копиться.
+    #[test]
+    fn profession_level_up_carries_remainder_and_caps() {
+        let cfg = prof_cfg();
+        // 100 XP: −40 (L1) −41 (L2) → остаток19.
+        assert_eq!(profession_level_up(&cfg, 0, 0, 100), (19, 2));
+        // Остаток переносится, а не сгорает.
+        assert_eq!(profession_level_up(&cfg, 19, 2, 0), (19, 2));
+        // Потолок: на L250 опыт не копится.
+        assert_eq!(profession_level_up(&cfg, 40, 249, 10_000), (0, 250));
+        assert_eq!(profession_level_up(&cfg, 7, 250, 100), (0, 250));
+        // Отрицательный gain не уводит XP в минус.
+        assert_eq!(profession_level_up(&cfg, 5, 1, -100), (0, 1));
+    }
+
+    /// M21: ранги1…5 (границы по 50 уровней), цена ранга — геометрия
+    /// `200 × 1.5^ранг` (300/450/675/1013).
+    #[test]
+    fn profession_rank_max_and_up_cost() {
+        let cfg = prof_cfg();
+        assert_eq!(profession_rank_max(&cfg), 5, "потолок ранга");
+        assert_eq!(profession_rank_up_cost(&cfg, 1), 300, "ранг1→2");
+        assert_eq!(profession_rank_up_cost(&cfg, 2), 450, "ранг2→3");
+        assert_eq!(profession_rank_up_cost(&cfg, 3), 675, "ранг3→4");
+        assert_eq!(profession_rank_up_cost(&cfg, 4), 1_013, "ранг4→5");
     }
 
     #[test]

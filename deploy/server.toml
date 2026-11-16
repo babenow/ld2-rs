@@ -112,12 +112,17 @@ duration_s = 3          # длительность анимации улучше
 chance = 1.0
 
 [gameplay.professions]  # skills.md §8 (D25)
-rank_max = 7            # предел ранга профессии
 xp_per_craft_base = 40  # XP за крафт: 40 + per_rank × ранг рецепта
 xp_per_craft_per_rank = 25
-xp_to_next_base = 80    # порог ранга: round(base × growth^rank)
-xp_growth = 1.5
 fail_xp_ratio = 0.2     # XP при неудаче
+# M21: две шкалы — уровень (0..max_level, порог растёт) и ранг
+# (границы кратно rank_span; повышение — у тренера за золото/награда)
+level_xp_base = 40      # порог уровня: round(base × growth^L)
+level_xp_growth = 1.02  # каждый уровень дороже на 2 %
+max_level = 250         # потолок уровня (верхний ранг «Мастер»)
+rank_span = 50          # уровней в ранге (границы: 50/100/150/200)
+rank_up_gold_base = 200 # ранг у тренера: round(base × growth^ранг)
+rank_up_gold_growth = 1.5
 
 [gameplay.magic]
 rune_recharge = "time"         # M18/F58c (ADR-012 §4): тикер зарядов; "item" — только извлечением
