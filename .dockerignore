@@ -1,3 +1,10 @@
-# Контекст сборки Dockerfile (PLAN-M12.1): лишнее не тащим.
-target
+# Не тащим в контекст сборки то, что не нужно для cargo build -p ld2-server.
+target/
 .git
+.pgdata
+content/
+Dockerfile
+docker-compose.yml
+README.md
+*.log
+.env
