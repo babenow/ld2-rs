@@ -7,11 +7,13 @@
 //! **две шкалы** — уровень (XP-порог растёт: `40 × 1.02^L`) и прогресс
 //! границы ранга (кратно 50 уровней); кнопки «Повысить ранг» (у
 //! тренера, цена из `extra.rank_up_gold`) и «Сбросить» (двухшаговое
-//! подтверждение). Ниже основных — секция дополнительных (только
-//! изученные; изучаются параллельно, лимит primary не трогают).
-//! По указанию заказчика из окна убраны: список рецептов, выпадающий
-//! список обучения и подписи «Уровень x»/надпись ранга под полосами
-//! (обучение — у тренера в диалоге).
+//! подтверждение). Основные — **два слота** (лимит primary = 2):
+//! заполненные карточки либо пустые с надписями «Первая профессия»/
+//! «Вторая профессия» (указание заказчика); прочие основные не
+//! показываются. Ниже — дополнительные: **всегда все три** (изученные —
+//! полные карточки, нет — пустые с названием; изучаются параллельно). По указанию заказчика из окна убраны: список
+//! рецептов, выпадающий список обучения и подписи «Уровень x»/
+//! надпись ранга под полосами (обучение — у тренера в диалоге).
 
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, Window};
 use ld2_core::l10n::{t, tf, Key, Lang};
@@ -23,8 +25,8 @@ use crate::palette::Palette;
 
 use super::{act_btn, scrollable_tab, sheet::bar, PopupKind, Root};
 
-/// M21: основные профессии (окно: по одной карточке в строке; у
-/// неизученных — пустая карточка, указание заказчика).
+/// M21: основные профессии (окно показывает только **два слота** —
+/// лимит primary; слоты заполненные или пустые с подписью слота).
 const PRIMARY: [&str; 11] = [
     "herbalist",
     "alchemist",
@@ -219,13 +221,14 @@ fn section_title(text: &str) -> Div {
         .child(text.to_string())
 }
 
-/// Пустая карточка неизученной профессии (только название,
-/// приглушённое; указание заказчика — показывать все).
+/// Пустая карточка неизученной дополнительной профессии — название
+/// приглушённо (секция видна всегда, указание заказчика).
 fn empty_card(pal: &Palette, lang: Lang, id: &str) -> Div {
     div()
         .flex()
         .flex_row()
         .items_center()
+        .justify_center()
         .px_3()
         .py_3()
         .rounded_md()
@@ -235,9 +238,26 @@ fn empty_card(pal: &Palette, lang: Lang, id: &str) -> Div {
         .child(div().text_color(rgb(pal.muted)).child(prof_label(lang, id)))
 }
 
+/// Пустой слот основной профессии («Первая/Вторая профессия» —
+/// указание заказчика); заполняется карточкой при изучении.
+fn empty_slot(pal: &Palette, lang: Lang, label: Key) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .px_3()
+        .py_4()
+        .rounded_md()
+        .bg(rgb(pal.panel))
+        .border_1()
+        .border_color(rgb(pal.border))
+        .child(div().text_color(rgb(pal.muted)).child(t(lang, label)))
+}
+
 impl Root {
     /// M21: окно профессий (гейт — `professions_popup.open`):
-    /// изученные основные строками, ниже — дополнительные.
+    /// два слота основных + изученные дополнительные строкой.
     pub(super) fn professions_window(
         &mut self,
         window: &mut Window,
@@ -265,20 +285,26 @@ impl Root {
             );
         };
 
-        // Все профессии: изученные — полная карточка, нет — пустая
-        // (указание заказчика); основные строками, доп — в одну строку.
+        // Основные — два слота (лимит primary): изученные карточками,
+        // нет — пустые «Первая/Вторая профессия» (указание заказчика).
         let reset_armed = self.prof_reset_armed.clone();
+        let learned_primary: Vec<&ProfessionSnapshot> = PRIMARY
+            .iter()
+            .filter_map(|id| snap.char.professions.iter().find(|p| p.id == *id))
+            .collect();
         let mut col = col_gap();
         col = col.child(section_title(t(lang, Key::ProfessionsPrimary)));
-        let mut primary_count = 0usize;
-        for id in PRIMARY {
-            if let Some(prof) = snap.char.professions.iter().find(|p| p.id == id) {
-                primary_count += 1;
-                col = col.child(prof_card(cx, pal, lang, prof, reset_armed.as_deref()));
-            } else {
-                col = col.child(empty_card(pal, lang, id));
+        for (index, slot_key) in [(0usize, Key::ProfSlotFirst), (1, Key::ProfSlotSecond)] {
+            match learned_primary.get(index) {
+                Some(prof) => {
+                    col = col.child(prof_card(cx, pal, lang, prof, reset_armed.as_deref()));
+                }
+                None => col = col.child(empty_slot(pal, lang, slot_key)),
             }
         }
+        // Дополнительные — всегда все три в одну строку: изученные —
+        // полная карточка, нет — пустая с названием (указание
+        // заказчика: карточки дополнительных не должны исчезать).
         col = col.child(section_title(t(lang, Key::ProfessionsSecondary)));
         let mut row = div().flex().flex_row().gap_2();
         for id in SECONDARY {
@@ -289,6 +315,7 @@ impl Root {
             row = row.child(div().flex_grow_1().min_w(px(240.0)).child(card));
         }
         col = col.child(row);
+        let primary_count = learned_primary.len();
 
         let content = scrollable_tab("ld2-professions-scroll", &self.professions_scroll, col);
 

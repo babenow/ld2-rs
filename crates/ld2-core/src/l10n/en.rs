@@ -172,6 +172,8 @@ pub(super) fn t(key: Key) -> &'static str {
         ResetProfConfirm => "Confirm reset",
         HkOpenProfessions => "Professions window",
         ProfLevelLabel => "Level",
+        ProfSlotFirst => "First profession",
+        ProfSlotSecond => "Second profession",
         ProfRankUpBtn => "Rank up: {n} g",
         ProfRankUpHint => "Next rank at level {lvl}",
         ProfRank1 => "Novice",
