@@ -48,6 +48,9 @@ pub(super) async fn run(
     let mut attempt: u32 = 0;
     let mut last_state_version: u64 = 0;
     let mut deferred: Vec<Outbound> = Vec::new();
+    // M19 (§15): кэш discovery — домен → адрес на время транспорта
+    // (ADR-013: до смены домена/рестарта; ошибки не кэшируются).
+    let mut resolved: Option<(String, String)> = None;
 
     'outer: loop {
         if attempt > 0 {
@@ -76,6 +79,40 @@ pub(super) async fn run(
             }
         } else {
             let _ = ingress.send(IngressEvent::Status(TransportStatus::Connecting));
+        }
+
+        // M19 (§15, ADR-013): домен → well-known-документ → адрес.
+        // Отказ — без подключения: статус в UI + backoff-ретраи
+        // (документ может быть исправлен на сервере).
+        if let Some(domain) = cfg.domain.clone() {
+            let cached_ok = resolved.as_ref().is_some_and(|(d, _)| *d == domain);
+            if cached_ok {
+                if let Some((_, address)) = &resolved {
+                    cfg.host = address.clone();
+                }
+            } else {
+                let d = domain.clone();
+                let outcome = tokio::task::spawn_blocking(move || {
+                    crate::discovery::resolve_blocking(&d, crate::discovery::RELEASE)
+                })
+                .await;
+                match outcome {
+                    Ok(Ok(doc)) => {
+                        debug!("discovery {domain} → {}", doc.address);
+                        cfg.host = doc.address.clone();
+                        resolved = Some((domain, doc.address));
+                    }
+                    Ok(Err(e)) => {
+                        warn!("discovery ({domain}): {e}");
+                        let _ = ingress.send(IngressEvent::Status(TransportStatus::ResolveFailed(
+                            (&e).into(),
+                        )));
+                        attempt += 1;
+                        continue;
+                    }
+                    Err(join) => warn!("discovery join: {join}"),
+                }
+            }
         }
 
         attempt += 1;

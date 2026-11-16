@@ -21,6 +21,12 @@ pub fn project_dirs() -> Result<ProjectDirs> {
 pub struct Config {
     /// Адрес сервера: `wss://` в release, `ws://` — только dev/localhost.
     pub host: String,
+    /// M19 (ADR-013, protocol.md §15): домен discovery — если задан
+    /// (непуст), адрес берётся из `GET https://<домен>/.well-known/
+    /// ld2.json`; пуст/нет — прямой режим через `host` (обратная
+    /// совместимость).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
     /// Код языка UI: `ru` | `en` (D8: таблицы ru/en с M0).
     pub lang: String,
     /// Последний логин — предзаполнение формы и ключ keyring (ФР-01).
@@ -300,6 +306,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             host: DEFAULT_HOST.to_string(),
+            domain: None,
             lang: "ru".to_string(),
             last_login: None,
             theme: default_theme(),
@@ -373,7 +380,27 @@ mod tests {
     }
 
     /// M9: расширенный конфиг переживает round-trip со старыми файлами
-    /// (новые поля — serde defaults).
+    /// M19 (§15): домен discovery — опциональное поле: старые конфиги
+    /// без него разбираются (None = прямой режим), с ним — тоже.
+    #[test]
+    fn domain_is_optional_and_round_trips() {
+        let old: Config = toml::from_str("host = \"ws://127.0.0.1:24817/ws\"\nlang = \"ru\"")
+            .expect("разбор без domain");
+        assert_eq!(old.domain, None, "старый конфиг — прямой режим");
+
+        let with: Config = toml::from_str(
+            "host = \"ws://127.0.0.1:24817/ws\"\nlang = \"ru\"\ndomain = \"game.example.com\"",
+        )
+        .expect("разбор с domain");
+        assert_eq!(with.domain.as_deref(), Some("game.example.com"));
+
+        // round-trip: сериализация не теряет домен.
+        let text = toml::to_string(&with).expect("сериализация");
+        let back: Config = toml::from_str(&text).expect("разбор обратно");
+        assert_eq!(back.domain, with.domain);
+    }
+
+    /// Старые файлы конфига (новые поля — serde defaults).
     #[test]
     fn extended_config_defaults_from_old_file() {
         let old: Config =

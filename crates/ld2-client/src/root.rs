@@ -275,6 +275,8 @@ pub struct Root {
     reg_password: Option<Entity<TextInput>>,
     reg_password2: Option<Entity<TextInput>>,
     host_input: Option<Entity<TextInput>>,
+    /// M19 (§15): ввод домена discovery (пусто — прямой режим host).
+    domain_input: Option<Entity<TextInput>>,
     settings_open: bool,
     /// M16/F29b: окно персонажа — оверлей поверх игрового экрана
     /// (геометрия/флаги жестов — в `char_popup`).
@@ -440,6 +442,11 @@ const TYPING_FIELDS: &[TypingField] = &[
         get: |r| &r.host_input,
     },
     TypingField {
+        screen: Screen::Login,
+        name: "domain",
+        get: |r| &r.domain_input,
+    },
+    TypingField {
         screen: Screen::Characters,
         name: "create_name",
         get: |r| &r.create_name,
@@ -453,6 +460,11 @@ const TYPING_FIELDS: &[TypingField] = &[
         screen: Screen::Characters,
         name: "host",
         get: |r| &r.host_input,
+    },
+    TypingField {
+        screen: Screen::Characters,
+        name: "domain",
+        get: |r| &r.domain_input,
     },
     TypingField {
         screen: Screen::Game,
@@ -473,6 +485,11 @@ const TYPING_FIELDS: &[TypingField] = &[
         screen: Screen::Game,
         name: "host",
         get: |r| &r.host_input,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "domain",
+        get: |r| &r.domain_input,
     },
 ];
 
@@ -501,6 +518,7 @@ impl Root {
             reg_password: None,
             reg_password2: None,
             host_input: None,
+            domain_input: None,
             settings_open: false,
             char_popup: PopupState::new((760.0, 560.0)),
             // Рюкзак со сдвигом: при открытии обоих окон видны обе
@@ -891,7 +909,10 @@ impl Root {
         tracing::info!("смена сервера → переподключение: {}", self.config.host);
         self.transport.close();
         let (tx, rx) = mpsc::unbounded_channel();
-        self.transport = transport::spawn(TransportConfig::new(self.config.host.clone()), tx);
+        self.transport = transport::spawn(
+            TransportConfig::new(self.config.host.clone()).with_domain(self.config.domain.clone()),
+            tx,
+        );
         self.ingress = rx;
         self.store.to_login_screen();
     }
@@ -947,6 +968,9 @@ impl Root {
             },
         ));
         self.host_input = Some(mk(window, cx, host.clone(), false, Some(host)));
+        // M19 (§15): поле домена discovery (пусто — прямой режим).
+        let domain = self.config.domain.clone().unwrap_or_default();
+        self.domain_input = Some(mk(window, cx, domain.clone(), false, Some(domain)));
         self.guild_input = Some(mk(window, cx, "…".into(), false, None));
         self.create_name = Some(mk(
             window,
@@ -1589,6 +1613,10 @@ impl Root {
                 if let Some(input) = self.host_input.clone() {
                     input.update(cx, |i, cx| i.set_text(host.clone(), cx));
                 }
+                let domain = self.config.domain.clone().unwrap_or_default();
+                if let Some(input) = self.domain_input.clone() {
+                    input.update(cx, |i, cx| i.set_text(domain.clone(), cx));
+                }
             }
             Click::ToggleCharacter => {
                 if self.char_popup.open {
@@ -1647,6 +1675,10 @@ impl Root {
                 if let Some(input) = self.host_input.clone() {
                     input.update(cx, |i, cx| i.set_text(host, cx));
                 }
+                let domain = self.config.domain.clone().unwrap_or_default();
+                if let Some(input) = self.domain_input.clone() {
+                    input.update(cx, |i, cx| i.set_text(domain, cx));
+                }
                 self.host_editing = true;
             }
             Click::TogglePicker(key) => {
@@ -1663,8 +1695,19 @@ impl Root {
                     self.store.notice = Some(t(self.lang, Key::SettingsWsDenied).to_string());
                     return;
                 }
-                if host != self.config.host {
+                // M19 (§15): домен discovery — пусто = прямой режим;
+                // пробелы внутри — некорректный ввод (отказ до сохранения).
+                let domain_raw = self.ti(&self.domain_input).read(cx).text().to_string();
+                let domain_raw = domain_raw.trim().to_string();
+                if !domain_raw.is_empty() && domain_raw.contains(char::is_whitespace) {
+                    self.store.notice = Some(t(self.lang, Key::DiscBadDoc).to_string());
+                    return;
+                }
+                let domain = (!domain_raw.is_empty()).then(|| domain_raw.clone());
+                let changed = host != self.config.host || domain != self.config.domain;
+                if changed {
                     self.config.host = host;
+                    self.config.domain = domain;
                     self.save_config();
                     self.reconnect();
                 }
@@ -2182,233 +2225,215 @@ impl Root {
             },
         ));
         // M14/F9: тело — только содержимое активной вкладки.
-        let body = match self.settings_tab {
-            SettingsTab::General => {
-                let mut body = div().flex().flex_col().gap_3();
+        let body =
+            match self.settings_tab {
+                SettingsTab::General => {
+                    let mut body = div().flex().flex_col().gap_3();
 
-                // Тема.
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsTheme).to_string(),
-                    vec![
-                        btn(
-                            cx,
-                            t(lang, Key::ThemeDark).to_string(),
-                            if theme == "dark" {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::Theme("dark"),
-                        ),
-                        btn(
-                            cx,
-                            t(lang, Key::ThemeLight).to_string(),
-                            if theme == "light" {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::Theme("light"),
-                        ),
-                    ],
-                ));
+                    // Тема.
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::SettingsTheme).to_string(),
+                        vec![
+                            btn(
+                                cx,
+                                t(lang, Key::ThemeDark).to_string(),
+                                if theme == "dark" {
+                                    pal.accent
+                                } else {
+                                    pal.panel
+                                },
+                                pal.text,
+                                Click::Theme("dark"),
+                            ),
+                            btn(
+                                cx,
+                                t(lang, Key::ThemeLight).to_string(),
+                                if theme == "light" {
+                                    pal.accent
+                                } else {
+                                    pal.panel
+                                },
+                                pal.text,
+                                Click::Theme("light"),
+                            ),
+                        ],
+                    ));
 
-                // M14/F8: язык (перенесён из шапки) — зеркало строки «Тема».
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::Language).to_string(),
-                    vec![
-                        btn(
-                            cx,
-                            "RU",
-                            if lang.code() == "ru" {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::Lang("ru"),
-                        ),
-                        btn(
-                            cx,
-                            "EN",
-                            if lang.code() == "en" {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::Lang("en"),
-                        ),
-                    ],
-                ));
+                    // M14/F8: язык (перенесён из шапки) — зеркало строки «Тема».
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::Language).to_string(),
+                        vec![
+                            btn(
+                                cx,
+                                "RU",
+                                if lang.code() == "ru" {
+                                    pal.accent
+                                } else {
+                                    pal.panel
+                                },
+                                pal.text,
+                                Click::Lang("ru"),
+                            ),
+                            btn(
+                                cx,
+                                "EN",
+                                if lang.code() == "en" {
+                                    pal.accent
+                                } else {
+                                    pal.panel
+                                },
+                                pal.text,
+                                Click::Lang("en"),
+                            ),
+                        ],
+                    ));
 
-                // M14/F13: стиль строк боя в журнале: цвета — ColorPicker,
-                // жирность урона — Вкл/Выкл (зеркало «Уведомлений»).
-                body = body.child(color_picker_row(
-                    cx,
-                    pal,
-                    lang,
-                    ColorRow {
-                        label: Key::SettingsLogDamageColor,
-                        id: "ld2-log-damage-color",
-                        value: &self.config.log_damage_color,
-                        open: self.color_picker_open == Some("ld2-log-damage-color"),
-                        set: |root, v| root.config.log_damage_color = v,
-                    },
-                ));
-                body = body.child(color_picker_row(
-                    cx,
-                    pal,
-                    lang,
-                    ColorRow {
-                        label: Key::SettingsLogAttackColor,
-                        id: "ld2-log-attack-color",
-                        value: &self.config.log_attack_color,
-                        open: self.color_picker_open == Some("ld2-log-attack-color"),
-                        set: |root, v| root.config.log_attack_color = v,
-                    },
-                ));
-                // M14/F14: флаг — слайдер-переключатель (Ely Switch).
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsDamageBold).to_string(),
-                    vec![div().child({
-                        let this = cx.entity();
-                        Switch::new("ld2-log-damage-bold", self.config.log_damage_bold).on_change(
-                            move |on, _window, acx| {
-                                this.update(acx, |root, cx| {
-                                    root.on_click(Click::LogDamageBold(on), cx);
-                                    cx.notify();
-                                });
-                            },
-                        )
-                    })],
-                ));
-
-                // Лимит истории чата.
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsChatLimit).to_string(),
-                    vec![
-                        btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
-                        div().px_2().child(format!("{limit}")),
-                        btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
-                    ],
-                ));
-
-                // Уведомления (D7).
-                // M14/F14: флаг — слайдер-переключатель (Ely Switch).
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsNotify).to_string(),
-                    vec![div().child({
-                        let this = cx.entity();
-                        Switch::new("ld2-notify", notify).on_change(move |on, _window, acx| {
-                            this.update(acx, |root, cx| {
-                                root.on_click(Click::SetNotify(on), cx);
-                                cx.notify();
-                            });
-                        })
-                    })],
-                ));
-
-                // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
-                if let Ok(dirs) = ld2_core::config::project_dirs() {
-                    body = body.child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(pal.muted))
-                            .child(dirs.config_dir().display().to_string()),
-                    );
-                }
-
-                body
-            }
-            // M14/F14: шрифты — отдельная вкладка (глобальный масштаб,
-            // шрифт чата и шрифта лога).
-            SettingsTab::Fonts => {
-                let mut body = div().flex().flex_col().gap_3();
-                // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
-                // пишет Theme.font_scale (отклонение M10 «font_scale не
-                // применяется» снято).
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            div()
-                                .w(px(130.0))
-                                .text_color(rgb(pal.muted))
-                                .child(t(lang, Key::SettingsFont)),
-                        )
-                        .child(slider_cell({
+                    // M14/F13: стиль строк боя в журнале: цвета — ColorPicker,
+                    // жирность урона — Вкл/Выкл (зеркало «Уведомлений»).
+                    body = body.child(color_picker_row(
+                        cx,
+                        pal,
+                        lang,
+                        ColorRow {
+                            label: Key::SettingsLogDamageColor,
+                            id: "ld2-log-damage-color",
+                            value: &self.config.log_damage_color,
+                            open: self.color_picker_open == Some("ld2-log-damage-color"),
+                            set: |root, v| root.config.log_damage_color = v,
+                        },
+                    ));
+                    body = body.child(color_picker_row(
+                        cx,
+                        pal,
+                        lang,
+                        ColorRow {
+                            label: Key::SettingsLogAttackColor,
+                            id: "ld2-log-attack-color",
+                            value: &self.config.log_attack_color,
+                            open: self.color_picker_open == Some("ld2-log-attack-color"),
+                            set: |root, v| root.config.log_attack_color = v,
+                        },
+                    ));
+                    // M14/F14: флаг — слайдер-переключатель (Ely Switch).
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::SettingsDamageBold).to_string(),
+                        vec![div().child({
                             let this = cx.entity();
-                            let value = self.config.font_scale as f64;
-                            Slider::new("ld2-font-scale", value)
-                                .range(1.0, 1.4)
-                                .step(0.05)
-                                .on_change(move |v, _window, acx| {
+                            Switch::new("ld2-log-damage-bold", self.config.log_damage_bold)
+                                .on_change(move |on, _window, acx| {
                                     this.update(acx, |root, cx| {
-                                        root.config.font_scale = v as f32;
-                                        cx.global_mut::<Theme>().font_scale = v as f32;
-                                        cx.refresh_windows();
+                                        root.on_click(Click::LogDamageBold(on), cx);
                                         cx.notify();
-                                        root.save_config();
                                     });
                                 })
-                        }))
-                        .child(value_readout(pal, format!("{:.2}", self.config.font_scale))),
-                );
+                        })],
+                    ));
 
-                // M14/F8: шрифт сообщений чата и строк лога — отдельные px.
-                body = body.child(font_px_row(
-                    cx,
-                    pal,
-                    lang,
-                    Key::SettingsChatFont,
-                    "ld2-chat-font-px",
-                    self.config.chat_font_px,
-                    |root, v| root.config.chat_font_px = v,
-                ));
-                body = body.child(font_px_row(
-                    cx,
-                    pal,
-                    lang,
-                    Key::SettingsLogFont,
-                    "ld2-log-font-px",
-                    self.config.log_font_px,
-                    |root, v| root.config.log_font_px = v,
-                ));
-                body
-            }
-            // M14/F11: адрес сервера — read-only; поле ввода
-            // раскрывается действием «Подключиться к другому».
-            SettingsTab::Connection => {
-                let mut body = div().flex().flex_col().gap_3();
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
+                    // Лимит истории чата.
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::SettingsChatLimit).to_string(),
+                        vec![
+                            btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
+                            div().px_2().child(format!("{limit}")),
+                            btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
+                        ],
+                    ));
+
+                    // Уведомления (D7).
+                    // M14/F14: флаг — слайдер-переключатель (Ely Switch).
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::SettingsNotify).to_string(),
+                        vec![div().child({
+                            let this = cx.entity();
+                            Switch::new("ld2-notify", notify).on_change(move |on, _window, acx| {
+                                this.update(acx, |root, cx| {
+                                    root.on_click(Click::SetNotify(on), cx);
+                                    cx.notify();
+                                });
+                            })
+                        })],
+                    ));
+
+                    // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
+                    if let Ok(dirs) = ld2_core::config::project_dirs() {
+                        body = body.child(
                             div()
+                                .text_size(px(11.0))
                                 .text_color(rgb(pal.muted))
-                                .child(t(lang, Key::SettingsHost)),
-                        )
-                        .child(div().text_size(px(14.0)).child(self.config.host.clone()))
-                        .children((!host_ok).then(|| {
-                            div()
-                                .text_color(rgb(pal.danger))
-                                .child(t(lang, Key::SettingsWsDenied))
-                        })),
-                );
-                if self.host_editing {
+                                .child(dirs.config_dir().display().to_string()),
+                        );
+                    }
+
+                    body
+                }
+                // M14/F14: шрифты — отдельная вкладка (глобальный масштаб,
+                // шрифт чата и шрифта лога).
+                SettingsTab::Fonts => {
+                    let mut body = div().flex().flex_col().gap_3();
+                    // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
+                    // пишет Theme.font_scale (отклонение M10 «font_scale не
+                    // применяется» снято).
+                    body = body.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .w(px(130.0))
+                                    .text_color(rgb(pal.muted))
+                                    .child(t(lang, Key::SettingsFont)),
+                            )
+                            .child(slider_cell({
+                                let this = cx.entity();
+                                let value = self.config.font_scale as f64;
+                                Slider::new("ld2-font-scale", value)
+                                    .range(1.0, 1.4)
+                                    .step(0.05)
+                                    .on_change(move |v, _window, acx| {
+                                        this.update(acx, |root, cx| {
+                                            root.config.font_scale = v as f32;
+                                            cx.global_mut::<Theme>().font_scale = v as f32;
+                                            cx.refresh_windows();
+                                            cx.notify();
+                                            root.save_config();
+                                        });
+                                    })
+                            }))
+                            .child(value_readout(pal, format!("{:.2}", self.config.font_scale))),
+                    );
+
+                    // M14/F8: шрифт сообщений чата и строк лога — отдельные px.
+                    body = body.child(font_px_row(
+                        cx,
+                        pal,
+                        lang,
+                        Key::SettingsChatFont,
+                        "ld2-chat-font-px",
+                        self.config.chat_font_px,
+                        |root, v| root.config.chat_font_px = v,
+                    ));
+                    body = body.child(font_px_row(
+                        cx,
+                        pal,
+                        lang,
+                        Key::SettingsLogFont,
+                        "ld2-log-font-px",
+                        self.config.log_font_px,
+                        |root, v| root.config.log_font_px = v,
+                    ));
+                    body
+                }
+                // M14/F11: адрес сервера — read-only; поле ввода
+                // раскрывается действием «Подключиться к другому».
+                SettingsTab::Connection => {
+                    let mut body = div().flex().flex_col().gap_3();
                     body = body.child(
                         div()
                             .flex()
@@ -2416,54 +2441,105 @@ impl Root {
                             .gap_1()
                             .child(
                                 div()
-                                    .w(px(320.0))
-                                    .child(Input::new(self.ti(&self.host_input))),
+                                    .text_color(rgb(pal.muted))
+                                    .child(t(lang, Key::SettingsHost)),
                             )
-                            .child(btn(
-                                cx,
-                                t(lang, Key::SettingsApply).to_string(),
-                                pal.accent,
-                                pal.accent_text,
-                                Click::ApplyHost,
-                            )),
+                            .child(div().text_size(px(14.0)).child(self.config.host.clone()))
+                            .children((!host_ok).then(|| {
+                                div()
+                                    .text_color(rgb(pal.danger))
+                                    .child(t(lang, Key::SettingsWsDenied))
+                            })),
                     );
-                } else {
-                    body = body.child(btn(
-                        cx,
-                        t(lang, Key::SettingsChangeHost).to_string(),
-                        pal.panel,
-                        pal.text,
-                        Click::EditHost,
-                    ));
-                }
-                body
-            }
-            SettingsTab::Hotkeys => {
-                let mut body = div().flex().flex_col().gap_3();
-                // Горячие клавиши: только отображение (редактирование/применение
-                // навигации — M10.4 вместе с game-навигацией).
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
+                    // M19 (§15): режим discovery — домен (пусто = прямой URL).
+                    body =
+                        body.child(
                             div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(t(lang, Key::SettingsHotkeys)),
-                        )
-                        // M14/F4: все ремаппингуемые действия — из одного
-                        // вектора (навигация/цикл + боевые 1–6), без match
-                        // по индексу.
-                        .children(HOTKEY_ROWS.iter().map(|row| {
-                            let value = (row.get)(&self.config.hotkeys).to_string();
-                            hotkey_row(cx, lang, row, &value)
-                        })),
-                );
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_color(rgb(pal.muted))
+                                        .child(t(lang, Key::SettingsDomain)),
+                                )
+                                .child(div().text_size(px(14.0)).child(
+                                    self.config.domain.clone().unwrap_or_else(|| "—".into()),
+                                )),
+                        );
+                    if self.host_editing {
+                        body = body.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(pal.muted))
+                                        .child(t(lang, Key::SettingsHost)),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(320.0))
+                                        .child(Input::new(self.ti(&self.host_input))),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(pal.muted))
+                                        .child(t(lang, Key::SettingsDomain)),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(320.0))
+                                        .child(Input::new(self.ti(&self.domain_input))),
+                                )
+                                .child(btn(
+                                    cx,
+                                    t(lang, Key::SettingsApply).to_string(),
+                                    pal.accent,
+                                    pal.accent_text,
+                                    Click::ApplyHost,
+                                )),
+                        );
+                    } else {
+                        body = body.child(btn(
+                            cx,
+                            t(lang, Key::SettingsChangeHost).to_string(),
+                            pal.panel,
+                            pal.text,
+                            Click::EditHost,
+                        ));
+                    }
+                    body
+                }
+                SettingsTab::Hotkeys => {
+                    let mut body = div().flex().flex_col().gap_3();
+                    // Горячие клавиши: только отображение (редактирование/применение
+                    // навигации — M10.4 вместе с game-навигацией).
+                    body = body.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child(t(lang, Key::SettingsHotkeys)),
+                            )
+                            // M14/F4: все ремаппингуемые действия — из одного
+                            // вектора (навигация/цикл + боевые 1–6), без match
+                            // по индексу.
+                            .children(HOTKEY_ROWS.iter().map(|row| {
+                                let value = (row.get)(&self.config.hotkeys).to_string();
+                                hotkey_row(cx, lang, row, &value)
+                            })),
+                    );
 
-                body
-            }
-        };
+                    body
+                }
+            };
 
         // M14/F9: тело активной вкладки — в скролле; заголовок,
         // вкладки и кнопка «Закрыть» остаются вне прокрутки.
@@ -3088,6 +3164,8 @@ fn status_key(status: &TransportStatus) -> Key {
         TransportStatus::Reconnecting { .. } => Key::StatusReconnecting,
         TransportStatus::AuthExpired => Key::StatusAuthExpired,
         TransportStatus::Stopped => Key::StatusStopped,
+        // M19 (§15): адрес не разрешился (discovery) — свой текст.
+        TransportStatus::ResolveFailed(_) => Key::StatusResolveFailed,
     }
 }
 
@@ -3098,7 +3176,9 @@ fn status_color(pal: &Palette, status: &TransportStatus) -> (u32, Key) {
     let color = match status {
         TransportStatus::Online => pal.success,
         TransportStatus::Connecting | TransportStatus::Reconnecting { .. } => pal.warn,
-        TransportStatus::AuthExpired | TransportStatus::Stopped => pal.danger,
+        TransportStatus::AuthExpired
+        | TransportStatus::Stopped
+        | TransportStatus::ResolveFailed(_) => pal.danger,
     };
     (color, status_key(status))
 }
@@ -3686,7 +3766,7 @@ mod tests {
     /// Login → Game не блокирует хоткеи.
     #[test]
     fn typing_fields_cover_every_input_and_gate_game() {
-        const ALL: [&str; 12] = [
+        const ALL: [&str; 13] = [
             "login",
             "password",
             "reg_login",
@@ -3694,6 +3774,7 @@ mod tests {
             "reg_password",
             "reg_password2",
             "host",
+            "domain",
             "guild",
             "chat",
             "chat_filter",
@@ -3721,7 +3802,7 @@ mod tests {
             .collect();
         assert_eq!(
             game,
-            ["chat", "chat_filter", "guild", "host"],
+            ["chat", "chat_filter", "guild", "host", "domain"],
             "игровой экран проверяет только свои поля"
         );
     }

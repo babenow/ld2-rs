@@ -33,7 +33,9 @@ fn main() -> anyhow::Result<()> {
     let lang = Lang::from_code(&config.lang);
 
     // Keyring-resume (ФР-01): входили раньше — экран входа пропускаем.
-    let mut tcfg = TransportConfig::new(config.host.clone());
+    // M19 (§15): домен discovery — при заданном домене адрес берётся
+    // из well-known-документа (прямой host — фолбэк/отладка).
+    let mut tcfg = TransportConfig::new(config.host.clone()).with_domain(config.domain.clone());
     if let Some(login) = &config.last_login {
         if let Some(token) =
             ld2_core::secrets::get_token_with_timeout(&config.host, login, Duration::from_secs(1))
