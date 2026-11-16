@@ -12,8 +12,33 @@ use crate::state::SharedState;
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/.well-known/ld2.json", get(discovery_doc))
         .route("/ws", get(crate::transport::ws_handler))
         .with_state(state)
+}
+
+/// M19 (ADR-013): well-known discovery-документ (вне WS-контракта):
+/// `address` из `[discovery]`, `version` — версия WS-контракта,
+/// `min_client` — из `[server].min_client` (§5), если задан.
+/// Секция не настроена →404 (discovery выключен).
+async fn discovery_doc(
+    State(state): State<SharedState>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let address = state
+        .config
+        .discovery
+        .address
+        .as_deref()
+        .filter(|a| !a.is_empty())
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let mut doc = serde_json::json!({
+        "address": address,
+        "version": ld2_protocol::envelope::PROTOCOL_VERSION,
+    });
+    if let Some(min_client) = state.config.server.min_client.as_deref() {
+        doc["min_client"] = serde_json::json!(min_client);
+    }
+    Ok(axum::Json(doc))
 }
 
 /// `200 ok` при живой БД, `503` иначе (для мониторинга/оркестраторов).

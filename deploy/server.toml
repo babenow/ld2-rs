@@ -167,3 +167,9 @@ attr = 18
 [[skills.gates]]
 rank = 30
 attr = 25
+
+# M19 (ADR-013): discovery подключения — клиент хранит домен и берёт
+# адрес из GET /.well-known/ld2.json ({ address, version, min_client }).
+# Секция не задана / address пуст →404 (discovery выключен).
+[discovery]
+address = "ws://127.0.0.1:24817/ws"

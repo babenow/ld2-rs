@@ -25,6 +25,21 @@ pub struct Config {
     pub world: WorldSection,
     /// Модель опыта навыков (skills.md §2/§8).
     pub skills: SkillsSection,
+    /// M19 (ADR-013): discovery подключения — well-known-документ;
+    /// секция опциональна (нет → маршрут отдаёт404).
+    #[serde(default)]
+    pub discovery: DiscoverySection,
+}
+
+/// M19 (ADR-013): discovery подключения — `GET /.well-known/ld2.json`
+/// отдаёт `{ address, version, min_client? }`; клиент хранит домен и
+/// резолвит адрес сервера без перевыпуска (ROADMAP M19).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DiscoverySection {
+    /// WS-адрес для документа (`ws://…` dev / `wss://…` prod);
+    /// пусто/нет — discovery выключен (404).
+    pub address: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -491,6 +506,16 @@ impl Config {
         check_crime(&self.gameplay.crime, &mut out);
         check_chat(&self.gameplay.chat, &mut out);
         check_inventory(&self.gameplay.inventory, &mut out);
+
+        // [discovery] (M19): адрес — WS-URL.
+        if let Some(address) = self.discovery.address.as_deref() {
+            if !address.is_empty()
+                && !address.starts_with("ws://")
+                && !address.starts_with("wss://")
+            {
+                out.push("discovery.address: должен начинаться с ws:// или wss://".into());
+            }
+        }
 
         if self.gameplay.upgrade.max_level == 0 {
             out.push("gameplay.upgrade.max_level: должен быть ≥ 1".into());
