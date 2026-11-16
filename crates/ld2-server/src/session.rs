@@ -791,6 +791,13 @@ impl Session {
 
     /// Локация персонажа: по `location_id`; пустой → спавн из сида (персист,
     /// D27); нет в БД (контент не засеян/удалён) → заглушка (D26).
+    /// Снимок локации с оверлеем живого мира (мобы/трупы/ресурсы/
+    /// наземные предметы — `World::build_location`; M20).
+    fn location_with_world(&self, snapshot: LocationSnapshot) -> LocationSnapshot {
+        let world = self.state.world.lock().expect("мир");
+        world.build_location(snapshot)
+    }
+
     async fn resolve_location(
         &self,
         location_id: &str,
@@ -799,7 +806,7 @@ impl Session {
         let pool = &self.state.pool;
         if !location_id.is_empty() {
             return match db::locations::get(pool, location_id).await {
-                Ok(Some(row)) => (row.id.clone(), row.snapshot()),
+                Ok(Some(row)) => (row.id.clone(), self.location_with_world(row.snapshot())),
                 Ok(None) => {
                     warn!("локация {location_id} отсутствует в сиде — заглушка");
                     (location_id.to_string(), location_snapshot(location_id))
@@ -826,7 +833,7 @@ impl Session {
             warn!("спавн не персистнут: {e}");
         }
         match db::locations::get(pool, &spawn).await {
-            Ok(Some(row)) => (spawn, row.snapshot()),
+            Ok(Some(row)) => (spawn, self.location_with_world(row.snapshot())),
             Ok(None) => {
                 warn!("спавн-локация {spawn} отсутствует в БД");
                 let stub = location_snapshot(&spawn);
@@ -970,7 +977,7 @@ impl Session {
             world.end_combat(&char_id); // смена локации прерывает бой (M12.5)
         }
         let location = match db::locations::get(&self.state.pool, &target).await {
-            Ok(Some(row)) => row.snapshot(),
+            Ok(Some(row)) => self.location_with_world(row.snapshot()),
             Ok(None) => {
                 warn!("целевая локация {target} отсутствует в сиде — заглушка");
                 location_snapshot(&target)
