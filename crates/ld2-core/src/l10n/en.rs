@@ -209,7 +209,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ProfSkinning => "Skinning",
         ProfLeatherworking => "Leatherworking",
         ProfFishing => "Fishing",
-        ProfMedic => "Medicine",
+        ProfMedic => "First Aid",
         ProfJeweler => "Jewelcrafting",
         // M8: chat
         ChLabel => "Chat",

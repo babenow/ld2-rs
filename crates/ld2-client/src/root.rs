@@ -383,8 +383,7 @@ pub struct Root {
     /// M10.5: окно сделки — поле золота.
     /// M11.3: золото сделки (NumberInput Ely; фиксируется операцией).
     trade_gold_value: f64,
-    /// M11.3: выбранные значения Select (обучение профессии / предмет сделки).
-    learn_pick: Option<String>,
+
     trade_pick: Option<String>,
     /// M11.7 (D20/D21): поле ввода ника и длительность таймера удаления.
     delete_name: Option<Entity<TextInput>>,
@@ -607,7 +606,7 @@ impl Root {
             dialog_seen: None,
             professions_popup: PopupState {
                 delta: (0.0, -30.0),
-                ..PopupState::new((620.0, 560.0))
+                ..PopupState::new((880.0, 620.0))
             },
             prof_reset_armed: None,
             // M18/F53: окно заточки — компактная карточка по центру,
@@ -634,7 +633,6 @@ impl Root {
             chat_filter: None,
             chat_channel: "location".into(),
             trade_gold_value: 0.0,
-            learn_pick: None,
             trade_pick: None,
             delete_name: None,
             delete_delay: 10,
@@ -1501,7 +1499,7 @@ impl Root {
             PopupKind::Socketing => (440.0, 420.0),
             PopupKind::Quantity => (400.0, 280.0),
             PopupKind::Dialog => (560.0, 460.0),
-            PopupKind::Professions => (620.0, 560.0),
+            PopupKind::Professions => (880.0, 620.0),
         }
     }
 

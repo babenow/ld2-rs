@@ -12,7 +12,7 @@
     { "id": "woodcarver", "name": "Резчик", "type": "primary" },
     { "id": "jeweler", "name": "Ювелирное дело", "type": "primary" },
     { "id": "cook", "name": "Кулинария", "type": "secondary" },
-    { "id": "fishing", "name": "Рыбалка", "type": "secondary" },
-    { "id": "medic", "name": "Лекарь", "type": "secondary" }
+    { "id": "fishing", "name": "Рыболовство", "type": "secondary" },
+    { "id": "medic", "name": "Лечение", "type": "secondary" }
   ]
 }
