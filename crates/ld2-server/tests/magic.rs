@@ -88,7 +88,8 @@ async fn rune_weapon_gem_armor_only_and_equipped_attrs() {
     let rune = give(&mut c, "rune_fire").await;
     let gem = give(&mut c, "gem_str").await; // +3 str
 
-    // Руна в броню — отказ.
+    // M18/F58: руна в броню — отказ, т.к. слот брони принимает
+    // самоцветы (решает `accepts`, а не тип предмета).
     let seq = c
         .send(
             "cmd/socket.insert",
@@ -104,8 +105,8 @@ async fn rune_weapon_gem_armor_only_and_equipped_attrs() {
         ack["error"]["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("оружие"),
-        "текст отказа: {ack}"
+            .contains("самоцветы"),
+        "текст называет, что принимает слот: {ack}"
     );
 
     // Самоцвет в оружие — отказ.
@@ -262,6 +263,16 @@ async fn socket_insert_cast_extract_flow() {
     assert_eq!(rune["name"], "Руна огня", "руна в сокете: {ack}");
     assert_eq!(rune["charges"], 7, "заряды из определения");
     assert_eq!(rune["spell"], "fire_dart");
+    // M18/F58f: знак руны — контент-поле glyph, копируется в сокет.
+    assert_eq!(rune["glyph"], "f", "glyph из параметров руны: {ack}");
+    // M18/F58f: раритет вставленного — знак самоцвета по раритету.
+    assert_eq!(rune["rarity"], "uncommon", "rarity из контента: {ack}");
+    // M18/F58f: подпись слота (что даёт) — серверные строки из params.
+    let detail = rune["detail"].as_array().expect("detail в сокете");
+    assert!(
+        detail.iter().any(|l| l.as_str() == Some("+12 к урону")),
+        "урон в подписи: {detail:?}"
+    );
     let removed = c.wait_event("evt/item/removed").await;
     assert_eq!(removed["payload"]["uid"], rune_uid, "руна израсходована");
 
@@ -675,4 +686,628 @@ async fn sockets_persist_across_server_restart() {
         staff["sockets"][0]["rune"].is_null(),
         "пустой слот остался пустым: {staff}"
     );
+}
+
+/// M18/F58 (ADR-012): сервер проставляет `accepts` в снапшоте — тип
+/// слота реально доходит до клиента. Дефолт по типу предмета (когда
+/// `rune_sockets` не задан): броня → `gem`, оружие/посох → `rune`
+/// — прежнее поведение правил инкрустации сохраняется.
+#[tokio::test]
+async fn snapshot_carries_socket_accepts() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // staff_apprentice: 2 слота, посох → оба рунных;
+    // helm_knight: 1 слот, броня → под самоцвет.
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let helm_uid = give(&mut c, "helm_knight").await;
+
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "resync");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let inv = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь");
+
+    let accepts_of = |uid: &str| -> Vec<String> {
+        let item = inv
+            .iter()
+            .find(|i| i["uid"] == uid)
+            .unwrap_or_else(|| panic!("предмет {uid} должен быть в инвентаре"));
+        item["sockets"]
+            .as_array()
+            .expect("сокеты")
+            .iter()
+            .map(|s| s["accepts"].as_str().unwrap_or("<нет поля>").to_string())
+            .collect()
+    };
+
+    assert_eq!(
+        accepts_of(&staff_uid),
+        ["rune", "rune"],
+        "посох: все слоты рунные (дефолт не-брони)"
+    );
+    assert_eq!(accepts_of(&helm_uid), ["gem"], "броня: слот под самоцвет");
+}
+
+/// M18/F58 (ADR-012): слот принимает по `accepts` — гемы в оружие
+/// разрешены там, где слот под самоцветы (`rune_sockets` делит
+/// слоты: первые рунные, остальные под самоцветы).
+#[tokio::test]
+async fn gem_goes_into_weapon_socket_by_accepts() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // 4 слота: 0,1 — рунные; 2,3 — под самоцветы.
+    let sword = give(&mut c, "sword_1000_true").await;
+    let rune = give(&mut c, "rune_fire").await;
+    let gem = give(&mut c, "gem_str").await;
+
+    async fn insert(
+        c: &mut ld2_test_kit::WsClient,
+        staff_uid: &str,
+        idx: u64,
+        rune_uid: &str,
+    ) -> serde_json::Value {
+        let seq = c
+            .send(
+                "cmd/socket.insert",
+                json!({ "staff_uid": staff_uid, "socket_index": idx, "rune_uid": rune_uid }),
+            )
+            .await;
+        c.ack(seq).await
+    }
+
+    // Руна в рунный слот — работает (экземпляр расходуется).
+    let ack = insert(&mut c, &sword, 0, &rune).await;
+    assert_eq!(ack["result"], "ok", "руна в рунный слот: {ack}");
+    let rune2 = give(&mut c, "rune_fire").await;
+
+    // Самоцвет в слот оружия (accepts: gem) — работает (F58).
+    let ack = insert(&mut c, &sword, 2, &gem).await;
+    assert_eq!(ack["result"], "ok", "самоцвет в оружие разрешён: {ack}");
+    // Гем потрачен при успешной вставке — для кейса ниже нужен новый.
+    let gem2 = give(&mut c, "gem_str").await;
+
+    // Руна в гемный слот — отказ (свежий экземпляр: старый потрачен).
+    let ack = insert(&mut c, &sword, 3, &rune2).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NO_RUNE_SLOT",
+        "руна в гемный слот: {ack}"
+    );
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("самоцветы"),
+        "текст называет принимаемое слотом: {ack}"
+    );
+
+    // Самоцвет в рунный слот — отказ (слот 1 рунный); gem потрачен → свой.
+    let ack = insert(&mut c, &sword, 1, &gem2).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NO_RUNE_SLOT",
+        "самоцвет в рунный слот: {ack}"
+    );
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("руны"),
+        "текст называет принимаемое слотом: {ack}"
+    );
+}
+
+/// M18/F58c (ADR-012 §4): тикер восстанавливает заряды рун — аналог
+/// `resource.energy_regen_s`, сек из конфига; клиент получает патч
+/// `evt/item/state` с новыми зарядами (не нужно ждать ресинк).
+#[tokio::test]
+async fn rune_charges_regenerate_by_ticker() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.magic.rune_recharge = "time".into();
+            cfg.gameplay.magic.rune_recharge_s = 1.0; // шаг каждую секунду
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let rune_uid = give(&mut c, "rune_fire").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune_uid }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+
+    // Вставлена руна 7/10 (charges из def) → тикер добирает до max;
+    // патч приходит от тикера, а не от вставки (вставка шлёт патч по uid руны).
+    let patch = c
+        .wait(|v| {
+            v["type"] == "evt/item/state"
+                && v["payload"]["uid"] == staff_uid.as_str()
+                && v["payload"]["patch"]["sockets"].is_array()
+        })
+        .await;
+    let charges = patch["payload"]["patch"]["sockets"][0]["rune"]["charges"]
+        .as_i64()
+        .expect("charges в патче");
+    assert!(
+        charges > 7 && charges <= 10,
+        "тикер поднял заряды (7 < charges ≤ 10): {charges}, патч: {patch}"
+    );
+    // Сокеты в патче — wire-виде (§6: есть accepts, нет служебного def_id).
+    assert_eq!(
+        patch["payload"]["patch"]["sockets"][0]["accepts"].as_str(),
+        Some("rune"),
+        "accepts добрался в патч: {patch}"
+    );
+    assert!(
+        patch["payload"]["patch"]["sockets"][0]
+            .get("def_id")
+            .is_none(),
+        "служебное поле не уходит клиенту: {patch}"
+    );
+}
+
+/// M18/F58c: режим `rune_recharge = "item"` — тикера нет, заряды
+/// остаются прежними (ключ больше не декоративен: режим решает).
+#[tokio::test]
+async fn rune_recharge_item_mode_disables_ticker() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.magic.rune_recharge = "item".into();
+            cfg.gameplay.magic.rune_recharge_s = 1.0; // если б тикер шёл — успел бы
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let rune_uid = give(&mut c, "rune_fire").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune_uid }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+
+    // Две секунды тик-лупа: патча зарядов быть не должно, заряды прежние.
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let staff = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь")
+        .iter()
+        .find(|i| i["uid"] == staff_uid)
+        .expect("посох");
+    assert_eq!(
+        staff["sockets"][0]["rune"]["charges"].as_i64(),
+        Some(7),
+        "режим item: заряды не тикают: {staff}"
+    );
+}
+
+/// M18/F58c: прочитать до появления ОБОИХ событий — порядок в потоке
+/// не гарантирован (патч сокетов уходит раньше cast-события).
+async fn wait_cast_and_socket_patch(
+    c: &mut ld2_test_kit::WsClient,
+    staff_uid: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let mut cast = None;
+    let mut patch = None;
+    while cast.is_none() || patch.is_none() {
+        let v = c.recv_json().await;
+        match v["type"].as_str() {
+            Some("evt/magic/cast") if cast.is_none() => cast = Some(v),
+            Some("evt/item/state")
+                if patch.is_none()
+                    && v["payload"]["uid"] == staff_uid
+                    && v["payload"]["patch"]["sockets"].is_array() =>
+            {
+                patch = Some(v)
+            }
+            _ => {}
+        }
+    }
+    (cast.expect("cast"), patch.expect("патч сокетов"))
+}
+
+/// M18/F58c (ADR-012 §4): затрата — поле руны `cost`, а не всегда 1:
+/// «Руна шторма» (cost 2) снимает 2 заряда за каст и требует полной
+/// оплаты (1 заряд < cost → E_NO_CHARGES, даже не смотрит ману).
+#[tokio::test]
+async fn rune_cast_spends_configured_charge_cost() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.magic.mana.rune_cost = 1; // мана не мешает — проверяем заряды
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let rune_uid = give(&mut c, "rune_storm").await; // charges 5, cost 2
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune_uid }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+
+    // Каст #1: 5 → 3 (cost 2), патч сокетов идёт тем же потоком.
+    let seq = c
+        .send(
+            "cmd/magic.rune_cast",
+            json!({ "staff_uid": staff_uid, "socket_index": 0 }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let (cast, patch) = wait_cast_and_socket_patch(&mut c, &staff_uid).await;
+    assert_eq!(cast["payload"]["charges_left"], 3, "cost 2: 5 → 3");
+    assert_eq!(
+        patch["payload"]["patch"]["sockets"][0]["rune"]["charges"].as_i64(),
+        Some(3),
+        "патч сокетов несёт новые заряды: {patch}"
+    );
+
+    // Каст #2: 3 → 1.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let seq = c
+        .send(
+            "cmd/magic.rune_cast",
+            json!({ "staff_uid": staff_uid, "socket_index": 0 }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let (cast, _) = wait_cast_and_socket_patch(&mut c, &staff_uid).await;
+    assert_eq!(cast["payload"]["charges_left"], 1, "cost 2: 3 → 1");
+
+    // Каст #3: 1 заряд < cost 2 → отказ.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let seq = c
+        .send(
+            "cmd/magic.rune_cast",
+            json!({ "staff_uid": staff_uid, "socket_index": 0 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_NO_CHARGES",
+        "недостаточно зарядов на cost: {ack}"
+    );
+}
+
+/// M18/F58d (ADR-012 §6): бафф из БД доходит до клиента в
+/// `char.buffs`, влияет на `derived` и снимается тикером с полной
+/// заменой `evt/char/buffs`.
+#[tokio::test]
+async fn buff_in_snapshot_affects_derived_and_expires() {
+    use ld2_server::db;
+
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.magic.rune_recharge_s = 1.0;
+        })
+        .await
+    );
+    let (mut c, _login, char_id) = in_world(&ws).await;
+
+    // Снимок до баффа — базовая точность.
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let base_accuracy = snap["payload"]["char"]["derived"]["accuracy"]
+        .as_i64()
+        .expect("accuracy до баффа");
+    assert!(
+        snap["payload"]["char"]["buffs"]
+            .as_array()
+            .is_none_or(|b| b.is_empty()),
+        "до баффа список пуст"
+    );
+
+    // Накладываем бафф напрямую в БД (процесс наложения — F58d-3).
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("пул");
+    let now = ld2_server::time::now_epoch();
+    db::buffs::apply(
+        &pool,
+        &char_id,
+        "rune_marksman",
+        "Меткость",
+        "accuracy",
+        6,
+        false,
+        60, // длительность, с
+        3,  // max_stacks
+        now,
+    )
+    .await
+    .expect("бафф наложен");
+    db::buffs::apply(
+        &pool,
+        &char_id,
+        "rune_marksman",
+        "Меткость",
+        "accuracy",
+        6,
+        false,
+        60,
+        3,
+        now,
+    )
+    .await
+    .expect("второй стак");
+    pool.close().await;
+
+    // Ресинк: бафф в char.buffs, derived вырос ровно на value×стаков.
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let buffs = snap["payload"]["char"]["buffs"]
+        .as_array()
+        .expect("buffs в снапшоте");
+    assert_eq!(buffs.len(), 1, "один бафф: {buffs:?}");
+    assert_eq!(buffs[0]["kind"], "rune_marksman");
+    assert_eq!(buffs[0]["stacks"], 2, "два наложения → 2 стака");
+    let buffed = snap["payload"]["char"]["derived"]["accuracy"]
+        .as_i64()
+        .expect("accuracy с баффом");
+    assert_eq!(
+        buffed,
+        base_accuracy + 12,
+        "бафф accuracy 6 × 2 стака применён к derived"
+    );
+
+    // Короткий бафф: тикер (раз в секунду) снимает и шлёт полную
+    // замену evt/char/buffs (паттерн evt/crime/status).
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("пул");
+    db::buffs::apply(
+        &pool,
+        &char_id,
+        "rune_warmaster",
+        "Ярость",
+        "damage",
+        4,
+        false,
+        1, // снимется на первом же тике
+        1,
+        ld2_server::time::now_epoch(),
+    )
+    .await
+    .expect("короткий бафф");
+    pool.close().await;
+
+    // Полная замена: истёкший снят, активный marksman остаётся.
+    let removed = c
+        .wait(|v| {
+            v["type"] == "evt/char/buffs"
+                && v["payload"]["buffs"]
+                    .as_array()
+                    .is_some_and(|b| b.iter().all(|x| x["kind"] != "rune_warmaster"))
+                && v["payload"]["buffs"]
+                    .as_array()
+                    .is_some_and(|b| !b.is_empty())
+        })
+        .await;
+    let rest = removed["payload"]["buffs"].as_array().expect("список");
+    assert_eq!(rest.len(), 1, "только warmaster снят: {removed}");
+    assert_eq!(rest[0]["kind"], "rune_marksman", "активный остался");
+
+    // Ресинк: marksman активен (derived с баффом), warmaster снят.
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let buffs = snap["payload"]["char"]["buffs"]
+        .as_array()
+        .expect("buffs после тикера");
+    assert_eq!(buffs.len(), 1, "остался только активный: {buffs:?}");
+    assert_eq!(buffs[0]["kind"], "rune_marksman");
+    assert_eq!(
+        snap["payload"]["char"]["derived"]["accuracy"].as_i64(),
+        Some(base_accuracy + 12),
+        "derived всё ещё с активным баффом"
+    );
+}
+
+/// M18/F58f: дубликаты рун не стакаются — одна и та же руна не может
+/// стоять в двух слотах предмета (§9 E_DUPLICATE_RUNE); другая руна
+/// вставляется свободно.
+#[tokio::test]
+async fn duplicate_rune_is_rejected_in_same_item() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+
+    // staff_apprentice: 2 рунных слота — второй свободен для дубликата.
+    let staff_uid = give(&mut c, "staff_apprentice").await;
+    let rune1 = give(&mut c, "rune_fire").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune1 }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "первая вставка");
+
+    // Вторая та же руна (отдельный стак) → отказ.
+    let rune2 = give(&mut c, "rune_fire").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 1, "rune_uid": rune2 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_DUPLICATE_RUNE",
+        "дубликат руны: {ack}"
+    );
+
+    // Другая руна в тот же слот — вставляется.
+    let rune3 = give(&mut c, "rune_frost").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 1, "rune_uid": rune3 }),
+        )
+        .await;
+    assert_eq!(
+        c.ack(seq).await["result"],
+        "ok",
+        "другая руна — не дубликат"
+    );
+
+    // Гемы не ограничиваются (если слот принимает) — проверим на брони
+    // с двумя самоцветами одного типа... armor_bronze имеет 1 слот,
+    // поэтому просто убеждаемся, что запрет не мешает обычному потоку.
+    let _ = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+}
+
+/// M18/F58f (ADR-012): самоцвет в **надетом оружии** даёт бонус
+/// атрибутов (раньше считалась только броня — статы «не прибавлялись»);
+/// снятие оружия снимает бонус.
+#[tokio::test]
+async fn gem_in_equipped_weapon_boosts_attrs() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // 4 слота, rune_sockets = 2 → слоты2 и 3 принимают самоцветы.
+    let sword = give(&mut c, "sword_1000_true").await;
+    let gem = give(&mut c, "gem_str").await; // +3 str
+
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": sword, "slot": "main_hand" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "надевание: {ack}");
+    let base = ack["payload"]["char"]["attrs"]["str"]
+        .as_i64()
+        .expect("базовая сила");
+
+    // Гем в gem-слот надетого оружия — бонус сразу в ack.
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": sword, "socket_index": 2, "rune_uid": gem }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "самоцвет в оружии: {ack}");
+    assert_eq!(
+        ack["payload"]["char"]["attrs"]["str"],
+        base + 3,
+        "бонус самоцвета из оружия: {ack}"
+    );
+
+    // Извлекли самоцвет из НАДЕТОГО оружия — бонус снят (оружие
+    // остаётся, `char` в ack как у брони).
+    let seq = c
+        .send(
+            "cmd/socket.extract",
+            json!({ "staff_uid": sword, "socket_index": 2 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "извлечение: {ack}");
+    assert_eq!(
+        ack["payload"]["char"]["attrs"]["str"], base,
+        "бонус снят: {ack}"
+    );
+}
+
+/// M18 (указание заказчика): извлечённый самоцвет по возможности
+/// складывается в существующий стак (не отдельная запись), клиент
+/// обновляет qty существующей записи.
+#[tokio::test]
+async fn gem_extract_stacks_into_existing() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // Две отдельные записи одного самоцвета (scenario give не стакует).
+    let gem1 = give(&mut c, "gem_str").await;
+    let gem2 = give(&mut c, "gem_str").await;
+
+    // Вставили первый — его запись списана; в рюкзаке остаётся gem2.
+    let armor = give(&mut c, "armor_bronze").await;
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": armor, "socket_index": 0, "rune_uid": gem1 }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "вставка");
+
+    // Извлечение — в стак gem2: uid существующей записи, qty = 2.
+    let seq = c
+        .send(
+            "cmd/socket.extract",
+            json!({ "staff_uid": armor, "socket_index": 0 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "извлечение: {ack}");
+    let rune = &ack["payload"]["rune"];
+    assert_eq!(rune["uid"], gem2, "слито в существующий стак: {ack}");
+    assert_eq!(rune["qty"], 2, "qty стака выросло: {ack}");
 }

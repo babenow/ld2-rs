@@ -55,6 +55,8 @@ async fn migrations_up_idempotent_and_revert_cycle() {
     let mut expected = [
         "_sqlx_migrations",
         "accounts",
+        "char_buffs",
+        "character_dialog_lines",
         "character_professions",
         "character_quests",
         "character_skills",

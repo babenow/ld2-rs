@@ -124,7 +124,12 @@ async fn second_offense_blends_partial_sum() {
     );
     assert_eq!(delta, 3557, "0.5·7200·(1−7200/604800) ≈ 3557");
     let total = second["payload"]["log_entry"]["total_s"].as_i64().unwrap();
-    assert_eq!(total, 7200 + delta, "T_new = T + delta");
+    // T — остаток первого срока на момент второго нарушения: если между
+    // шагами прошла секунда, T=7199 (CI-тайминг) — допуск на elapsed.
+    assert!(
+        (total - (7200 + delta)).abs() <= 5,
+        "T_new = T + delta: total={total}, delta={delta}"
+    );
 
     // Журнал: две записи.
     let seq = c.send("cmd/crime.log", json!({ "limit": 10 })).await;

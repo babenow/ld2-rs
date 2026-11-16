@@ -6,12 +6,13 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
-    AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, CharXpInvest,
-    ChatDelete, ChatSend, CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo,
-    GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip,
-    ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, PartyAccept,
-    PartyInvite, PartyKick, SkillUse, SocketExtract, SocketInsert, StateResync, TradeAddItem,
-    TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
+    AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, ChatDelete, ChatSend,
+    CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo, GuildBrowse,
+    GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip, ItemMove,
+    ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcReply, NpcTalk,
+    PartyAccept, PartyInvite, PartyKick, ShopBuy, ShopList, SkillTrain, SkillUse, SocketExtract,
+    SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold,
+    UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -21,8 +22,8 @@ use ld2_protocol::evt::{
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, EquipMap, Hp,
-    ItemSnapshot, LocationSnapshot, Mp, ProfessionSnapshot, Requires, Severity, SkillSnapshot,
-    Socket,
+    ItemBonus, ItemSnapshot, LocationSnapshot, Mp, ProfessionSnapshot, Requires, Severity,
+    SkillSnapshot, Socket,
 };
 use ld2_protocol::ErrorCode;
 use serde::de::DeserializeOwned;
@@ -64,6 +65,10 @@ pub struct Session {
     out_tx: tokio::sync::mpsc::UnboundedSender<String>,
     /// Активное превью улучшения (ФР-10, M12.5c): stale → `E_UPGRADE_PREVIEW_STALE`.
     preview_state: Option<UpgradePreviewState>,
+    /// M18/F54: выбранный камень усиления (uid) — активен, пока игрок
+    /// не потратит его на улучшение. Ставится `cmd/item.use` камня,
+    /// проверяется на превью/старте, тратится при старте (1 шт./улучшение).
+    sharpen_stone: Option<String>,
     /// Кулдаун чата (`chat.cooldown_s`, ФР-13): момент последнего сообщения.
     last_chat_at: Option<std::time::Instant>,
 }
@@ -75,6 +80,12 @@ struct UpgradePreviewState {
     item_uid: String,
     /// Уровень на момент превью.
     level: i32,
+    /// M18/F54: качество активного камня (процентные пункты) — бросок
+    /// старта использует то же значение, что и показанное превью.
+    stone_quality: i32,
+    /// M18/F54: uid камня на момент превью — между превью и стартом
+    /// камень не должен смениться/исчезнуть.
+    stone_uid: String,
 }
 
 impl Session {
@@ -97,6 +108,7 @@ impl Session {
             char: None,
             location_id: None,
             preview_state: None,
+            sharpen_stone: None,
             last_chat_at: None,
         }
     }
@@ -157,6 +169,13 @@ impl Session {
             "cmd/location.look" => self.location_look(seq).await,
             "cmd/location.move" => self.location_move(env, seq).await,
             "cmd/entity.info" => self.entity_info(env, seq).await,
+            // M18/F35: диалог NPC (поговорить/квесты)
+            "cmd/npc.talk" => self.npc_talk(env, seq).await,
+            // M18/F37: ответ персонажа — переход по ветке
+            "cmd/npc.reply" => self.npc_reply(env, seq).await,
+            // M18/F39: магазин NPC
+            "cmd/shop.list" => self.shop_list(env, seq).await,
+            "cmd/shop.buy" => self.shop_buy(env, seq).await,
             "cmd/state.resync" => self.state_resync(env, seq).await,
             // бой (ФР-05, M12.5)
             "cmd/combat.attack" => self.combat_attack(env, seq).await,
@@ -207,7 +226,7 @@ impl Session {
             "cmd/socket.insert" => self.socket_insert(env, seq).await,
             "cmd/socket.extract" => self.socket_extract(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
-            "cmd/char.xp_invest" => self.char_xp_invest(env, seq).await,
+            "cmd/skill.train" => self.skill_train(env, seq).await,
             "cmd/item.use" => self.item_use(env, seq).await,
             "cmd/item.equip" => self.item_equip(env, seq).await,
             "cmd/item.unequip" => self.item_unequip(env, seq).await,
@@ -584,7 +603,20 @@ impl Session {
                 format!("неизвестный профиль: {}", cmd.profile),
             )];
         }
-        match db::characters::create(pool, account_id, &cmd.name, &cmd.profile).await {
+        // M18/F34: пол — `male`/`female`; старые клиенты не шлют пол →
+        // `male` (обратная совместимость §11).
+        let gender = match cmd.gender.as_deref() {
+            None | Some("male") => "male",
+            Some("female") => "female",
+            Some(other) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::BadGender,
+                    format!("неизвестный пол: {other}"),
+                )];
+            }
+        };
+        match db::characters::create(pool, account_id, &cmd.name, &cmd.profile, gender).await {
             Ok(Some(row)) => {
                 // M17/F30e: стартовый ресурс по профилю (WoW): воин —
                 // ярость с нуля, лучник — полная энергия; мана (маг) —
@@ -1008,6 +1040,8 @@ impl Session {
                     upgrade: 0,
                     equipped_slot: None,
                     sockets: serde_json::json!([]),
+                    // M18/F47: лут несёт контент-бонусы (ADR-010).
+                    bonuses: def.bonuses.clone(),
                 };
                 loot.push(item_snapshot(&row, &def));
             }
@@ -1079,6 +1113,8 @@ impl Session {
                 upgrade: 0,
                 equipped_slot: None,
                 sockets: serde_json::json!([]),
+                // M18/F47: лут несёт контент-бонусы (ADR-010).
+                bonuses: def.bonuses.clone(),
             };
             loot.push(item_snapshot(&row, &def));
         }
@@ -1204,9 +1240,11 @@ impl Session {
             .map(|slot| (slot.clone(), None))
             .collect();
         let mut inventory = Vec::new();
-        // M17/F30c: raw-сокеты надетой брони — из них считаются
-        // бонусы самоцветов (правило контента, вручную).
-        let mut armor_sockets: Vec<Value> = Vec::new();
+        // M17/F30c: raw-сокеты надетой экипировки — из них считаются
+        // бонусы самоцветов (правило контента, вручную). M18/F58f
+        // (ADR-012): самоцветы разрешены и в оружии — бонус берётся
+        // из любой надетой экипировки, не только брони.
+        let mut equipped_sockets: Vec<Value> = Vec::new();
         for item in db::items::inventory(pool, &row.id).await? {
             let Some(def) = db::items::def(pool, &item.def_id).await? else {
                 warn!("нет определения {} для предмета {}", item.def_id, item.uid);
@@ -1214,16 +1252,17 @@ impl Session {
             };
             if let Some(slot) = &item.equipped_slot {
                 equip.insert(slot.clone(), Some(item.uid.clone()));
-                if def.item_type == "armor" {
-                    armor_sockets.push(item.sockets.clone());
+                if def.sockets > 0 {
+                    equipped_sockets.push(item.sockets.clone());
                 }
             }
             inventory.push(item_snapshot(&item, &def));
         }
-        // M17/F30c: самоцветы в сокетах надетой брони улучшают
+        // M17/F30c: самоцветы в сокетах надетой экипировки улучшают
         // основные характеристики — бонус в снапшот-attrs (виден в
-        // «Атрибутах»/«Параметрах», участвует в требованиях и гейтах).
-        for sockets_json in &armor_sockets {
+        // «Атрибутах»/«Параметрах», участвует в требованиях и гейтах);
+        // руны и прочие вставки отсекаются ниже по типу определения.
+        for sockets_json in &equipped_sockets {
             let sockets: Vec<Value> =
                 serde_json::from_value(sockets_json.clone()).unwrap_or_default();
             for socket in sockets {
@@ -1259,19 +1298,70 @@ impl Session {
             .filter(|i| equip_uids.contains(i.uid.as_str()))
             .cloned()
             .collect();
-        let derived = crate::stats::derive(
+        // M18/F47/ADR-010: бонусы надетых предметов — атрибуты в attrs
+        // (туда же, где считаются самоцветы), навыки к рангу снапшота;
+        // параметры применяет stats::derive.
+        let mut skill_bonus: BTreeMap<String, i64> = BTreeMap::new();
+        for item in &equipped {
+            for bonus in item.bonuses.iter().flatten() {
+                match bonus.kind.as_str() {
+                    "attr" => *attrs.entry(bonus.id.clone()).or_insert(0) += bonus.value,
+                    "skill" => *skill_bonus.entry(bonus.id.clone()).or_insert(0) += bonus.value,
+                    _ => {}
+                }
+            }
+        }
+        for skill in skills.iter_mut() {
+            if let Some(bonus) = skill_bonus.get(&skill.id) {
+                skill.rank = (i64::from(skill.rank) + *bonus).max(0) as u32;
+            }
+        }
+        let mut derived = crate::stats::derive(
             &attrs,
             &skills,
             &equipped,
             self.state.config.gameplay.combat.base_damage,
         );
+        // M18/F58d (ADR-012 §6): активные баффы рун — из БД; применяются
+        // к параметрам той же механикой, что бонусы предметов.
+        let now = crate::time::now_epoch();
+        let buff_rows = match db::buffs::active(pool, &row.id, now).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("баффы {}: {e}", row.id);
+                Vec::new()
+            }
+        };
+        let buffs: Vec<ld2_protocol::types::BuffState> = buff_rows
+            .iter()
+            .map(
+                |(kind, title, stacks, expires_at, ..)| ld2_protocol::types::BuffState {
+                    kind: kind.clone(),
+                    title: title.clone(),
+                    stacks: (*stacks).max(0) as u32,
+                    expires_at: *expires_at,
+                    extra: Default::default(),
+                },
+            )
+            .collect();
+        crate::stats::apply_buffs(
+            &mut derived,
+            &buff_rows
+                .iter()
+                .map(|(_, _, stacks, _, param, value, pct)| (param.clone(), *value, *pct, *stacks))
+                .collect::<Vec<_>>(),
+        );
 
         Ok(CharacterState {
             id: row.id.clone(),
             name: row.name.clone(),
+            // M18/F58d (ADR-012 §6): активные баффы рун (стак + таймер).
+            buffs,
             // M17/F30b: класс для правил экипировки на клиенте (F30e —
             // ресурс боя).
             profile: Some(row.profile.clone()),
+            // M18/F34: пол для диалогов NPC (F35).
+            gender: row.gender.clone(),
             attrs,
             skills,
             // Изученные профессии (§6, M12.6).
@@ -1733,37 +1823,31 @@ impl Session {
         mine
     }
 
-    /// `cmd/char.xp_invest` (§7): вложение XP-пула в навык — транзакционно
-    /// (D27), потолок/гейты — skills.md §2.2 (конфиг `[skills]`, D25).
-    async fn char_xp_invest(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+    /// `cmd/skill.train` (M18/F44, ADR-009): повышение ранга навыка у
+    /// тренера **из диалога**. Условия: тренер по навыку в локации (M14,
+    /// `E_NO_TRAINER`), у NPC есть запись обучения, **шкала навыка
+    /// заполнена на 100 %** (`E_SKILL_NOT_READY`), хватает очков опыта
+    /// (`E_XP_POOL`) и платы из контента (`E_INGREDIENTS`). Потолок ранга
+    /// и гейт атрибутов — как у прежнего `char.xp_invest` (удалён: он
+    /// обходил гейт 100 %).
+    async fn skill_train(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
         }
-        let Ok(cmd) = Self::payload_of::<CharXpInvest>(env, seq) else {
+        let Ok(cmd) = Self::payload_of::<SkillTrain>(env, seq) else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
         let char_id = match self.require_char_id(seq) {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
-        if cmd.points <= 0 {
-            return vec![Self::err(seq, ErrorCode::XpPool, "points должен быть > 0")];
-        }
         // Локация до заимствования pool (current_location требует &mut self).
         let location = self.current_location(&char_id).await;
         let pool = &self.state.pool;
-        match db::skills::content_skill(pool, &cmd.skill_id).await {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return vec![Self::err(seq, ErrorCode::XpPool, "нет такого навыка")];
-            }
-            Err(e) => {
-                warn!("xp_invest (навык): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }
-        // M14: вложение/повышение — только у тренера по навыку в локации.
-        let Some(price) = (match trainers::trainer_price(
+        // M14: обучение только у тренера по навыку в локации — маркер
+        // контента (`locations.json → trainer.skills`) служит гейтом;
+        // цена при этом берётся из диалога (ADR-009).
+        let trainer = match trainers::trainer_price(
             pool,
             &location,
             trainers::TrainerKind::Skill,
@@ -1773,105 +1857,150 @@ impl Session {
         {
             Ok(price) => price,
             Err(e) => {
-                warn!("xp_invest (тренер): {e}");
+                warn!("skill.train (тренер): {e}");
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
-        }) else {
+        };
+        if trainer.is_none() {
             return vec![Self::err(
                 seq,
                 ErrorCode::NoTrainer,
                 "здесь нет тренера по этому навыку",
             )];
+        }
+        // NPC диалога несёт список навыков и плату (ADR-009).
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
         };
-
-        let pool_now = match db::skills::xp_pool(pool, &char_id).await {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("xp_invest (пул): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        let entry = match self
+            .state
+            .dialogs
+            .get(&entity.id)
+            .and_then(|def| def.training.iter().find(|t| t.skill == cmd.skill_id))
+        {
+            Some(entry) => entry.clone(),
+            None => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::NoTrainer,
+                    "этот NPC не обучает этому навыку",
+                )];
             }
         };
-        if pool_now < cmd.points {
-            return vec![Self::err(seq, ErrorCode::XpPool, "не хватает очков опыта")];
+        // Навык есть в контенте.
+        match db::skills::content_skill(pool, &cmd.skill_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return vec![Self::err(seq, ErrorCode::XpPool, "нет такого навыка")];
+            }
+            Err(e) => {
+                warn!("skill.train (навык): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
         }
-        let (mut xp, mut rank) = match db::skills::learned(pool, &char_id).await {
+        // Прогресс: строка создаётся использованием навыка (тик боя/
+        // крафта); без неё шкала пустая → отказ до оплаты.
+        let (xp, rank) = match db::skills::learned(pool, &char_id).await {
             Ok(rows) => rows
                 .into_iter()
                 .find(|s| s.skill_id == cmd.skill_id)
                 .map(|s| (s.xp, s.rank))
                 .unwrap_or((0, 0)),
             Err(e) => {
-                warn!("xp_invest (прогресс): {e}");
+                warn!("skill.train (прогресс): {e}");
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
-        // Ранг на момент запроса — по нему считается цена (вложение не
-        // дорожает от того, что само же повышает ранг).
-        let rank_at_start = rank;
         let cfg = &self.state.config.skills;
-        xp += cmd.points;
-        loop {
-            let need = crate::systems::xp_to_next(rank.max(0) as u32, cfg);
-            if xp < need {
-                break;
-            }
-            if rank >= cfg.rank_max as i32 {
+        let need = crate::systems::xp_to_next(rank.max(0) as u32, cfg);
+        // M18/F44: повышение ранга — только при полной шкале (100 %).
+        if need > 0 && xp < need {
+            let percent = (xp * 100 / need.max(1)).clamp(0, 100);
+            return vec![Self::err(
+                seq,
+                ErrorCode::SkillNotReady,
+                format!("шкала навыка заполнена на {percent} % — нужно 100 %"),
+            )];
+        }
+        if rank >= cfg.rank_max as i32 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::RankCap,
+                "достигнут потолок ранга",
+            )];
+        }
+        let next = rank + 1;
+        // Гейт атрибутов (§2.2 skills.md) — как у прежнего вложения.
+        if let Some(gate) = cfg.gates.iter().find(|g| g.rank as i32 == next) {
+            let max_attr = self
+                .char
+                .as_ref()
+                .map(|c| c.attrs.values().max().copied().unwrap_or(0))
+                .unwrap_or(0);
+            if max_attr < gate.attr {
                 return vec![Self::err(
                     seq,
-                    ErrorCode::RankCap,
-                    "достигнут потолок ранга",
+                    ErrorCode::RequirementAttr,
+                    format!(
+                        "ранг {next} требует атрибут {} (максимум {max_attr})",
+                        gate.attr
+                    ),
                 )];
             }
-            let next = rank + 1;
-            // Гейт атрибутов (§2.2): конфиг даёт значение порога; сравниваем
-            // с максимальным из пяти атрибутов персонажа.
-            if let Some(gate) = cfg.gates.iter().find(|g| g.rank as i32 == next) {
-                let max_attr = self
-                    .char
-                    .as_ref()
-                    .map(|c| c.attrs.values().max().copied().unwrap_or(0))
-                    .unwrap_or(0);
-                if max_attr < gate.attr {
-                    return vec![Self::err(
-                        seq,
-                        ErrorCode::RequirementAttr,
-                        format!(
-                            "ранг {next} требует атрибут {} (максимум {max_attr})",
-                            gate.attr
-                        ),
-                    )];
-                }
-            }
-            xp -= need;
-            rank = next;
         }
-        // M14: оплата тренеру — ПОСЛЕ всех проверок (тренер → пул → ранг →
-        // гейт атрибутов): за неудачное вложение золото не списывается.
-        let gold = trainers::gold_price(&price, i64::from(rank_at_start));
-        // F29a: оплата монетами — события списания в конце ответа.
-        let money_events = match self.pay_trainer(seq, &char_id, &price, gold).await {
+        // Плата очками опыта (пул квестов).
+        let pool_now = match db::skills::xp_pool(pool, &char_id).await {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("skill.train (пул): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if pool_now < entry.points {
+            return vec![Self::err(
+                seq,
+                ErrorCode::XpPool,
+                format!("не хватает очков опыта: {}", entry.points),
+            )];
+        }
+        // Плата тренеру (золото + предметы из диалога) — проверки до
+        // списаний (паттерн M14/F5).
+        let money_events = match self
+            .pay_dialog_fee(seq, &char_id, entry.gold, &entry.items)
+            .await
+        {
             Ok(events) => events,
             Err(e) => return vec![e],
         };
-
-        let pool_left = pool_now - cmd.points;
+        let pool_left = pool_now - entry.points;
+        // Ранг +1, шкала обнуляется (заполняется использованием заново).
         if let Err(e) =
-            db::skills::invest_tx(pool, &char_id, &cmd.skill_id, xp, rank, pool_left).await
+            db::skills::invest_tx(pool, &char_id, &cmd.skill_id, 0, next, pool_left).await
         {
-            warn!("xp_invest (транзакция): {e}");
+            warn!("skill.train (транзакция): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
         let mut outs = vec![
-            Self::ack_payload(seq, &serde_json::json!({ "pool_left": pool_left })),
+            Self::ack_payload(
+                seq,
+                &serde_json::json!({
+                    "rank": next.max(0) as u32,
+                    "xp": 0,
+                    "xp_to_next": crate::systems::xp_to_next(next.max(0) as u32, cfg),
+                    "pool_left": pool_left,
+                }),
+            ),
             out_event(
                 "evt/char/xp",
                 None,
                 serde_json::to_value(CharXp {
                     skill_id: cmd.skill_id,
-                    amount: cmd.points,
-                    skill_xp: xp,
-                    rank: Some(rank.max(0) as u32),
-                    xp_to_next: Some(crate::systems::xp_to_next(rank.max(0) as u32, cfg)),
+                    // Отрицательное amount — очки пула списаны на ранг.
+                    amount: -entry.points,
+                    skill_xp: 0,
+                    rank: Some(next.max(0) as u32),
+                    xp_to_next: Some(crate::systems::xp_to_next(next.max(0) as u32, cfg)),
                     pool_left: Some(pool_left),
                 })
                 .unwrap_or_default(),
@@ -1879,6 +2008,92 @@ impl Session {
         ];
         outs.extend(money_events);
         outs
+    }
+
+    /// M18/F44: плата за обучение из контента диалога (ADR-009) — золото
+    /// монетами, предметы по `def_id`; все проверки до списаний
+    /// (паттерн `pay_trainer` M14/F5).
+    async fn pay_dialog_fee(
+        &self,
+        seq: u32,
+        char_id: &str,
+        gold: i64,
+        items: &[crate::dialogs::TrainingItem],
+    ) -> Result<Vec<Out>, Out> {
+        let pool = &self.state.pool;
+        if gold > 0 {
+            match db::items::count_by_type(pool, char_id, db::items::MONEY_TYPE).await {
+                Ok(have) if have >= gold => {}
+                Ok(have) => {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("не хватает золота: {gold} (есть {have})"),
+                    ));
+                }
+                Err(e) => {
+                    warn!("skill.train (монеты): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            }
+        }
+        if !items.is_empty() {
+            let inventory = match db::items::inventory(pool, char_id).await {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!("skill.train (инвентарь): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            };
+            for item in items {
+                let have: i64 = inventory
+                    .iter()
+                    .filter(|row| row.def_id == item.def_id)
+                    .map(|row| i64::from(row.qty))
+                    .sum();
+                if have < item.qty {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("нужен предмет: {} ×{} (есть {have})", item.def_id, item.qty),
+                    ));
+                }
+            }
+        }
+        let mut events = Vec::new();
+        if gold > 0 {
+            match db::items::consume_money(pool, char_id, gold).await {
+                Ok(Some(changes)) => events.extend(Self::money_events(changes)),
+                Ok(None) => {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("не хватает золота: {gold}"),
+                    ));
+                }
+                Err(e) => {
+                    warn!("skill.train (списание золота): {e}");
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            }
+        }
+        for item in items {
+            match db::items::consume_by_def(pool, char_id, &item.def_id, item.qty).await {
+                Ok(Some(changes)) => events.extend(Self::money_events(changes)),
+                Ok(None) => {
+                    return Err(Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("нужен предмет: {} ×{}", item.def_id, item.qty),
+                    ));
+                }
+                Err(e) => {
+                    warn!("skill.train (списание {}): {e}", item.def_id);
+                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+                }
+            }
+        }
+        Ok(events)
     }
 
     /// `cmd/item.move` (M16/F29g): поменять местами два предмета
@@ -1946,6 +2161,29 @@ impl Session {
                 "нет определения предмета",
             )];
         };
+        // M18/F54: камень усиления — не расходник: `item.use` выбирает
+        // активный камень, клиент открывает список предметов для заточки;
+        // 1 шт. списывается сервером при `upgrade.start`.
+        if def.item_type == "upgrade_stone" {
+            if item.qty <= 0 {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Ingredients,
+                    "камень усиления не найден",
+                )];
+            }
+            self.sharpen_stone = Some(item.uid.clone());
+            // Типизированный payload (ld2-protocol) — golden-тест фиксирует
+            // форму ack; клиент читает `stone_uid`/`quality` (M18/F54).
+            let selected = ld2_protocol::StoneSelected {
+                stone_uid: item.uid,
+                quality: i64::from(Self::stone_quality(&def)),
+            };
+            return vec![Self::ack_payload(
+                seq,
+                &serde_json::to_value(selected).expect("StoneSelected сериализуется"),
+            )];
+        }
         // M17/F30g: кулдаун предмета (cooldown_s, дефолт 1 с).
         if let Some(err) = self.item_cd_gate(seq, &char_id, &def).await {
             return vec![err];
@@ -2049,20 +2287,6 @@ impl Session {
             let Some(def_id) = slot else {
                 return vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")];
             };
-            match db::items::count(&pool, char_id).await {
-                Ok(n) if n >= i64::from(self.state.config.gameplay.inventory.slots) => {
-                    return vec![Self::err(
-                        seq,
-                        ErrorCode::InventoryFull,
-                        "инвентарь заполнен",
-                    )];
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    warn!("take_loot (слоты): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                }
-            }
             let Some(def) = (match db::items::def(&pool, &def_id).await {
                 Ok(def) => def,
                 Err(e) => {
@@ -2076,6 +2300,30 @@ impl Session {
                     "нет определения предмета",
                 )];
             };
+            // M18/F58f (новая фича): рюкзак вмещает **стаки** — простой
+            // стак уже есть → место не нужно; иначе проверяем слот
+            // ДО изъятия лута (иначе при полном лут бы пропал).
+            match Self::take_loot_fits(
+                &pool,
+                char_id,
+                &def_id,
+                self.state.config.gameplay.inventory.slots,
+            )
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::InventoryFull,
+                        "инвентарь заполнен",
+                    )];
+                }
+                Err(e) => {
+                    warn!("take_loot (слоты): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
             // Изъятие из памяти: None — кто-то успел раньше (гонок нет —
             // обработка последовательна, но проверка честная).
             let took = {
@@ -2085,23 +2333,21 @@ impl Session {
             if took.is_none() {
                 return vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")];
             }
-            // F29a: монеты складываются в существующий стак (патч
-            // qty), обычные предметы — новым инстансом.
-            let (row, stacked) = if def.item_type == db::items::MONEY_TYPE {
-                match db::items::grant_stacking(&pool, char_id, &def_id, i64::from(def.qty)).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!("take_loot (стак монет): {e}");
-                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                    }
-                }
-            } else {
-                match db::items::insert(&pool, char_id, &def_id, i64::from(def.qty)).await {
-                    Ok(row) => (row, false),
-                    Err(e) => {
-                        warn!("take_loot (insert): {e}");
-                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                    }
+            // M18/F58f: всё складывается в простой стак (монеты —
+            // как раньше, F29a); слот занят только новой записью
+            // (место проверено выше). Событие — патч qty либо added.
+            let (row, stacked) = match db::items::grant_stacking(
+                &pool,
+                char_id,
+                &def_id,
+                i64::from(def.qty),
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("take_loot (стак): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                 }
             };
             let ev = if stacked {
@@ -2149,20 +2395,6 @@ impl Session {
         let Some(def_id) = defs.get(idx).cloned() else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого лута")];
         };
-        match db::items::count(&pool, char_id).await {
-            Ok(n) if n >= i64::from(self.state.config.gameplay.inventory.slots) => {
-                return vec![Self::err(
-                    seq,
-                    ErrorCode::InventoryFull,
-                    "инвентарь заполнен",
-                )];
-            }
-            Ok(_) => {}
-            Err(e) => {
-                warn!("take_loot (слоты): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }
         let Some(def) = (match db::items::def(&pool, &def_id).await {
             Ok(def) => def,
             Err(e) => {
@@ -2176,18 +2408,53 @@ impl Session {
                 "нет определения предмета",
             )];
         };
+        // M18/F58f: лимит по стакам (простой стак — место не нужно).
+        match Self::take_loot_fits(
+            &pool,
+            char_id,
+            &def_id,
+            self.state.config.gameplay.inventory.slots,
+        )
+        .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::InventoryFull,
+                    "инвентарь заполнен",
+                )];
+            }
+            Err(e) => {
+                warn!("take_loot (слоты): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
         match db::items::take_loot_tx(&pool, loot_uid, char_id, &def_id, i64::from(def.qty)).await {
             Ok(None) => vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")],
-            Ok(Some(row)) => {
+            Ok(Some((row, stacked))) => {
                 let item = item_snapshot(&row, &def);
-                let mut outs = vec![
-                    Self::ack_payload(seq, &serde_json::json!({})),
+                // M18/F58f: стак → патч qty (как у монет), новая запись → added.
+                let ev = if stacked {
+                    let mut patch = serde_json::Map::new();
+                    patch.insert("qty".into(), serde_json::json!(row.qty));
+                    out_event(
+                        "evt/item/state",
+                        None,
+                        serde_json::to_value(ItemState {
+                            uid: row.uid.clone(),
+                            patch,
+                        })
+                        .unwrap_or_default(),
+                    )
+                } else {
                     out_event(
                         "evt/item/added",
                         None,
                         serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
-                    ),
-                ];
+                    )
+                };
+                let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({})), ev];
                 // ФР-11: лут с трупа **игрока** → статус «Мародёр» (§10).
                 if entity.was_player.unwrap_or(false) {
                     if let Some((_, text)) = self.apply_crime(char_id, "marauder").await {
@@ -2201,6 +2468,23 @@ impl Session {
                 vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")]
             }
         }
+    }
+
+    /// M18/F58f: поместится ли подбираемое в рюкзак — **по стакам**:
+    /// «простой» однотипный стак есть → место не нужно (складываем);
+    /// иначе — свободный слот. `false` — инвентарь заполнен (вызывающий
+    /// возвращает `InventoryFull`), `Err` — ошибка БД.
+    async fn take_loot_fits(
+        pool: &sqlx::PgPool,
+        char_id: &str,
+        def_id: &str,
+        slots: u32,
+    ) -> Result<bool, sqlx::Error> {
+        if db::items::stackable_exists(pool, char_id, def_id).await? {
+            return Ok(true);
+        }
+        let n = db::items::count(pool, char_id).await?;
+        Ok(n < i64::from(slots))
     }
 
     /// `cmd/item.equip` (§7): слот — из конфига (D25), требования — из
@@ -2794,6 +3078,159 @@ impl Session {
         if scenario == "kit" {
             return self.scenario_kit(seq).await;
         }
+        // `/scenario skillxp <skill_id> [xp]` — M18/F44: заполнить шкалу
+        // навыка (по умолчанию ровно до 100 %) — смоук обучения у
+        // тренера без боя (гейт 100 %, ADR-009).
+        if let Some(rest) = scenario.strip_prefix("skillxp ") {
+            let mut parts = rest.split_whitespace();
+            let Some(skill_id) = parts.next().map(str::to_string) else {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "формат: skillxp <skill_id> [xp]",
+                )];
+            };
+            let char_id = match self.require_char_id(seq) {
+                Ok(id) => id,
+                Err(out) => return vec![out],
+            };
+            let pool = &self.state.pool;
+            let (xp_now, rank) = match db::skills::learned_one(pool, &char_id, &skill_id).await {
+                Ok(Some(pair)) => pair,
+                Ok(None) => (0, 0),
+                Err(e) => {
+                    warn!("scenario skillxp (прогресс): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let xp = match parts.next().and_then(|v| v.parse::<i64>().ok()) {
+                Some(xp) => xp.max(0),
+                None => crate::systems::xp_to_next(rank.max(0) as u32, &self.state.config.skills),
+            };
+            let pool_left = match db::skills::xp_pool(pool, &char_id).await {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("scenario skillxp (пул): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            if let Err(e) =
+                db::skills::invest_tx(pool, &char_id, &skill_id, xp, rank, pool_left).await
+            {
+                warn!("scenario skillxp: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            let need = crate::systems::xp_to_next(rank.max(0) as u32, &self.state.config.skills);
+            return vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                out_event(
+                    "evt/char/xp",
+                    None,
+                    serde_json::to_value(CharXp {
+                        skill_id,
+                        amount: xp - xp_now,
+                        skill_xp: xp,
+                        rank: Some(rank.max(0) as u32),
+                        xp_to_next: Some(need),
+                        pool_left: Some(pool_left),
+                    })
+                    .unwrap_or_default(),
+                ),
+            ];
+        }
+        // `/scenario bonus <uid> <kind> <id> <value> [pct]` — M18/F47:
+        // добавить бонус инстансу (ADR-010) — смоук карточки и статов
+        // без правки контента.
+        if let Some(rest) = scenario.strip_prefix("bonus ") {
+            let mut parts = rest.split_whitespace();
+            let (Some(uid), Some(kind), Some(id), Some(value)) = (
+                parts.next().map(str::to_string),
+                parts.next().map(str::to_string),
+                parts.next().map(str::to_string),
+                parts.next().and_then(|v| v.parse::<i64>().ok()),
+            ) else {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "формат: bonus <uid> <kind> <id> <value> [pct]",
+                )];
+            };
+            if !matches!(kind.as_str(), "attr" | "param" | "skill") {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "kind должен быть attr | param | skill",
+                )];
+            }
+            let pct = parts.next().is_some_and(|v| v == "pct");
+            if pct && kind != "param" {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "pct допустим только для kind=param",
+                )];
+            }
+            let char_id = match self.require_char_id(seq) {
+                Ok(id) => id,
+                Err(out) => return vec![out],
+            };
+            let pool = &self.state.pool;
+            let Some(row) = (match db::items::find(pool, &uid, &char_id).await {
+                Ok(row) => row,
+                Err(e) => {
+                    warn!("scenario bonus (предмет): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }) else {
+                return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
+            };
+            let mut list: Vec<serde_json::Value> = row
+                .bonuses
+                .as_ref()
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            list.push(serde_json::json!({
+                "kind": kind, "id": id, "value": value, "pct": pct
+            }));
+            let bonuses = serde_json::Value::Array(list);
+            if let Err(e) = db::items::set_bonuses(pool, &uid, bonuses.clone()).await {
+                warn!("scenario bonus (запись): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            // Патч несёт эффективный список (контент + инстанс) — как
+            // item_snapshot, иначе карточка потеряет контент-бонусы.
+            let def = match db::items::def(pool, &row.def_id).await {
+                Ok(Some(def)) => def,
+                Ok(None) => {
+                    return vec![Self::err(seq, ErrorCode::ItemGone, "нет определения")];
+                }
+                Err(e) => {
+                    warn!("scenario bonus (определение): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let mut effective: Vec<serde_json::Value> = content_bonuses(&def)
+                .iter()
+                .cloned()
+                .map(|bonus| serde_json::to_value(bonus).unwrap_or_default())
+                .collect();
+            effective.extend(bonuses.as_array().cloned().unwrap_or_default());
+            let mut patch = serde_json::Map::new();
+            patch.insert("bonuses".into(), serde_json::Value::Array(effective));
+            return vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                out_event(
+                    "evt/item/state",
+                    None,
+                    serde_json::to_value(ItemState {
+                        uid: row.uid,
+                        patch,
+                    })
+                    .unwrap_or_default(),
+                ),
+            ];
+        }
         if scenario != "death" {
             return vec![Self::err(
                 seq,
@@ -3074,33 +3511,57 @@ impl Session {
                 "в сокет идут руны и самоцветы",
             )];
         }
-        // M18/F32: руны — только в оружие (weapon/staff), самоцветы —
-        // только в броню (armor); окна клиента фильтруют список целей,
-        // сервер — истина (§7).
-        let target_ok = match rune_def.item_type.as_str() {
-            "gem" => staff_def.item_type == "armor",
-            _ => matches!(staff_def.item_type.as_str(), "weapon" | "staff"),
-        };
-        if !target_ok {
-            return vec![Self::err(
-                seq,
-                ErrorCode::NoRuneSlot,
-                "руны вставляются только в оружие, самоцветы — только в броню",
-            )];
-        }
-
+        // M18/F58 (ADR-012): принимает слот — его `accepts`, а не тип
+        // предмета: отсюда самоцветы в оружие (слоты со `accepts: gem`)
+        // и отказ «руна в гемный слот». Правило сверяется после поиска
+        // слота — см. ниже.
         // Ленивая инициализация: пустой массив → слоты по определению.
         let mut sockets: Vec<Value> =
             serde_json::from_value(staff.sockets.clone()).unwrap_or_default();
         if sockets.is_empty() {
             sockets = Self::empty_sockets_list(staff_def.sockets);
         }
-        let Some(slot) = sockets.get_mut(cmd.socket_index as usize) else {
+        // Фаза проверок — immutable (занят/accepts/дубликат); запись
+        // ниже переопределяет `slot` как mutable (M18/F58f).
+        let Some(slot) = sockets.get(cmd.socket_index as usize) else {
             return vec![Self::err(seq, ErrorCode::NoRuneSlot, "нет такого сокета")];
         };
         if slot.get("rune").is_some_and(|r| !r.is_null()) {
             return vec![Self::err(seq, ErrorCode::NoRuneSlot, "сокет уже занят")];
         }
+        // M18/F58 (ADR-012): слот принимает только то, что указано в
+        // `accepts`; поля в сырой записи может не быть — тогда считаем
+        // по индексу и `rune_slots` предмета (тот же хелпер, что и в
+        // снапшоте — клиент и сервер видят слот одинаково).
+        let accepts = socket_accepts(slot, cmd.socket_index, rune_slots(&staff_def));
+        if accepts != rune_def.item_type {
+            let takes = match accepts.as_str() {
+                "gem" => "самоцветы",
+                _ => "руны",
+            };
+            return vec![Self::err(
+                seq,
+                ErrorCode::NoRuneSlot,
+                format!("слот принимает только {takes}"),
+            )];
+        }
+        // M18/F58f: дубликаты рун не стакаются (указание заказчика) —
+        // одна и та же руна не может стоять в двух слотах предмета;
+        // гемы не ограничиваются. После accepts: «не тот слот» важнее
+        // «дубликата».
+        if rune_def.item_type == "rune"
+            && sockets
+                .iter()
+                .any(|s| s.get("def_id").and_then(|v| v.as_str()) == Some(rune_def.id.as_str()))
+        {
+            return vec![Self::err(
+                seq,
+                ErrorCode::DuplicateRune,
+                "эта руна уже вставлена в предмет",
+            )];
+        }
+        // Индекс проверен выше — запись безопасна.
+        let slot = &mut sockets[cmd.socket_index as usize];
         let charges = rune_def
             .stats
             .get("charges")
@@ -3120,22 +3581,46 @@ impl Session {
         // M17/F30a: damage руны пишется в сокет — прибавляется к урону
         // оружия (stats::derive) и попадает в снапшот.
         let damage = rune_def.stats.get("damage").and_then(|v| v.as_i64());
+        // M18/F58f: настраиваемый знак руны — поле `glyph` её параметров
+        // (одна латинская буква — глиф Dwarven Runes); без поля клиент
+        // фолбэчит хешем имени.
+        let glyph = rune_def
+            .stats
+            .get("glyph")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let mut rune_obj = serde_json::json!({
+            "name": rune_def.name,
+            "spell": spell,
+            "charges": charges,
+            "max": max,
+            "damage": damage,
+        });
+        if let Some(g) = glyph {
+            rune_obj["glyph"] = serde_json::json!(g);
+        }
+        // M18/F58f: раритет вставленного — символ самоцвета в UI
+        // зависит от него (предмет и слот; §8 — сервер-истина).
+        rune_obj["rarity"] = serde_json::json!(rune_def.rarity);
+        // M18/F58f: подпись занятого слота — что даёт вставка (урон/
+        // шанс/бафф/эффект/трата; самоцвет — атрибут) — для окна
+        // информации (§8: строки формирует сервер).
+        let detail = crate::systems::slot_detail_lines(&rune_def.item_type, &rune_def.stats);
+        if !detail.is_empty() {
+            rune_obj["detail"] = serde_json::json!(detail);
+        }
         *slot = serde_json::json!({
             "index": cmd.socket_index,
             "def_id": rune_def.id,
-            "rune": {
-                "name": rune_def.name,
-                "spell": spell,
-                "charges": charges,
-                "max": max,
-                "damage": damage,
-            }
+            "rune": rune_obj
         });
         let sockets_value = Value::Array(sockets);
         if let Err(e) = db::items::set_sockets(pool, &staff.uid, sockets_value).await {
             warn!("socket.insert (запись): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        // M18/F58d: кэш рун (charges/параметры) — пересборка.
+        refresh_char_runes(&self.state, &char_id).await;
 
         // Руна расходуется (стак −1 либо удаление).
         let mut outs = Vec::new();
@@ -3260,20 +3745,37 @@ impl Session {
         let Some(rune_def_id) = rune_def_id else {
             return vec![Self::err(seq, ErrorCode::NoRuneSlot, "сокет пуст")];
         };
-        if db::items::count(pool, &char_id).await.unwrap_or(i64::MAX)
-            >= i64::from(self.state.config.gameplay.inventory.slots)
+        // M18 (указание заказчика): извлечённый самоцвет по
+        // возможности идёт в существующий стак — слот не занимает,
+        // лимит проверяем с учётом стака (take_loot_fits).
+        match Self::take_loot_fits(
+            pool,
+            &char_id,
+            &rune_def_id,
+            self.state.config.gameplay.inventory.slots,
+        )
+        .await
         {
-            return vec![Self::err(
-                seq,
-                ErrorCode::InventoryFull,
-                "инвентарь заполнен",
-            )];
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::InventoryFull,
+                    "инвентарь заполнен",
+                )];
+            }
+            Err(e) => {
+                warn!("socket.extract (слоты): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
         }
         *slot = serde_json::json!({ "index": cmd.socket_index, "rune": null });
         if let Err(e) = db::items::set_sockets(pool, &staff.uid, Value::Array(sockets)).await {
             warn!("socket.extract (запись): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        // M18/F58d: кэш рун — пересборка ПОСЛЕ записи (слот очищен).
+        refresh_char_runes(&self.state, &char_id).await;
         let Some(rune_def) = (match db::items::def(pool, &rune_def_id).await {
             Ok(def) => def,
             Err(e) => {
@@ -3283,11 +3785,24 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
         };
-        let rune_row = match db::items::insert(pool, &char_id, &rune_def_id, 1).await {
-            Ok(row) => row,
-            Err(e) => {
-                warn!("socket.extract (возврат руны): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        // M18 (указание заказчика): извлечённый **самоцвет** по
+        // возможности складывается в существующий стак (простая
+        // запись — состояние не теряется); руны — прежнее поведение.
+        let rune_row = if rune_def.item_type == "gem" {
+            match db::items::grant_stacking(pool, &char_id, &rune_def_id, 1).await {
+                Ok((row, _stacked)) => row,
+                Err(e) => {
+                    warn!("socket.extract (стак самоцвета): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+        } else {
+            match db::items::insert(pool, &char_id, &rune_def_id, 1).await {
+                Ok(row) => row,
+                Err(e) => {
+                    warn!("socket.extract (возврат руны): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
             }
         };
         let staff_row = match db::items::find(pool, &staff.uid, &char_id).await {
@@ -3335,7 +3850,7 @@ impl Session {
         };
         let pool = self.state.pool.clone();
 
-        let Some(staff) = (match db::items::find(&pool, &cmd.staff_uid, &char_id).await {
+        let Some(mut staff) = (match db::items::find(&pool, &cmd.staff_uid, &char_id).await {
             Ok(item) => item,
             Err(e) => {
                 warn!("rune_cast (поиск посоха): {e}");
@@ -3368,9 +3883,6 @@ impl Session {
             .get("charges")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
-        if charges <= 0 {
-            return vec![Self::err(seq, ErrorCode::NoCharges, "руна разряжена")];
-        }
         let rune_def_id = slot
             .get("def_id")
             .and_then(|v| v.as_str())
@@ -3385,6 +3897,12 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
         };
+        // M18/F58c (ADR-012 §4): затрата — поле руны `cost` (деф. 1),
+        // зарядов должно хватать на неё целиком.
+        let cost_charges = crate::systems::rune_charge_cost(&rune_def.stats);
+        if charges < cost_charges {
+            return vec![Self::err(seq, ErrorCode::NoCharges, "руна разряжена")];
+        }
         if staff_def.item_type != "staff" || staff_def.sockets == 0 {
             return vec![Self::err(
                 seq,
@@ -3449,13 +3967,38 @@ impl Session {
             serde_json::from_value(staff.sockets.clone()).unwrap_or_default();
         if let Some(slot) = sockets.get_mut(cmd.socket_index as usize) {
             if let Some(r) = slot.get_mut("rune") {
-                r["charges"] = serde_json::json!(charges - 1);
+                r["charges"] = serde_json::json!(charges - cost_charges);
             }
         }
-        if let Err(e) = db::items::set_sockets(&pool, &staff.uid, Value::Array(sockets)).await {
+        let sockets_value = Value::Array(sockets);
+        if let Err(e) = db::items::set_sockets(&pool, &staff.uid, sockets_value.clone()).await {
             warn!("rune_cast (заряды): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        // M18/F58d: кэш рун — charges изменились.
+        refresh_char_runes(&self.state, &char_id).await;
+        // M18/F58c: клиенту — патч сокетов (иначе заряды на кнопке
+        // отстают до ресинка; сокеты в wire-виде — с `accepts`, §6).
+        staff.sockets = sockets_value;
+        let mut item_patch = serde_json::Map::new();
+        item_patch.insert(
+            "sockets".into(),
+            serde_json::to_value(
+                item_snapshot(&staff, &staff_def)
+                    .sockets
+                    .unwrap_or_default(),
+            )
+            .unwrap_or(Value::Null),
+        );
+        let charge_event = out_event(
+            "evt/item/state",
+            None,
+            serde_json::to_value(ItemState {
+                uid: staff.uid.clone(),
+                patch: item_patch,
+            })
+            .unwrap_or_default(),
+        );
 
         let by_name = self
             .char
@@ -3473,7 +4016,7 @@ impl Session {
             spell: spell.clone(),
             what: CastSource::Rune,
             target: cmd.target_id.clone(),
-            charges_left: Some((charges - 1) as i32),
+            charges_left: Some((charges - cost_charges) as i32),
             mp_left: Some(new_mp),
             ok: true,
             extra: Default::default(),
@@ -3481,6 +4024,9 @@ impl Session {
         let cast_json = event_payload_text("evt/magic/cast", &cast);
 
         let mut mine: Vec<Out> = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        if !matches!(&charge_event, Out::Text(t) if t.is_empty()) {
+            mine.push(charge_event);
+        }
         if let Some(text) = &cast_json {
             mine.push(Out::Text(text.clone()));
         }
@@ -3900,6 +4446,50 @@ impl Session {
         outs
     }
 
+    /// M18/F54: активный камень усиления — предмет (`upgrade_stone`)
+    /// из инвентаря текущего персонажа; `None` — не выбран или потерян
+    /// (выброшен/продан после выбора).
+    async fn active_stone(
+        &self,
+        stone_uid: &str,
+        char_id: &str,
+    ) -> Option<(db::items::ItemRow, db::items::ItemDefRow)> {
+        let pool = &self.state.pool;
+        let item = db::items::find(pool, stone_uid, char_id)
+            .await
+            .ok()
+            .flatten()?;
+        if item.qty <= 0 {
+            return None;
+        }
+        let def = db::items::def(pool, &item.def_id).await.ok().flatten()?;
+        if def.item_type != "upgrade_stone" {
+            return None;
+        }
+        Some((item, def))
+    }
+
+    /// M18/F54: качество камня (`stats.quality`, процентные пункты;
+    /// ключа нет → 0 — нейтральный «средний» камень).
+    fn stone_quality(def: &db::items::ItemDefRow) -> i32 {
+        def.stats
+            .get("quality")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0) as i32
+    }
+
+    /// M18/F54: итоговый шанс заточки — база конфига + бонус камня
+    /// (затухание 1/(1+level)) × рейты сервера.
+    fn sharpen_chance(&self, base: f64, stone_quality: i32, level: i32) -> f64 {
+        let rates = self.state.config.gameplay.rates.chance;
+        crate::systems::upgrade_chance_with_stone(
+            base,
+            i64::from(stone_quality),
+            i64::from(level),
+            rates,
+        )
+    }
+
     /// `cmd/upgrade.preview` (§7, ФР-10): превью «сейчас → после» —
     /// `preview_id`, `delta.upgrade`, `cost.gold`, `chance` (если
     /// `shows_chance`). `E_UPGRADE_MAX` — уровень уже предельный.
@@ -3940,17 +4530,39 @@ impl Session {
 
         let cfg = &self.state.config.gameplay.upgrade;
         let level = def.upgrade + item.upgrade;
+        // Потолок уровня — раньше проверки камня: предмет вообще не
+        // улучшается, камень тут ни при чём.
         if level >= cfg.max_level as i32 {
             return vec![Self::err(seq, ErrorCode::UpgradeMax, "предельный уровень")];
         }
+        // M18/F54: улучшение требует выбранный камень усиления.
+        let Some(stone_uid) = self.sharpen_stone.clone() else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Ingredients,
+                "нужен камень усиления",
+            )];
+        };
+        let Some((_, stone_def)) = self.active_stone(&stone_uid, &char_id).await else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Ingredients,
+                "камень усиления не найден",
+            )];
+        };
+        let stone_quality = Self::stone_quality(&stone_def);
+
         let next = level + 1;
         let cost = crate::systems::upgrade_cost(i64::from(level), cfg);
-        let chance = crate::systems::upgrade_chance(i64::from(level), cfg);
+        let base = crate::systems::upgrade_chance(i64::from(level), cfg);
+        let chance = self.sharpen_chance(base, stone_quality, level);
         let preview_id = format!("pv_{:x}", crate::time::now_ms());
         self.preview_state = Some(UpgradePreviewState {
             preview_id: preview_id.clone(),
             item_uid: item.uid.clone(),
             level,
+            stone_quality,
+            stone_uid,
         });
 
         let mut payload = serde_json::json!({
@@ -4032,6 +4644,23 @@ impl Session {
             )];
         }
 
+        // M18/F54: камень от превью обязан существовать и совпадать
+        // с активным (игрок мог выкинуть/сменить его между превью и стартом).
+        let Some((stone_item, _)) = self.active_stone(&preview.stone_uid, &char_id).await else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Ingredients,
+                "камень усиления не найден",
+            )];
+        };
+        if self.sharpen_stone.as_deref() != Some(preview.stone_uid.as_str()) {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Ingredients,
+                "выбран другой камень усиления",
+            )];
+        }
+
         // Золото списывается всегда (до броска); F29a: монеты-стаки.
         let cost = crate::systems::upgrade_cost(i64::from(level), &cfg);
         let money_events = match db::items::consume_money(&pool, &char_id, cost).await {
@@ -4049,7 +4678,48 @@ impl Session {
             }
         };
 
-        let chance = crate::systems::upgrade_chance(i64::from(level), &cfg);
+        // M18/F54: 1 шт. камня на улучшение — списываем до броска.
+        let stone_events = if stone_item.qty > 1 {
+            // Стак пережил расход — камень остаётся активным, игрок
+            // может заточить следующий предмет тем же стаком.
+            let new_qty = i64::from(stone_item.qty) - 1;
+            if let Err(e) = db::items::set_qty(&pool, &stone_item.uid, new_qty).await {
+                warn!("upgrade.start (камень qty): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(new_qty));
+            vec![out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: stone_item.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            )]
+        } else {
+            if let Err(e) = db::items::delete(&pool, &stone_item.uid).await {
+                warn!("upgrade.start (камень удаление): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            // Последняя штука — выбор снимается.
+            self.sharpen_stone = None;
+            vec![out_event(
+                "evt/item/removed",
+                None,
+                serde_json::to_value(ItemRemoved {
+                    uid: stone_item.uid.clone(),
+                    reason: ItemRemovalReason::Consumed,
+                })
+                .unwrap_or_default(),
+            )]
+        };
+
+        // M18/F54: шанс — тот же, что показано в превью (база + бонус
+        // камня × рейты сервера).
+        let base = crate::systems::upgrade_chance(i64::from(level), &cfg);
+        let chance = self.sharpen_chance(base, preview.stone_quality, level);
         let success = crate::systems::upgrade_roll(crate::time::now_ms()) < chance;
         let rule = crate::systems::UpgradeFailRule::parse(
             self.state
@@ -4068,6 +4738,8 @@ impl Session {
         let mut outs = Vec::new();
         // F29a: оплата монетами — события списания до результата.
         outs.extend(money_events);
+        // M18/F54: списанный камень усиления.
+        outs.extend(stone_events);
         if success {
             let new_level = level + 1;
             if let Err(e) = db::items::set_upgrade(&pool, &item.uid, item.upgrade + 1).await {
@@ -4083,6 +4755,7 @@ impl Session {
                     new_upgrade: Some(new_level as u32),
                     item_destroyed: Some(false),
                     cost: serde_json::from_value(cost_json.clone()).unwrap_or_default(),
+                    duration_ms: Some((cfg.duration_s * 1000.0).round() as i64),
                 })
                 .unwrap_or_default(),
             ));
@@ -4119,7 +4792,8 @@ impl Session {
                 ));
             } else if new_upgrade != level {
                 if let Err(e) =
-                    db::items::set_upgrade(&pool, &item.uid, new_upgrade - def.upgrade).await
+                    db::items::set_upgrade(&pool, &item.uid, (new_upgrade - def.upgrade).max(0))
+                        .await
                 {
                     warn!("upgrade.start (понижение): {e}");
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
@@ -4146,6 +4820,7 @@ impl Session {
                 },
                 item_destroyed: Some(destroyed),
                 cost: serde_json::from_value(cost_json).unwrap_or_default(),
+                duration_ms: Some((cfg.duration_s * 1000.0).round() as i64),
             };
             outs.insert(
                 0,
@@ -6014,6 +6689,587 @@ impl Session {
         vec![Self::ack_payload(seq, &serde_json::json!({}))]
     }
 
+    // ── диалоги NPC (M18/F35; ветки/реплики F37) ──────────────────────────
+
+    /// NPC из сида текущей локации (паритет с `entity.info`);
+    /// не-NPC/несущность → `E_TARGET_GONE`.
+    async fn require_npc(&self, seq: u32, entity_id: &str) -> Result<Entity, Out> {
+        let pool = &self.state.pool;
+        let current = self.location_id.clone().unwrap_or_default();
+        let entities = match db::locations::get(pool, &current).await {
+            Ok(Some(row)) => {
+                serde_json::from_value::<Vec<Entity>>(row.entities.clone()).unwrap_or_default()
+            }
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                warn!("npc (чтение {current}): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        };
+        let Some(entity) = entities.into_iter().find(|e| e.id == entity_id) else {
+            return Err(Self::err(seq, ErrorCode::TargetGone, "сущность не найдена"));
+        };
+        if entity.kind != ld2_protocol::types::EntityKind::Npc {
+            return Err(Self::err(seq, ErrorCode::TargetGone, "это не NPC"));
+        }
+        Ok(entity)
+    }
+
+    /// Контекст персонажа для условий диалога (имя/пол/уровень/attrs/
+    /// навыки/профессии/рюкзак — M18/F35).
+    async fn dialog_context(
+        &self,
+        char_id: &str,
+        seq: u32,
+    ) -> Result<crate::dialogs::DialogContext, Out> {
+        let pool = &self.state.pool;
+        let row = match db::characters::get(pool, char_id).await {
+            Ok(Some(row)) => row,
+            Ok(None) => return Err(Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")),
+            Err(e) => {
+                warn!("npc (лист): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        };
+        let (level, _, _) =
+            crate::systems::level_for_total(row.total_xp, &self.state.config.gameplay.level);
+        let attrs: std::collections::BTreeMap<String, i64> =
+            serde_json::from_value(row.attrs.clone()).unwrap_or_default();
+        let mut skills = std::collections::HashMap::new();
+        let mut professions = std::collections::HashMap::new();
+        let mut items = std::collections::HashMap::new();
+        match db::skills::learned(pool, char_id).await {
+            Ok(rows) => {
+                for s in rows {
+                    skills.insert(s.skill_id, i64::from(s.rank));
+                }
+            }
+            Err(e) => {
+                warn!("npc (навыки): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        }
+        match db::professions::learned(pool, char_id).await {
+            Ok(rows) => {
+                for p in rows {
+                    professions.insert(p.0, i64::from(p.2));
+                }
+            }
+            Err(e) => {
+                warn!("npc (профессии): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        }
+        match db::items::inventory(pool, char_id).await {
+            Ok(rows) => {
+                for it in rows {
+                    *items.entry(it.def_id).or_insert(0) += i64::from(it.qty);
+                }
+            }
+            Err(e) => {
+                warn!("npc (рюкзак): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        }
+        Ok(crate::dialogs::DialogContext {
+            name: row.name,
+            gender: row.gender,
+            level: i64::from(level),
+            attrs,
+            skills,
+            professions,
+            items,
+        })
+    }
+
+    /// Доступные квесты NPC (giver == id, фаза available): id-ы для
+    /// гейта строк + wire-список для ack + флаг «NPC вообще даёт
+    /// квесты» (кнопка статус-бара, M18/F38).
+    async fn npc_quests(
+        &self,
+        char_id: &str,
+        npc_id: &str,
+        seq: u32,
+    ) -> Result<
+        (
+            std::collections::HashSet<String>,
+            Vec<serde_json::Value>,
+            bool,
+        ),
+        Out,
+    > {
+        let pool = &self.state.pool;
+        let (defs, progress) = match (
+            db::quests::defs(pool).await,
+            db::quests::progress(pool, char_id).await,
+        ) {
+            (Ok(d), Ok(p)) => (d, p),
+            (Err(e), _) | (_, Err(e)) => {
+                warn!("npc (квесты): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        };
+        let mut quests = Vec::new();
+        let mut available = std::collections::HashSet::new();
+        let mut gives_quests = false;
+        for def in &defs {
+            if def.2.as_deref() != Some(npc_id) {
+                continue;
+            }
+            gives_quests = true;
+            let progress_row = progress.iter().find(|(id, _, _)| id == &def.0);
+            let state = db::quests::build_state(def, progress_row);
+            if state.state == ld2_protocol::types::QuestPhase::Available {
+                available.insert(state.id.clone());
+                quests.push(serde_json::to_value(&state).unwrap_or_default());
+            }
+        }
+        Ok((available, quests, gives_quests))
+    }
+
+    /// `cmd/npc.talk` (M18/F35/F37): NPC текущей локации → **корень
+    /// ветки** (узел с видимыми ответами) и доступные квесты.
+    /// ack `{dialog: {id, name}, node: {...}|null, quests[], actions[]}`;
+    /// `node: null` — записи диалога нет (квесты отдаются). Поле
+    /// `greeting` убрано (M18/F42, ADR-008).
+    async fn npc_talk(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<NpcTalk>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
+        };
+        let context = match self.dialog_context(&char_id, seq).await {
+            Ok(context) => context,
+            Err(out) => return vec![out],
+        };
+        let (available, quests, gives_quests) =
+            match self.npc_quests(&char_id, &entity.id, seq).await {
+                Ok(triple) => triple,
+                Err(out) => return vec![out],
+            };
+        // M18/F38: контекстные кнопки статус-бара — только реально
+        // существующие системы: «Квесты» (NPC — выдающий) и «Обучение»
+        // (trainer в extra сущности); торговля/склад — когда появятся
+        // их системы.
+        let mut actions: Vec<&str> = Vec::new();
+        if gives_quests {
+            actions.push("quests");
+        }
+        if entity.extra.contains_key("trainer") {
+            actions.push("train");
+        }
+        if self.state.shops.contains_key(&entity.id) {
+            actions.push("shop");
+        }
+        let pool = &self.state.pool;
+        let shown = match db::dialogs::shown_lines(pool, &char_id, &entity.id).await {
+            Ok(map) => map,
+            Err(e) => {
+                warn!("npc.talk (кулдауны строк): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let now = crate::time::now_epoch();
+        let ctx = context.line_ctx(&available);
+        let node = match self.state.dialogs.get(&entity.id) {
+            Some(def) => {
+                let root = def
+                    .root
+                    .clone()
+                    .or_else(|| def.lines.first().map(|l| l.id.clone()))
+                    .unwrap_or_default();
+                // M18/F42: приветствие убрано (ADR-008) — окно открывается
+                // сразу с корневой репликой.
+                crate::dialogs::enter_node(def, &root, &ctx, now, &shown)
+            }
+            None => None,
+        };
+        if let Some((node, mark)) = &node {
+            if *mark {
+                if let Err(e) =
+                    db::dialogs::mark_shown(pool, &char_id, &entity.id, &node.id, now).await
+                {
+                    // Показ уже уходит клиенту — кулдаун догонит в следующий раз.
+                    warn!("npc.talk (отметка показа {}): {e}", node.id);
+                }
+            }
+        }
+        let node =
+            serde_json::to_value(node.map(|(node, _)| node)).unwrap_or(serde_json::Value::Null);
+        // M18/F44: обучение NPC из контента диалога (ADR-009) — список
+        // навыков с ценой; у NPC без training — пустой массив.
+        let training = self
+            .state
+            .dialogs
+            .get(&entity.id)
+            .map(|def| {
+                serde_json::to_value(&def.training).unwrap_or_else(|_| serde_json::json!([]))
+            })
+            .unwrap_or_else(|| serde_json::json!([]));
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({
+                "dialog": {
+                    "id": entity.id,
+                    "name": entity.name,
+                },
+                "node": node,
+                "quests": quests,
+                "actions": actions,
+                "training": training,
+            }),
+        )]
+    }
+
+    /// `cmd/npc.reply` (M18/F37): ответ персонажа — переход по связи
+    /// `node_id` → `reply_id`; у ответа без `next` диалог заканчивается
+    /// (`{node: null}`). ack `{node: {...}|null, quests[]}` — список
+    /// квестов освежается (приняли/сдали между открытиями).
+    async fn npc_reply(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<NpcReply>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
+        };
+        let Some(def) = self.state.dialogs.get(&entity.id) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "диалога нет")];
+        };
+        let context = match self.dialog_context(&char_id, seq).await {
+            Ok(context) => context,
+            Err(out) => return vec![out],
+        };
+        let (available, quests, _) = match self.npc_quests(&char_id, &entity.id, seq).await {
+            Ok(triple) => triple,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let shown = match db::dialogs::shown_lines(pool, &char_id, &entity.id).await {
+            Ok(map) => map,
+            Err(e) => {
+                warn!("npc.reply (кулдауны строк): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let now = crate::time::now_epoch();
+        let ctx = context.line_ctx(&available);
+
+        // Валидация связи (stateless): строка → ответ → цель.
+        let Some(node_line) = def.lines.iter().find(|line| line.id == cmd.node_id) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет такой строки")];
+        };
+        let Some(reply) = node_line
+            .replies
+            .iter()
+            .find(|reply| reply.id == cmd.reply_id)
+        else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет такой реплики")];
+        };
+        if !crate::dialogs::reply_allowed(reply, &ctx) {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "реплика недоступна")];
+        }
+        let node = match &reply.next {
+            // Конец диалога — без следующего узла.
+            None => serde_json::Value::Null,
+            Some(next_id) => {
+                let Some((view, mark)) =
+                    crate::dialogs::enter_node(def, next_id, &ctx, now, &shown)
+                else {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "строка недоступна")];
+                };
+                if mark {
+                    if let Err(e) =
+                        db::dialogs::mark_shown(pool, &char_id, &entity.id, next_id, now).await
+                    {
+                        warn!("npc.reply (отметка показа {next_id}): {e}");
+                    }
+                }
+                serde_json::to_value(&view).unwrap_or_default()
+            }
+        };
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "node": node, "quests": quests }),
+        )]
+    }
+
+    // ── магазины NPC (M18/F39) ─────────────────────────────────────────────
+
+    /// Скидка персонажа в bp: аккаунт (премиум — SQL,
+    /// `accounts.shop_discount_bp`) + навыки из
+    /// `[gameplay.shop].skill_discounts` (множитель за ранг); потолок
+    /// применяет `shops::buy_price_gold`.
+    async fn shop_discount_bp(&self, char_id: &str, seq: u32) -> Result<i64, Out> {
+        let pool = &self.state.pool;
+        let account_id = self.account_id.expect("require_auth выше");
+        let account_bp = match db::accounts::shop_discount_bp(pool, account_id).await {
+            Ok(bp) => bp,
+            Err(e) => {
+                warn!("shop (скидка аккаунта): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        };
+        let mut ranks = std::collections::HashMap::new();
+        match db::skills::learned(pool, char_id).await {
+            Ok(rows) => {
+                for skill in rows {
+                    ranks.insert(skill.skill_id, i64::from(skill.rank));
+                }
+            }
+            Err(e) => {
+                warn!("shop (навыки): {e}");
+                return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
+            }
+        }
+        let skills_bp = crate::shops::skill_discount_bp(
+            &self.state.config.gameplay.shop.skill_discounts,
+            &ranks,
+        );
+        Ok(account_bp + skills_bp)
+    }
+
+    /// `cmd/shop.list` (M18/F39): товары NPC по валютным вкладкам с
+    /// ценами (база `gold_value` × наценка сервера × наценка торговца ×
+    /// скидка bp с потолком → конвертация `rate`).
+    /// ack `{shop: {tabs: [{currency, currency_name, items[]}]}}`.
+    async fn shop_list(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ShopList>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
+        };
+        let Some(shop) = self.state.shops.get(&entity.id).cloned() else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет магазина")];
+        };
+        let discount_bp = match self.shop_discount_bp(&char_id, seq).await {
+            Ok(bp) => bp,
+            Err(out) => return vec![out],
+        };
+        let cfg = &self.state.config.gameplay.shop;
+        let pool = &self.state.pool;
+
+        let mut tabs = Vec::new();
+        for currency in &shop.currencies {
+            let cur_def = match db::items::def(pool, &currency.currency).await {
+                Ok(Some(def)) => def,
+                Ok(None) => {
+                    warn!("shop.list (валюта {}): нет определения", currency.currency);
+                    continue;
+                }
+                Err(e) => {
+                    warn!("shop.list (валюта): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let mut items = Vec::new();
+            for item_id in &currency.items {
+                let Some(def) = (match db::items::def(pool, item_id).await {
+                    Ok(Some(def)) => Some(def),
+                    Ok(None) => None,
+                    Err(e) => {
+                        warn!("shop.list (товар {item_id}): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                }) else {
+                    warn!("shop.list (товар {item_id}): нет определения");
+                    continue;
+                };
+                let gold = crate::shops::buy_price_gold(
+                    i64::from(def.gold_value),
+                    cfg.server_markup,
+                    shop.markup,
+                    discount_bp,
+                    cfg.max_discount_bp,
+                );
+                let unit = i64::from(def.qty).max(1);
+                // M18/F40: полный снапшот на виртуальной строке —
+                // карточка информации по клику на товар.
+                let virtual_row = db::items::ItemRow {
+                    uid: format!("shop:{}", def.id),
+                    def_id: def.id.clone(),
+                    qty: unit.clamp(1, i64::from(i32::MAX)) as i32,
+                    upgrade: 0,
+                    equipped_slot: None,
+                    sockets: serde_json::json!([]),
+                    // M18/F47: карточка товара показывает бонусы (ADR-010).
+                    bonuses: def.bonuses.clone(),
+                };
+                let item_value =
+                    serde_json::to_value(item_snapshot(&virtual_row, &def)).unwrap_or_default();
+                items.push(serde_json::json!({
+                    "def_id": def.id,
+                    "name": def.name,
+                    "rarity": def.rarity,
+                    "price": crate::shops::price_in_currency(gold, currency.rate),
+                    "qty": unit,
+                    "item": item_value,
+                }));
+            }
+            tabs.push(serde_json::json!({
+                "currency": currency.currency,
+                "currency_name": cur_def.name,
+                "items": items,
+            }));
+        }
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "shop": { "tabs": tabs } }),
+        )]
+    }
+
+    /// `cmd/shop.buy` (M18/F39): покупка одной партии — списание
+    /// валюты (события стаков, паттерн F29a) + выдача товара
+    /// (стак → `evt/item/state`, новый стак → `evt/item/added`).
+    /// ack `{}` — изменения уходят событиями.
+    async fn shop_buy(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ShopBuy>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let entity = match self.require_npc(seq, &cmd.entity_id).await {
+            Ok(entity) => entity,
+            Err(out) => return vec![out],
+        };
+        let Some(shop) = self.state.shops.get(&entity.id).cloned() else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет магазина")];
+        };
+        let Some(tab) = shop.currencies.iter().find(|c| c.currency == cmd.currency) else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет такой валюты")];
+        };
+        if !tab.items.contains(&cmd.def_id) {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "нет такого товара")];
+        }
+        let pool = &self.state.pool;
+        let currency_def = match db::items::def(pool, &cmd.currency).await {
+            Ok(Some(def)) => def,
+            _ => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "нет определения валюты",
+                )];
+            }
+        };
+        let item_def = match db::items::def(pool, &cmd.def_id).await {
+            Ok(Some(def)) => def,
+            _ => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "нет определения товара",
+                )];
+            }
+        };
+        let discount_bp = match self.shop_discount_bp(&char_id, seq).await {
+            Ok(bp) => bp,
+            Err(out) => return vec![out],
+        };
+        let cfg = &self.state.config.gameplay.shop;
+        let gold = crate::shops::buy_price_gold(
+            i64::from(item_def.gold_value),
+            cfg.server_markup,
+            shop.markup,
+            discount_bp,
+            cfg.max_discount_bp,
+        );
+        let price = crate::shops::price_in_currency(gold, tab.rate);
+
+        // Лимит слотов (паритет socket.extract: полный рюкзак — отказ).
+        if db::items::count(pool, &char_id).await.unwrap_or(i64::MAX)
+            >= i64::from(self.state.config.gameplay.inventory.slots)
+        {
+            return vec![Self::err(
+                seq,
+                ErrorCode::InventoryFull,
+                "инвентарь заполнен",
+            )];
+        }
+
+        // 1) Списание валюты (все проверки прошли; события — после ack).
+        let money_events =
+            match db::items::consume_by_def(pool, &char_id, &cmd.currency, price).await {
+                Ok(Some(changes)) => Self::money_events(changes),
+                Ok(None) => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::NotEnoughMoney,
+                        format!("не хватает {}: {price}", currency_def.name),
+                    )];
+                }
+                Err(e) => {
+                    warn!("shop.buy (валюта): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+
+        // 2) Выдача товара (партия = qty стака из контента).
+        let unit_qty = i64::from(item_def.qty).max(1);
+        let (row, stacked) =
+            match db::items::grant_stacking(pool, &char_id, &cmd.def_id, unit_qty).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    warn!("shop.buy (выдача): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        outs.extend(money_events);
+        if stacked {
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(row.qty));
+            outs.push(out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: row.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            ));
+        } else {
+            let item = item_snapshot(&row, &item_def);
+            outs.push(out_event(
+                "evt/item/added",
+                None,
+                serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+            ));
+        }
+        outs
+    }
+
     // ── квесты (ФР-12, M12.6) ───────────────────────────────────────────────
 
     /// Журнал квестов: все контент-квесты + прогресс персонажа (§7).
@@ -6105,6 +7361,22 @@ impl Session {
         let mut outs = Vec::new();
         match op {
             "accept" => {
+                // M18/F36: лимит текущих квестов — из конфига сервера
+                // (§5 `quests.max_active`); взятые = active/turn_in.
+                let current = progress
+                    .iter()
+                    .filter(|(_, state, _)| matches!(state.as_str(), "active" | "turn_in"))
+                    .count();
+                if current
+                    >= usize::try_from(self.state.config.gameplay.quests.max_active)
+                        .unwrap_or(usize::MAX)
+                {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::QuestLimit,
+                        "лимит текущих квестов достигнут",
+                    )];
+                }
                 if row.is_some() {
                     return vec![Self::err(seq, ErrorCode::Internal, "квест уже взят")];
                 }
@@ -6270,8 +7542,96 @@ fn summary_of(row: &db::characters::CharacterRow, location_name: String) -> Char
     }
 }
 
+/// M18/F47: разобрать JSON-массив бонусов (битые записи пропускаются
+/// с предупреждением).
+fn parse_bonuses(value: &serde_json::Value) -> Vec<ItemBonus> {
+    let Some(list) = value.as_array() else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(
+            |item| match serde_json::from_value::<ItemBonus>(item.clone()) {
+                Ok(bonus) => Some(bonus),
+                Err(e) => {
+                    warn!("бонус предмета пропущен ({item}): {e}");
+                    None
+                }
+            },
+        )
+        .collect()
+}
+
+/// M18/F47/ADR-010: контент-бонусы определения — поле `bonuses` **плюс**
+/// раздел `stats.param` («любой параметр прямо в статах»).
+fn content_bonuses(def: &db::items::ItemDefRow) -> Vec<ItemBonus> {
+    let mut out = parse_bonuses(def.bonuses.as_ref().unwrap_or(&serde_json::Value::Null));
+    let Some(params) = def.stats.get("param").and_then(|v| v.as_object()) else {
+        return out;
+    };
+    for (id, value) in params {
+        let (value, pct) = match value {
+            serde_json::Value::Number(n) => (n.as_i64().unwrap_or(0), false),
+            serde_json::Value::Object(map) => (
+                map.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                map.get("pct").and_then(|v| v.as_bool()).unwrap_or(false),
+            ),
+            _ => continue,
+        };
+        if value == 0 {
+            continue;
+        }
+        out.push(ItemBonus {
+            kind: "param".into(),
+            id: id.clone(),
+            value,
+            pct,
+        });
+    }
+    out
+}
+
+/// M18/F58 (ADR-012, уточнение заказчика): сколько слотов предмета
+/// принимают руны — **отдельная колонка определения**
+/// (`item_defs.rune_sockets`, как `sockets`), а не поле в `stats`;
+/// `NULL` — не указано → дефолт по типу предмета сохраняет прежнее
+/// поведение: броня → 0 (всё под самоцветы), оружие/посох → все слоты
+/// рунные. Общая точка для снапшота и `socket.insert`.
+fn rune_slots(def: &db::items::ItemDefRow) -> i64 {
+    match def.rune_sockets {
+        Some(n) => i64::from(n).max(0),
+        None => {
+            if def.item_type == "armor" {
+                0
+            } else {
+                i64::from(def.sockets)
+            }
+        }
+    }
+}
+
+/// M18/F58 (ADR-012): принимает ли слот: его `accepts` либо вычисление
+/// по индексу. В сырой записи (`items.sockets`) поля может не быть —
+/// ленивая инициализация слотов и перезапись при инкрустации его не
+/// ставят; тогда считаем по `rune_slots` (первые N — рунные).
+fn socket_accepts(slot: &serde_json::Value, index: u32, rune_slots: i64) -> String {
+    slot.get("accepts")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if i64::from(index) < rune_slots {
+                "rune".into()
+            } else {
+                "gem".into()
+            }
+        })
+}
+
 /// Проводной вид предмета §6: поля инстанса + определение из сида (D26).
-fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> ItemSnapshot {
+/// `pub(crate)`: тикер зарядов (M18/F58c) шлёт патч сокетов клиенту.
+pub(crate) fn item_snapshot(
+    item: &db::items::ItemRow,
+    def: &db::items::ItemDefRow,
+) -> ItemSnapshot {
     ItemSnapshot {
         uid: item.uid.clone(),
         item_type: def.item_type.clone(),
@@ -6284,26 +7644,48 @@ fn item_snapshot(item: &db::items::ItemRow, def: &db::items::ItemDefRow) -> Item
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
         sockets: {
-            let sockets: Vec<Socket> =
+            let mut sockets: Vec<Socket> =
                 serde_json::from_value(item.sockets.clone()).unwrap_or_default();
-            if sockets.is_empty() {
+            if sockets.is_empty() && def.sockets > 0 {
                 // M18/F31: предмет с сокетами показывает их даже до
                 // первой вставки — окно инкрустации и список целей
                 // видят всё оружие/броню с сокетами (ленивая форма).
-                if def.sockets > 0 {
-                    let list: Vec<serde_json::Value> = (0..def.sockets.max(0))
-                        .map(|i| serde_json::json!({ "index": i, "rune": null }))
-                        .collect();
-                    serde_json::from_value(serde_json::Value::Array(list)).ok()
-                } else {
-                    None
-                }
-            } else {
-                Some(sockets)
+                let list: Vec<serde_json::Value> = (0..def.sockets.max(0))
+                    .map(|i| serde_json::json!({ "index": i, "rune": null }))
+                    .collect();
+                sockets =
+                    serde_json::from_value(serde_json::Value::Array(list)).unwrap_or_default();
             }
+            // M18/F58 (ADR-012): тип слота добираем при отправке —
+            // `item_defs.rune_sockets` предмета (NULL = не указано →
+            // дефолт по типу: броня → gem, оружие/посох → rune, прежнее
+            // поведение). Правится так и raw-запись сокета после
+            // инкрустации, где поля нет.
+            if !sockets.is_empty() {
+                let slots = rune_slots(def);
+                for socket in &mut sockets {
+                    if socket.accepts.is_none() {
+                        socket.accepts = Some(if i64::from(socket.index) < slots {
+                            "rune".into()
+                        } else {
+                            "gem".into()
+                        });
+                    }
+                }
+            }
+            (!sockets.is_empty()).then_some(sockets)
         },
         qty: Some(i64::from(item.qty)),
         gold_value: Some(i64::from(def.gold_value)),
+        // M18/F47: бонусы = контент определения (bonuses + stats.param)
+        // + свои бонусы инстанса.
+        bonuses: {
+            let mut list = content_bonuses(def);
+            list.extend(parse_bonuses(
+                item.bonuses.as_ref().unwrap_or(&serde_json::Value::Null),
+            ));
+            (!list.is_empty()).then_some(list)
+        },
         // M17/F30g: определение — ключ кулдауна использования.
         def_id: Some(item.def_id.clone()),
         slot: def.slot.clone(),
@@ -6384,6 +7766,98 @@ fn attr_genitive(id: &str) -> &str {
     }
 }
 
+/// M18/F58d (ADR-012 §5): пересобрать кэш рун экипированного оружия
+/// в `world` — из raw-сокетов `main_hand` + параметров рун (`stats`:
+/// `chance`/`damage`/`cost`/`buff`). Руны без `chance` в авто-приём
+/// не участвуют. Вызывается на входе, экипировке, инкрустации/извлечении,
+/// касте и из тикера зарядов (charges в кэше должен совпадать с БД).
+pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_id: &str) {
+    use crate::world::{RuneBuff, SocketedRune};
+
+    let Some(main) = db::items::find_equipped_in_slot(&state.pool, char_id, "main_hand")
+        .await
+        .ok()
+        .flatten()
+    else {
+        let mut world = state.world.lock().expect("мир");
+        world.set_char_runes(char_id, Vec::new());
+        return;
+    };
+    let slots: Vec<Value> = serde_json::from_value(main.sockets.clone()).unwrap_or_default();
+    let mut runes: Vec<SocketedRune> = Vec::new();
+    for slot in &slots {
+        let Some(rune) = slot.get("rune").filter(|r| !r.is_null()) else {
+            continue;
+        };
+        let Some(rune_def_id) = slot.get("def_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(Some(rune_def)) = db::items::def(&state.pool, rune_def_id).await else {
+            continue;
+        };
+        // Шанс — контент-параметр: без него руна не участвует в
+        // авто-приёме (прежние руны продолжают работать кастом).
+        let Some(chance) = rune_def.stats.get("chance").and_then(|v| v.as_f64()) else {
+            continue;
+        };
+        if !chance.is_finite() || chance <= 0.0 {
+            continue;
+        }
+        let buff = rune_def
+            .stats
+            .get("buff")
+            .and_then(|b| b.as_object())
+            .map(|b| RuneBuff {
+                kind: rune_def.id.clone(),
+                title: rune_def.name.clone(),
+                param: b
+                    .get("param")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                value: b.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                pct: b.get("pct").and_then(|v| v.as_bool()).unwrap_or(false),
+                duration_s: b.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(10),
+                max_stacks: b.get("max_stacks").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
+            });
+        // M18/F58d: эффект на моба (stats.effect): stun/root/bleed.
+        let effect = rune_def
+            .stats
+            .get("effect")
+            .and_then(|e| e.as_object())
+            .and_then(|e| {
+                let kind = e.get("kind")?.as_str()?.to_string();
+                Some(crate::world::RuneEffect {
+                    kind,
+                    value: e.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                    duration_s: e.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(5),
+                })
+            });
+        runes.push(SocketedRune {
+            staff_uid: main.uid.clone(),
+            socket_index: slot.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            def_id: rune_def.id.clone(),
+            spell: rune
+                .get("spell")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            chance,
+            damage: rune_def
+                .stats
+                .get("damage")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
+            cost: crate::systems::rune_charge_cost(&rune_def.stats),
+            charges: rune.get("charges").and_then(|v| v.as_i64()).unwrap_or(0),
+            buff,
+            effect,
+        });
+    }
+    let mut world = state.world.lock().expect("мир");
+    world.set_char_runes(char_id, runes);
+}
+
 impl Session {
     /// M17/F30f: обновить «чем бьёт» в мире — по экипированному
     /// оружию (main_hand); без него — «руками». Вызывается при входе
@@ -6409,9 +7883,13 @@ impl Session {
         let attack_ms = def
             .as_ref()
             .map(|d| (d.cooldown_s.max(0.001) * 1000.0).round() as i64);
-        let mut world = self.state.world.lock().expect("мир");
-        world.set_char_hits_as(char_id, hits);
-        world.set_char_attack_ms(char_id, attack_ms);
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.set_char_hits_as(char_id, hits);
+            world.set_char_attack_ms(char_id, attack_ms);
+        }
+        // M18/F58d: то же оружие — источник рун для авто-приёма.
+        refresh_char_runes(&self.state, char_id).await;
     }
 
     /// M17/F30g: гейт кулдауна предмета (cooldown_s, дефолт 1 с) —

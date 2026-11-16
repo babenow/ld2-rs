@@ -19,6 +19,7 @@ mod backpack;
 mod chars;
 mod chat;
 mod game;
+mod quests;
 mod register;
 mod sheet;
 mod social;
@@ -68,6 +69,16 @@ struct PopupResize;
 enum PopupKind {
     Character,
     Backpack,
+    /// M18/F36: окно квестов (2 вкладки: текущие/выполненные).
+    Quests,
+    /// M18/F38: окно диалога NPC — как окно персонажа (попап).
+    Npc,
+    /// M18: описание предмета — как окно персонажа (попап).
+    Item,
+    /// M18/F53: окно заточки — попап (карточка с шапкой, без затемнения).
+    Upgrade,
+    /// M18: окно сокетов (инкрустация через меню оружия) — popup.
+    Socketing,
 }
 
 impl PopupKind {
@@ -76,7 +87,35 @@ impl PopupKind {
         match self {
             PopupKind::Character => "ld2-char",
             PopupKind::Backpack => "ld2-bp",
+            PopupKind::Quests => "ld2-quests",
+            PopupKind::Npc => "ld2-npc",
+            PopupKind::Item => "ld2-item",
+            PopupKind::Upgrade => "ld2-upgrade",
+            PopupKind::Socketing => "ld2-socket",
         }
+    }
+}
+
+/// M18/F33: открытие окна сбрасывает контекстное меню **своей**
+/// стороны. Иначе закрытие окна с открытым меню оставляло
+/// `bp_menu`/`equip_menu = Some(...)`: keyed state меню и `asked`-
+/// счётчик гаснут вместе с элементом (кадр без рендера), поэтому при
+/// следующем открытии stale-запрос `.manual(Some((n, at)))` открывал
+/// меню само. `open_popup` — единственная точка, где окно становится
+/// открытым, — инвариант: любое открытое окно стартует с пустым меню.
+fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mut Option<T>) {
+    match kind {
+        PopupKind::Character => *equip_menu = None,
+        PopupKind::Backpack => *bp_menu = None,
+        // M18/F36: окно квестов контекстных меню не использует.
+        PopupKind::Quests => {}
+        // M18/F38: окно диалога NPC тоже.
+        PopupKind::Npc => {}
+        PopupKind::Item => {}
+        // M18/F53: окно заточки — попап.
+        PopupKind::Upgrade => {}
+        // M18: окно сокетов контекстных меню не использует.
+        PopupKind::Socketing => {}
     }
 }
 
@@ -137,6 +176,8 @@ pub(crate) enum Click {
     ToggleCharacter,
     /// M16/F29b: открыть/закрыть окно рюкзака (кнопка в шапке).
     ToggleInventory,
+    /// M18/F36: открыть/закрыть окно квестов (кнопка в шапке).
+    ToggleQuests,
     Theme(&'static str),
     ChatLimit(i64),
     /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
@@ -154,6 +195,8 @@ pub(crate) enum Click {
     Attack(String),
     Flee,
     Examine(String),
+    /// M18/F35: диалог NPC (поговорить/квесты).
+    NpcTalk(String),
     PartyInvite(String),
     TradeOpen(String),
     RuneCast {
@@ -232,6 +275,8 @@ pub struct Root {
     reg_password: Option<Entity<TextInput>>,
     reg_password2: Option<Entity<TextInput>>,
     host_input: Option<Entity<TextInput>>,
+    /// M19 (§15): ввод домена discovery (пусто — прямой режим host).
+    domain_input: Option<Entity<TextInput>>,
     settings_open: bool,
     /// M16/F29b: окно персонажа — оверлей поверх игрового экрана
     /// (геометрия/флаги жестов — в `char_popup`).
@@ -239,6 +284,19 @@ pub struct Root {
     /// M16/F29b: окно рюкзака — может быть открыто одновременно с
     /// персонажем (общий scrim группы окон).
     backpack_popup: PopupState,
+    /// M18/F36: окно квестов — третий член группы окон (общий scrim).
+    quests_popup: PopupState,
+    /// M18/F38: окно диалога NPC — геометрия (гейт рендера — наличие
+    /// `store.npc_dialog`, см. `npc_window`).
+    npc_popup: PopupState,
+    item_popup: PopupState,
+    /// M18: окно сокетов (инкрустация через меню оружия) — popup.
+    socket_popup: PopupState,
+    /// M18: вторая страница окна инкрустации — выбранный слот
+    /// (список вставок); `None` — страница слотов.
+    socket_pick: Option<u32>,
+    /// M18/F53: окно заточки — попап (геометрия карточки).
+    upgrade_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
     /// всплывающих окон — закрытие по mouse-up только для настоящего
     /// «клика мимо» (M15/F25e).
@@ -252,8 +310,15 @@ pub struct Root {
     viewport: (f32, f32),
     /// M16/F29b: активная вкладка рюкзака (персистентна в config).
     backpack_tab: backpack::BackpackTab,
+    /// M18/F36: вкладка окна квестов (текущие/выполненные) и выбор
+    /// в левой колонке (показывается в правой).
+    quests_tab: quests::QuestsTab,
+    selected_quest: Option<String>,
     /// M14/F16: открытый диалог выхода — (действие, дедлайн мс по now_ms()).
     exit_timer: Option<(ExitKind, i64)>,
+    /// M18/F53: прогресс улучшения в диалоге — (uid, preview_id, старт мс,
+    /// длительность мс). Команда `upgrade.start` отправляется по истечении.
+    upgrade_progress: Option<(String, String, i64, i64)>,
     /// M14/F17: открытая карточка навыка — id из снапшота.
     skill_info: Option<String>,
     first_frame: bool,
@@ -287,11 +352,17 @@ pub struct Root {
     /// и stick-to-bottom чата.
     journal_scroll: ScrollHandle,
     chat_scroll: ScrollHandle,
+    /// M18/F46: прокрутка ленты диалога NPC (stick-to-bottom) и длина
+    /// ленты на прошлом кадре — по ней решается досcrollивание вниз.
+    npc_scroll: ScrollHandle,
+    npc_seen: usize,
     /// M14/F3: обычная прокрутка вкладок листа «Навыки»/«Профессии».
     skills_scroll: ScrollHandle,
     professions_scroll: ScrollHandle,
     /// M16/F29b: прокрутка тела окна рюкзака (сетка предметов).
     backpack_scroll: ScrollHandle,
+    /// M18/F36: скролл тела окна квестов.
+    quests_scroll: ScrollHandle,
     /// M15/F26: прокрутка вкладки «Параметры» (16 строк).
     params_scroll: ScrollHandle,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
@@ -312,6 +383,8 @@ pub struct Root {
     /// M10.6: создание/удаление персонажей (ФР-02).
     create_name: Option<Entity<TextInput>>,
     create_profile: ld2_core::store::Profile,
+    /// M18/F34: пол — селектор в форме создания (по умолчанию мужской).
+    create_gender: ld2_core::store::Gender,
     create_open: bool,
     create_submitted: bool,
     delete_target: Option<(String, String)>,
@@ -369,6 +442,11 @@ const TYPING_FIELDS: &[TypingField] = &[
         get: |r| &r.host_input,
     },
     TypingField {
+        screen: Screen::Login,
+        name: "domain",
+        get: |r| &r.domain_input,
+    },
+    TypingField {
         screen: Screen::Characters,
         name: "create_name",
         get: |r| &r.create_name,
@@ -382,6 +460,11 @@ const TYPING_FIELDS: &[TypingField] = &[
         screen: Screen::Characters,
         name: "host",
         get: |r| &r.host_input,
+    },
+    TypingField {
+        screen: Screen::Characters,
+        name: "domain",
+        get: |r| &r.domain_input,
     },
     TypingField {
         screen: Screen::Game,
@@ -402,6 +485,11 @@ const TYPING_FIELDS: &[TypingField] = &[
         screen: Screen::Game,
         name: "host",
         get: |r| &r.host_input,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "domain",
+        get: |r| &r.domain_input,
     },
 ];
 
@@ -430,6 +518,7 @@ impl Root {
             reg_password: None,
             reg_password2: None,
             host_input: None,
+            domain_input: None,
             settings_open: false,
             char_popup: PopupState::new((760.0, 560.0)),
             // Рюкзак со сдвигом: при открытии обоих окон видны обе
@@ -438,11 +527,42 @@ impl Root {
                 delta: (40.0, 40.0),
                 ..PopupState::new((760.0, 560.0))
             },
+            // M18/F36: квесты — левее рюкзака (обе шапки видны).
+            quests_popup: PopupState {
+                delta: (-40.0, 40.0),
+                ..PopupState::new((800.0, 560.0))
+            },
+            // M18/F38: диалог NPC — правее и выше центра.
+            npc_popup: PopupState {
+                delta: (60.0, -40.0),
+                ..PopupState::new((640.0, 560.0))
+            },
+            item_popup: PopupState {
+                delta: (80.0, -20.0),
+                // M18/F55: фоллбэк до open_popup — в диапазоне
+                // «резиновой» ширины (320..480).
+                ..PopupState::new((400.0, 420.0))
+            },
+            // M18: окно сокетов — карточка по центру (как заточка).
+            socket_popup: PopupState {
+                delta: (0.0, -40.0),
+                ..PopupState::new((440.0, 420.0))
+            },
+            socket_pick: None,
+            // M18/F53: окно заточки — компактная карточка по центру,
+            // без затемнения (см. open_popup: базовый размер).
+            upgrade_popup: PopupState {
+                delta: (0.0, -40.0),
+                ..PopupState::new((440.0, 360.0))
+            },
             backpack_tab: backpack::BackpackTab::default(),
+            quests_tab: quests::QuestsTab::default(),
+            selected_quest: None,
             popup_scrim_down: false,
             drag_owner: None,
             viewport: (0.0, 0.0),
             exit_timer: None,
+            upgrade_progress: None,
             skill_info: None,
             first_frame: true,
             guild_input: None,
@@ -461,9 +581,12 @@ impl Root {
             last_notice: None,
             journal_scroll: ScrollHandle::new(),
             chat_scroll: ScrollHandle::new(),
+            npc_scroll: ScrollHandle::new(),
+            npc_seen: 0,
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
             backpack_scroll: ScrollHandle::new(),
+            quests_scroll: ScrollHandle::new(),
             params_scroll: ScrollHandle::new(),
             log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
@@ -475,6 +598,7 @@ impl Root {
             party_collapsed,
             create_name: None,
             create_profile: ld2_core::store::Profile::default(),
+            create_gender: ld2_core::store::Gender::default(),
             create_open: false,
             create_submitted: false,
             delete_target: None,
@@ -544,6 +668,45 @@ impl Root {
             }
         }
 
+        // M18/F53: прогресс улучшения в диалоге — по истечении 3 с
+        // (из настроек сервера) отправляем cmd/upgrade.start; модалка
+        // закроется по evt/upgrade/result.
+        let upgrade_progress_active = self.upgrade_progress.is_some();
+        if let Some((uid, preview_id, _started, ends)) = self.upgrade_progress.clone() {
+            // M18/F54: камень мог выбыть за 3 с прогресса — старт без
+            // него сервер отверг бы; сбрасываем, ничего не отправляя.
+            if self.store.sharpen_stone.is_none() {
+                tracing::debug!("прогресс заточки сброшен: камень выбыл");
+                self.upgrade_progress = None;
+            } else if self.now_ms() >= ends {
+                self.upgrade_progress = None;
+                let cmd = ld2_protocol::cmd::UpgradeStart {
+                    item_uid: uid,
+                    preview_id,
+                };
+                self.send_cmd(&cmd, Act::Upgrade);
+            }
+        }
+        // Если модалка закрыта (Esc/✕) — сбрасываем прогресс.
+        if self.store.upgrade.is_none() && self.store.sharpen_stone.is_none() {
+            self.upgrade_progress = None;
+        }
+
+        // M18/F53: после результата модалка остаётся открытой —
+        // автоматически запрашиваем новое превью для следующего улучшения.
+        if self.store.sharpen_stone.is_some()
+            && self.store.pending != Some(Act::Preview)
+            && self
+                .store
+                .upgrade
+                .as_ref()
+                .is_some_and(|v| v.result.is_some() && v.preview.is_none())
+        {
+            let uid = self.store.upgrade.as_ref().unwrap().item_uid.clone();
+            let cmd = ld2_protocol::cmd::UpgradePreview { item_uid: uid };
+            self.send_cmd(&cmd, Act::Preview);
+        }
+
         // M11.4: новый notice → всплывающий тост Ely (текст в экране
         // остаётся до замены — на время жизни тоста возможен дубль).
         if let Some(notice) = self.store.notice.clone() {
@@ -572,14 +735,27 @@ impl Root {
                 .store
                 .item_cooldowns
                 .values()
-                .any(|(until_ms, _)| *until_ms > now_ms);
+                .any(|(until_ms, _)| *until_ms > now_ms)
+            // M18/F42: живой отсчёт таймеров реплик на кулдауне.
+            || self.store.npc_dialog.as_ref().is_some_and(|dialog| {
+                dialog.node.as_ref().is_some_and(|node| {
+                    node.replies.iter().any(|reply| {
+                        reply
+                            .wait_until_ms
+                            .is_some_and(|until| until > now_ms)
+                    })
+                })
+            })
+            // M18/F53: прогресс улучшения в диалоге.
+            || self.upgrade_progress.is_some();
 
-        if had_events || cd_active || exit_active || inscribe_active {
+        if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
         Duration::from_millis(
-            if had_events || cd_active || exit_active || inscribe_active {
+            if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active
+            {
                 50
             } else {
                 200
@@ -640,7 +816,13 @@ impl Root {
                     }
                 }
                 Effect::Notify(kind) => {
-                    // D7: под флагом настроек (desktop.notify).
+                    // M18/F55: итог заточки рисуется цветом прямо на
+                    // экране заточки — системное уведомление («новое
+                    // окно») для него убрано. Остальные события (D7) —
+                    // под флагом desktop.notify.
+                    if matches!(kind, ld2_core::store::NotifyKind::Upgrade) {
+                        continue;
+                    }
                     if self.config.notify {
                         ld2_core::notify::show(&l10n::notify_body(self.lang, kind));
                     }
@@ -685,13 +867,24 @@ impl Root {
     /// сокет (индекс по свежему снапшоту; сервер валидирует — занятый
     /// слот/нет сокетов → тост через notice).
     fn finish_inscribe(&mut self, rune_uid: String, target_uid: String) {
-        let index = self
-            .store
-            .snapshot
+        // M18/F58f (баг «не работает инкрустация через меню камня»):
+        // слот — первый свободный, **принимающий тип вставки**
+        // (accepts, ADR-012): иначе самоцвет шёл в рунный слот и
+        // сервер отвечал «слот принимает только руны».
+        let snapshot = self.store.snapshot.clone();
+        let insert_type = snapshot
+            .as_ref()
+            .and_then(|s| s.char.inventory.iter().find(|i| i.uid == rune_uid))
+            .map(|i| i.item_type.clone());
+        let index = snapshot
             .as_ref()
             .and_then(|s| s.char.inventory.iter().find(|i| i.uid == target_uid))
             .and_then(|item| item.sockets.as_ref())
-            .and_then(|sockets| sockets.iter().position(|s| s.rune.is_none()));
+            .and_then(|sockets| {
+                insert_type
+                    .as_deref()
+                    .and_then(|t| sheet::first_compatible_socket(sockets, t))
+            });
         let Some(index) = index else {
             self.store.notice = Some(t(self.lang, Key::InscribeNoWeapons).to_string());
             return;
@@ -716,7 +909,10 @@ impl Root {
         tracing::info!("смена сервера → переподключение: {}", self.config.host);
         self.transport.close();
         let (tx, rx) = mpsc::unbounded_channel();
-        self.transport = transport::spawn(TransportConfig::new(self.config.host.clone()), tx);
+        self.transport = transport::spawn(
+            TransportConfig::new(self.config.host.clone()).with_domain(self.config.domain.clone()),
+            tx,
+        );
         self.ingress = rx;
         self.store.to_login_screen();
     }
@@ -772,6 +968,9 @@ impl Root {
             },
         ));
         self.host_input = Some(mk(window, cx, host.clone(), false, Some(host)));
+        // M19 (§15): поле домена discovery (пусто — прямой режим).
+        let domain = self.config.domain.clone().unwrap_or_default();
+        self.domain_input = Some(mk(window, cx, domain.clone(), false, Some(domain)));
         self.guild_input = Some(mk(window, cx, "…".into(), false, None));
         self.create_name = Some(mk(
             window,
@@ -871,15 +1070,50 @@ impl Root {
             .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
     }
 
+    /// M18/F41: снять фокус со всех полей ввода окна (`Window::blur`).
+    ///
+    /// gpui не blur'ит поле само: после набора текста фокус «залипал»
+    /// в чате, и гейт [`Self::typing_focused`] глушил **все** глобальные
+    /// хоткеи (C/I/квесты не открывались, в т.ч. параллельно). Прямой
+    /// `handle.update` из обработчика ввода недоступен: событие
+    /// обрабатывается внутри `update_window`, где окно временно снято
+    /// с карты `App` (вернётся «window not found»). Откладываем blur
+    /// до конца цикла эффектов — к `flush_effects` окно уже на месте.
+    pub(crate) fn blur_typing(cx: &mut Context<'_, Self>) {
+        cx.defer(|cx| {
+            let Some(handle) = cx.active_window() else {
+                return;
+            };
+            let _ = handle.update(cx, |_, window, cx| window.blur(cx));
+        });
+    }
+
     /// Обработка глобального нажатия: навигация/цикл целей по хоткеям
     /// из config (ФР-19); не срабатывает вне игры и при наборе текста.
     pub(crate) fn handle_keystroke(
         &mut self,
         ks: &gpui::Keystroke,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.store.screen != Screen::Game || self.typing_focused(window, cx) {
+        // M18/F41: Esc в поле ввода = выход из чата (снять фокус),
+        // иначе гейт ниже глушит хоткеи до следующего клика мышью.
+        if ks.key == "escape" && self.typing_focused(window, cx) {
+            tracing::debug!("Esc в поле ввода → снятие фокуса");
+            window.blur(cx);
+            cx.notify();
+            return;
+        }
+        let typing = self.typing_focused(window, cx);
+        if self.store.screen != Screen::Game || typing {
+            // Диагностика жалоб «хоткеи не работают»: ранний выход из-за
+            // экрана или фокуса в поле ввода.
+            tracing::debug!(
+                "keystroke {:?} пропущен гейтом: screen={:?}, typing_focused={}",
+                ks,
+                self.store.screen,
+                typing
+            );
             return;
         }
         for (spec, dir) in [
@@ -902,6 +1136,54 @@ impl Root {
         // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
         // настроек/диалога выхода (они ловят Esc сами).
         if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
+            // M18/F54: окно заточки (список предметов или сама заточка) —
+            // верхний слой группы окон; Esc закрывает оба экрана разом.
+            if self.store.sharpen_stone.is_some() || self.store.upgrade.is_some() {
+                tracing::debug!("закрытие окна заточки: Esc");
+                self.store.close_upgrade();
+                self.store.sharpen_stone = None;
+                self.store.sharpen_list = false;
+                self.upgrade_progress = None;
+                cx.notify();
+                return;
+            }
+            // M18: окно сокетов — верхний слой группы попапов; Esc
+            // сначала возвращает со второй страницы к списку слотов.
+            if self.store.socketing.is_some() {
+                if self.socket_pick.is_some() {
+                    self.socket_pick = None;
+                    cx.notify();
+                    return;
+                }
+                tracing::debug!("закрытие окна сокетов: Esc");
+                self.store.close_socketing();
+                self.socket_popup.open = false;
+                cx.notify();
+                return;
+            }
+            // M18/F53: описание предмета — поверх окна заточки.
+            if self.store.item_detail.is_some() {
+                tracing::debug!("закрытие описания предмета: Esc");
+                self.store.item_detail = None;
+                cx.notify();
+                return;
+            }
+            // M18/F38: диалог NPC — верхний слой группы окон.
+            if self.store.npc_dialog.is_some() {
+                tracing::debug!("закрытие диалога NPC: Esc");
+                self.store.npc_dialog = None;
+                self.npc_popup.open = false;
+                cx.notify();
+                return;
+            }
+            // M18/F36: квесты рисуются поверх рюкзака — Esc закрывает
+            // верхнее (после рассуждений порядок: диалог → квесты →
+            // рюкзак → персонаж).
+            if self.quests_popup.open {
+                self.quests_popup.open = false;
+                cx.notify();
+                return;
+            }
             if self.backpack_popup.open {
                 self.backpack_popup.open = false;
                 cx.notify();
@@ -916,6 +1198,7 @@ impl Root {
         // M15/F25: хоткей окна персонажа (кнопка в шапке дублирует);
         // M16/F29b: окна открываются одновременно (общий scrim).
         if keystroke_matches(&self.config.hotkeys.open_character, ks) {
+            tracing::debug!("hotkey окна персонажа → open={}", !self.char_popup.open);
             if self.char_popup.open {
                 self.char_popup.open = false;
             } else {
@@ -931,6 +1214,16 @@ impl Root {
                 self.backpack_popup.open = false;
             } else {
                 self.open_popup(PopupKind::Backpack);
+            }
+            cx.notify();
+            return;
+        }
+        // M18/F36: хоткей окна квестов (кнопка в шапке дублирует).
+        if keystroke_matches(&self.config.hotkeys.open_quests, ks) {
+            if self.quests_popup.open {
+                self.quests_popup.open = false;
+            } else {
+                self.open_popup(PopupKind::Quests);
             }
             cx.notify();
             return;
@@ -1065,6 +1358,11 @@ impl Root {
         match kind {
             PopupKind::Character => &mut self.char_popup,
             PopupKind::Backpack => &mut self.backpack_popup,
+            PopupKind::Quests => &mut self.quests_popup,
+            PopupKind::Npc => &mut self.npc_popup,
+            PopupKind::Item => &mut self.item_popup,
+            PopupKind::Upgrade => &mut self.upgrade_popup,
+            PopupKind::Socketing => &mut self.socket_popup,
         }
     }
 
@@ -1073,18 +1371,43 @@ impl Root {
         match kind {
             PopupKind::Character => &self.char_popup,
             PopupKind::Backpack => &self.backpack_popup,
+            PopupKind::Quests => &self.quests_popup,
+            PopupKind::Npc => &self.npc_popup,
+            PopupKind::Item => &self.item_popup,
+            PopupKind::Upgrade => &self.upgrade_popup,
+            PopupKind::Socketing => &self.socket_popup,
         }
     }
 
     /// M16/F29f: открытие окна — базовый размер (персонаж **выше**:
     /// 760×760; рюкзак 760×560), по центру с клампом под вьюпорт
     /// (drag/resize живут до закрытия) и первая вкладка.
-    fn open_popup(&mut self, kind: PopupKind) {
-        let (tw, th) = match kind {
+    /// M18/F55: базовый размер карточки для `open_popup`.
+    ///
+    /// Окно описания предмета — **«резиновое»**: ширина считается доли
+    /// вьюпорта (28 %, clamp `320..480`) вместо прежних фиксированных
+    /// 520 px; высота остаётся константой, докрутит resize-grip.
+    /// `clamp` также спасает нулевой viewport до первой отрисовки.
+    /// Остальные окна — константы (как были).
+    fn popup_base_size(kind: PopupKind, viewport: (f32, f32)) -> (f32, f32) {
+        let (vw, _) = viewport;
+        match kind {
             PopupKind::Character => (760.0, 760.0),
             PopupKind::Backpack => (760.0, 560.0),
-        };
+            PopupKind::Quests => (800.0, 560.0),
+            PopupKind::Npc => (640.0, 560.0),
+            PopupKind::Item => ((vw * 0.28).clamp(320.0, 480.0), 420.0),
+            PopupKind::Upgrade => (440.0, 360.0),
+            PopupKind::Socketing => (440.0, 420.0),
+        }
+    }
+
+    fn open_popup(&mut self, kind: PopupKind) {
+        // M18/F33: чистое контекстное меню при каждом открытии (см.
+        // clear_popup_menu).
+        clear_popup_menu(kind, &mut self.bp_menu, &mut self.equip_menu);
         let (vw, vh) = self.viewport;
+        let (tw, th) = Self::popup_base_size(kind, self.viewport);
         let (w, h) = if vw > 0.0 && vh > 0.0 {
             clamp_char_size(tw, th, vw, vh)
         } else {
@@ -1093,6 +1416,11 @@ impl Root {
         let delta = match kind {
             PopupKind::Character => (0.0, 0.0),
             PopupKind::Backpack => (40.0, 40.0),
+            PopupKind::Quests => (-40.0, 40.0),
+            PopupKind::Npc => (60.0, -40.0),
+            PopupKind::Item => (80.0, -20.0),
+            PopupKind::Upgrade => (0.0, -40.0),
+            PopupKind::Socketing => (0.0, -40.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1103,6 +1431,18 @@ impl Root {
         match kind {
             PopupKind::Character => self.sheet_tab = sheet::SheetTab::Params,
             PopupKind::Backpack => self.backpack_tab = backpack::BackpackTab::default(),
+            // M18/F36: на «Текущих» при каждом открытии (паритет окон);
+            // выбор квеста переживает закрытие — правая колонка
+            // корректно откатывается на первой строке вкладки.
+            PopupKind::Quests => self.quests_tab = quests::QuestsTab::default(),
+            // M18/F38: окно диалога открывает ack, не open_popup.
+            PopupKind::Npc => {}
+            // M18: описание предмета открывает контекстное меню.
+            PopupKind::Item => {}
+            // M18/F53: окно заточки открывает контекстное меню.
+            PopupKind::Upgrade => {}
+            // M18: окно сокетов открывает контекстное меню.
+            PopupKind::Socketing => {}
         }
     }
 
@@ -1171,7 +1511,12 @@ impl Root {
     /// один на всех и лежит ПОД карточками; клик мимо закрывает
     /// верхнее открытое окно (рюкзак, затем персонаж).
     fn popup_scrim(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
-        if !self.char_popup.open && !self.backpack_popup.open {
+        let npc_open = self.store.npc_dialog.is_some();
+        if !self.char_popup.open
+            && !self.backpack_popup.open
+            && !self.quests_popup.open
+            && !npc_open
+        {
             return None;
         }
         Some(
@@ -1200,8 +1545,32 @@ impl Root {
                                     scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
                                 root.popup_scrim_down = false;
                                 if close {
-                                    // Верхнее окно: рюкзак рисуется поверх.
-                                    if root.backpack_popup.open {
+                                    // Верхнее окно: сокеты → заточка →
+                                    // описание → диалог → квесты → рюкзак →
+                                    // персонаж.
+                                    if root.store.socketing.is_some() {
+                                        if root.socket_pick.is_some() {
+                                            root.socket_pick = None;
+                                        } else {
+                                            root.store.close_socketing();
+                                            root.socket_popup.open = false;
+                                        }
+                                    } else if root.store.sharpen_stone.is_some()
+                                        || root.store.upgrade.is_some()
+                                    {
+                                        root.store.close_upgrade();
+                                        root.store.sharpen_stone = None;
+                                        root.store.sharpen_list = false;
+                                        root.upgrade_progress = None;
+                                    } else if root.store.item_detail.is_some() {
+                                        root.store.item_detail = None;
+                                    } else if root.store.npc_dialog.is_some() {
+                                        tracing::debug!("закрытие диалога NPC: скрим");
+                                        root.store.npc_dialog = None;
+                                        root.npc_popup.open = false;
+                                    } else if root.quests_popup.open {
+                                        root.quests_popup.open = false;
+                                    } else if root.backpack_popup.open {
                                         root.backpack_popup.open = false;
                                     } else if root.char_popup.open {
                                         root.char_popup.open = false;
@@ -1244,6 +1613,10 @@ impl Root {
                 if let Some(input) = self.host_input.clone() {
                     input.update(cx, |i, cx| i.set_text(host.clone(), cx));
                 }
+                let domain = self.config.domain.clone().unwrap_or_default();
+                if let Some(input) = self.domain_input.clone() {
+                    input.update(cx, |i, cx| i.set_text(domain.clone(), cx));
+                }
             }
             Click::ToggleCharacter => {
                 if self.char_popup.open {
@@ -1260,6 +1633,15 @@ impl Root {
                     self.backpack_popup.open = false;
                 } else {
                     self.open_popup(PopupKind::Backpack);
+                }
+                cx.notify();
+            }
+            // M18/F36: окно квестов (текущие/выполненные).
+            Click::ToggleQuests => {
+                if self.quests_popup.open {
+                    self.quests_popup.open = false;
+                } else {
+                    self.open_popup(PopupKind::Quests);
                 }
                 cx.notify();
             }
@@ -1293,6 +1675,10 @@ impl Root {
                 if let Some(input) = self.host_input.clone() {
                     input.update(cx, |i, cx| i.set_text(host, cx));
                 }
+                let domain = self.config.domain.clone().unwrap_or_default();
+                if let Some(input) = self.domain_input.clone() {
+                    input.update(cx, |i, cx| i.set_text(domain, cx));
+                }
                 self.host_editing = true;
             }
             Click::TogglePicker(key) => {
@@ -1309,8 +1695,19 @@ impl Root {
                     self.store.notice = Some(t(self.lang, Key::SettingsWsDenied).to_string());
                     return;
                 }
-                if host != self.config.host {
+                // M19 (§15): домен discovery — пусто = прямой режим;
+                // пробелы внутри — некорректный ввод (отказ до сохранения).
+                let domain_raw = self.ti(&self.domain_input).read(cx).text().to_string();
+                let domain_raw = domain_raw.trim().to_string();
+                if !domain_raw.is_empty() && domain_raw.contains(char::is_whitespace) {
+                    self.store.notice = Some(t(self.lang, Key::DiscBadDoc).to_string());
+                    return;
+                }
+                let domain = (!domain_raw.is_empty()).then(|| domain_raw.clone());
+                let changed = host != self.config.host || domain != self.config.domain;
+                if changed {
                     self.config.host = host;
+                    self.config.domain = domain;
                     self.save_config();
                     self.reconnect();
                 }
@@ -1354,6 +1751,18 @@ impl Root {
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
+            // M18/F35: диалог NPC — реплики/квесты вместо осмотра.
+            Click::NpcTalk(id) => {
+                tracing::debug!("вых. cmd/npc.talk {id}");
+                let cmd = ld2_protocol::cmd::NpcTalk { entity_id: id };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::NpcTalk),
+                    Err(e) => {
+                        tracing::debug!("cmd/npc.talk не ушла: {e}");
+                        self.store.world_error = Some(format!("нет связи: {e}"));
+                    }
+                }
+            }
             Click::PartyInvite(player_id) => {
                 let cmd = ld2_protocol::cmd::PartyInvite { player_id };
                 match self.transport.send(&cmd) {
@@ -1388,6 +1797,14 @@ impl Root {
             Click::UseItem(uid) => {
                 // M14/F4: расходник боя (свиток/зелье) запускает
                 // глобальный кулдаун; лут и прочие предметы — нет.
+                // M18/F54: камень усиления — отдельный ack (Act::Sharpen).
+                let stone = self.store.snapshot.as_ref().and_then(|s| {
+                    s.char
+                        .inventory
+                        .iter()
+                        .find(|i| i.uid == uid && i.item_type == "upgrade_stone")
+                        .map(|i| i.uid.clone())
+                });
                 let combat_item = self.store.snapshot.as_ref().is_some_and(|s| {
                     s.char.inventory.iter().any(|i| {
                         i.uid == uid && matches!(i.item_type.as_str(), "scroll" | "potion")
@@ -1399,9 +1816,18 @@ impl Root {
                 };
                 match self.transport.send(&cmd) {
                     Ok(_) => {
-                        self.store.on_world_sent(Act::Drop);
+                        self.store.on_world_sent(if stone.is_some() {
+                            Act::Sharpen
+                        } else {
+                            Act::Drop
+                        });
                         if combat_item {
                             self.store.begin_global_cooldown(self.now_ms());
+                        }
+                        if stone.is_some() {
+                            // M18/F54: геометрия карточки; гейт рендера —
+                            // sharpen_stone, которое придёт в ack.
+                            self.open_popup(PopupKind::Upgrade);
                         }
                         self.store.entity_detail = None;
                         self.store.clear_loot_confirm();
@@ -1614,6 +2040,16 @@ impl Root {
                             pal.text,
                             Click::ToggleInventory,
                         )
+                    }))
+                    // M18/F36: кнопка квестов рядом с «Рюкзак».
+                    .children(self.store.snapshot.as_ref().map(|_| {
+                        btn(
+                            cx,
+                            t(lang, Key::QuestsTab),
+                            pal.panel,
+                            pal.text,
+                            Click::ToggleQuests,
+                        )
                     })),
             )
             .child(
@@ -1789,233 +2225,215 @@ impl Root {
             },
         ));
         // M14/F9: тело — только содержимое активной вкладки.
-        let body = match self.settings_tab {
-            SettingsTab::General => {
-                let mut body = div().flex().flex_col().gap_3();
+        let body =
+            match self.settings_tab {
+                SettingsTab::General => {
+                    let mut body = div().flex().flex_col().gap_3();
 
-                // Тема.
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsTheme).to_string(),
-                    vec![
-                        btn(
-                            cx,
-                            t(lang, Key::ThemeDark).to_string(),
-                            if theme == "dark" {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::Theme("dark"),
-                        ),
-                        btn(
-                            cx,
-                            t(lang, Key::ThemeLight).to_string(),
-                            if theme == "light" {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::Theme("light"),
-                        ),
-                    ],
-                ));
+                    // Тема.
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::SettingsTheme).to_string(),
+                        vec![
+                            btn(
+                                cx,
+                                t(lang, Key::ThemeDark).to_string(),
+                                if theme == "dark" {
+                                    pal.accent
+                                } else {
+                                    pal.panel
+                                },
+                                pal.text,
+                                Click::Theme("dark"),
+                            ),
+                            btn(
+                                cx,
+                                t(lang, Key::ThemeLight).to_string(),
+                                if theme == "light" {
+                                    pal.accent
+                                } else {
+                                    pal.panel
+                                },
+                                pal.text,
+                                Click::Theme("light"),
+                            ),
+                        ],
+                    ));
 
-                // M14/F8: язык (перенесён из шапки) — зеркало строки «Тема».
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::Language).to_string(),
-                    vec![
-                        btn(
-                            cx,
-                            "RU",
-                            if lang.code() == "ru" {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::Lang("ru"),
-                        ),
-                        btn(
-                            cx,
-                            "EN",
-                            if lang.code() == "en" {
-                                pal.accent
-                            } else {
-                                pal.panel
-                            },
-                            pal.text,
-                            Click::Lang("en"),
-                        ),
-                    ],
-                ));
+                    // M14/F8: язык (перенесён из шапки) — зеркало строки «Тема».
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::Language).to_string(),
+                        vec![
+                            btn(
+                                cx,
+                                "RU",
+                                if lang.code() == "ru" {
+                                    pal.accent
+                                } else {
+                                    pal.panel
+                                },
+                                pal.text,
+                                Click::Lang("ru"),
+                            ),
+                            btn(
+                                cx,
+                                "EN",
+                                if lang.code() == "en" {
+                                    pal.accent
+                                } else {
+                                    pal.panel
+                                },
+                                pal.text,
+                                Click::Lang("en"),
+                            ),
+                        ],
+                    ));
 
-                // M14/F13: стиль строк боя в журнале: цвета — ColorPicker,
-                // жирность урона — Вкл/Выкл (зеркало «Уведомлений»).
-                body = body.child(color_picker_row(
-                    cx,
-                    pal,
-                    lang,
-                    ColorRow {
-                        label: Key::SettingsLogDamageColor,
-                        id: "ld2-log-damage-color",
-                        value: &self.config.log_damage_color,
-                        open: self.color_picker_open == Some("ld2-log-damage-color"),
-                        set: |root, v| root.config.log_damage_color = v,
-                    },
-                ));
-                body = body.child(color_picker_row(
-                    cx,
-                    pal,
-                    lang,
-                    ColorRow {
-                        label: Key::SettingsLogAttackColor,
-                        id: "ld2-log-attack-color",
-                        value: &self.config.log_attack_color,
-                        open: self.color_picker_open == Some("ld2-log-attack-color"),
-                        set: |root, v| root.config.log_attack_color = v,
-                    },
-                ));
-                // M14/F14: флаг — слайдер-переключатель (Ely Switch).
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsDamageBold).to_string(),
-                    vec![div().child({
-                        let this = cx.entity();
-                        Switch::new("ld2-log-damage-bold", self.config.log_damage_bold).on_change(
-                            move |on, _window, acx| {
-                                this.update(acx, |root, cx| {
-                                    root.on_click(Click::LogDamageBold(on), cx);
-                                    cx.notify();
-                                });
-                            },
-                        )
-                    })],
-                ));
-
-                // Лимит истории чата.
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsChatLimit).to_string(),
-                    vec![
-                        btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
-                        div().px_2().child(format!("{limit}")),
-                        btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
-                    ],
-                ));
-
-                // Уведомления (D7).
-                // M14/F14: флаг — слайдер-переключатель (Ely Switch).
-                body = body.child(row(
-                    pal,
-                    t(lang, Key::SettingsNotify).to_string(),
-                    vec![div().child({
-                        let this = cx.entity();
-                        Switch::new("ld2-notify", notify).on_change(move |on, _window, acx| {
-                            this.update(acx, |root, cx| {
-                                root.on_click(Click::SetNotify(on), cx);
-                                cx.notify();
-                            });
-                        })
-                    })],
-                ));
-
-                // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
-                if let Ok(dirs) = ld2_core::config::project_dirs() {
-                    body = body.child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(pal.muted))
-                            .child(dirs.config_dir().display().to_string()),
-                    );
-                }
-
-                body
-            }
-            // M14/F14: шрифты — отдельная вкладка (глобальный масштаб,
-            // шрифт чата и шрифта лога).
-            SettingsTab::Fonts => {
-                let mut body = div().flex().flex_col().gap_3();
-                // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
-                // пишет Theme.font_scale (отклонение M10 «font_scale не
-                // применяется» снято).
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            div()
-                                .w(px(130.0))
-                                .text_color(rgb(pal.muted))
-                                .child(t(lang, Key::SettingsFont)),
-                        )
-                        .child(slider_cell({
+                    // M14/F13: стиль строк боя в журнале: цвета — ColorPicker,
+                    // жирность урона — Вкл/Выкл (зеркало «Уведомлений»).
+                    body = body.child(color_picker_row(
+                        cx,
+                        pal,
+                        lang,
+                        ColorRow {
+                            label: Key::SettingsLogDamageColor,
+                            id: "ld2-log-damage-color",
+                            value: &self.config.log_damage_color,
+                            open: self.color_picker_open == Some("ld2-log-damage-color"),
+                            set: |root, v| root.config.log_damage_color = v,
+                        },
+                    ));
+                    body = body.child(color_picker_row(
+                        cx,
+                        pal,
+                        lang,
+                        ColorRow {
+                            label: Key::SettingsLogAttackColor,
+                            id: "ld2-log-attack-color",
+                            value: &self.config.log_attack_color,
+                            open: self.color_picker_open == Some("ld2-log-attack-color"),
+                            set: |root, v| root.config.log_attack_color = v,
+                        },
+                    ));
+                    // M14/F14: флаг — слайдер-переключатель (Ely Switch).
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::SettingsDamageBold).to_string(),
+                        vec![div().child({
                             let this = cx.entity();
-                            let value = self.config.font_scale as f64;
-                            Slider::new("ld2-font-scale", value)
-                                .range(1.0, 1.4)
-                                .step(0.05)
-                                .on_change(move |v, _window, acx| {
+                            Switch::new("ld2-log-damage-bold", self.config.log_damage_bold)
+                                .on_change(move |on, _window, acx| {
                                     this.update(acx, |root, cx| {
-                                        root.config.font_scale = v as f32;
-                                        cx.global_mut::<Theme>().font_scale = v as f32;
-                                        cx.refresh_windows();
+                                        root.on_click(Click::LogDamageBold(on), cx);
                                         cx.notify();
-                                        root.save_config();
                                     });
                                 })
-                        }))
-                        .child(value_readout(pal, format!("{:.2}", self.config.font_scale))),
-                );
+                        })],
+                    ));
 
-                // M14/F8: шрифт сообщений чата и строк лога — отдельные px.
-                body = body.child(font_px_row(
-                    cx,
-                    pal,
-                    lang,
-                    Key::SettingsChatFont,
-                    "ld2-chat-font-px",
-                    self.config.chat_font_px,
-                    |root, v| root.config.chat_font_px = v,
-                ));
-                body = body.child(font_px_row(
-                    cx,
-                    pal,
-                    lang,
-                    Key::SettingsLogFont,
-                    "ld2-log-font-px",
-                    self.config.log_font_px,
-                    |root, v| root.config.log_font_px = v,
-                ));
-                body
-            }
-            // M14/F11: адрес сервера — read-only; поле ввода
-            // раскрывается действием «Подключиться к другому».
-            SettingsTab::Connection => {
-                let mut body = div().flex().flex_col().gap_3();
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
+                    // Лимит истории чата.
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::SettingsChatLimit).to_string(),
+                        vec![
+                            btn(cx, "−500", pal.panel, pal.text, Click::ChatLimit(-500)),
+                            div().px_2().child(format!("{limit}")),
+                            btn(cx, "+500", pal.panel, pal.text, Click::ChatLimit(500)),
+                        ],
+                    ));
+
+                    // Уведомления (D7).
+                    // M14/F14: флаг — слайдер-переключатель (Ely Switch).
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::SettingsNotify).to_string(),
+                        vec![div().child({
+                            let this = cx.entity();
+                            Switch::new("ld2-notify", notify).on_change(move |on, _window, acx| {
+                                this.update(acx, |root, cx| {
+                                    root.on_click(Click::SetNotify(on), cx);
+                                    cx.notify();
+                                });
+                            })
+                        })],
+                    ));
+
+                    // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
+                    if let Ok(dirs) = ld2_core::config::project_dirs() {
+                        body = body.child(
                             div()
+                                .text_size(px(11.0))
                                 .text_color(rgb(pal.muted))
-                                .child(t(lang, Key::SettingsHost)),
-                        )
-                        .child(div().text_size(px(14.0)).child(self.config.host.clone()))
-                        .children((!host_ok).then(|| {
-                            div()
-                                .text_color(rgb(pal.danger))
-                                .child(t(lang, Key::SettingsWsDenied))
-                        })),
-                );
-                if self.host_editing {
+                                .child(dirs.config_dir().display().to_string()),
+                        );
+                    }
+
+                    body
+                }
+                // M14/F14: шрифты — отдельная вкладка (глобальный масштаб,
+                // шрифт чата и шрифта лога).
+                SettingsTab::Fonts => {
+                    let mut body = div().flex().flex_col().gap_3();
+                    // M11.5: размер шрифта (НФР: 1.0…1.4, min 12px) — Slider Ely
+                    // пишет Theme.font_scale (отклонение M10 «font_scale не
+                    // применяется» снято).
+                    body = body.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .w(px(130.0))
+                                    .text_color(rgb(pal.muted))
+                                    .child(t(lang, Key::SettingsFont)),
+                            )
+                            .child(slider_cell({
+                                let this = cx.entity();
+                                let value = self.config.font_scale as f64;
+                                Slider::new("ld2-font-scale", value)
+                                    .range(1.0, 1.4)
+                                    .step(0.05)
+                                    .on_change(move |v, _window, acx| {
+                                        this.update(acx, |root, cx| {
+                                            root.config.font_scale = v as f32;
+                                            cx.global_mut::<Theme>().font_scale = v as f32;
+                                            cx.refresh_windows();
+                                            cx.notify();
+                                            root.save_config();
+                                        });
+                                    })
+                            }))
+                            .child(value_readout(pal, format!("{:.2}", self.config.font_scale))),
+                    );
+
+                    // M14/F8: шрифт сообщений чата и строк лога — отдельные px.
+                    body = body.child(font_px_row(
+                        cx,
+                        pal,
+                        lang,
+                        Key::SettingsChatFont,
+                        "ld2-chat-font-px",
+                        self.config.chat_font_px,
+                        |root, v| root.config.chat_font_px = v,
+                    ));
+                    body = body.child(font_px_row(
+                        cx,
+                        pal,
+                        lang,
+                        Key::SettingsLogFont,
+                        "ld2-log-font-px",
+                        self.config.log_font_px,
+                        |root, v| root.config.log_font_px = v,
+                    ));
+                    body
+                }
+                // M14/F11: адрес сервера — read-only; поле ввода
+                // раскрывается действием «Подключиться к другому».
+                SettingsTab::Connection => {
+                    let mut body = div().flex().flex_col().gap_3();
                     body = body.child(
                         div()
                             .flex()
@@ -2023,54 +2441,105 @@ impl Root {
                             .gap_1()
                             .child(
                                 div()
-                                    .w(px(320.0))
-                                    .child(Input::new(self.ti(&self.host_input))),
+                                    .text_color(rgb(pal.muted))
+                                    .child(t(lang, Key::SettingsHost)),
                             )
-                            .child(btn(
-                                cx,
-                                t(lang, Key::SettingsApply).to_string(),
-                                pal.accent,
-                                pal.accent_text,
-                                Click::ApplyHost,
-                            )),
+                            .child(div().text_size(px(14.0)).child(self.config.host.clone()))
+                            .children((!host_ok).then(|| {
+                                div()
+                                    .text_color(rgb(pal.danger))
+                                    .child(t(lang, Key::SettingsWsDenied))
+                            })),
                     );
-                } else {
-                    body = body.child(btn(
-                        cx,
-                        t(lang, Key::SettingsChangeHost).to_string(),
-                        pal.panel,
-                        pal.text,
-                        Click::EditHost,
-                    ));
-                }
-                body
-            }
-            SettingsTab::Hotkeys => {
-                let mut body = div().flex().flex_col().gap_3();
-                // Горячие клавиши: только отображение (редактирование/применение
-                // навигации — M10.4 вместе с game-навигацией).
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
+                    // M19 (§15): режим discovery — домен (пусто = прямой URL).
+                    body =
+                        body.child(
                             div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(t(lang, Key::SettingsHotkeys)),
-                        )
-                        // M14/F4: все ремаппингуемые действия — из одного
-                        // вектора (навигация/цикл + боевые 1–6), без match
-                        // по индексу.
-                        .children(HOTKEY_ROWS.iter().map(|row| {
-                            let value = (row.get)(&self.config.hotkeys).to_string();
-                            hotkey_row(cx, lang, row, &value)
-                        })),
-                );
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_color(rgb(pal.muted))
+                                        .child(t(lang, Key::SettingsDomain)),
+                                )
+                                .child(div().text_size(px(14.0)).child(
+                                    self.config.domain.clone().unwrap_or_else(|| "—".into()),
+                                )),
+                        );
+                    if self.host_editing {
+                        body = body.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(pal.muted))
+                                        .child(t(lang, Key::SettingsHost)),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(320.0))
+                                        .child(Input::new(self.ti(&self.host_input))),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(pal.muted))
+                                        .child(t(lang, Key::SettingsDomain)),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(320.0))
+                                        .child(Input::new(self.ti(&self.domain_input))),
+                                )
+                                .child(btn(
+                                    cx,
+                                    t(lang, Key::SettingsApply).to_string(),
+                                    pal.accent,
+                                    pal.accent_text,
+                                    Click::ApplyHost,
+                                )),
+                        );
+                    } else {
+                        body = body.child(btn(
+                            cx,
+                            t(lang, Key::SettingsChangeHost).to_string(),
+                            pal.panel,
+                            pal.text,
+                            Click::EditHost,
+                        ));
+                    }
+                    body
+                }
+                SettingsTab::Hotkeys => {
+                    let mut body = div().flex().flex_col().gap_3();
+                    // Горячие клавиши: только отображение (редактирование/применение
+                    // навигации — M10.4 вместе с game-навигацией).
+                    body = body.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child(t(lang, Key::SettingsHotkeys)),
+                            )
+                            // M14/F4: все ремаппингуемые действия — из одного
+                            // вектора (навигация/цикл + боевые 1–6), без match
+                            // по индексу.
+                            .children(HOTKEY_ROWS.iter().map(|row| {
+                                let value = (row.get)(&self.config.hotkeys).to_string();
+                                hotkey_row(cx, lang, row, &value)
+                            })),
+                    );
 
-                body
-            }
-        };
+                    body
+                }
+            };
 
         // M14/F9: тело активной вкладки — в скролле; заголовок,
         // вкладки и кнопка «Закрыть» остаются вне прокрутки.
@@ -2277,7 +2746,7 @@ struct HotkeyRowSpec {
 
 /// Все ремаппингуемые действия: навигация/цикл (ФР-19) + боевые
 /// панели (M14/F4, цифры 1–6 — Esc занят диалогами).
-const HOTKEY_ROWS: [HotkeyRowSpec; 13] = [
+const HOTKEY_ROWS: [HotkeyRowSpec; 14] = [
     HotkeyRowSpec {
         id: "ld2-hk-nav-up",
         label: Key::HkNavUp,
@@ -2355,6 +2824,12 @@ const HOTKEY_ROWS: [HotkeyRowSpec; 13] = [
         label: Key::HkOpenBackpack,
         get: |hk| hk.open_backpack.as_str(),
         set: |hk, v| hk.open_backpack = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-quests",
+        label: Key::HkOpenQuests,
+        get: |hk| hk.open_quests.as_str(),
+        set: |hk, v| hk.open_quests = v,
     },
 ];
 
@@ -2606,6 +3081,40 @@ pub(crate) fn act_btn(
         .bg(rgb(bg))
         .text_color(rgb(fg))
         .hover(move |s| s.bg(rgb(bg)))
+        .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
+        .child(label.into())
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                if let Some(f) = cell.borrow_mut().take() {
+                    f(this, cx);
+                }
+                cx.notify();
+            }),
+        )
+}
+
+/// M18/F38: кнопка действия с **реальной** подсветкой наведения
+/// (в отличие от `act_btn`, где hover не меняет фон) — реплики
+/// персонажа в окне диалога.
+pub(crate) fn act_btn_hover(
+    cx: &mut Context<'_, Root>,
+    label: impl Into<SharedString>,
+    bg: u32,
+    hover_bg: u32,
+    fg: u32,
+    f: impl FnOnce(&mut Root, &mut Context<'_, Root>) + 'static,
+) -> Div {
+    let cell = RefCell::new(Some(f));
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .cursor_pointer()
+        .bg(rgb(bg))
+        .text_color(rgb(fg))
+        .hover(move |s| s.bg(rgb(hover_bg)))
+        .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
         .child(label.into())
         .on_mouse_up(
             MouseButton::Left,
@@ -2636,6 +3145,7 @@ fn btn_hover(
         .bg(rgb(bg))
         .text_color(rgb(fg))
         .hover(move |s| s.bg(rgb(hover_bg)))
+        .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
         .child(label)
         .on_mouse_up(
             MouseButton::Left,
@@ -2654,6 +3164,8 @@ fn status_key(status: &TransportStatus) -> Key {
         TransportStatus::Reconnecting { .. } => Key::StatusReconnecting,
         TransportStatus::AuthExpired => Key::StatusAuthExpired,
         TransportStatus::Stopped => Key::StatusStopped,
+        // M19 (§15): адрес не разрешился (discovery) — свой текст.
+        TransportStatus::ResolveFailed(_) => Key::StatusResolveFailed,
     }
 }
 
@@ -2664,7 +3176,9 @@ fn status_color(pal: &Palette, status: &TransportStatus) -> (u32, Key) {
     let color = match status {
         TransportStatus::Online => pal.success,
         TransportStatus::Connecting | TransportStatus::Reconnecting { .. } => pal.warn,
-        TransportStatus::AuthExpired | TransportStatus::Stopped => pal.danger,
+        TransportStatus::AuthExpired
+        | TransportStatus::Stopped
+        | TransportStatus::ResolveFailed(_) => pal.danger,
     };
     (color, status_key(status))
 }
@@ -2945,10 +3459,7 @@ impl Root {
             ld2_core::store::Dialog::PartyInvite
             | ld2_core::store::Dialog::GuildInvite
             | ld2_core::store::Dialog::Trade => self.social_dialog(cx, pal),
-            ld2_core::store::Dialog::Item
-            | ld2_core::store::Dialog::Upgrade
-            | ld2_core::store::Dialog::Socket
-            | ld2_core::store::Dialog::Inscribe => self.sheet_dialog(cx, pal),
+            ld2_core::store::Dialog::Inscribe => self.sheet_dialog(cx, pal),
             ld2_core::store::Dialog::Create | ld2_core::store::Dialog::Delete => {
                 self.chars_dialog(cx, pal)
             }
@@ -2982,6 +3493,18 @@ impl Render for Root {
             .flex_col()
             .bg(rgb(pal.bg))
             .text_color(rgb(pal.text))
+            // M18/F41: клик мимо поля ввода снимает с него фокус
+            // (capture-фаза корня — до bubble-фокусировки самого поля:
+            // клик по полю вернёт фокус ему, клик мимо оставит снятым).
+            // Без этого фокус «залипал» в чате и гейт typing_focused
+            // глушил все хоткеи окон после набора текста.
+            .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                if this.typing_focused(window, cx) {
+                    tracing::debug!("клик мимо поля → снятие фокуса");
+                    window.blur(cx);
+                    cx.notify();
+                }
+            }))
             .child(self.titlebar(cx, &pal))
             .child(self.header(cx, &pal))
             .child(
@@ -3016,6 +3539,28 @@ impl Render for Root {
             .when_some(self.backpack_dialog(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
+            // M18/F36: окно квестов — поверх рюкзака (порядок слоёв =
+            // порядок закрытия по Esc/scrim).
+            .when_some(self.quests_dialog(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M18/F38: окно диалога NPC — верхний слой группы попапов
+            // (модалки смерти/осмотра/луута рисуются позже — выше).
+            .when_some(self.npc_window(window, cx, &pal), |d, layer| d.child(layer))
+            // M18/F53: описание предмета и окно заточки — попапы
+            // (карточка с шапкой и крестиком, без затемнения).
+            // Порядок слоёв = порядок Esc/scrim: заточка — верхняя.
+            .when_some(self.item_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            .when_some(self.upgrade_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M18: окно сокетов (инкрустация через меню оружия) —
+            // popup-диалог, как другие окна (карточка с крестиком).
+            .when_some(self.socket_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
@@ -3030,6 +3575,60 @@ impl Render for Root {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M18/F33: открытие окна сбрасывает его контекстное меню —
+    /// M18/F55: окно описания предмета «резиновое» — ширина от доли
+    /// вьюпорта (28 %, clamp 320..480), а не прежние фиксированные
+    /// 520 px; остальные окна от вьюпорта не зависят.
+    #[test]
+    fn item_popup_width_follows_viewport() {
+        // Типичный экран: 28 % от 1600 ≈ 448 — уже прежних 520.
+        let (w, h) = Root::popup_base_size(PopupKind::Item, (1600.0, 900.0));
+        assert!((w - 448.0).abs() < 0.01, "28% от 1600 = {w}");
+        assert_eq!(h, 420.0, "высота — константа, докрутит resize-grip");
+
+        // Широкий экран не даёт окну раздуться, узкий — не схлопывает.
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Item, (3000.0, 900.0)).0,
+            480.0,
+            "верхняя граница"
+        );
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Item, (800.0, 600.0)).0,
+            320.0,
+            "нижняя граница"
+        );
+        // Viewport ещё не отрисован (0×0) — clamp даёт валидный размер.
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Item, (0.0, 0.0)).0,
+            320.0,
+            "до первой отрисовки"
+        );
+
+        assert_eq!(
+            Root::popup_base_size(PopupKind::Character, (1000.0, 700.0)),
+            (760.0, 760.0),
+            "персонаж — константа"
+        );
+    }
+
+    /// иначе меню, открытое в момент закрытия, появлялось бы само
+    /// при следующем открытии (stale-запрос `.manual` + гаснущий
+    /// keyed state). Каждое окно сбрасывает только своё меню.
+    #[test]
+    fn opening_popup_clears_its_context_menu() {
+        let mut bp = Some("bp".to_string());
+        let mut eq = Some("eq".to_string());
+        clear_popup_menu(PopupKind::Backpack, &mut bp, &mut eq);
+        assert!(bp.is_none(), "меню рюкзака сброшено при открытии");
+        assert_eq!(eq.as_deref(), Some("eq"), "меню персонажа не тронуто");
+        clear_popup_menu(PopupKind::Character, &mut bp, &mut eq);
+        assert!(eq.is_none(), "меню персонажа сброшено при открытии");
+        assert!(bp.is_none(), "меню рюкзака уже пусто");
+        // Повторное открытие — без паники и без лишних эффектов.
+        clear_popup_menu(PopupKind::Backpack, &mut bp, &mut eq);
+        assert!(bp.is_none() && eq.is_none());
+    }
 
     /// M14/F4: боевые хоткеи — дефолтные цифры 1–6 парсятся и
     /// распознаются так же, как навигационные спецификации.
@@ -3055,8 +3654,8 @@ mod tests {
     fn hotkey_rows_cover_nav_and_six_actions() {
         assert_eq!(
             HOTKEY_ROWS.len(),
-            13,
-            "навигация/цикл + 6 действий + окна персонажа и рюкзака"
+            14,
+            "навигация/цикл + 6 действий + окна персонажа/рюкзака/квестов"
         );
         let ids: std::collections::HashSet<_> = HOTKEY_ROWS.iter().map(|r| r.id).collect();
         assert_eq!(ids.len(), HOTKEY_ROWS.len(), "id строк уникальны");
@@ -3072,6 +3671,7 @@ mod tests {
         assert_eq!((HOTKEY_ROWS[10].get)(&hk), "6", "расходник");
         assert_eq!((HOTKEY_ROWS[11].get)(&hk), "c", "окно персонажа (M15/F25)");
         assert_eq!((HOTKEY_ROWS[12].get)(&hk), "i", "окно рюкзака (M16/F29b)");
+        assert_eq!((HOTKEY_ROWS[13].get)(&hk), "j", "окно квестов (M18/F36)");
 
         // Сеттер переписывает только своё поле.
         let mut hk = Hotkeys::default();
@@ -3166,7 +3766,7 @@ mod tests {
     /// Login → Game не блокирует хоткеи.
     #[test]
     fn typing_fields_cover_every_input_and_gate_game() {
-        const ALL: [&str; 12] = [
+        const ALL: [&str; 13] = [
             "login",
             "password",
             "reg_login",
@@ -3174,6 +3774,7 @@ mod tests {
             "reg_password",
             "reg_password2",
             "host",
+            "domain",
             "guild",
             "chat",
             "chat_filter",
@@ -3201,7 +3802,7 @@ mod tests {
             .collect();
         assert_eq!(
             game,
-            ["chat", "chat_filter", "guild", "host"],
+            ["chat", "chat_filter", "guild", "host", "domain"],
             "игровой экран проверяет только свои поля"
         );
     }

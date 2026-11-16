@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use ld2_protocol::types::{Entity, Exit, Requires};
+use ld2_protocol::types::{Entity, Exit, ItemBonus, Requires};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -93,6 +93,12 @@ pub struct ContentItemDef {
     /// Количество сокетов (посохи, ADR-002) — создаются при вставке.
     #[serde(default)]
     pub sockets: u32,
+    /// M18/F58 (ADR-012, уточнение заказчика): сколько слотов
+    /// принимают руны — **отдельное поле определения** (как
+    /// `sockets`), а не в `stats`. `None` — не указано → дефолт по
+    /// типу: броня 0, оружие/посох — все слоты.
+    #[serde(default)]
+    pub rune_sockets: Option<i32>,
     /// M17/F30g: кулдаун использования/скорость атаки, с
     /// (дефолт 1.0 — «по умолчанию 1 сек»).
     #[serde(default)]
@@ -105,6 +111,9 @@ pub struct ContentItemDef {
     /// левую); `None` → 1.
     #[serde(default)]
     pub hands: Option<i32>,
+    /// M18/F47: бонусы предмета (ADR-010) — атрибут/параметр/навык.
+    #[serde(default)]
+    pub bonuses: Vec<ItemBonus>,
 }
 
 /// Профессия из `professions.json` (skills.md §5.1: первичная/вторичная).
@@ -352,14 +361,15 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         let stats = serde_json::Value::Object(item.stats.clone());
         let requires = serde_json::to_value(&item.requires).unwrap_or(serde_json::Value::Null);
         sqlx::query(
-            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, slot, hands, cooldown_s) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, rune_sockets, slot, hands, cooldown_s, bonuses) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
              ON CONFLICT (id) DO UPDATE SET \
                item_type = EXCLUDED.item_type, name = EXCLUDED.name, rarity = EXCLUDED.rarity, \
                upgrade = EXCLUDED.upgrade, stats = EXCLUDED.stats, requires = EXCLUDED.requires, \
                gold_value = EXCLUDED.gold_value, qty = EXCLUDED.qty, skill = EXCLUDED.skill, \
-               sockets = EXCLUDED.sockets, slot = EXCLUDED.slot, hands = EXCLUDED.hands, \
-               cooldown_s = EXCLUDED.cooldown_s",
+               sockets = EXCLUDED.sockets, rune_sockets = EXCLUDED.rune_sockets, \
+               slot = EXCLUDED.slot, hands = EXCLUDED.hands, \
+               cooldown_s = EXCLUDED.cooldown_s, bonuses = EXCLUDED.bonuses",
         )
         .bind(&item.id)
         .bind(&item.item_type)
@@ -372,9 +382,11 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
         .bind(item.qty.unwrap_or(1))
         .bind(&item.skill)
         .bind(i64::from(item.sockets))
+        .bind(item.rune_sockets)
         .bind(&item.slot)
         .bind(item.hands.unwrap_or(1))
         .bind(item.cooldown_s.unwrap_or(1.0))
+        .bind(serde_json::to_value(&item.bonuses).unwrap_or(serde_json::Value::Null))
         .execute(&mut *tx)
         .await?;
     }
@@ -547,6 +559,453 @@ mod tests {
                 "нет группы у навыка {}",
                 skill.id
             );
+        }
+    }
+
+    /// M18/F35: контент диалогов валиден — у каждого `giver` есть запись
+    /// диалога; id строк уникальны; ссылки (`quest`/`item`/`skill`/
+    /// `profession`) указывают на существующий контент; `every_s > 0`;
+    /// пол — `male`/`female`.
+    #[test]
+    fn dialogs_content_is_valid() {
+        use std::collections::HashSet;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = load(&dir).expect("контент контента загружается");
+        let dialogs = crate::dialogs::load(&dir).expect("dialogs.json парсится");
+        let shops = crate::shops::load(&dir).expect("shops.json парсится");
+        assert!(!dialogs.is_empty(), "диалоги NPC есть");
+
+        // У каждого выдающего квеста NPC — запись диалога.
+        for quest in &content.quests {
+            if let Some(giver) = &quest.giver {
+                assert!(
+                    dialogs.contains_key(giver),
+                    "у квеста {} giver={giver} нет диалога",
+                    quest.id
+                );
+            }
+        }
+
+        let item_ids: HashSet<&str> = content.items.iter().map(|i| i.id.as_str()).collect();
+        let skill_ids: HashSet<&str> = content.skills.iter().map(|s| s.id.as_str()).collect();
+        let prof_ids: HashSet<&str> = content.professions.iter().map(|p| p.id.as_str()).collect();
+        let quest_ids: HashSet<&str> = content.quests.iter().map(|q| q.id.as_str()).collect();
+
+        for (npc_id, npc) in &dialogs {
+            let mut seen = HashSet::new();
+            for line in &npc.lines {
+                assert!(seen.insert(&line.id), "id строки дублируется у {npc_id}");
+                if let Some(every) = line.every_s {
+                    assert!(every > 0, "every_s должен быть > 0: {npc_id}/{}", line.id);
+                }
+                if let Some(quest) = &line.quest {
+                    assert!(
+                        quest_ids.contains(quest.as_str()),
+                        "неизвестный quest {} у {npc_id}",
+                        line.id
+                    );
+                }
+                if let Some(when) = &line.when {
+                    if let Some(item) = &when.item {
+                        assert!(
+                            item_ids.contains(item.def_id.as_str()),
+                            "неизвестный item {} у {npc_id}",
+                            line.id
+                        );
+                    }
+                    if let Some(skill) = &when.skill {
+                        assert!(
+                            skill_ids.contains(skill.id.as_str()),
+                            "неизвестный skill {} у {npc_id}",
+                            line.id
+                        );
+                    }
+                    if let Some(prof) = &when.profession {
+                        assert!(
+                            prof_ids.contains(prof.id.as_str()),
+                            "неизвестная profession {} у {npc_id}",
+                            line.id
+                        );
+                    }
+                    if let Some(gender) = &when.gender {
+                        assert!(
+                            matches!(gender.as_str(), "male" | "female"),
+                            "неизвестный пол {} у {npc_id}",
+                            line.id
+                        );
+                    }
+                }
+            }
+
+            // M18/F44: обучение навыкам (ADR-009) — навык из контента,
+            // очки/золото положительные, предметы существуют, навык
+            // уникален у NPC, и NPC обязательно тренер по этому навыку
+            // (иначе запись недостижима — сервер отдаёт E_NO_TRAINER).
+            let mut trained = HashSet::new();
+            for entry in &npc.training {
+                assert!(
+                    skill_ids.contains(entry.skill.as_str()),
+                    "неизвестный skill {} в training у {npc_id}",
+                    entry.skill
+                );
+                assert!(
+                    trained.insert(entry.skill.as_str()),
+                    "skill {} дублируется в training у {npc_id}",
+                    entry.skill
+                );
+                assert!(
+                    entry.points > 0,
+                    "training.points должен быть > 0: {npc_id}"
+                );
+                assert!(entry.gold >= 0, "training.gold должен быть ≥ 0: {npc_id}");
+                for item in &entry.items {
+                    assert!(
+                        item_ids.contains(item.def_id.as_str()),
+                        "неизвестный item {} в training у {npc_id}",
+                        item.def_id
+                    );
+                    assert!(item.qty > 0, "training.qty должен быть > 0: {npc_id}");
+                }
+                let marker_trains = content
+                    .locations
+                    .iter()
+                    .flat_map(|loc| loc.entities.iter())
+                    .find(|e| e.id == *npc_id)
+                    .and_then(|e| e.extra.get("trainer"))
+                    .and_then(|t| t.get("skills"))
+                    .and_then(|s| s.as_array())
+                    .is_some_and(|arr| {
+                        arr.iter().any(|v| v.as_str() == Some(entry.skill.as_str()))
+                    });
+                assert!(
+                    marker_trains,
+                    "у {npc_id} есть training.{}, но нет маркера trainer.skills в locations.json",
+                    entry.skill
+                );
+            }
+
+            // M18/F37/F38: дерево диалога — корень существует (любой
+            // диалог начинается со стартовой реплики), ответы ведут
+            // на существующие строки, id ответов уникальны (в пределах
+            // NPC); переходы — произвольный граф: циклы-возвраты к
+            // развилкам разрешены (уточнение заказчика M19: «в диалогах
+            // можно всегда вернуться к развилке репликой»).
+            assert!(
+                npc.root.is_some(),
+                "у {npc_id} нет root — диалог без стартовой реплики"
+            );
+            let root = npc
+                .root
+                .as_deref()
+                .or_else(|| npc.lines.first().map(|l| l.id.as_str()))
+                .expect("в диалоге есть строки");
+            assert!(
+                npc.lines.iter().any(|l| l.id == root),
+                "корень {root} отсутствует у {npc_id}"
+            );
+            let mut reply_ids = HashSet::new();
+            let mut edges: std::collections::HashMap<&str, Vec<&str>> =
+                std::collections::HashMap::new();
+            for line in &npc.lines {
+                for reply in &line.replies {
+                    assert!(
+                        reply_ids.insert(reply.id.as_str()),
+                        "id ответа дублируется у {npc_id}"
+                    );
+                    // M18/F43/F44: действие ответа — известное и только
+                    // там, где у NPC оно реально есть: shop → магазин,
+                    // train → список обучения в диалоге.
+                    if let Some(action) = &reply.action {
+                        match action.as_str() {
+                            "shop" => assert!(
+                                shops.contains_key(npc_id),
+                                "ответ {} с action=shop, но у {npc_id} нет магазина",
+                                reply.id
+                            ),
+                            "train" => assert!(
+                                !npc.training.is_empty(),
+                                "ответ {} с action=train, но у {npc_id} нет training",
+                                reply.id
+                            ),
+                            other => panic!(
+                                "неизвестное действие {other} у ответа {} ({npc_id})",
+                                reply.id
+                            ),
+                        }
+                    }
+                    if let Some(next) = &reply.next {
+                        assert!(
+                            npc.lines.iter().any(|l| &l.id == next),
+                            "ответ {} у {npc_id} ведёт на несуществующую {next}",
+                            reply.id
+                        );
+                        edges.entry(line.id.as_str()).or_default().push(next);
+                    }
+                    if let Some(when) = &reply.when {
+                        if let Some(gender) = &when.gender {
+                            assert!(
+                                matches!(gender.as_str(), "male" | "female"),
+                                "неизвестный пол у ответа {}",
+                                reply.id
+                            );
+                        }
+                        if let Some(item) = &when.item {
+                            assert!(
+                                item_ids.contains(item.def_id.as_str()),
+                                "неизвестный item у ответа {}",
+                                reply.id
+                            );
+                        }
+                    }
+                }
+            }
+            // M19 (уточнение заказчика): ацикличность больше не
+            // проверяется — возвраты к развилкам (циклы через root)
+            // легальны; остаются проверки id/next/action/when выше.
+            assert!(!edges.is_empty() || npc.lines.len() <= 1, "нет переходов");
+        }
+    }
+
+    /// M18/F39: `shops.json` валиден — NPC существует (entity kind=npc
+    /// в локациях), валюты/товары из контента предметов, markup/rate > 0,
+    /// валюты уникальны, вкладки непусты.
+    #[test]
+    fn shops_content_is_valid() {
+        use std::collections::HashSet;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = load(&dir).expect("контент контента загружается");
+        let shops = crate::shops::load(&dir).expect("shops.json парсится");
+        assert!(!shops.is_empty(), "магазины NPC есть");
+
+        let item_ids: HashSet<&str> = content.items.iter().map(|i| i.id.as_str()).collect();
+        let mut npc_ids = HashSet::new();
+        for location in &content.locations {
+            for entity in &location.entities {
+                if entity.kind == ld2_protocol::types::EntityKind::Npc {
+                    npc_ids.insert(entity.id.as_str());
+                }
+            }
+        }
+
+        for (npc_id, shop) in &shops {
+            assert!(
+                npc_ids.contains(npc_id.as_str()),
+                "нет NPC {npc_id} в локациях"
+            );
+            assert!(shop.markup > 0.0, "markup > 0 у {npc_id}");
+            assert!(!shop.currencies.is_empty(), "валютные вкладки у {npc_id}");
+            let mut currencies = HashSet::new();
+            for tab in &shop.currencies {
+                assert!(
+                    currencies.insert(tab.currency.as_str()),
+                    "валюта дубль у {npc_id}"
+                );
+                assert!(
+                    item_ids.contains(tab.currency.as_str()),
+                    "нет предмета-валюты {} у {npc_id}",
+                    tab.currency
+                );
+                assert!(tab.rate > 0.0, "rate > 0 у {npc_id}");
+                assert!(
+                    !tab.items.is_empty(),
+                    "пустая вкладка {} у {npc_id}",
+                    tab.currency
+                );
+                for item in &tab.items {
+                    assert!(
+                        item_ids.contains(item.as_str()),
+                        "нет товара {item} у {npc_id}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// M18/F47: `items.json` с бонусами валиден (ADR-010): kind ∈
+    /// attr|param|skill, id существует (атрибут/параметр/навык), value ≠ 0,
+    /// `pct` только у param, id уникален в пределах предмета.
+    #[test]
+    fn items_content_is_valid() {
+        use std::collections::HashSet;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = load(&dir).expect("контент контента загружается");
+        let skill_ids: HashSet<&str> = content.skills.iter().map(|s| s.id.as_str()).collect();
+        const ATTRS: [&str; 4] = ["str", "dex", "vit", "int"];
+        const PARAMS: [&str; 20] = [
+            "accuracy",
+            "damage",
+            "damage_min",
+            "damage_max",
+            "crit_chance",
+            "crit_damage",
+            "armor",
+            "dodge",
+            "parry_min",
+            "parry_max",
+            "parry_chance",
+            "block_min",
+            "block_max",
+            "block_chance",
+            "magic_defense",
+            "magic_dodge",
+            "magic_resist",
+            "magic_dispel",
+            "magic_crit_damage",
+            "magic_crit_chance",
+        ];
+        for item in &content.items {
+            let mut seen = HashSet::new();
+            for bonus in &item.bonuses {
+                assert!(
+                    seen.insert(bonus.id.as_str()),
+                    "дубль бонуса {} у {}",
+                    bonus.id,
+                    item.id
+                );
+                assert_ne!(bonus.value, 0, "value должен быть ≠ 0: {}", item.id);
+                match bonus.kind.as_str() {
+                    "attr" => assert!(
+                        ATTRS.contains(&bonus.id.as_str()),
+                        "неизвестный атрибут {} у {}",
+                        bonus.id,
+                        item.id
+                    ),
+                    "param" => assert!(
+                        PARAMS.contains(&bonus.id.as_str()),
+                        "неизвестный параметр {} у {}",
+                        bonus.id,
+                        item.id
+                    ),
+                    "skill" => assert!(
+                        skill_ids.contains(bonus.id.as_str()),
+                        "неизвестный навык {} у {}",
+                        bonus.id,
+                        item.id
+                    ),
+                    other => panic!("неизвестный kind {other} у {}", item.id),
+                }
+                if bonus.pct {
+                    assert_eq!(
+                        bonus.kind, "param",
+                        "pct допустим только у param: {}",
+                        item.id
+                    );
+                }
+            }
+
+            // M18/F58f: у оружия/посохов со слотами `rune_sockets`
+            // обязан быть указан явно (указание заказчика): деление
+            // слотов на рунные/самоцветы — из контента, не из дефолта.
+            if matches!(item.item_type.as_str(), "weapon" | "staff")
+                && item.sockets > 0
+                && item.rune_sockets.is_none()
+            {
+                panic!(
+                    "нет явного rune_sockets у оружия/посоха {} (sockets: {})",
+                    item.id, item.sockets
+                );
+            }
+
+            // M18/F58d: бафф авто-приёма — param из известных, срок и
+            // лимит стаков положительные (ADR-012 §6).
+            if let Some(buff) = item.stats.get("buff") {
+                let b = buff.as_object().expect("stats.buff — объект");
+                let param = b.get("param").and_then(|v| v.as_str()).unwrap_or("");
+                assert!(
+                    PARAMS.contains(&param),
+                    "неизвестный param {param:?} в stats.buff у {}",
+                    item.id
+                );
+                assert_ne!(
+                    b.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                    0,
+                    "value ≠ 0 в stats.buff у {}",
+                    item.id
+                );
+                assert!(
+                    b.get("duration_s").and_then(|v| v.as_f64()).unwrap_or(0.0) > 0.0,
+                    "duration_s > 0 в stats.buff у {}",
+                    item.id
+                );
+                assert!(
+                    b.get("max_stacks").and_then(|v| v.as_i64()).unwrap_or(0) >= 1,
+                    "max_stacks ≥ 1 в stats.buff у {}",
+                    item.id
+                );
+            }
+            // M18/F58d: эффект на моба — только известные kind
+            // (стан/кровотечение/корни); bleed требует value (урон/сек).
+            if let Some(effect) = item.stats.get("effect") {
+                let e = effect.as_object().expect("stats.effect — объект");
+                let kind = e.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                assert!(
+                    matches!(kind, "stun" | "root" | "bleed"),
+                    "неизвестный effect.kind {kind:?} у {}",
+                    item.id
+                );
+                assert!(
+                    e.get("duration_s").and_then(|v| v.as_f64()).unwrap_or(0.0) > 0.0,
+                    "duration_s > 0 в stats.effect у {}",
+                    item.id
+                );
+                if kind == "bleed" {
+                    assert!(
+                        e.get("value").and_then(|v| v.as_i64()).unwrap_or(0) >= 1,
+                        "bleed требует value ≥ 1 (урон/сек) у {}",
+                        item.id
+                    );
+                }
+            }
+
+            // M18/F58f: знак руны — поле `glyph` (одна латинская буква
+            // — глиф шрифта Dwarven Runes); без него клиент фолбэчит
+            // хешем имени, но контент рун обязан задавать знак явно.
+            if item.item_type == "rune" {
+                let glyph = item
+                    .stats
+                    .get("glyph")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| panic!("нет stats.glyph у руны {}", item.id));
+                let mut chars = glyph.chars();
+                let c = chars
+                    .next()
+                    .unwrap_or_else(|| panic!("пустой stats.glyph у руны {}", item.id));
+                assert!(
+                    c.is_ascii_alphabetic() && chars.next().is_none(),
+                    "stats.glyph должен быть одной латинской буквой (получено {glyph:?}) у {}",
+                    item.id
+                );
+            }
+
+            // M18/F47: раздел stats.param — любой параметр прямо в
+            // статах: число (плоское) или {value, pct}.
+            if let Some(params) = item.stats.get("param").and_then(|v| v.as_object()) {
+                for (id, value) in params {
+                    assert!(
+                        PARAMS.contains(&id.as_str()),
+                        "неизвестный параметр {id} в stats.param у {}",
+                        item.id
+                    );
+                    let value = match value {
+                        serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
+                        serde_json::Value::Object(map) => {
+                            map.get("value").and_then(|v| v.as_i64()).unwrap_or(0)
+                        }
+                        other => panic!(
+                            "некорректное значение {other} в stats.param ({id}) у {}",
+                            item.id
+                        ),
+                    };
+                    assert_ne!(
+                        value, 0,
+                        "value должен быть ≠ 0 в stats.param ({id}) у {}",
+                        item.id
+                    );
+                }
+            }
         }
     }
 }

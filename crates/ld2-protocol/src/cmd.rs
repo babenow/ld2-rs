@@ -62,6 +62,10 @@ pub struct CharCreate {
     pub name: String,
     /// Стартовый профиль: Воин/Лучник/Маг (список — capability сервера).
     pub profile: String,
+    /// M18/F34: пол (`male`/`female`); отсутствие/`null` → `male`
+    /// (обратная совместимость, §11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gender: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -74,11 +78,13 @@ pub struct CharDelete {
     pub char_id: String,
 }
 
-/// Вложение очков опыта из пула квестов (D3/§2.1 skills.md).
+/// M18/F44/ADR-009: повышение ранга навыка у тренера через диалог —
+/// шкала навыка 100 % + очки опыта (пул) + плата из диалога NPC.
+/// Заменяет `char.xp_invest` (обходил гейт 100 %).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct CharXpInvest {
+pub struct SkillTrain {
+    pub entity_id: String,
     pub skill_id: String,
-    pub points: i64,
 }
 
 // ─── мир / навигация (ФР-03) ─────────────────────────────────────────────────
@@ -94,6 +100,38 @@ pub struct LocationMove {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct EntityInfo {
     pub entity_id: String,
+}
+
+/// M18/F35: диалог NPC — приветствие/строки с условиями + доступные квесты.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct NpcTalk {
+    pub entity_id: String,
+}
+
+/// M18/F37: ответ персонажа в диалоге — переход с `node_id` по
+/// `reply_id` на следующую строку (без `next` у ответа — конец,
+/// сервер отвечает `{node: null}`).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct NpcReply {
+    pub entity_id: String,
+    pub node_id: String,
+    pub reply_id: String,
+}
+
+/// M18/F39: список товаров NPC — цены уже посчитаны сервером
+/// (наценки/скидки), по валютным вкладкам.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ShopList {
+    pub entity_id: String,
+}
+
+/// M18/F39: покупка у NPC: валюта (`def_id`) + товар (`def_id`),
+/// одна партия по цене вкладки.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ShopBuy {
+    pub entity_id: String,
+    pub currency: String,
+    pub def_id: String,
 }
 
 // ─── бой (ФР-05) ─────────────────────────────────────────────────────────────
@@ -395,10 +433,14 @@ impl_commands!(
     (CharCreate, "cmd/char.create", false),
     (CharSelect, "cmd/char.select", true),
     (CharDelete, "cmd/char.delete", false),
-    (CharXpInvest, "cmd/char.xp_invest", false),
+    (SkillTrain, "cmd/skill.train", false),
     (LocationLook, "cmd/location.look", true),
     (LocationMove, "cmd/location.move", false),
     (EntityInfo, "cmd/entity.info", true),
+    (NpcTalk, "cmd/npc.talk", true),
+    (NpcReply, "cmd/npc.reply", false),
+    (ShopList, "cmd/shop.list", true),
+    (ShopBuy, "cmd/shop.buy", false),
     (CombatAttack, "cmd/combat.attack", false),
     (CombatStop, "cmd/combat.stop", true),
     (CombatFlee, "cmd/combat.flee", false),

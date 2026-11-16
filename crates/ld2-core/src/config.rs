@@ -21,6 +21,12 @@ pub fn project_dirs() -> Result<ProjectDirs> {
 pub struct Config {
     /// Адрес сервера: `wss://` в release, `ws://` — только dev/localhost.
     pub host: String,
+    /// M19 (ADR-013, protocol.md §15): домен discovery — если задан
+    /// (непуст), адрес берётся из `GET https://<домен>/.well-known/
+    /// ld2.json`; пуст/нет — прямой режим через `host` (обратная
+    /// совместимость).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
     /// Код языка UI: `ru` | `en` (D8: таблицы ru/en с M0).
     pub lang: String,
     /// Последний логин — предзаполнение формы и ключ keyring (ФР-01).
@@ -160,6 +166,10 @@ pub struct Hotkeys {
     /// Открыть/закрыть окно рюкзака (дефолт «i» — классика MMO).
     #[serde(default = "hk_backpack")]
     pub open_backpack: String,
+    // ── M18/F36: окно квестов ──
+    /// Открыть/закрыть окно квестов (дефолт «j» — journal).
+    #[serde(default = "hk_quests")]
+    pub open_quests: String,
 }
 
 fn hk_alt_up() -> String {
@@ -201,6 +211,9 @@ fn hk_char() -> String {
 fn hk_backpack() -> String {
     "i".into()
 }
+fn hk_quests() -> String {
+    "j".into()
+}
 
 impl Default for Hotkeys {
     fn default() -> Self {
@@ -218,6 +231,7 @@ impl Default for Hotkeys {
             action_consumable: hk_digit6(),
             open_character: hk_char(),
             open_backpack: hk_backpack(),
+            open_quests: hk_quests(),
         }
     }
 }
@@ -239,6 +253,7 @@ impl Hotkeys {
             ("action_consumable", &mut self.action_consumable),
             ("open_character", &mut self.open_character),
             ("open_backpack", &mut self.open_backpack),
+            ("open_quests", &mut self.open_quests),
         ]
     }
 }
@@ -291,6 +306,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             host: DEFAULT_HOST.to_string(),
+            domain: None,
             lang: "ru".to_string(),
             last_login: None,
             theme: default_theme(),
@@ -364,7 +380,27 @@ mod tests {
     }
 
     /// M9: расширенный конфиг переживает round-trip со старыми файлами
-    /// (новые поля — serde defaults).
+    /// M19 (§15): домен discovery — опциональное поле: старые конфиги
+    /// без него разбираются (None = прямой режим), с ним — тоже.
+    #[test]
+    fn domain_is_optional_and_round_trips() {
+        let old: Config = toml::from_str("host = \"ws://127.0.0.1:24817/ws\"\nlang = \"ru\"")
+            .expect("разбор без domain");
+        assert_eq!(old.domain, None, "старый конфиг — прямой режим");
+
+        let with: Config = toml::from_str(
+            "host = \"ws://127.0.0.1:24817/ws\"\nlang = \"ru\"\ndomain = \"game.example.com\"",
+        )
+        .expect("разбор с domain");
+        assert_eq!(with.domain.as_deref(), Some("game.example.com"));
+
+        // round-trip: сериализация не теряет домен.
+        let text = toml::to_string(&with).expect("сериализация");
+        let back: Config = toml::from_str(&text).expect("разбор обратно");
+        assert_eq!(back.domain, with.domain);
+    }
+
+    /// Старые файлы конфига (новые поля — serde defaults).
     #[test]
     fn extended_config_defaults_from_old_file() {
         let old: Config =
@@ -388,6 +424,8 @@ mod tests {
         assert_eq!(cfg.hotkeys.open_character, "c");
         // M16/F29b: окно рюкзака и его вкладка — дефолты старого файла.
         assert_eq!(cfg.hotkeys.open_backpack, "i");
+        // M18/F36: окно квестов — дефолт старого файла.
+        assert_eq!(cfg.hotkeys.open_quests, "j");
         assert_eq!(cfg.backpack_tab, "all");
         // M16/F29j: «запомнить пароль» в старом конфиге выключено.
         assert!(!cfg.remember_password);

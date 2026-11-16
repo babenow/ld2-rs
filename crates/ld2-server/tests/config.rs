@@ -113,6 +113,64 @@ fn zero_char_slots_names_key() {
     );
 }
 
+/// M18/F36: нулевой лимит текущих квестов — ошибка валидации.
+#[test]
+fn zero_quest_max_active_names_key() {
+    assert_problem(
+        &edited("max_active = 10", "max_active = 0"),
+        "gameplay.quests.max_active",
+    );
+}
+
+/// M18/F39: наценка сервера меньше 1 — ошибка валидации.
+#[test]
+fn bad_shop_markup_names_key() {
+    assert_problem(
+        &edited("server_markup = 1.0", "server_markup = 0.5"),
+        "gameplay.shop.server_markup",
+    );
+}
+
+/// M18/F39: потолок скидки вне 0..=10000 — ошибка валидации.
+#[test]
+fn shop_max_discount_out_of_range_names_key() {
+    assert_problem(
+        &edited("max_discount_bp = 5000", "max_discount_bp = 20000"),
+        "gameplay.shop.max_discount_bp",
+    );
+}
+
+/// M18/F54: множитель шансов вне 0..=10 — ошибка валидации.
+#[test]
+fn bad_rates_chance_names_key() {
+    assert_problem(
+        &edited("chance = 1.0", "chance = 25.0"),
+        "gameplay.rates.chance",
+    );
+}
+
+/// M18/F54: старый конфиг без `[gameplay.rates]` валиден и получает
+/// дефолтный множитель 1.0 (обратная совместимость, §11).
+#[test]
+fn rates_section_is_optional_with_default_one() {
+    let text = example_text();
+    let stripped: String = text
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            !t.starts_with("[gameplay.rates]") && !t.starts_with("chance = 1.0")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!stripped.contains("[gameplay.rates]"), "секция удалена");
+    let cfg: Config = toml::from_str(&stripped).expect("старый TOML парсится");
+    cfg.problems().is_empty().then_some(()).expect("валиден");
+    assert!(
+        (cfg.gameplay.rates.chance - 1.0).abs() < f64::EPSILON,
+        "дефолт 1.0"
+    );
+}
+
 #[test]
 fn feature_wrong_type_names_key() {
     // строка вместо bool: untagged-парсинг проходит, ловит валидация
@@ -222,4 +280,25 @@ fn deploy_config_matches_example_except_db_url() {
         "в deploy это url: {:?}",
         diffs[0].1
     );
+}
+
+/// M18/F58c: `rune_recharge` — режим (time|item), а не любая строка:
+/// ключ ожил, опечатка в значении должна падать на старте, а не
+/// молча выключать тикер.
+#[test]
+fn rune_recharge_mode_must_be_known() {
+    let text = edited("rune_recharge = \"time\"", "rune_recharge = \"tim\"");
+    assert_problem(&text, "rune_recharge");
+    let text = edited("rune_recharge = \"time\"", "rune_recharge = \"\"");
+    assert_problem(&text, "rune_recharge");
+}
+
+/// M18/F58c: интервал восстановления заряда — положительные секунды
+/// (тик-луп делит аккумулятор на него — 0/отрицательное зависло бы).
+#[test]
+fn rune_recharge_interval_must_be_positive() {
+    let text = edited("rune_recharge_s = 30.0", "rune_recharge_s = 0.0");
+    assert_problem(&text, "rune_recharge_s");
+    let text = edited("rune_recharge_s = 30.0", "rune_recharge_s = -1.0");
+    assert_problem(&text, "rune_recharge_s");
 }

@@ -31,6 +31,18 @@ profession_limit = 2       # → §5 profession_limit
 
 party_max_members = 4   # ФР-14: лимит состава группы
 
+[gameplay.quests]           # M18/F36: квесты → §5 quests.max_active
+max_active = 10             # лимит текущих (взятых) квестов на персонажа
+
+
+[gameplay.shop]            # M18/F39: магазины NPC (цены считаются сервером)
+server_markup = 1.0        # множитель наценки сервера (1.1 = +10%)
+max_discount_bp = 5000     # потолок суммарной скидки (bp: 5000 = −50%)
+
+# Навык → множитель скидки ЗА РАНГ (haggle 0.02 = −2%/ранг)
+[gameplay.shop.skill_discounts]
+haggle = 0.02
+
 [gameplay.combat]           # M12.5: тик-луп атак (D25)
 attack_interval_s = 1.0     # период атак в бою, с
 base_damage = 6             # базовый урон персонажа (v1)
@@ -81,7 +93,7 @@ cooldown_s = 1.5
 channels = ["system", "location", "global", "party", "guild", "whisper"]
 
 [gameplay.inventory]
-slots = 40
+slots = 100
 equip_slots = ["head", "shoulders", "bracers", "gloves", "body", "legs", "feet", "cloak", "ring1", "ring2", "amulet", "main_hand", "off_hand", "artifact1", "artifact2"]
 
 [gameplay.upgrade]
@@ -92,6 +104,12 @@ gold_base = 100         # стоимость улучшения +0 → +1 (зо�
 gold_per_level = 50     # прибавка за уровень
 chance_base = 0.9       # шанс успеха с +0
 chance_per_level = 0.05 # снижение шанса за уровень
+duration_s = 3          # длительность анимации улучшения, сек (M18/F53)
+
+# Рейты сервера (M18/F54): множитель любых шансов.
+# 1.0 — шансы как в формуле, 0.0 — все броски падают.
+[gameplay.rates]
+chance = 1.0
 
 [gameplay.professions]  # skills.md §8 (D25)
 rank_max = 7            # предел ранга профессии
@@ -102,7 +120,8 @@ xp_growth = 1.5
 fail_xp_ratio = 0.2     # XP при неудаче
 
 [gameplay.magic]
-rune_recharge = "item"     # ADR-002
+rune_recharge = "time"         # M18/F58c (ADR-012 §4): тикер зарядов; "item" — только извлечением
+rune_recharge_s = 30.0         # сек на восстановление одного заряда руны
 scroll_requires_target = true
 
 [gameplay.magic.mana]      # ADR-002: мана
@@ -148,3 +167,9 @@ attr = 18
 [[skills.gates]]
 rank = 30
 attr = 25
+
+# M19 (ADR-013): discovery подключения — клиент хранит домен и берёт
+# адрес из GET /.well-known/ld2.json ({ address, version, min_client }).
+# Секция не задана / address пуст →404 (discovery выключен).
+[discovery]
+address = "ws://127.0.0.1:24817/ws"

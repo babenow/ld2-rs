@@ -45,6 +45,14 @@ pub enum Act {
     Attack,
     /// `entity.info` → `entity_detail`.
     Examine,
+    /// `npc.talk` → `npc_dialog` (M18/F35).
+    NpcTalk,
+    /// `npc.reply` → новый узел в `npc_dialog` (M18/F37).
+    NpcReply,
+    /// `shop.list` → `npc_dialog.shop` (M18/F39).
+    ShopList,
+    /// `shop.buy` — изменения приходят событиями (M18/F39).
+    ShopBuy,
     /// `char.xp_invest` → `pool_left` в снапшоте.
     Invest,
     /// `item.equip`/`item.unequip` — ack несёт обновлённый `char` (§7).
@@ -56,6 +64,8 @@ pub enum Act {
     Preview,
     /// `upgrade.start` → результат событием (ФР-10).
     Upgrade,
+    /// M18/F54: `item.use` камня усиления → ack `{stone_uid, quality}`.
+    Sharpen,
     /// `socket.insert`/`socket.extract` → ack несёт посох/руну (§7).
     Socket,
     /// Каст из hotbar (ФР-09) — ошибки в мир (`E_NOT_ENOUGH_MP`…).
@@ -89,6 +99,19 @@ pub struct UpgradeView {
     pub item_name: String,
     /// payload `upgrade.preview`: `{preview_id, delta, cost, chance}`.
     pub preview: Option<serde_json::Value>,
+    /// M18/F53: последний результат `evt/upgrade/result` (модалка не
+    /// закрывается — показываем итог и позволяем улучшать дальше).
+    pub result: Option<serde_json::Value>,
+}
+
+/// M18/F54: выбранный камень усиления — активен, пока сервер его не
+/// снимет (последняя штука потрачена) или игрок не закроет окно.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SharpenStone {
+    pub uid: String,
+    pub name: String,
+    /// Качество в процентных пунктах (`stats.quality`; −5/0/+5).
+    pub quality: i64,
 }
 
 /// Цветовой тип строки журнала мира (ФР-17; палитра §7.4 — в UI).
@@ -178,6 +201,13 @@ pub struct AppStore {
     pub item_detail: Option<serde_json::Value>,
     /// Модалка улучшения (ФР-10).
     pub upgrade: Option<UpgradeView>,
+    /// M18/F54: активный камень усиления.
+    pub sharpen_stone: Option<SharpenStone>,
+    /// M18/F55: окно заточки открыто (экран списка показан) — гейт
+    /// рендера. Переживает расход последнего камня, чтобы «назад»
+    /// возвращал к списку, а не закрывал окно; снимается только при
+    /// закрытии окна (Esc/крестик/скрим).
+    pub sharpen_list: bool,
     /// Открытая инкрустация (ФР-09): uid посоха.
     pub socketing: Option<String>,
     /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
@@ -243,6 +273,8 @@ pub struct AppStore {
     pub visited: Vec<VisitedLocation>,
     /// Результат `entity.info` — модалка осмотра (включая лут трупа).
     pub entity_detail: Option<serde_json::Value>,
+    /// M18/F35: открытое окно диалога NPC (реплики + квесты).
+    pub npc_dialog: Option<NpcDialogView>,
     /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
     pub pending_delete: Option<PendingDelete>,
     /// M11.7: цель текущего `char.delete` — снять карточку по ack.
@@ -267,6 +299,195 @@ pub struct PendingDelete {
     pub deadline: i64,
 }
 
+/// M18/F37/F42: узел диалога — строка NPC + её видимые ответы (тексты уже
+/// отрендерены сервером, `{name}` подставлен).
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcNode {
+    pub id: String,
+    pub text: String,
+    /// Квест, который предлагает узел (секция «Квесты» окна).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quest: Option<String>,
+    #[serde(default)]
+    pub replies: Vec<NpcReplyOption>,
+}
+
+impl NpcNode {
+    /// M18/F42: абсолютные дедлайны кулдауна реплик — по ним UI ведёт
+    /// живой отсчёт `(мм:сс)` (ADR-008). Вызывается при разборе payload.
+    pub fn stamp_wait_deadlines(&mut self) {
+        let now = local_epoch_ms();
+        for reply in &mut self.replies {
+            if let Some(wait_s) = reply.wait_s {
+                reply.wait_until_ms = Some(now + (wait_s as i64) * 1000);
+            }
+        }
+    }
+}
+
+/// M18/F37/F42: ответ персонажа, видимый в текущем узле (`id` — ключ
+/// `cmd/npc.reply`).
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcReplyOption {
+    pub id: String,
+    pub text: String,
+    /// M18/F42: секунды до конца кулдауна целевой строки — ответ
+    /// показывается неактивным с таймером (ADR-008); `None` — активен.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_s: Option<u64>,
+    /// M18/F42: абсолютный дедлайн кулдауна (epoch-мс) — ставится при
+    /// разборе payload, живой отсчёт таймера в UI (wire не несёт).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_until_ms: Option<i64>,
+    /// M18/F43: действие ответа (`"shop"`) — клиент открывает магазин
+    /// вместо перехода по ветке; `None` — обычный ответ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+}
+
+/// M18/F37: строка транскрипта окна диалога — лента NPC ↔ персонаж.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcTranscriptLine {
+    /// `true` — реплика персонажа (ответ).
+    pub me: bool,
+    pub text: String,
+}
+
+/// M18/F39: товар магазина в цене активной валютной вкладки.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcShopItem {
+    pub def_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub rarity: String,
+    /// Цена за партию в единицах валюты вкладки.
+    pub price: i64,
+    /// Размер партии (qty из контента, ≥1).
+    #[serde(default = "shop_item_qty")]
+    pub qty: i64,
+    /// M18/F40: полный снапшот — карточка информации по клику строки.
+    #[serde(default)]
+    pub item: Option<ld2_protocol::types::ItemSnapshot>,
+}
+
+fn shop_item_qty() -> i64 {
+    1
+}
+
+/// M18/F39: валютная вкладка магазина.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcShopTab {
+    /// `def_id` валюты (для баланса и `cmd/shop.buy`).
+    pub currency: String,
+    pub currency_name: String,
+    #[serde(default)]
+    pub items: Vec<NpcShopItem>,
+}
+
+/// M18/F39: открытый магазин NPC (внутри окна диалога — очищается
+/// вместе с `npc_dialog` на всех путях закрытия).
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcShopView {
+    #[serde(default)]
+    pub tabs: Vec<NpcShopTab>,
+}
+
+/// M18/F35/F37/F42: открытое окно диалога NPC — payload ack
+/// `cmd/npc.talk` `{dialog: {id, name}, node, quests, actions}`
+/// (`greeting` убран — ADR-008); транскрипт накапливает ленту
+/// (узлы ↔ ответы персонажа).
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcDialogView {
+    pub id: String,
+    pub name: String,
+    /// Текущий узел; `None` — диалог не начат/закончен.
+    #[serde(default)]
+    pub node: Option<NpcNode>,
+    #[serde(default)]
+    pub transcript: Vec<NpcTranscriptLine>,
+    #[serde(default)]
+    pub quests: Vec<ld2_protocol::types::QuestState>,
+    /// M18/F38: контекстные кнопки статус-бара от сервера — только
+    /// реально существующие системы (`quests`/`train`/`shop`).
+    #[serde(default)]
+    pub actions: Vec<String>,
+    /// M18/F39: открытый магазин (по кнопке — `cmd/shop.list`).
+    #[serde(default)]
+    pub shop: Option<NpcShopView>,
+    /// M18/F39: активная валютная вкладка магазина.
+    #[serde(default)]
+    pub shop_currency: Option<String>,
+    /// M18/F44: обучение у этого NPC (ADR-009) — навыки с ценой.
+    #[serde(default)]
+    pub training: Vec<NpcTraining>,
+    /// M18/F44: открыта ли панель обучения (реплика `action=train`,
+    /// паритет магазина); чистится вместе с окном диалога.
+    #[serde(default)]
+    pub training_open: bool,
+}
+
+/// M18/F44: обучение навыку у NPC в диалоге (ADR-009) — повышение ранга
+/// стоит очков опыта (пул) + платы из контента.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcTraining {
+    pub skill: String,
+    /// Плата очками опыта (пул квестов).
+    pub points: i64,
+    /// Плата золотом (монеты); 0 — без золота.
+    #[serde(default)]
+    pub gold: i64,
+    /// Плата предметами.
+    #[serde(default)]
+    pub items: Vec<NpcTrainingItem>,
+}
+
+/// M18/F44: предмет платы за обучение.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcTrainingItem {
+    pub def_id: String,
+    #[serde(default = "shop_item_qty")]
+    pub qty: i64,
+}
+
+impl NpcDialogView {
+    /// Разбор payload ack (`None` — нет `dialog`; лента — корневой узел,
+    /// `quests`/`actions` без поля → пусто; `greeting` больше нет —
+    /// ADR-008).
+    pub fn from_payload(payload: &serde_json::Value) -> Option<Self> {
+        let dialog = payload.get("dialog")?;
+        let mut node = match payload.get("node") {
+            Some(value) if !value.is_null() => {
+                serde_json::from_value::<NpcNode>(value.clone()).ok()
+            }
+            _ => None,
+        };
+        // M18/F42: дедлайны для живого отсчёта таймеров реплик.
+        node.as_mut().map(NpcNode::stamp_wait_deadlines);
+        let mut transcript = Vec::new();
+        if let Some(node) = &node {
+            transcript.push(NpcTranscriptLine {
+                me: false,
+                text: node.text.clone(),
+            });
+        }
+        Some(Self {
+            id: dialog["id"].as_str()?.into(),
+            name: dialog["name"].as_str()?.into(),
+            node,
+            transcript,
+            quests: serde_json::from_value(payload.get("quests")?.clone()).unwrap_or_default(),
+            actions: serde_json::from_value(payload.get("actions").cloned().unwrap_or_default())
+                .unwrap_or_default(),
+            shop: None,
+            shop_currency: None,
+            training: serde_json::from_value(payload.get("training").cloned().unwrap_or_default())
+                .unwrap_or_default(),
+            // M18/F44: панель обучения закрыта — открывает реплика.
+            training_open: false,
+        })
+    }
+}
+
 /// M11: какой всплывающий диалог активен. Приоритет и гейт экрана — здесь
 /// же их читает UI-диспетчер gpui-клиента (E2E-тест вехи M11.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,9 +499,6 @@ pub enum Dialog {
     PartyInvite,
     GuildInvite,
     Trade,
-    Item,
-    Upgrade,
-    Socket,
     /// M17/F30a: выбор оружия под инкрустацию руны/самоцвета.
     Inscribe,
     Create,
@@ -289,10 +507,14 @@ pub enum Dialog {
 
 impl AppStore {
     /// Активный диалог (M11.2): экран персонажей — создание/удаление;
-    /// игра — смерть > осмотр > лут > группа > гильдия > сделка > предмет >
-    /// улучшение > инкрустация > выбор цели инкрустации (M17/F30a);
-    /// вне игры/персонажей — None. `create_open` и `delete_open` —
-    /// флаги UI (Root), остальное — состояние store.
+    /// игра — смерть > осмотр > лут > группа > гильдия > сделка >
+    /// выбор цели инкрустации (M17/F30a); окно сокетов (инкрустация
+    /// через меню оружия) — popup, вне диспетчера (M18); вне игры/
+    /// персонажей — None. `create_open` и `delete_open` — флаги UI
+    /// (Root), остальное — состояние store.
+    ///
+    /// M18/F53: описание предмета и окно заточки — попапы (вне
+    /// диспетчера модалок, как окно персонажа и диалог NPC).
     pub fn active_dialog(&self, create_open: bool, delete_open: bool) -> Option<Dialog> {
         match self.screen {
             Screen::Characters => {
@@ -317,16 +539,11 @@ impl AppStore {
                     Some(Dialog::GuildInvite)
                 } else if self.trade.is_some() {
                     Some(Dialog::Trade)
-                } else if self.item_detail.is_some() {
-                    Some(Dialog::Item)
-                } else if self.upgrade.is_some() {
-                    Some(Dialog::Upgrade)
-                } else if self.socketing.is_some() {
-                    Some(Dialog::Socket)
                 } else if self.inscribe.is_some() {
                     // M17/F30a: окно «Куда инкрустировать…».
                     Some(Dialog::Inscribe)
                 } else {
+                    // M18/F38: диалог NPC — попап (вне диспетчера модалок).
                     None
                 }
             }
@@ -379,6 +596,8 @@ impl AppStore {
             death: None,
             item_detail: None,
             upgrade: None,
+            sharpen_stone: None,
+            sharpen_list: false,
             socketing: None,
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
@@ -410,6 +629,7 @@ impl AppStore {
             log: VecDeque::new(),
             visited: Vec::new(),
             entity_detail: None,
+            npc_dialog: None,
             pending_delete: None,
             deleting_char: None,
             session_login: None,
@@ -445,6 +665,21 @@ impl AppStore {
     fn apply_status(&mut self, status: TransportStatus) -> Vec<Effect> {
         let auth_expired = matches!(status, TransportStatus::AuthExpired);
         let stopped = matches!(status, TransportStatus::Stopped);
+        // M19 (§15): discovery-отказ — понятная причина без подключения
+        // (текст по ключу; ретраи транспорта продолжаются).
+        if let TransportStatus::ResolveFailed(code) = &status {
+            use crate::l10n::{t, Key, Lang};
+            let key = match code {
+                crate::transport::ResolveFailCode::Unreachable => Key::DiscUnreachable,
+                crate::transport::ResolveFailCode::BadDoc => Key::DiscBadDoc,
+                crate::transport::ResolveFailCode::Contract => Key::DiscContract,
+                crate::transport::ResolveFailCode::MinClient => Key::DiscMinClient,
+                crate::transport::ResolveFailCode::Insecure => Key::DiscInsecure,
+            };
+            self.notice = Some(t(Lang::Ru, key).to_string());
+            self.transport = status;
+            return vec![];
+        }
         self.transport = status;
         if auth_expired {
             // §4.5: access/refresh истёк → экран входа, токен из keyring.
@@ -469,6 +704,13 @@ impl AppStore {
         }
 
         let Some(act) = self.pending.take() else {
+            // M18/F41: ack без корреляции (гонка команд) молча теряется —
+            // в debug-логе видно, чей ack пришёл не вовремя.
+            tracing::debug!(
+                "ack {} (seq={}) без pending — пропущен",
+                ack.msg_type,
+                ack.seq
+            );
             return vec![];
         };
 
@@ -497,13 +739,20 @@ impl AppStore {
                     self.deleting_char = None;
                     self.notice = Some(msg);
                 }
-                Act::Move | Act::Attack | Act::Examine => self.world_error = Some(msg),
+                Act::Move
+                | Act::Attack
+                | Act::Examine
+                | Act::NpcTalk
+                | Act::NpcReply
+                | Act::ShopList
+                | Act::ShopBuy => self.world_error = Some(msg),
                 // M16/F29h: ошибки листа — системные уведомления
                 // (тосты), как и весь прочий фидбек.
                 Act::Invest
                 | Act::Equip
                 | Act::Unequip
                 | Act::Drop
+                | Act::Sharpen
                 | Act::Preview
                 | Act::Upgrade
                 | Act::Socket
@@ -572,6 +821,10 @@ impl AppStore {
             }
             Act::Attack
             | Act::Examine
+            | Act::NpcTalk
+            | Act::NpcReply
+            | Act::ShopList
+            | Act::ShopBuy
             | Act::Drop
             | Act::Upgrade
             | Act::Cast
@@ -579,7 +832,8 @@ impl AppStore {
             | Act::Chat
             | Act::ChatDelete
             | Act::Trade => {
-                // результат событиями (§8)
+                // результат событиями (§8); npc.talk/npc.reply
+                // обрабатываются ниже отдельными блоками (M18/F35/F37)
             }
             Act::Party => {
                 // §7: party.create/accept несут {party}.
@@ -647,11 +901,52 @@ impl AppStore {
                     }
                 }
             }
+            Act::Sharpen => {
+                // M18/F54: сервер выбрал камень — запоминаем для окна
+                // заточки (имя берём из снапшота, качество — из ack).
+                if let Some(payload) = ack.payload.as_ref() {
+                    // Типизированный ack (ld2-protocol, golden §7) —
+                    // старая/чужая форма молча игнорируется.
+                    let Ok(sel) =
+                        serde_json::from_value::<ld2_protocol::StoneSelected>(payload.clone())
+                    else {
+                        return vec![];
+                    };
+                    let name = self
+                        .snapshot
+                        .as_ref()
+                        .and_then(|s| {
+                            s.char
+                                .inventory
+                                .iter()
+                                .find(|i| i.uid == sel.stone_uid)
+                                .map(|i| i.name.clone())
+                        })
+                        .unwrap_or_else(|| sel.stone_uid.clone());
+                    self.sharpen_stone = Some(SharpenStone {
+                        uid: sel.stone_uid,
+                        name,
+                        quality: sel.quality,
+                    });
+                    // M18/F55: окно открыто — гейт рендера (список).
+                    self.sharpen_list = true;
+                    // Свежий выбор камня — прошлый результат неактуален.
+                    if let Some(upgrade) = self.upgrade.as_mut() {
+                        upgrade.result = None;
+                        upgrade.preview = None;
+                    }
+                }
+            }
             Act::Preview => {
                 if let (Some(upgrade), Some(payload)) =
                     (self.upgrade.as_mut(), ack.payload.as_ref())
                 {
                     upgrade.preview = Some(payload.clone());
+                    // M18/F55: итог прошлого броска НЕ затираем — он
+                    // должен остаться на экране заточки (зелёным/красным)
+                    // даже после автопревью. Сбрасывается при открытии
+                    // предмета (`open_upgrade`), при смене камня и при
+                    // старте следующего улучшения.
                 }
             }
             Act::Socket => {
@@ -686,6 +981,63 @@ impl AppStore {
             }
         }
 
+        // M18/F39: магазин — ack `{shop}` → панель внутри окна диалога.
+        if act == Act::ShopList {
+            if let (Some(dialog), Some(payload)) = (self.npc_dialog.as_mut(), ack.payload.as_ref())
+            {
+                if let Ok(shop) = serde_json::from_value::<NpcShopView>(payload["shop"].clone()) {
+                    dialog.shop_currency = shop.tabs.first().map(|tab| tab.currency.clone());
+                    dialog.shop = Some(shop);
+                }
+            }
+        }
+        // M18/F35: диалог NPC — ack `{dialog, node, quests}` → окно (до
+        // Examine: там payload перемещается).
+        if act == Act::NpcTalk {
+            if let Some(payload) = ack.payload.as_ref() {
+                self.npc_dialog = NpcDialogView::from_payload(payload);
+                // M18/F41: диагностика повторного открытия диалога.
+                tracing::debug!(
+                    "ack npc.talk (seq={}) → открыт={}, узел={:?}, строк ленты={}",
+                    ack.seq,
+                    self.npc_dialog.is_some(),
+                    self.npc_dialog
+                        .as_ref()
+                        .and_then(|d| d.node.as_ref().map(|n| n.id.clone())),
+                    self.npc_dialog.as_ref().map_or(0, |d| d.transcript.len()),
+                );
+            } else {
+                tracing::debug!("ack npc.talk (seq={}) без payload", ack.seq);
+            }
+        }
+        // M18/F37: ответ персонажа — новый узел (`node: null` — конец);
+        // список квестов освежается (приняли/сдали между открытиями).
+        if act == Act::NpcReply {
+            if let Some(payload) = ack.payload.as_ref() {
+                let terminal = payload.get("node").is_none_or(|v| v.is_null());
+                if terminal {
+                    // M18/F38: конец диалога («Пока») — окно закрывается.
+                    self.npc_dialog = None;
+                } else if let Some(dialog) = self.npc_dialog.as_mut() {
+                    if let Ok(mut node) = serde_json::from_value::<NpcNode>(payload["node"].clone())
+                    {
+                        // M18/F42: дедлайны для живого отсчёта таймеров.
+                        node.stamp_wait_deadlines();
+                        dialog.transcript.push(NpcTranscriptLine {
+                            me: false,
+                            text: node.text.clone(),
+                        });
+                        dialog.node = Some(node);
+                        if let Ok(quests) = serde_json::from_value::<
+                            Vec<ld2_protocol::types::QuestState>,
+                        >(payload["quests"].clone())
+                        {
+                            dialog.quests = quests;
+                        }
+                    }
+                }
+            }
+        }
         // Осмотр: payload ack'а — детали сущности (включая лут трупа, ФР-03/ФР-11).
         if act == Act::Examine {
             self.entity_detail = ack.payload;
@@ -986,9 +1338,20 @@ impl AppStore {
                         }
                     }
                 }
-                let text = match xp.rank {
-                    Some(rank) => format!("+{} XP → {} — ранг {rank}!", xp.amount, xp.skill_id),
-                    None => format!("+{} XP → {}", xp.amount, xp.skill_id),
+                let text = if xp.amount < 0 {
+                    // M18/F44: повышение ранга у тренера — очки пула
+                    // списаны (amount отрицательный), шкала обнулена.
+                    match xp.rank {
+                        Some(rank) => {
+                            format!("{} — ранг {rank}! (−{} очков)", xp.skill_id, -xp.amount)
+                        }
+                        None => format!("{} (−{} очков)", xp.skill_id, -xp.amount),
+                    }
+                } else {
+                    match xp.rank {
+                        Some(rank) => format!("+{} XP → {} — ранг {rank}!", xp.amount, xp.skill_id),
+                        None => format!("+{} XP → {}", xp.amount, xp.skill_id),
+                    }
                 };
                 self.push_log(LogKind::Xp, text);
                 vec![]
@@ -1077,6 +1440,20 @@ impl AppStore {
                         .equip
                         .retain(|_, slot| slot.as_deref() != Some(removed.uid.as_str()));
                 }
+                // M18/F54: активный камень выбыл — снимаем выбор и
+                // гасим превью: оно было посчитано с этим камнем, повторный
+                // старт без нового камня (`E_UPGRADE_PREVIEW_STALE`/`E_…`)
+                // был бы неверным шагом.
+                if self
+                    .sharpen_stone
+                    .as_ref()
+                    .is_some_and(|st| st.uid == removed.uid)
+                {
+                    self.sharpen_stone = None;
+                    if let Some(view) = self.upgrade.as_mut() {
+                        view.preview = None;
+                    }
+                }
                 self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
                 vec![]
             }
@@ -1121,7 +1498,7 @@ impl AppStore {
             "evt/upgrade/result" => {
                 // ФР-10: результат — событием; модалка закрывается.
                 let Ok(result) =
-                    serde_json::from_value::<ld2_protocol::evt::UpgradeResult>(payload)
+                    serde_json::from_value::<ld2_protocol::evt::UpgradeResult>(payload.clone())
                 else {
                     return vec![];
                 };
@@ -1150,7 +1527,14 @@ impl AppStore {
                         format!("Провал улучшения: «{name}» (без изменений)"),
                     );
                 }
-                self.upgrade = None;
+                // M18/F53: модалка не закрывается — сохраняем результат,
+                // сбрасываем превью (следующее улучшение запросит новое).
+                if let Some(view) = self.upgrade.as_mut() {
+                    if view.item_uid == result.uid {
+                        view.result = Some(payload.clone());
+                        view.preview = None;
+                    }
+                }
                 vec![Effect::Notify(NotifyKind::Upgrade)]
             }
             "evt/quest/progress" | "evt/quest/updated" => {
@@ -1172,6 +1556,13 @@ impl AppStore {
                         *q = w.quest.clone();
                     } else {
                         snap.char.quests.push(w.quest.clone());
+                    }
+                }
+                // M18/F35: квест взят/сдан — убирается из открытого диалога
+                // NPC (реплики и кнопки не врут).
+                if let Some(dialog) = self.npc_dialog.as_mut() {
+                    if !matches!(w.quest.state, ld2_protocol::types::QuestPhase::Available) {
+                        dialog.quests.retain(|q| q.id != w.quest.id);
                     }
                 }
                 let title = w.quest.title.unwrap_or(w.quest.id);
@@ -1328,6 +1719,26 @@ impl AppStore {
                 // §8: журнал гильдии попадает и в системный лог (ФР-16).
                 self.push_log(LogKind::System, format!("Гильдия: {}", w.entry.text));
                 self.guild_log.push(w.entry);
+                vec![]
+            }
+            "evt/char/buffs" => {
+                // M18/F58d (ADR-012 §6): полная замена списка баффов рун.
+                let Ok(update) = serde_json::from_value::<ld2_protocol::evt::CharBuffs>(payload)
+                else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    snap.char.buffs = update.buffs.clone();
+                }
+                if !update.buffs.is_empty() {
+                    let titles: Vec<&str> = update.buffs.iter().map(|b| b.title.as_str()).collect();
+                    self.push_log(
+                        LogKind::System,
+                        format!("Бафф: {} ×{}", titles.join(", "), {
+                            update.buffs.iter().map(|b| b.stacks).max().unwrap_or(1)
+                        }),
+                    );
+                }
                 vec![]
             }
             "evt/crime/status" => {
@@ -1491,6 +1902,7 @@ impl AppStore {
             item_uid,
             item_name,
             preview: None,
+            result: None,
         });
     }
 
@@ -1623,6 +2035,7 @@ impl AppStore {
         self.target = None;
         self.loot_confirm = None;
         self.quest_tracker.clear();
+        self.npc_dialog = None;
         self.session_login = None;
         self.chat.clear();
         // M14/F18: лог мира персональный — очистка при выходе.
@@ -1692,6 +2105,7 @@ impl AppStore {
         self.upgrade = None;
         self.socketing = None;
         self.quest_tracker.clear();
+        self.npc_dialog = None;
         // ФР-13: переключение персонажа сбрасывает историю чата.
         self.chat.clear();
         // M14/F18: лог мира персональный — очистка при выходе из игры.
@@ -1768,6 +2182,16 @@ pub fn filter_active_statuses(statuses: &[CrimeStatus], now: i64) -> Vec<CrimeSt
         .collect()
 }
 
+/// M18/F58f (ADR-012 §6): активные баффы рун — снятые/просроченные не
+/// показываются (сервер присылает только активные, но локальный отсчёт
+/// может отстать; §1.1 now = локальное + offset).
+pub fn filter_active_buffs(
+    buffs: &[ld2_protocol::types::BuffState],
+    now: i64,
+) -> Vec<&ld2_protocol::types::BuffState> {
+    buffs.iter().filter(|b| b.expires_at > now).collect()
+}
+
 /// Применение `payload` ack'а `socket.*`: `{staff, rune?}` → инвентарь.
 fn apply_item_patch(ch: &mut ld2_protocol::types::CharacterState, payload: &serde_json::Value) {
     if let Some(staff) = payload.get("staff").filter(|v| !v.is_null()) {
@@ -1782,7 +2206,12 @@ fn apply_item_patch(ch: &mut ld2_protocol::types::CharacterState, payload: &serd
     if let Some(rune) = payload.get("rune").filter(|v| !v.is_null()) {
         if let Ok(rune) = serde_json::from_value::<ld2_protocol::types::ItemSnapshot>(rune.clone())
         {
-            if !ch.inventory.iter().any(|i| i.uid == rune.uid) {
+            // M18 (указание заказчика): извлечённый самоцвет может
+            // попасть в существующий стак — запись уже в инвентаре:
+            // обновляем (qty выросло), иначе — добавляем.
+            if let Some(slot) = ch.inventory.iter_mut().find(|i| i.uid == rune.uid) {
+                *slot = rune;
+            } else {
                 ch.inventory.push(rune);
             }
         }
@@ -1922,6 +2351,38 @@ impl Profile {
     }
 }
 
+/// M18/F34: пол персонажа — wire-значения `cmd/char.create.gender`
+/// (`male`/`female`); общий для клиентов (D12), задаётся при создании.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Gender {
+    #[default]
+    Male,
+    Female,
+}
+
+impl Gender {
+    pub fn all() -> [Gender; 2] {
+        [Gender::Male, Gender::Female]
+    }
+
+    /// Wire-значение `cmd/char.create.gender`.
+    pub fn value(self) -> &'static str {
+        match self {
+            Gender::Male => "male",
+            Gender::Female => "female",
+        }
+    }
+
+    /// Локализованное название пола.
+    pub fn label_key(self) -> crate::l10n::Key {
+        use crate::l10n::Key;
+        match self {
+            Gender::Male => Key::GenderMale,
+            Gender::Female => Key::GenderFemale,
+        }
+    }
+}
+
 /// Заголовок преступления из конфига сервера (§5 kinds), фолбэк — kind.
 pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
     store
@@ -2054,17 +2515,22 @@ mod tests {
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Trade));
         s.trade = None;
 
-        // Лист: предмет > улучшение > инкрустация (ФР-07/09/10).
+        // Лист: инкрустация (ФР-09); описание предмета и заточка —
+        // попапы (M18/F53), вне диспетчера модалок.
         s.item_detail = Some(serde_json::json!({"name": "x"}));
+        // M18: окно сокетов — popup (вне диспетчера модалок).
         s.socketing = Some("staff".into());
-        assert_eq!(s.active_dialog(false, false), Some(Dialog::Item));
-        s.item_detail = None;
-        assert_eq!(s.active_dialog(false, false), Some(Dialog::Socket));
+        assert_eq!(s.active_dialog(false, false), None, "сокетинг — popup");
         s.socketing = None;
         // M17/F30a: выбор цели инкрустации — отдельный диалог.
         s.inscribe = Some("rune_1".into());
         assert_eq!(s.active_dialog(false, false), Some(Dialog::Inscribe));
         s.inscribe = None;
+        // M18/F38: диалог NPC — попап: не участвует в диспетчере
+        // модалок (модалки смерти/осмотра/луута — выше по приоритету).
+        s.npc_dialog = Some(NpcDialogView::default());
+        assert_eq!(s.active_dialog(false, false), None);
+        s.npc_dialog = None;
         assert_eq!(s.active_dialog(false, false), None);
     }
 
@@ -2966,6 +3432,267 @@ mod tests {
         assert!(store.pending.is_none());
     }
 
+    /// M18/F35: ack `npc.talk` открывает окно диалога (реплики + квесты);
+    /// `evt/quest/updated` с невидимой фазой убирает квест из списка окна.
+    #[test]
+    fn npc_talk_ack_opens_dialog_and_prunes_quest() {
+        let mut store = in_game();
+        store.on_world_sent(Act::NpcTalk);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            8,
+            None,
+            &serde_json::json!({
+                "dialog": {
+                    "id": "npc_elder", "name": "Староста"
+                },
+                "node": {
+                    "id": "l_hello", "text": "Как дела?",
+                    "replies": [
+                        { "id": "r_work", "text": "Какая работа?", "wait_s": 1740 },
+                        { "id": "r_shop", "text": "Покажи свои товары.", "action": "shop" },
+                        { "id": "r_bye", "text": "Пока." }
+                    ]
+                },
+                "quests": [ { "id": "q1", "title": "Волчья беда", "state": "available" } ],
+                "actions": [ "quests", "train" ],
+                "training": [
+                    { "skill": "sword", "points": 10, "gold": 100 },
+                    { "skill": "fire", "points": 10, "gold": 50,
+                      "items": [ { "def_id": "herb", "qty": 1 } ] }
+                ]
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        assert_eq!(dialog.name, "Староста");
+        // Лента: корневой узел (`greeting` убран — ADR-008).
+        assert_eq!(dialog.transcript.len(), 1, "лента: {dialog:?}");
+        assert!(!dialog.transcript[0].me && dialog.transcript[0].text == "Как дела?");
+        let node = dialog.node.as_ref().expect("узел");
+        assert_eq!(node.id, "l_hello");
+        assert_eq!(node.replies.len(), 3);
+        // M18/F42: `wait_s` парсится — реплика на кулдауне неактивна
+        // (ADR-008), без поля — активна.
+        assert_eq!(node.replies[0].wait_s, Some(1740), "таймер кулдауна");
+        assert_eq!(node.replies[1].wait_s, None, "активная реплика");
+        // M18/F43: `action` парсится — реплика откроет магазин.
+        assert_eq!(
+            node.replies[1].action.as_deref(),
+            Some("shop"),
+            "действие реплики"
+        );
+        assert_eq!(node.replies[2].action, None, "у обычной ответа нет");
+        // Живой отсчёт: абсолютный дедлайн ≈ now + 1740 с.
+        let until = node.replies[0]
+            .wait_until_ms
+            .expect("дедлайн кулдауна ставится");
+        let expected = local_epoch_ms() + 1740 * 1000;
+        assert!(
+            (until - expected).abs() < 2_000,
+            "дедлайн {until} ≈ {expected}"
+        );
+        assert_eq!(
+            node.replies[2].wait_until_ms, None,
+            "у активной реплики дедлайна нет"
+        );
+        assert_eq!(dialog.quests.len(), 1);
+        assert_eq!(dialog.actions, vec!["quests", "train"], "actions из ack");
+        // M18/F44: обучение парсится (ADR-009) — навык, очки, плата.
+        assert_eq!(dialog.training.len(), 2, "обучение: {dialog:?}");
+        let train = &dialog.training[0];
+        assert_eq!(train.skill, "sword");
+        assert_eq!(train.points, 10);
+        assert_eq!(train.gold, 100);
+        assert!(train.items.is_empty(), "у sword платы предметами нет");
+        let fire = &dialog.training[1];
+        assert_eq!(fire.skill, "fire");
+        assert_eq!(fire.items.len(), 1, "у fire плата предметом");
+        assert_eq!(fire.items[0].def_id, "herb");
+        assert_eq!(fire.items[0].qty, 1);
+        assert_eq!(store.active_dialog(false, false), None, "попап вне модалок");
+        assert!(store.pending.is_none());
+
+        // M18/F37: ответ → новый узел в ленте, квесты освежены.
+        store.on_world_sent(Act::NpcReply);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            9,
+            None,
+            &serde_json::json!({
+                "node": {
+                    "id": "l_errand", "text": "Отнеси весть!", "quest": "q1",
+                    "replies": [ { "id": "r_errand_bye", "text": "Хорошо." } ]
+                },
+                "quests": [ { "id": "q1", "title": "Волчья беда", "state": "available" } ]
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        assert_eq!(dialog.transcript.len(), 2, "лента растёт: {dialog:?}");
+        assert_eq!(dialog.transcript[1].text, "Отнеси весть!");
+        assert_eq!(
+            dialog.node.as_ref().expect("узел").quest.as_deref(),
+            Some("q1")
+        );
+
+        // Квест взят → из диалога исчезает (и в снапшоте стал active).
+        store.apply(evt(
+            "evt/quest/updated",
+            serde_json::json!({ "quest": { "id": "q1", "title": "Волчья беда", "state": "active" } }),
+        ));
+        assert!(
+            store
+                .npc_dialog
+                .as_ref()
+                .expect("диалог открыт")
+                .quests
+                .is_empty(),
+            "принятый квест убран из окна"
+        );
+
+        // M18/F38: конец диалога («Пока») — окно закрывается целиком.
+        store.on_world_sent(Act::NpcReply);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            10,
+            None,
+            &serde_json::json!({ "node": serde_json::Value::Null, "quests": [] }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(
+            store.npc_dialog.is_none(),
+            "терминальный ответ закрыл диалог"
+        );
+        assert_eq!(store.active_dialog(false, false), None);
+    }
+
+    /// M18/F41: повторное открытие диалога (`cmd/npc.talk`) начинает
+    /// разговор заново — лента с приветствия, открытый магазин и
+    /// выбранная валюта сброшены.
+    #[test]
+    fn npc_talk_reopens_resets_dialog_to_start() {
+        let mut store = in_game();
+        let talk_ack = |seq: u32| {
+            ld2_protocol::Ack::ok_with_payload(
+                seq,
+                None,
+                &serde_json::json!({
+                    "dialog": {
+                        "id": "npc_elder", "name": "Староста"
+                    },
+                    "node": {
+                        "id": "l_hello", "text": "Как дела?",
+                        "replies": [ { "id": "r_bye", "text": "Пока." } ]
+                    },
+                    "quests": [],
+                    "actions": [ "shop" ]
+                }),
+            )
+            .unwrap()
+        };
+
+        // Первое открытие: корневой узел.
+        store.on_world_sent(Act::NpcTalk);
+        store.apply(IngressEvent::Ack(talk_ack(20)));
+        // Разговор пошёл дальше: ответ → вторая строка ленты.
+        store.on_world_sent(Act::NpcReply);
+        store.apply(IngressEvent::Ack(
+            ld2_protocol::Ack::ok_with_payload(
+                21,
+                None,
+                &serde_json::json!({
+                    "node": { "id": "l_errand", "text": "Отнеси весть!",
+                              "replies": [ { "id": "r_done", "text": "Хорошо." } ] },
+                    "quests": []
+                }),
+            )
+            .unwrap(),
+        ));
+        // И магазин открыт, и валюта выбрана.
+        store.on_world_sent(Act::ShopList);
+        store.apply(IngressEvent::Ack(
+            ld2_protocol::Ack::ok_with_payload(
+                22,
+                None,
+                &serde_json::json!({
+                    "shop": { "tabs": [
+                        { "currency": "gold_coin", "currency_name": "Золотая монета",
+                          "items": [] },
+                        { "currency": "gem_str", "currency_name": "Самоцвет силы",
+                          "items": [] }
+                    ]}
+                }),
+            )
+            .unwrap(),
+        ));
+        {
+            let dialog = store.npc_dialog.as_mut().expect("диалог открыт");
+            dialog.shop_currency = Some("gem_str".into());
+            assert_eq!(dialog.transcript.len(), 2, "лента разговора");
+            assert!(dialog.shop.is_some(), "магазин открыт");
+        }
+
+        // Повторное открытие — всё с начала.
+        store.on_world_sent(Act::NpcTalk);
+        store.apply(IngressEvent::Ack(talk_ack(23)));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        assert_eq!(dialog.transcript.len(), 1, "лента заново: {dialog:?}");
+        assert_eq!(dialog.transcript[0].text, "Как дела?", "с корневой реплики");
+        assert_eq!(dialog.node.as_ref().expect("корень").id, "l_hello");
+        assert!(dialog.shop.is_none(), "магазин закрыт");
+        assert!(dialog.shop_currency.is_none(), "валюта сброшена");
+        assert_eq!(dialog.actions, vec!["shop"], "actions нового ack");
+    }
+
+    /// M18/F39: ack `shop.list` открывает панель магазина внутри окна
+    /// диалога (активная вкладка — первая).
+    #[test]
+    fn shop_list_ack_opens_shop_panel() {
+        let mut store = in_game();
+        let talk = serde_json::json!({
+            "dialog": { "id": "npc_elder", "name": "Староста" },
+            "node": serde_json::Value::Null,
+            "quests": []
+        });
+        store.npc_dialog = NpcDialogView::from_payload(&talk);
+        store.on_world_sent(Act::ShopList);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            12,
+            None,
+            &serde_json::json!({
+                "shop": { "tabs": [
+                    { "currency": "gold_coin", "currency_name": "Золотая монета",
+                      "items": [ { "def_id": "potion_heal", "name": "Зелье лечения",
+                                   "rarity": "common", "price": 28, "qty": 1,
+                                   "item": { "uid": "shop:potion_heal", "type": "potion",
+                                             "name": "Зелье лечения", "rarity": "common",
+                                             "upgrade": 0, "stats": {}, "sockets": [],
+                                             "qty": 1 } } ] },
+                    { "currency": "gem_str", "currency_name": "Самоцвет силы", "items": [] }
+                ]}
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        let shop = dialog.shop.as_ref().expect("магазин открыт");
+        assert_eq!(shop.tabs.len(), 2);
+        assert_eq!(
+            dialog.shop_currency.as_deref(),
+            Some("gold_coin"),
+            "активна первая вкладка"
+        );
+        assert_eq!(shop.tabs[0].items[0].price, 28);
+        // M18/F40: снапшот парсится — карточка по клику строки.
+        let snapshot = shop.tabs[0].items[0].item.as_ref().expect("снапшот товара");
+        assert_eq!(snapshot.name, "Зелье лечения");
+        assert_eq!(snapshot.item_type, "potion");
+        // Закрытие диалога чистит магазин (поля внутри вида).
+        store.npc_dialog = None;
+        assert!(store.npc_dialog.is_none());
+    }
+
     #[test]
     fn corpse_looted_was_player_logs_crime() {
         let mut store = in_game();
@@ -3160,7 +3887,7 @@ mod tests {
         assert_eq!(view.item_uid, "i_17");
         assert_eq!(view.preview.as_ref().unwrap()["preview_id"], "pv_7");
 
-        // Результат закрывает модалку и пишет лог.
+        // Результат остаётся в модалке (не закрывается) и пишет лог.
         store.apply(evt(
             "evt/upgrade/result",
             serde_json::json!({
@@ -3168,10 +3895,158 @@ mod tests {
                 "item_destroyed": false, "cost": { "gold": 300 }
             }),
         ));
-        assert!(store.upgrade.is_none(), "модалка закрыта по результату");
+        assert!(store.upgrade.is_some(), "модалка остаётся открытой");
+        assert!(
+            store.upgrade.as_ref().unwrap().result.is_some(),
+            "результат сохранён"
+        );
         let last = store.log.back().expect("лог");
         assert_eq!(last.kind, LogKind::Loot);
         assert!(last.text.contains("+3"), "{}", last.text);
+    }
+
+    /// M18/F54: ack выбора камня заполняет активный камень (uid/имя из
+    /// снапшота/качество); удаление камня снимает выбор и гасит превью,
+    /// чтобы не стартовать по неактуальному `preview_id`.
+    /// M18/F55: итог заточки переживает автопревью — после результата
+    /// запрашивается новое превью (для повторного улучшения), и итог
+    /// обязан остаться на экране зелёным/красным, а не исчезнуть.
+    #[test]
+    fn sharpen_result_survives_new_preview() {
+        let mut store = in_game();
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        let ack_preview = |n: u32| {
+            ld2_protocol::Ack::ok_with_payload(
+                n,
+                None,
+                &serde_json::json!({
+                    "preview_id": format!("pv_{n}"),
+                    "delta": { "upgrade": "+3" },
+                    "cost": { "gold": 100 }
+                }),
+            )
+            .unwrap()
+        };
+
+        // Первое превью → результат.
+        store.on_sheet_sent(Act::Preview);
+        store.apply(IngressEvent::Ack(ack_preview(41)));
+        store.apply(evt(
+            "evt/upgrade/result",
+            serde_json::json!({
+                "uid": "i_17", "ok": true, "new_upgrade": 3,
+                "item_destroyed": false, "cost": { "gold": 100 }
+            }),
+        ));
+        assert!(
+            store.upgrade.as_ref().unwrap().result.is_some(),
+            "итог есть"
+        );
+        assert!(
+            store.upgrade.as_ref().unwrap().preview.is_none(),
+            "превью сброшено под автопревью"
+        );
+
+        // Автопревью после результата (M18/F55): итог обязан пережить.
+        store.on_sheet_sent(Act::Preview);
+        store.apply(IngressEvent::Ack(ack_preview(42)));
+
+        let view = store.upgrade.as_ref().expect("окно открыто");
+        assert!(
+            view.preview.is_some(),
+            "новое превью принято — повторная заточка доступна"
+        );
+        assert!(
+            view.result.is_some(),
+            "итог прошлого броска не затёрт новым превью"
+        );
+    }
+
+    /// M18/F55: окно заточки переживает расход последнего камня —
+    /// иначе «назад» (гейт был `stone || upgrade`) закрывал окно вовсе
+    /// (жалоба M18/F55). Гейт — отдельный флаг `sharpen_list`.
+    #[test]
+    fn sharpen_window_outlives_spent_stone() {
+        let mut store = in_game();
+        assert!(!store.sharpen_list, "окно по умолчанию закрыто");
+
+        // Выбор камня открывает окно (экран списка).
+        store.on_sheet_sent(Act::Sharpen);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            51,
+            None,
+            &serde_json::json!({ "stone_uid": "i_17", "quality": 5 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.sharpen_list, "окно открыто выбором камня");
+
+        // Последний камень потрачен → сервер снимает выбор...
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "consumed" }),
+        ));
+        assert!(store.sharpen_stone.is_none(), "камень снят");
+        assert!(
+            store.sharpen_list,
+            "окно обязано пережить расход камня — иначе «назад» его закроет"
+        );
+
+        // «Назад» к списку закрывает только карточку предмета.
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.close_upgrade();
+        assert!(store.upgrade.is_none(), "карточка предмета закрыта");
+        assert!(store.sharpen_list, "список доступен — окно живо");
+
+        // Закрытие окна (крестик/Esc/скрим) — флаг снимается.
+        store.sharpen_list = false;
+        assert!(!store.sharpen_list, "окно закрыто");
+    }
+
+    #[test]
+    fn sharpen_stone_set_by_ack_and_cleared_on_removed() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Sharpen);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            31,
+            None,
+            &serde_json::json!({ "stone_uid": "i_17", "quality": 5 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+
+        let stone = store.sharpen_stone.as_ref().expect("камень выбран");
+        assert_eq!(stone.uid, "i_17");
+        assert_eq!(stone.quality, 5, "качество из ack");
+        assert_eq!(stone.name, "Ясеневый посох", "имя из снапшота");
+
+        // Превью посчитано с камнем — запоминаем, что оно есть.
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.on_sheet_sent(Act::Preview);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            32,
+            None,
+            &serde_json::json!({ "preview_id": "pv_1", "delta": { "upgrade": "+3" } }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.upgrade.as_ref().unwrap().preview.is_some());
+
+        // Камень выбыл → выбор снят, превью погашено (старт был бы
+        // неверным шагом без нового камня).
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "consumed" }),
+        ));
+        assert!(
+            store.sharpen_stone.is_none(),
+            "выбор камня снят по удалению"
+        );
+        assert!(
+            store.upgrade.as_ref().unwrap().preview.is_none(),
+            "превью погашено вместе с камнем"
+        );
+        assert!(store.upgrade.is_some(), "окно заточки само не закрывается");
     }
 
     #[test]
@@ -3184,7 +4059,7 @@ mod tests {
                 "uid": "i_17", "ok": false, "item_destroyed": true, "cost": {}
             }),
         ));
-        assert!(store.upgrade.is_none());
+        assert!(store.upgrade.is_some());
         let last = store.log.back().expect("лог");
         assert_eq!(
             last.kind,
@@ -3222,6 +4097,9 @@ mod tests {
             spell: "ice_shard".into(),
             charges: 5,
             max: 5,
+            glyph: None,
+            detail: None,
+            rarity: None,
         });
         store.apply(evt(
             "evt/item/state",
@@ -3402,6 +4280,34 @@ mod tests {
     }
 
     #[test]
+    fn char_buffs_full_replacement() {
+        let mut store = in_game();
+        // M18/F58d: полная замена списка баффов (паттерн evt/crime/status).
+        let expires = local_epoch() + 30;
+        store.apply(evt(
+            "evt/char/buffs",
+            serde_json::json!({
+                "buffs": [
+                    { "kind": "rune_marksman", "title": "Меткость",
+                      "stacks": 2, "expires_at": expires }
+                ]
+            }),
+        ));
+        let buffs = &store.snapshot.as_ref().unwrap().char.buffs;
+        assert_eq!(buffs.len(), 1);
+        assert_eq!(buffs[0].kind, "rune_marksman");
+        assert_eq!(buffs[0].stacks, 2);
+        assert_eq!(buffs[0].expires_at, expires, "срок сервера не изменён");
+
+        // Пустой список — снятие всех баффов.
+        store.apply(evt("evt/char/buffs", serde_json::json!({ "buffs": [] })));
+        assert!(
+            store.snapshot.as_ref().unwrap().char.buffs.is_empty(),
+            "пустая замена снимает баффы"
+        );
+    }
+
+    #[test]
     fn crime_statuses_replace_add_remove_without_recalculation() {
         let mut store = in_game();
         // Полная замена (§8): клиент хранит как есть, без пересчёта blend (§4.10).
@@ -3515,6 +4421,32 @@ mod tests {
         assert!(store.crime_log_loaded);
         assert_eq!(store.crime_log.len(), 1);
         assert_eq!(store.crime_log[0].delta_s, 3471);
+    }
+
+    #[test]
+    fn filter_active_buffs_hides_expired() {
+        use ld2_protocol::types::BuffState;
+        let now = 1_000;
+        let buffs = vec![
+            BuffState {
+                kind: "rune_marksman".into(),
+                title: "Меткость".into(),
+                stacks: 2,
+                expires_at: now + 30,
+                extra: Default::default(),
+            },
+            BuffState {
+                kind: "rune_rage".into(),
+                title: "Ярость".into(),
+                stacks: 1,
+                expires_at: now,
+                extra: Default::default(),
+            },
+        ];
+        let active = filter_active_buffs(&buffs, now);
+        assert_eq!(active.len(), 1, "просроченный не показывается");
+        assert_eq!(active[0].kind, "rune_marksman");
+        assert!(filter_active_buffs(&[], now).is_empty());
     }
 
     #[test]

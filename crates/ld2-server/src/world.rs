@@ -28,6 +28,19 @@ pub struct LiveMob {
     pub damage: i64,
     /// Следующая атака моба (epoch, мс).
     pub next_attack_at: i64,
+    /// M18/F58d (ADR-012 §5): дебаффы рун на мобе.
+    /// Стан (эпоха, мс): моб не атакует, пока не истёк.
+    pub stun_until: i64,
+    /// Корни (эпоха, мс): обездвиживание — **вступит в силу с
+    /// перемещением мобов** (решение заказчика 2026-11-15); сейчас
+    /// поле хранится, но на бой не влияет.
+    pub root_until: i64,
+    /// Кровотечение (DoT): урон в секунду, срок и следующий тик.
+    pub bleed_dps: i64,
+    pub bleed_until: i64,
+    pub bleed_next_at: i64,
+    /// Кто наложил кровотечение — XP за добивание от DoT.
+    pub bleed_src: Option<String>,
 }
 
 impl LiveMob {
@@ -87,6 +100,56 @@ pub struct CombatState {
     pub next_attack_at: i64,
 }
 
+/// M18/F58d (ADR-012 §5): руна в **экипированном** оружии — параметры
+/// авто-приёма для `plan_combat` (синхронный доступ без БД; сборка —
+/// `session::refresh_char_runes` на входе/экипировке/инкрустации/касте).
+#[derive(Debug, Clone)]
+pub struct SocketedRune {
+    /// uid предмета-носителя (запись charges в БД из плана).
+    pub staff_uid: String,
+    pub socket_index: u32,
+    pub def_id: String,
+    pub spell: String,
+    /// Шанс срабатывания при ударе, 0..1 (контент `stats.chance`).
+    pub chance: f64,
+    /// Урон при срабатывании (контент `stats.damage`).
+    pub damage: i64,
+    /// Затрата зарядов (деф 1, `stats.cost`).
+    pub cost: i64,
+    /// Остаток зарядов (кэш синхронизируется с БД при изменениях).
+    pub charges: i64,
+    /// Бафф персонажа при срабатывании (контент `stats.buff`).
+    pub buff: Option<RuneBuff>,
+    /// Эффект на цель-моба при срабатывании (контент `stats.effect`):
+    /// `stun`/`root`/`bleed` (ADR-012 §5, M18/F58d).
+    pub effect: Option<RuneEffect>,
+}
+
+/// M18/F58d: эффект руны на моба (контент `stats.effect`).
+#[derive(Debug, Clone)]
+pub struct RuneEffect {
+    /// `stun` | `root` | `bleed`.
+    pub kind: String,
+    /// Для `bleed` — урон/сек; для stun/root не используется.
+    pub value: i64,
+    pub duration_s: i64,
+}
+
+/// M18/F58d: параметры баффа руны (контент `stats.buff`).
+#[derive(Debug, Clone)]
+pub struct RuneBuff {
+    /// Ключ баффа — def_id руны (стаки разных рун не смешиваются).
+    pub kind: String,
+    /// Отображаемое название (сервер — истина, §8).
+    pub title: String,
+    /// Параметр (`accuracy`/`crit_chance`/`armor`/…).
+    pub param: String,
+    pub value: i64,
+    pub pct: bool,
+    pub duration_s: i64,
+    pub max_stacks: i32,
+}
+
 /// Состояние мира, общее для всех соединений.
 #[derive(Default)]
 pub struct World {
@@ -108,6 +171,9 @@ pub struct World {
     /// M17/F30g: период атаки персонажа, мс — из `cooldown_s`
     /// оружия в правой руке; `None` → конфиг `combat.attack_interval_s`.
     char_attack: HashMap<String, i64>,
+    /// M18/F58d (ADR-012 §5): руны экипированного оружия — авто-приёмы
+    /// в `plan_combat` (как `char_hits`: вход/экипировка/инкрустация).
+    char_runes: HashMap<String, Vec<SocketedRune>>,
     corpse_seq: u64,
 }
 
@@ -140,6 +206,106 @@ impl World {
     /// M17/F30g: текущий период атаки, мс (`None` — из конфига).
     pub fn char_attack_ms(&self, char_id: &str) -> Option<i64> {
         self.char_attack.get(char_id).copied()
+    }
+
+    /// M18/F58d: руны экипированного оружия (пусто — не экипировано
+    /// или руны без `chance` не участвуют в авто-приёме).
+    pub fn char_runes(&self, char_id: &str) -> &[SocketedRune] {
+        self.char_runes
+            .get(char_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// M18/F58d: заменить кэш рун персонажа (сборка — `refresh_char_runes`).
+    pub fn set_char_runes(&mut self, char_id: &str, runes: Vec<SocketedRune>) {
+        if runes.is_empty() {
+            self.char_runes.remove(char_id);
+        } else {
+            self.char_runes.insert(char_id.to_string(), runes);
+        }
+    }
+
+    /// M18/F58d: расход зарядов в кэше (план авто-приёма; БД — в
+    /// `tick_once` по `Plan::rune_work`).
+    pub fn spend_char_rune(&mut self, char_id: &str, socket_index: u32, charges: i64) {
+        if let Some(runes) = self.char_runes.get_mut(char_id) {
+            if let Some(rune) = runes.iter_mut().find(|r| r.socket_index == socket_index) {
+                rune.charges = charges;
+            }
+        }
+    }
+
+    /// M18/F58d (ADR-012 §5): наложить эффект руны на моба —
+    /// `stun`/`root`/`bleed` (контент `stats.effect`). `root` — поле
+    /// под будущее перемещение мобов; `bleed` тикает в `plan_combat`.
+    pub fn apply_rune_effect(
+        &mut self,
+        mob_id: &str,
+        kind: &str,
+        value: i64,
+        duration_s: i64,
+        src_char_id: &str,
+        now_ms: i64,
+    ) {
+        let Some(mob) = self.mobs.get_mut(mob_id) else {
+            return;
+        };
+        let until = now_ms + duration_s.max(0) * 1000;
+        match kind {
+            "stun" => mob.stun_until = until,
+            "root" => mob.root_until = until,
+            "bleed" => {
+                // Продление активного кровотечения НЕ сбрасывает таймер
+                // тика (иначе частые удары не дают DoT дотикнуть).
+                if mob.bleed_dps == 0 || mob.bleed_until <= now_ms {
+                    mob.bleed_dps = value.max(1);
+                    mob.bleed_next_at = now_ms + 1000; // первый тик через секунду
+                    mob.bleed_src = Some(src_char_id.to_string());
+                }
+                mob.bleed_until = until;
+            }
+            _ => {}
+        }
+    }
+
+    /// M18/F58d: стан моба активен на `now_ms` (атаки пропускаются).
+    pub fn mob_stunned(&self, mob_id: &str, now_ms: i64) -> bool {
+        self.mobs.get(mob_id).is_some_and(|m| m.stun_until > now_ms)
+    }
+
+    /// M18/F58d: мобы с активным кровотечением, у которых на `now_ms`
+    /// пора тикнуть → `(id, dps, next_at, src)`.
+    pub fn bleeding_mobs(&self, now_ms: i64) -> Vec<(String, i64, i64, Option<String>)> {
+        self.mobs
+            .values()
+            .filter(|m| m.bleed_dps > 0 && m.bleed_until >= now_ms && m.bleed_next_at <= now_ms)
+            .map(|m| {
+                (
+                    m.id.clone(),
+                    m.bleed_dps,
+                    m.bleed_next_at,
+                    m.bleed_src.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// M18/F58d: продвинуть тик кровоточащего моба (следующий через 1 с).
+    pub fn advance_bleed_tick(&mut self, mob_id: &str, now_ms: i64) {
+        if let Some(mob) = self.mobs.get_mut(mob_id) {
+            mob.bleed_next_at = now_ms + 1000;
+            if mob.bleed_until <= now_ms {
+                mob.bleed_dps = 0; // срок истёк — чистим
+            }
+        }
+    }
+
+    /// M18/F58d: локация моба (для рассылки событий DoT) и его имя.
+    pub fn mob_loc_name(&self, mob_id: &str) -> Option<(String, String)> {
+        self.mobs
+            .get(mob_id)
+            .map(|m| (m.location_id.clone(), m.name.clone()))
     }
 
     /// Загрузить живых мобов из сида (вызывается после content-сида).
@@ -181,6 +347,12 @@ impl World {
                         aggro: e.aggro.unwrap_or(false),
                         damage,
                         next_attack_at: 0,
+                        stun_until: 0,
+                        root_until: 0,
+                        bleed_dps: 0,
+                        bleed_until: 0,
+                        bleed_next_at: 0,
+                        bleed_src: None,
                     },
                 );
             }
@@ -459,6 +631,69 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M18/F58d: дебаффы рун — стан блокирует атаки до срока, bleed
+    /// тикает по расписанию, корни хранятся (движение — позже).
+    #[test]
+    fn rune_debuffs_stun_bleed_root_lifecycle() {
+        let mut world = World::default();
+        let row = (
+            "l_forest".to_string(),
+            serde_json::json!([{
+                "id": "m_w", "kind": "monster", "name": "Волк",
+                "hp": { "cur": 18, "max": 18 },
+                "difficulty": 3, "aggro": true, "damage": 6
+            }]),
+        );
+        world.seed_mobs(&[row]);
+        let now = 1_000_000_i64;
+
+        // Стан: активен ровно duration, потом снимается.
+        assert!(!world.mob_stunned("m_w", now), "до эффекта не стан");
+        world.apply_rune_effect("m_w", "stun", 0, 3, "c1", now);
+        assert!(world.mob_stunned("m_w", now + 2_999), "стан активен");
+        assert!(!world.mob_stunned("m_w", now + 3_001), "стан истёк");
+
+        // Кровотечение: первый тик через секунду, dps из контента,
+        // источник сохранён для XP.
+        world.apply_rune_effect("m_w", "bleed", 3, 6, "c1", now);
+        assert_eq!(world.bleeding_mobs(now), Vec::new(), "тиков ещё не было");
+        let due = world.bleeding_mobs(now + 1_000);
+        assert_eq!(due.len(), 1, "пора тикнуть");
+        assert_eq!(due[0].1, 3, "dps из эффекта");
+        assert_eq!(due[0].3.as_deref(), Some("c1"), "источник для XP");
+        world.advance_bleed_tick("m_w", now + 1_000);
+        assert_eq!(
+            world.bleeding_mobs(now + 1_500),
+            Vec::new(),
+            "следующий тик только через секунду"
+        );
+
+        // Срок истёк — снимаем (bleed_dps обнуляется).
+        world.apply_rune_effect("m_w", "bleed", 3, 2, "c1", now);
+        world.advance_bleed_tick("m_w", now + 5_000);
+        let mobs = world.bleeding_mobs(now + 6_000);
+        assert!(mobs.is_empty(), "истёкший DoT не тикает: {mobs:?}");
+
+        // Регрессия: частые пере-наложения (шанс 1.0) продлевают срок,
+        // но НЕ сбрасывают тик — иначе DoT никогда не дотикает.
+        world.apply_rune_effect("m_w", "bleed", 3, 6, "c1", now);
+        let next_before = world.bleeding_mobs(now + 1_000);
+        assert_eq!(next_before.len(), 1, "тикер назначен");
+        world.apply_rune_effect("m_w", "bleed", 3, 6, "c1", now + 500);
+        world.apply_rune_effect("m_w", "bleed", 3, 6, "c1", now + 900);
+        let due = world.bleeding_mobs(now + 1_000);
+        assert_eq!(due.len(), 1, "тик не сброшен пере-наложением");
+        world.advance_bleed_tick("m_w", now + 1_000);
+
+        // Корни: поле хранится (перемещение мобов появится позже) и не
+        // путается со станом — стан к этому моменту уже истёк.
+        world.apply_rune_effect("m_w", "root", 0, 5, "c1", now);
+        assert!(
+            !world.mob_stunned("m_w", now + 10_000),
+            "root не блокирует атаки (≠ стан)"
+        );
+    }
 
     /// M17/F30g: период атаки — из cooldown_s оружия; снятие оружия
     /// убирает значение (в plan берётся конфиг).

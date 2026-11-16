@@ -176,10 +176,11 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "chat": { "server_history": 200,
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
-  "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
-  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
-  "magic": { "rune_recharge": "item", "scroll_requires_target": true,
+  "inventory": { "slots": 100, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
+  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
+  "magic": { "rune_recharge": "time", "scroll_requires_target": true,  // time|item (M18/F58c)
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
+  "quests": { "max_active": 10 },             // M18/F36: лимит текущих квестов
   "characters": [
     { "id": "c1", "name": "Ким", "profile": "warrior", "location": "Черный лес",
       "summary": "Навыки: меч 3, аркана 1", "crime": ["murderer"], "online": true }
@@ -235,16 +236,28 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },
   "requires": { "attr": { "int": 12 }, "profession": null, "level": null },
-  "sockets": [ { "index": 0, "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
-               { "index": 1, "rune": null } ],
+  "sockets": [ { "index": 0, "accepts": "rune",              // M18/F58 (ADR-012): тип слота: rune|gem; аддитивно
+                    "rune": { "name": "Руна огня", "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12,
+                              "glyph": "f",                   // M18/F58f: знак руны (контент stats.glyph); аддитивно
+                              "detail": ["+12 к урону"],       // подпись слота (что даёт); сервер-строки §8
+                              "rarity": "uncommon" } },      // M18/F58f: раритет вставленного — знак самоцвета
+               { "index": 1, "accepts": "rune", "rune": null } ],   // старый сервер поля не шлёт → клиент фолбэчит
   "slot": "main_hand", "hands": 2,         // M17/F30b: слот предмета (ring/artifact —
                                             // псевдослоты пар) и руки (2 — двуручник)
   "def_id": "dagger_knife",              // M17/F30g: ключ кулдауна использования
-  "qty": 1, "gold_value": 120 }
+  "qty": 1, "gold_value": 120,
+  "bonuses": [ { "kind": "attr",  "id": "str",      "value": 3 },   // M18/F47 (ADR-010):
+               { "kind": "param", "id": "accuracy", "value": 4, "pct": true } ] }
+                                            // бонусы: kind ∈ attr|param|skill; pct — только у
+                                            // param (суммируются к итогу); без поля — нет бонусов
 
 // SkillSnapshot
 { "id": "sword", "name": "Владение мечом", "description": "+2% физ. урона мечом",
   "rank": 3, "xp": 612, "xp_to_next": 480 }      // description опционально (M14/F17)
+
+// BuffState (M18/F58d, ADR-012 §6): активный бафф руны в char.buffs
+{ "kind": "rune_marksman", "title": "Меткость",     // kind — ключ, title — для UI
+  "stacks": 2, "expires_at": 1762140341 }           // стак 1..=max_stacks, epoch-сек
 
 // CrimeStatus
 { "kind": "murderer", "severity": "high", "expires_at": 1762150000 }
@@ -252,7 +265,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 // QuestState
 { "id": "q_boars", "title": "Кабаны", "state": "active",     // available|active|turn_in|done
   "goals": [ { "text": "Кабанов убито", "cur": 2, "need": 5 } ],
-  "reward_preview": { "xp": 450, "items": [] } }
+  "reward_preview": { "xp": 450, "items": [] },
+  "reward_label": "450 XP в пул" }                             // M18/F36, опц.
 ```
 
 ---
@@ -269,34 +283,39 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `auth.logout` | `{}` | `{}` | + | выход |
 | `session.refresh` | `{}` | `{access_token, expires_in_s}` | + | ротация токена |
 | `char.list` | `{}` | `{characters[]}` | + | список персонажей |
-| `char.create` | `{name, profile}` | `{character}` | − | создание (profile: Воин/Лучник/Маг, список — capability сервера) |
+| `char.create` | `{name, profile, gender?}` | `{character}` | − | создание (profile: Воин/Лучник/Маг, список — capability сервера; gender `male`\|`female`, без поля → `male` — M18/F34) |
 | `char.select` | `{char_id}` | `{}` (→ `evt/state/snapshot`) | + | вход в мир |
 | `char.delete` | `{char_id}` | `{}` | − | удаление |
-| `char.xp_invest` | `{skill_id, points}` | `{pool_left}` | − | вложить очки опыта в навык |
+| `skill.train` | `{entity_id, skill_id}` | `{rank, xp, xp_to_next, pool_left}` | − | повышение ранга навыка **у тренера в диалоге** (M18/F44, ADR-009): гейты — тренер в локации (`E_NO_TRAINER`), **шкала 100 %** (`E_SKILL_NOT_READY`), очки опыта (`E_XP_POOL`), плата из контента диалога (`E_INGREDIENTS`), потолок/атрибут (`E_RANK_CAP`/`E_REQUIREMENT_ATTR`); списывает очки пула, шкала обнуляется; заменяет `char.xp_invest` |
 | `location.look` | `{}` | `{location}` | + | перерисовать локацию |
 | `location.move` | `{exit_id}` | `{location}` | − | переход |
 | `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа |
+| `npc.talk` | `{entity_id}` | `{dialog: {id, name}, node, quests[], actions[], training[]}` | + | диалог NPC: **корень ветки** (`node`: `{id, text, quest?, replies: [{id, text, wait_s?, action?}]}`; `wait_s` — секунды до конца кулдауна целевой строки: ответ показывается **неактивным** с таймером, без поля — активен; `action` — действие вместо перехода (`"shop"` → панель магазина, `"train"` → панель обучения; клиент шлёт `shop.list`/`skill.train`); ответы с не выполненными условиями скрыты; `node: null` — нет записи), доступные квесты, `actions`, `training: [{skill, points, gold, items?}]` — чему NPC учит и по какой цене (M18/F35, ветки F37/F42/F43/F44; `greeting` убран — ADR-008, обучение — ADR-009) |
+| `npc.reply` | `{entity_id, node_id, reply_id}` | `{node: {...}\|null, quests[]}` | − | ответ персонажа — переход по ветке (`node` — форма из `npc.talk`, включая `wait_s`); `node: null` — конец диалога (M18/F37, ADR-008) |
+| `shop.list` | `{entity_id}` | `{shop: {tabs: [{currency, currency_name, items[]}]}}` | + | товары NPC с ценами (база `gold_value` × наценка сервера × наценка торговца × скидка; `actions` в `npc.talk` содержит `shop`) (M18/F39) |
+| `shop.buy` | `{entity_id, currency, def_id}` | `{}` | − | покупка: списание валюты (события) + выдача предмета; `E_NOT_ENOUGH_MONEY` / `E_INVENTORY_FULL` (M18/F39) |
 | `combat.attack` | `{target_id}` | `{}` | − | удар |
 | `combat.stop` | `{}` | `{}` | + | выйти из боя |
 | `combat.flee` | `{}` | `{}` | − | попытка сбежать |
 | `skill.use` | `{skill_id, target_id?}` | `{}` | − | активный навык |
 | `item.use` | `{item_uid, target_id?}` | `{}` | − | зелье/свиток-прочее (M17/F30g: кулдаун `cooldown_s`, дефолт 1 с → `E_COOLDOWN`) |
+| `item.use` (камень) | `{item_uid}` | `{stone_uid, quality}` | − | **M18/F54:** `type=upgrade_stone` — выбирает активный камень усиления (не расходуется); ack несёт uid и качество в процентных пунктах. Следующие `upgrade.preview`/`start` работают с ним, 1 шт. списывается на старте |
 | `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
 | `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны посоха |
-| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) |
+| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие) |
 | `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune, char?}` | − | извлечение (цель надета — ack несёт `char`, M18/F32) |
-| `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после» |
-| `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение |
+| `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после»; **M18/F54:** без активного камня → `E_INGREDIENTS`; `chance` уже включает бонус камня × рейты сервера |
+| `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение; **M18/F54:** тратит 1 шт. активного камня (`evt/item/state` qty−1 либо `evt/item/removed`), камень сбрасывается |
 | `craft.list` | `{}` | `{professions[]}` | + | мои профессии: id/ранг/xp |
 | `craft.recipes` | `{profession?}` | `{recipes[]}` | + | список рецептов |
 | `craft.learn` | `{profession_id}` | `{profession}` | − | изучить профессию у NPC |
 | `craft.start` | `{recipe_id, qty}` | `{}` (→ `evt/craft/result`) | − | крафт |
 | `quest.list` | `{}` | `{quests[]}` | + | журнал квестов |
-| `quest.accept` / `quest.turn_in` / `quest.abandon` | `{quest_id}` | `{quest}` | − | взаимодействие |
+| `quest.accept` / `quest.turn_in` / `quest.abandon` | `{quest_id}` | `{quest}` | − | взаимодействие; `accept` ограничен `quests.max_active` (§5, M18/F36 → `E_QUEST_LIMIT`) |
 | `crime.log` | `{limit?}` | `{entries[]}` | + | журнал нарушений |
 | `chat.send` | `{channel, text, to?}` | `{}` (→ `evt/chat.message`) | − | сообщение (`system` — только admin/moderator) |
 | `chat.delete` | `{id}` | `{}` (→ `evt/chat.deleted`) | − | удаление сообщения (admin/moderator, M14/F19) |
@@ -372,6 +391,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ### Преступность (см. §10)
 | Событие | Payload | Назначение |
 |---|---|---|
+| `evt/char/buffs` | `{ buffs: [BuffState] }` | M18/F58d: полная замена списка баффов рун (стак/таймер) |
 | `evt/crime/status` | `{ statuses: [CrimeStatus], log_hint }` | **полная замена** списка статусов |
 | `evt/crime/added` | `{ status, log_entry }` | новый срок (дополняет журнал) |
 | `evt/crime/removed` | `{ kind }` | статус истёк (fallback: клиент снимает по `expires_at`) |
@@ -406,15 +426,19 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_CHAR_LIMIT` | слотов персонажей больше нет (`char_slot_limit`) |
 | `E_NAME_TAKEN` | имя занято/невалидно |
 | `E_BAD_PROFILE` | неизвестный/недоступный `profile` в `char.create` |
+| `E_BAD_GENDER` | неизвестное значение `gender` в `char.create` (M18/F34: `male`\|`female`) |
+| `E_QUEST_LIMIT` | взятых квестов больше `quests.max_active` в `quest.accept` (M18/F36) |
+| `E_NOT_ENOUGH_MONEY` | не хватает валюты в `shop.buy` (M18/F39) |
 | `E_NOT_IN_LOCATION` | команда вне контекста локации |
-| `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `char.xp_invest`, M14) |
+| `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `skill.train`, M14/M18) |
 | `E_EXIT_BLOCKED` | выход закрыт (завал, требование, правило) |
 | `E_TARGET_GONE` | цели нет (умерла/ушла) |
 | `E_NOT_IN_COMBAT` / `E_IN_COMBAT` | бой разрешён/запрещён здесь |
 | `E_COOLDOWN` | действие на кулдауне |
-| `E_NO_CHARGES` | у руны нет зарядов |
+| `E_NO_CHARGES` | у руны нет зарядов (меньше затраты `cost`, M18/F58c) |
 | `E_NOT_ENOUGH_MP` | не хватает маны для каста (D4: руна тратит ману + заряд) |
 | `E_NO_RUNE_SLOT` | предмет без свободного/подходящего сокета |
+| `E_DUPLICATE_RUNE` | та же руна уже вставлена в предмет (не стакается, M18/F58f) |
 | `E_REQUIREMENT_ATTR` | не хватает атрибута/уровня |
 | `E_PROFESSION` | нет требуемой профессии |
 | `E_INVENTORY_FULL` | инвентарь заполнен |
@@ -426,8 +450,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_PARTY_FULL` / `E_GUILD_LIMIT` | лимиты группы/гильдии |
 | `E_GUILD_PERMISSION` | нет прав (ранг) |
 | `E_PERMISSION` | нет прав роли аккаунта (модерация чата, M14/F19) |
-| `E_XP_POOL` | не хватает очков опыта (`char.xp_invest`) |
+| `E_XP_POOL` | не хватает очков опыта (`skill.train`) |
 | `E_RANK_CAP` | достигнут потолок ранга навыка/профессии |
+| `E_SKILL_NOT_READY` | шкала навыка не заполнена на 100 % — повышение ранга недоступно (`skill.train`, M18/F44) |
 | `E_PROFESSION_LIMIT` | превышен `profession_limit` первичных профессий |
 | `E_STATION_REQUIRED` | для рецепта нет станка в локации |
 | `E_TOOL_MISSING` | нет требуемого инструмента в инвентаре |
@@ -530,6 +555,8 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 ### 12.5 Улучшение предмета
 
 ```jsonc
+→ { "v":1, "type":"cmd/item.use", "seq":20, "payload": { "item_uid":"i_st1" } }   // выбрать камень
+← ack { "stone_uid":"i_st1", "quality":5 }
 → { "v":1, "type":"cmd/upgrade.preview", "seq":21, "payload": { "item_uid":"i_17" } }
 ← ack { "preview_id":"pv_7","delta":{"magic":"+2"},"cost":{"gold":300,"materials":{"rune_dust":2}},
         "chance":0.75 }
@@ -538,6 +565,8 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 ← { "v":1, "type":"evt/upgrade/result", "ts":"…", "state_version":1382, "payload":
     { "uid":"i_17","ok":true,"new_upgrade":3,"item_destroyed":false,
       "cost":{"gold":300,"materials":{"rune_dust":2}} } }
+← { "v":1, "type":"evt/item/removed", "ts":"…", "state_version":1383,
+    "payload": { "uid":"i_st1","reason":"consumed" } }   // камень потрачен (M18/F54)
 ← { "v":1, "type":"evt/item/state", "ts":"…", "state_version":1382,
     "payload": { "uid":"i_17","patch": { "upgrade":3 } } }
 ```
@@ -555,8 +584,9 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 - [ ] `cmd/auth.register`: лимиты длины из конфига (`E_WEAK_PASSWORD`), уникальность
       (`E_LOGIN_TAKEN`), выключенный флаг (`E_REGISTER_DISABLED`), rate-limit → `E_RATE_LIMITED`;
       email: синтаксис/нормализация (`E_BAD_EMAIL`), уникальность (`E_EMAIL_TAKEN`, D33).
-- [ ] `craft.learn`/`char.xp_invest`: тренер в локации (`E_NO_TRAINER`), оплата золотом/предметами
-      по цене тренера (`E_INGREDIENTS`, M14); кулдаун/гейт `skill.use` (`E_COOLDOWN`/`E_REQUIREMENT_ATTR`).
+- [ ] `craft.learn`/`skill.train`: тренер в локации (`E_NO_TRAINER`), оплата золотом/предметами
+      (`E_INGREDIENTS`, M14/M18); у `skill.train` — гейт шкалы 100 % (`E_SKILL_NOT_READY`) и очки
+      опыта (`E_XP_POOL`); кулдаун/гейт `skill.use` (`E_COOLDOWN`/`E_REQUIREMENT_ATTR`).
 - [ ] Модель преступности §10 через конфиг `crime.*`; статусы включаются присутствием `kind` в `crime.kinds` (в моке: murderer, marauder, **thief**).
 - [ ] Мана (D4): сервер проверяет `mp` перед кастом руны (`E_NOT_ENOUGH_MP`), свитки — без маны; реген по `magic.mana` из §5.
 - [ ] Неизвестные `cmd` от клиента (старее/новее по версии) — `E_INTERNAL`/игнор по §11, без падений.
@@ -570,6 +600,35 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 - [ ] Все лимиты из §5 (никаких `MAX_CHARS` в коде).
 - [ ] `evt/crime/status` — полная замена; fallback-истечение по `expires_at`; **никаких собственных расчётов blend**.
 - [ ] Мана: mp-бар из `char.mp`; при `E_NOT_ENOUGH_MP`/`E_NO_CHARGES` — приглушение иконки с причиной; `mp_left`/`charges_left` из `evt/magic/cast` — отображение бейджей.
+
+## 15. Discovery подключения (вне WS-контракта, M19/ADR-013)
+
+Клиент хранит в настройках **домен** (не полный WS-URL) и до подключения
+резолвит адрес сервера — смена адреса сервера не требует перевыпуска
+клиента. `GET https://<домен>/.well-known/ld2.json` (в dev-сборке для
+localhost допустим `http://`):
+
+```jsonc
+// 200 OK; секция [discovery] сервера не настроена → 404 (discovery выключен)
+{
+  "address": "wss://game.example.com/ws", // единственный обязательный ключ
+  "version": 1,                            // версия WS-контракта (§2, envelope::PROTOCOL_VERSION)
+  "min_client": "0.18.0"                   // опц.: из [server].min_client (§5); клиент старше → отказ
+}
+```
+
+Правила клиента (§11-совместимо, вне WS):
+
+- ввод настроек с `ws://`/`wss://` — **прямой режим** (dev/отладка), без discovery;
+- иначе — домен: `https://<домен>/.well-known/ld2.json`; `address` обязан
+  быть `ws(s)://` и проходить guard release (§8: внешний `ws://` запрещён);
+- `version` ≠ версии клиента → отказ («контракт требует обновления
+  клиента»); `min_client` новее версии клиента → отказ («нужно обновление
+  клиента»); недоступен/некорректен документ → понятная ошибка, без
+  подключения; результат кэшируется до смены домена.
+
+Сервер: маршрут в `app.rs` рядом с `/healthz`, адрес из `[discovery]
+address` (TOML), `min_client` — из `[server].min_client`.
 
 ---
 

@@ -5,7 +5,7 @@
 //! (или наоборот) ломает эти тесты.
 
 use ld2_protocol::cmd::{
-    AuthLogin, CharCreate, CharXpInvest, ChatSend, GuildRankSet, LocationMove, MagicRuneCast, Ping,
+    AuthLogin, CharCreate, ChatSend, GuildRankSet, LocationMove, MagicRuneCast, Ping, SkillTrain,
     StateResync, TradeAddItem,
 };
 use ld2_protocol::evt::{
@@ -13,7 +13,7 @@ use ld2_protocol::evt::{
     TradeState,
 };
 use ld2_protocol::features::SessionConfig;
-use ld2_protocol::types::{ItemSnapshot, Mp, Severity};
+use ld2_protocol::types::{ItemSnapshot, Mp, Severity, StoneSelected};
 use ld2_protocol::{Ack, Command, Envelope, ErrorCode};
 
 const TS: &str = "2026-11-03T12:00:00Z";
@@ -44,9 +44,10 @@ const SESSION_START_JSON: &str = r#"{
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
   "inventory": { "slots": 40, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
-  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true },
-  "magic": { "rune_recharge": "item", "scroll_requires_target": true,
+  "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
+  "magic": { "rune_recharge": "time", "scroll_requires_target": true,
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
+  "quests": { "max_active": 10 },
   "characters": [
     { "id": "c1", "name": "Ким", "location": "Черный лес",
       "summary": "Навыки: меч 3, аркана 1", "crime": ["murderer"], "online": true }
@@ -62,9 +63,18 @@ fn session_start_matches_doc_example() {
     assert_eq!(cfg.profession_limit, 2, "D10");
     // M14/F19: роль аккаунта; отсутствие поля (старый сервер) → player.
     assert_eq!(cfg.role, "player");
-    let legacy = SESSION_START_JSON.replace(r#""role": "player","#, "");
+    // M18/F36: лимит текущих квестов §5.
+    assert_eq!(cfg.quests.max_active, 10, "quests.max_active §5");
+    assert!((cfg.upgrade.duration_s - 3.0).abs() < f64::EPSILON);
+    let legacy = SESSION_START_JSON
+        .replace(r#""role": "player","#, "")
+        .replace(r#""quests": { "max_active": 10 },"#, "");
     let old_cfg: SessionConfig = serde_json::from_str(&legacy).expect("legacy §5");
     assert_eq!(old_cfg.role, "player", "serde(default) для старых серверов");
+    assert_eq!(
+        old_cfg.quests.max_active, 10,
+        "M18/F36: старый сервер без quests → дефолт10 (§11)"
+    );
     assert_eq!(cfg.crime.t_max_s, 604800);
     assert!((cfg.crime.blend_k - 0.5).abs() < f64::EPSILON);
     assert_eq!(cfg.crime.kinds.len(), 3, "D5: Убийца + Мародёр + Вор");
@@ -98,7 +108,7 @@ fn session_start_matches_doc_example() {
 const SNAPSHOT_JSON: &str = r#"{
   "state_version": 1337,
   "char": {
-    "id": "c1", "name": "Ким",
+    "id": "c1", "name": "Ким", "gender": "male",
     "attrs": { "str": 14, "int": 9 },
     "skills": [ { "id": "sword", "group": "weapon",
                   "rank": 3, "xp": 612, "xp_to_next": 480 } ],
@@ -121,13 +131,18 @@ const SNAPSHOT_JSON: &str = r#"{
     "equip": { "main_hand": "i_17", "off_hand": null },
     "inventory": [ { "uid": "i_17", "type": "staff", "name": "Ясеневый посох",
                      "rarity": "rare", "upgrade": 2, "stats": {},
-                     "sockets": [ { "index": 0, "rune": { "name": "Руна огня",
-                       "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12 } },
-                                  { "index": 1, "rune": null } ] } ],
+                     "sockets": [ { "index": 0, "accepts": "rune",
+                       "rune": { "name": "Руна огня",
+                       "spell": "fire_dart", "charges": 7, "max": 10, "damage": 12,
+                       "glyph": "f", "detail": ["+12 к урону"],
+                       "rarity": "uncommon" } },
+                                  { "index": 1, "accepts": "rune", "rune": null } ] } ],
     "crime": { "statuses": [ { "kind": "murderer", "severity": "high",
                                "expires_at": 1762150000 } ] },
     "quests": [ { "id": "q_boars", "state": "active",
-                  "goals": [ { "text": "Кабанов убито", "cur": 2, "need": 5 } ] } ]
+                  "goals": [ { "text": "Кабанов убито", "cur": 2, "need": 5 } ] } ],
+    "buffs": [ { "kind": "rune_marksman", "title": "Меткость",
+                 "stacks": 2, "expires_at": 1762140341 } ]
   },
   "location": { "id": "l_forest", "name": "Черный лес", "flags": ["pvp"],
                 "text": "Сосны давят тьмою…",
@@ -149,6 +164,16 @@ fn snapshot_matches_doc_example() {
     let snap: StateSnapshot = serde_json::from_str(SNAPSHOT_JSON).expect("снапшот парсится");
     assert_eq!(snap.state_version, 1337);
     assert_eq!(snap.char.hp.cur, 42);
+    assert_eq!(
+        snap.char.gender, "male",
+        "M18/F34: пол в снапшоте (без поля старого сервера → male)"
+    );
+    // M18/F58d (ADR-012 §6): баффы рун — стак + таймер.
+    assert_eq!(snap.char.buffs.len(), 1, "бафф в §6-примере");
+    assert_eq!(snap.char.buffs[0].kind, "rune_marksman");
+    assert_eq!(snap.char.buffs[0].title, "Меткость");
+    assert_eq!(snap.char.buffs[0].stacks, 2);
+    assert_eq!(snap.char.buffs[0].expires_at, 1762140341);
     assert_eq!(
         snap.char.mp,
         Mp { cur: 45, max: 60 },
@@ -184,6 +209,37 @@ fn snapshot_matches_doc_example() {
     );
     assert_eq!(snap.char.inventory[0].item_type, "staff");
     assert_eq!(snap.char.inventory[0].upgrade, 2);
+    // M18/F58 (ADR-012): тип слота доходит до клиента из §6-примера.
+    let sockets = snap.char.inventory[0].sockets.as_ref().expect("сокеты");
+    assert_eq!(
+        sockets[0].accepts.as_deref(),
+        Some("rune"),
+        "accepts заполненного слота"
+    );
+    assert_eq!(
+        sockets[1].accepts.as_deref(),
+        Some("rune"),
+        "accepts пустого слота"
+    );
+    // M18/F58f: настраиваемый знак руны (контент-поле glyph) доходит
+    // до клиента; поле аддитивно (§11).
+    assert_eq!(
+        sockets[0].rune.as_ref().and_then(|r| r.glyph.as_deref()),
+        Some("f"),
+        "glyph руны в §6-примере"
+    );
+    // M18/F58f: подпись занятого слота доходит до клиента.
+    assert_eq!(
+        sockets[0].rune.as_ref().and_then(|r| r.detail.as_deref()),
+        Some(&["+12 к урону".to_string()][..]),
+        "detail руны в §6-примере"
+    );
+    // M18/F58f: раритет вставленного — знак самоцвета по раритету.
+    assert_eq!(
+        sockets[0].rune.as_ref().and_then(|r| r.rarity.as_deref()),
+        Some("uncommon"),
+        "rarity в §6-примере"
+    );
     let staff = &snap.char.inventory[0];
     let sockets = staff.sockets.as_ref().expect("сокеты посоха");
     assert_eq!(sockets.len(), 2);
@@ -232,6 +288,7 @@ fn command_envelope_round_trip_per_domain() {
                 &CharCreate {
                     name: "Ким".into(),
                     profile: "warrior".into(),
+                    gender: None,
                 },
             )
             .unwrap(),
@@ -314,9 +371,9 @@ fn command_envelope_round_trip_per_domain() {
             Envelope::command(
                 9,
                 TS,
-                &CharXpInvest {
+                &SkillTrain {
+                    entity_id: "npc_elder".into(),
                     skill_id: "sword".into(),
-                    points: 50,
                 },
             )
             .unwrap(),
@@ -509,6 +566,29 @@ fn ack_ok_and_error_round_trip() {
 
 // ─── предмет (§6): открытые поля и сокеты ────────────────────────────────────
 
+/// M18/F58 (ADR-012): снапшот старого сервера без `accepts`
+/// парсится — поле аддитивное (§11), клиент фолбэчит по типу предмета.
+#[test]
+fn socket_accepts_optional_for_old_server() {
+    let old = r#"{ "uid": "i_9", "type": "weapon", "name": "Меч",
+        "rarity": "common", "upgrade": 0, "stats": {},
+        "sockets": [ { "index": 0, "rune": null } ] }"#;
+    let item: ItemSnapshot = serde_json::from_str(old).expect("старый сервер парсится");
+    let sockets = item.sockets.as_ref().expect("сокеты");
+    assert!(
+        sockets[0].accepts.is_none(),
+        "accepts отсутствует → клиент фолбэчит по типу предмета"
+    );
+    assert!(
+        sockets[0]
+            .rune
+            .as_ref()
+            .and_then(|r| r.glyph.as_deref())
+            .is_none(),
+        "glyph отсутствует → клиент фолбэчит хешем имени руны"
+    );
+}
+
 #[test]
 fn item_snapshot_open_fields_survive() {
     let json = r#"{
@@ -528,4 +608,72 @@ fn item_snapshot_open_fields_survive() {
     // Round-trip сохраняет extra
     let back: ItemSnapshot = serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
     assert_eq!(item, back);
+}
+
+/// M18/F47 (ADR-010): бонусы предмета — аддитивное поле; без поля
+/// парсится (сервер старой версии), round-trip сохраняет.
+#[test]
+fn item_bonuses_round_trip() {
+    let json = r#"{
+      "uid": "i_7", "type": "weapon", "name": "Топор Драккара",
+      "rarity": "epic", "upgrade": 0, "stats": {},
+      "bonuses": [ { "kind": "attr", "id": "str", "value": 3 },
+                   { "kind": "param", "id": "accuracy", "value": 4, "pct": true } ]
+    }"#;
+    let item: ItemSnapshot = serde_json::from_str(json).expect("парсинг бонусов");
+    let bonuses = item.bonuses.as_ref().expect("bonuses есть");
+    assert_eq!(bonuses.len(), 2);
+    assert_eq!(bonuses[0].kind, "attr");
+    assert_eq!(bonuses[0].value, 3);
+    assert!(!bonuses[0].pct, "pct по умолчанию false");
+    assert!(bonuses[1].pct, "процентный бонус");
+    let back: ItemSnapshot = serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
+    assert_eq!(item, back, "round-trip");
+
+    let old = r#"{
+      "uid": "i_8", "type": "potion", "name": "Зелье",
+      "rarity": "common", "upgrade": 0, "stats": {}
+    }"#;
+    let old_item: ItemSnapshot = serde_json::from_str(old).expect("старый сервер");
+    assert!(old_item.bonuses.is_none(), "бонусов нет → None");
+}
+
+/// M18/F34: снапшот старого сервера без `gender` парсится → `male` (§11);
+/// поле в JSON присутствует при сериализации.
+/// M18/F54 (wire): ack выбора камня усиления — дословный выдержка
+/// из `docs/protocol.md` §7 (`item.use` камня). Правка формы ack без
+/// правки типа (или наоборот) ломает этот тест.
+#[test]
+fn stone_selected_ack_matches_doc_example() {
+    const JSON: &str = r#"{ "stone_uid":"i_st1", "quality":5 }"#;
+    let parsed: StoneSelected = serde_json::from_str(JSON).expect("§7 парсится");
+    assert_eq!(parsed.stone_uid, "i_st1");
+    assert_eq!(parsed.quality, 5, "большой камень: +5%");
+
+    // Сериализация — ровно эта форма (сервер отдаёт ack именно так).
+    let encoded = serde_json::to_value(&parsed).expect("сериализация");
+    assert_eq!(
+        encoded,
+        serde_json::from_str::<serde_json::Value>(JSON).unwrap()
+    );
+
+    // Отрицательное качество (малый камень) тоже переживает round-trip.
+    let small: StoneSelected =
+        serde_json::from_str(r#"{ "stone_uid":"i_st0", "quality":-5 }"#).expect("-5 парсится");
+    assert_eq!(small.quality, -5, "малый камень: −5%");
+
+    // Старый сервер без полей → ошибка: поля обязательные (новый ack,
+    // старые клиенты его игнорируют — §11).
+    assert!(serde_json::from_str::<StoneSelected>(r#"{ }"#).is_err());
+}
+
+#[test]
+fn gender_defaults_when_absent() {
+    let json = r#"{ "id": "c1", "name": "Ким",
+        "hp": { "cur": 100, "max": 100 }, "mp": { "cur": 60, "max": 60 } }"#;
+    let state: ld2_protocol::types::CharacterState =
+        serde_json::from_str(json).expect("снапшот без gender парсится");
+    assert_eq!(state.gender, "male", "фолбэк старого сервера");
+    let encoded = serde_json::to_value(&state).expect("сериализация");
+    assert_eq!(encoded["gender"], "male", "поле в JSON");
 }

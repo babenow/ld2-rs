@@ -15,6 +15,7 @@
 //! логика игры и тесты общие.
 
 pub mod config;
+pub mod discovery;
 pub mod l10n;
 pub mod logging;
 pub mod notify;

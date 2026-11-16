@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::features::SessionConfig;
 use crate::types::{
-    CharacterState, CrimeLogEntry, CrimeStatus, Entity, GuildState, Hp, ItemSnapshot, JsonMap,
-    LocationSnapshot, PartyState, ProfessionSnapshot, QuestState,
+    BuffState, CharacterState, CrimeLogEntry, CrimeStatus, Entity, GuildState, Hp, ItemSnapshot,
+    JsonMap, LocationSnapshot, PartyState, ProfessionSnapshot, QuestState,
 };
 
 /// Событие: wire-`type` (`evt/<domain>.<event>`) и (де)сериализация payload'а.
@@ -308,6 +308,10 @@ pub struct UpgradeResult {
     pub item_destroyed: Option<bool>,
     #[serde(default)]
     pub cost: JsonMap,
+    /// M18/F53: длительность анимации улучшения, мс (из конфига
+    /// сервера). Клиент показывает прогресс-бар это время.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -342,6 +346,16 @@ pub struct QuestProgress {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuestUpdated {
     pub quest: QuestState,
+}
+
+// ─── баффы рун (M18/F58d, ADR-012 §6) ───────────────────────────────────────
+
+/// **Полная замена** списка активных баффов (стак/таймер — как
+/// `evt/crime/status`; клиент пересчитывает отображение целиком).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharBuffs {
+    #[serde(default)]
+    pub buffs: Vec<BuffState>,
 }
 
 // ─── преступность (§10, ФР-11) ───────────────────────────────────────────────
@@ -491,6 +505,7 @@ impl_events!(
     (CraftProfession, "evt/craft/profession"),
     (QuestProgress, "evt/quest/progress"),
     (QuestUpdated, "evt/quest/updated"),
+    (CharBuffs, "evt/char/buffs"),
     (CrimeStatusUpdate, "evt/crime/status"),
     (CrimeAdded, "evt/crime/added"),
     (CrimeRemoved, "evt/crime/removed"),
@@ -514,6 +529,7 @@ mod tests {
             StateSnapshot::TYPE,
             CharXp::TYPE,
             MagicCast::TYPE,
+            CharBuffs::TYPE,
             CrimeStatusUpdate::TYPE,
             GuildLog::TYPE,
             SessionConfig::TYPE,

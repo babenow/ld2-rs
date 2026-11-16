@@ -108,6 +108,24 @@ pub struct RuneInfo {
     /// M17/F30g: определение руны — ключ кулдауна каста на клиенте.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub def_id: Option<String>,
+    /// M18/F58f: настраиваемый знак руны — контент-поле `glyph`
+    /// (параметры руны, `stats.glyph`); латинская буква `a..=z`/`A..=Z`
+    /// — глиф шрифта Dwarven Runes. Аддитивно §11: поля нет у сервера
+    /// или руны → клиент фолбэчит стабильным хешем имени руны.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+    /// M18/F58f: раритет вставленного предмета — у самоцвета символ
+    /// в отображении зависит от него (предмет и слот). Сервер кладёт
+    /// при инкрустации (§8); аддитивно §11: поля нет → клиент
+    /// показывает слот прежним символом ◈.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rarity: Option<String>,
+    /// M18/F58f: подпись занятого слота — что даёт вставка (урон/шанс/
+    /// бафф/эффект/трата; для самоцвета — атрибут). Сервер формирует
+    /// при инкрустации (§8 — сервер-истина); аддитивно §11: старый
+    /// сервер/старые записи без поля → клиент показывает без подписи.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Vec<String>>,
 }
 
 /// Сокет посоха: `rune: null` — свободный (`◈◈○` в UI, ФР-09).
@@ -116,6 +134,28 @@ pub struct Socket {
     pub index: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rune: Option<RuneInfo>,
+    /// M18/F58 (ADR-012): тип слота — что он принимает (`rune` | `gem`).
+    /// Аддитивно §11: старый сервер поля не шлёт → клиент фолбэчит по
+    /// типу предмета (прежнее поведение: броня — самоцветы,
+    /// оружие/посох — руны).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepts: Option<String>,
+}
+
+/// M18/F47/ADR-010: бонус предмета — атрибут, параметр или навык
+/// (`kind`: `attr` | `param` | `skill`); `pct` — проценты, только у
+/// `param` (суммируются к итогу).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemBonus {
+    pub kind: String,
+    pub id: String,
+    pub value: i64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pct: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 /// Предмет инвентаря/экипировки/трупа (§6).
@@ -153,6 +193,9 @@ pub struct ItemSnapshot {
     pub qty: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gold_value: Option<i64>,
+    /// M18/F47/ADR-010: бонусы предмета (контент + инстанс) — аддитивно §11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bonuses: Option<Vec<ItemBonus>>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }
@@ -222,6 +265,16 @@ pub struct RewardPreview {
     pub items: Vec<serde_json::Value>,
 }
 
+/// M18/F54: подтверждение выбора камня усиления (`cmd/item.use` ack):
+/// uid выбранного камня и его качество в процентных пунктах
+/// (`stats.quality`; −5 малый / 0 средний / +5 большой).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StoneSelected {
+    pub stone_uid: String,
+    /// Процентные пункты к шансу заточки до затухания 1/(1+level).
+    pub quality: i64,
+}
+
 /// Квест в журнале (§6, ФР-12).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuestState {
@@ -233,6 +286,10 @@ pub struct QuestState {
     pub goals: Vec<QuestGoal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reward_preview: Option<RewardPreview>,
+    /// M18/F36: человекочитаемая строка награды из контента
+    /// (`reward_label`), аддитивно §6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reward_label: Option<String>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }
@@ -246,6 +303,21 @@ pub struct ProfessionSnapshot {
     pub rank: u32,
     pub xp: i64,
     pub xp_to_next: i64,
+    #[serde(flatten, default)]
+    pub extra: JsonMap,
+}
+
+/// M18/F58d (ADR-012 §6): активный бафф персонажа — руна-приём
+/// наложила эффект (стак + таймер). `kind` — идентификатор (ключ
+/// перевода/кэша), `title` — отображаемое название (сервер — истина,
+/// §8), `stacks` — от1 до `max_stacks` из параметров руны.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuffState {
+    pub kind: String,
+    pub title: String,
+    pub stacks: u32,
+    /// Epoch-секунды снятия.
+    pub expires_at: i64,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }
@@ -356,6 +428,10 @@ pub struct CharacterState {
     /// правила экипировки и ресурс боя (F30e); аддитивно §6.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// M18/F34: пол (`male`/`female`) — задаётся при создании, диалоги
+    /// NPC знают пол (F35); старый сервер без поля → `male` (§11).
+    #[serde(default = "default_gender")]
+    pub gender: String,
     #[serde(default)]
     pub equip: EquipMap,
     #[serde(default)]
@@ -364,8 +440,17 @@ pub struct CharacterState {
     pub crime: CrimeState,
     #[serde(default)]
     pub quests: Vec<QuestState>,
+    /// M18/F58d (ADR-012 §6): активные баффы рун (стак + таймер);
+    /// старый сервер без поля → пусто (§11).
+    #[serde(default)]
+    pub buffs: Vec<BuffState>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
+}
+
+/// Фолбэк пола для снапшотов старых серверов (M18/F34, §11).
+fn default_gender() -> String {
+    "male".to_string()
 }
 
 /// Сводка персонажа в списке аккаунта (§5 `characters[]`, ФР-02).

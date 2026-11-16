@@ -25,6 +25,21 @@ pub struct Config {
     pub world: WorldSection,
     /// Модель опыта навыков (skills.md §2/§8).
     pub skills: SkillsSection,
+    /// M19 (ADR-013): discovery подключения — well-known-документ;
+    /// секция опциональна (нет → маршрут отдаёт404).
+    #[serde(default)]
+    pub discovery: DiscoverySection,
+}
+
+/// M19 (ADR-013): discovery подключения — `GET /.well-known/ld2.json`
+/// отдаёт `{ address, version, min_client? }`; клиент хранит домен и
+/// резолвит адрес сервера без перевыпуска (ROADMAP M19).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DiscoverySection {
+    /// WS-адрес для документа (`ws://…` dev / `wss://…` prod);
+    /// пусто/нет — discovery выключен (404).
+    pub address: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -95,6 +110,74 @@ pub struct GameplaySection {
     /// без неё действуют дефолты (обратная совместимость конфигов).
     #[serde(default)]
     pub resource: ResourceSection,
+    /// M18/F36: квесты — лимит текущих (взятых) квестов на персонажа
+    /// → §5 `quests.max_active`; секция опциональна (дефолт 10).
+    #[serde(default)]
+    pub quests: QuestsSection,
+    /// M18/F39: магазины NPC (наценки/скидки); опциональна.
+    #[serde(default)]
+    pub shop: ShopSection,
+    /// M18/F54: рейты сервера — коэффициент любых шансов; опциональна.
+    #[serde(default)]
+    pub rates: RatesSection,
+}
+
+/// Лимиты квестов (M18/F36): `max_active` — взятых квестов (фазы
+/// active/turn_in) одновременно; сверх лимита `quest.accept` →
+/// `E_QUEST_LIMIT`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestsSection {
+    pub max_active: u32,
+}
+
+impl Default for QuestsSection {
+    fn default() -> Self {
+        Self { max_active: 10 }
+    }
+}
+
+/// M18/F39: магазины NPC — цены считаются сервером (контент задаёт
+/// базу `gold_value` и наценку торговца): `server_markup` — множитель
+/// наценки сервера; `max_discount_bp` — потолок суммарной скидки
+/// (аккаунт + навыки); `skill_discounts` — навык → множитель скидки
+/// **за ранг** (haggle 0.02 = −2%/ранг). Секция опциональна.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShopSection {
+    pub server_markup: f64,
+    pub max_discount_bp: i64,
+    #[serde(default)]
+    pub skill_discounts: HashMap<String, f64>,
+}
+
+impl Default for ShopSection {
+    fn default() -> Self {
+        let mut skill_discounts = HashMap::new();
+        skill_discounts.insert("haggle".into(), 0.02);
+        Self {
+            server_markup: 1.0,
+            max_discount_bp: 5000,
+            skill_discounts,
+        }
+    }
+}
+
+/// **Рейты сервера** (M18/F54): единый коэффициент шансов — `chance`
+/// умножает любой бросок вероятности (заточка и др.) перед клампом в
+/// `0..=1`. `1.0` — дефолт (шансы как в формуле конфига), `0.0` — все
+/// шансы гарантированно проваливаются. Секция опциональна.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RatesSection {
+    /// Множитель шансов (`0.0..=10.0`).
+    pub chance: f64,
+}
+
+impl Default for RatesSection {
+    fn default() -> Self {
+        Self { chance: 1.0 }
+    }
 }
 
 /// Значение capability-флага §5: булево или строка (`upgrade.rules`).
@@ -156,13 +239,23 @@ pub struct UpgradeSection {
     pub chance_base: f64,
     /// Снижение шанса за уровень.
     pub chance_per_level: f64,
+    /// Длительность анимации улучшения, сек (M18/F53). Прогресс-бар
+    /// клиента идёт это время; результат приходит после.
+    pub duration_s: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MagicSection {
-    /// Режим перезарядки руны: `item` и др. (ADR-002).
+    /// Режим восстановления зарядов рун (ADR-002, оживлён M18/F58c
+    /// по ADR-012 §4): `time` — тикер по `rune_recharge_s`;
+    /// `item` — прежнее поведение (заряды возвращаются только при
+    /// извлечении руны). Ранее ключ был декоративным.
     pub rune_recharge: String,
+    /// M18/F58c (ADR-012 §4): секунд на восстановление **одного**
+    /// заряда руны — по аналогии с `resource.energy_regen_s`
+    /// (тик-луп, раз в секунду, только онлайн-персонажи).
+    pub rune_recharge_s: f64,
     pub scroll_requires_target: bool,
     pub mana: ManaSection,
 }
@@ -414,6 +507,16 @@ impl Config {
         check_chat(&self.gameplay.chat, &mut out);
         check_inventory(&self.gameplay.inventory, &mut out);
 
+        // [discovery] (M19): адрес — WS-URL.
+        if let Some(address) = self.discovery.address.as_deref() {
+            if !address.is_empty()
+                && !address.starts_with("ws://")
+                && !address.starts_with("wss://")
+            {
+                out.push("discovery.address: должен начинаться с ws:// или wss://".into());
+            }
+        }
+
         if self.gameplay.upgrade.max_level == 0 {
             out.push("gameplay.upgrade.max_level: должен быть ≥ 1".into());
         }
@@ -433,8 +536,43 @@ impl Config {
             ));
         }
 
+        if self.gameplay.upgrade.duration_s <= 0.0 {
+            out.push(format!(
+                "gameplay.upgrade.duration_s: должен быть > 0 (получено: {})",
+                self.gameplay.upgrade.duration_s
+            ));
+        }
+
         if self.gameplay.party_max_members < 2 {
             out.push("gameplay.party_max_members: должен быть ≥ 2".into());
+        }
+
+        // [gameplay.quests] (M18/F36)
+        if self.gameplay.quests.max_active == 0 {
+            out.push("gameplay.quests.max_active: должен быть ≥ 1".into());
+        }
+
+        // [gameplay.rates] (M18/F54): множитель шансов.
+        if !(0.0..=10.0).contains(&self.gameplay.rates.chance) {
+            out.push(format!(
+                "gameplay.rates.chance: должен быть в 0.0..=10.0 (получено: {})",
+                self.gameplay.rates.chance
+            ));
+        }
+
+        // [gameplay.shop] (M18/F39)
+        if self.gameplay.shop.server_markup < 1.0 {
+            out.push("gameplay.shop.server_markup: должен быть ≥ 1.0".into());
+        }
+        if !(0..=10_000).contains(&self.gameplay.shop.max_discount_bp) {
+            out.push("gameplay.shop.max_discount_bp: должен быть 0..=10000".into());
+        }
+        for (skill, per_rank) in &self.gameplay.shop.skill_discounts {
+            if *per_rank < 0.0 || *per_rank >= 1.0 {
+                out.push(format!(
+                    "gameplay.shop.skill_discounts.{skill}: должен быть 0.0..1.0"
+                ));
+            }
         }
 
         // [gameplay.professions] (M12.6)
@@ -478,8 +616,15 @@ impl Config {
             out.push("gameplay.level.max_level: должен быть ≥ 1".into());
         }
 
-        if self.gameplay.magic.rune_recharge.trim().is_empty() {
-            out.push("gameplay.magic.rune_recharge: не должно быть пустым".into());
+        if !matches!(self.gameplay.magic.rune_recharge.trim(), "time" | "item") {
+            out.push(
+                "gameplay.magic.rune_recharge: ожидается \"time\" или \"item\" (M18/F58c)".into(),
+            );
+        }
+        if !self.gameplay.magic.rune_recharge_s.is_finite()
+            || self.gameplay.magic.rune_recharge_s <= 0.0
+        {
+            out.push("gameplay.magic.rune_recharge_s: должен быть > 0".into());
         }
         if self.gameplay.magic.mana.rune_cost == 0 {
             out.push("gameplay.magic.mana.rune_cost: должен быть ≥ 1".into());

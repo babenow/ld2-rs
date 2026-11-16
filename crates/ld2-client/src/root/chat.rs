@@ -212,9 +212,14 @@ impl Root {
 
     /// Отправка ввода чата: слэш-команды парсятся, неизвестная — тост
     /// и в чат НЕ уходит (ФР-13).
+    ///
+    /// M18/F41: после отправки (и по Enter в пустом поле) фокус снимается
+    /// — иначе гейт `typing_focused` глушит хоткеи окон. При ошибке
+    /// отправки/неизвестной команде фокус остаётся: можно исправить.
     pub(crate) fn send_chat(&mut self, cx: &mut Context<'_, Self>) {
         let text = self.ti(&self.chat_input).read(cx).text().to_string();
         if text.trim().is_empty() {
+            Self::blur_typing(cx);
             return;
         }
         if let Some(input) = self.chat_input.clone() {
@@ -226,7 +231,10 @@ impl Root {
             ChatDraft::Send { channel, to, text } => {
                 let cmd = ChatSend { channel, text, to };
                 match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_sheet_sent(Act::Chat),
+                    Ok(_) => {
+                        self.store.on_sheet_sent(Act::Chat);
+                        Self::blur_typing(cx);
+                    }
                     Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
                 }
             }

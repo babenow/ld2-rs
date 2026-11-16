@@ -11,14 +11,14 @@ use ely::motion::Reorder;
 use ely::navigation::Tabs;
 use ely::primitives::{Icon, IconName, Tooltip};
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Window};
-use ld2_core::l10n::{t, Key};
+use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::{Act, Screen};
 use ld2_protocol::cmd::ItemMove;
 use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
-use super::sheet::{badges, rarity_color, rarity_label};
+use super::sheet::{rarity_color, rarity_label};
 use super::{scrollable_tab, PopupKind, Root};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
@@ -132,7 +132,7 @@ fn tab_for_type(item_type: &str) -> BackpackTab {
         "potion" => BackpackTab::Potion,
         "rune" | "scroll" => BackpackTab::Magic,
         "herb" | "wood_oak" | "parchment" | "ink" => BackpackTab::Material,
-        "flask" | "chisel" | "quill" => BackpackTab::Tool,
+        "flask" | "chisel" | "quill" | "upgrade_stone" => BackpackTab::Tool,
         "money" => BackpackTab::Currencies,
         "armor" | "shield" => BackpackTab::Armor,
         "artifact" => BackpackTab::Artifact,
@@ -221,6 +221,15 @@ impl Root {
                     .sum()
             })
             .unwrap_or(0);
+        // M18/F58f (новая фича): заполненность в статус-баре —
+        // занято записей-стаков (как серверный count) из лимита
+        // `inventory.slots`; при полном — красным.
+        let usage: Option<(usize, u32)> = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| s.char.inventory.len())
+            .zip(self.store.session.as_ref().map(|s| s.inventory.slots));
         let footer = div()
             .flex()
             .flex_row()
@@ -236,7 +245,21 @@ impl Root {
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
                     .child(money.to_string()),
-            );
+            )
+            .child(div().flex_grow_1())
+            .children(usage.map(|(used, total)| {
+                let full = (used as u32) >= total;
+                div()
+                    .text_color(rgb(if full { pal.danger } else { pal.muted }))
+                    .child(tf(
+                        lang,
+                        Key::BackpackUsage,
+                        &[
+                            ("{used}", &used.to_string()),
+                            ("{total}", &total.to_string()),
+                        ],
+                    ))
+            }));
 
         Some(self.popup_window(
             window,
@@ -244,6 +267,7 @@ impl Root {
             pal,
             PopupKind::Backpack,
             t(lang, Key::BackpackTitle),
+            None,
             body,
             Some(footer),
         ))
@@ -313,11 +337,13 @@ impl Root {
                 .border_color(rgb(pal.border))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(pal.selection)))
-                .child(
-                    div()
-                        .text_color(rgb(rarity_color(&item.rarity, pal)))
-                        .child(format!("{} {}", item.name, badges(item))),
-                );
+                .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
+                // M18/F58f: подпись в две строки — слоты под названием
+                // (указание заказчика); слоты рун — их глифы.
+                .child(super::sheet::item_label_stack(
+                    item,
+                    rarity_color(&item.rarity, pal),
+                ));
             // ЛКМ — меню (после перетаскивания gpui подавляет клик; на
             // всякий случай — guard по активному drag), ПКМ — меню.
             let tile = tile
@@ -454,6 +480,7 @@ mod tests {
             sockets: None,
             qty: Some(qty),
             gold_value: Some(1),
+            bonuses: None,
             extra: Default::default(),
         };
         let items = vec![

@@ -253,3 +253,79 @@ async fn character_delete_rules() {
         "имя после delete свободно"
     );
 }
+
+/// M18/F34: пол задаётся при создании (диалоги NPC «знают» пол, F35):
+/// `female` → в снапшоте; пол не прислан → `male`; мусор → `E_BAD_GENDER`
+/// (слот не занят).
+#[tokio::test]
+async fn character_gender_set_at_creation() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login) = registered(&ws).await;
+
+    // Явный пол → снапшот после выбора персонажа.
+    let seq = c
+        .send(
+            "cmd/char.create",
+            json!({
+                "name": unique_name("Мира"),
+                "profile": "mage",
+                "gender": "female"
+            }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "создание female: {ack}");
+    let female_id = ack["payload"]["character"]["id"]
+        .as_str()
+        .expect("id созданного")
+        .to_string();
+    let seq = c
+        .send("cmd/char.select", json!({ "char_id": female_id }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "select female");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    assert_eq!(
+        snap["payload"]["char"]["gender"], "female",
+        "пол в снапшоте: {snap}"
+    );
+
+    // Без поля (старый клиент) → `male`.
+    let seq = c
+        .send(
+            "cmd/char.create",
+            json!({ "name": unique_name("Олег"), "profile": "warrior" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "создание без поля: {ack}");
+    let male_id = ack["payload"]["character"]["id"]
+        .as_str()
+        .expect("id созданного")
+        .to_string();
+    let seq = c
+        .send("cmd/char.select", json!({ "char_id": male_id }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "select male");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    assert_eq!(
+        snap["payload"]["char"]["gender"], "male",
+        "дефолт без поля: {snap}"
+    );
+
+    // Мусорное значение → отказ, слот не занят.
+    let seq = c
+        .send(
+            "cmd/char.create",
+            json!({ "name": unique_name("X"), "profile": "warrior", "gender": "other" }),
+        )
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_BAD_GENDER",
+        "неизвестный пол отклоняется"
+    );
+}

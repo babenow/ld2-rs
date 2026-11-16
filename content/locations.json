@@ -14,6 +14,12 @@
           "label": "тропа на север",
           "dir": "north",
           "to": "l_forest"
+        },
+        {
+          "id": "e_city",
+          "label": "дорога в город",
+          "dir": "east",
+          "to": "l_city_center"
         }
       ],
       "entities": [
@@ -135,6 +141,243 @@
           "loot": [
             "dagger_knife",
             "potion_heal"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "l_city_north",
+      "name": "Северная улица",
+      "text": "Ровные фасады, лотки у стен. На юг — центральная улица; по сторонам двери: на западе — алхимическая лаборатория, на востоке — плотницкая мастерская.",
+      "exits": [
+        {
+          "id": "e_south",
+          "label": "улица на юг",
+          "dir": "south",
+          "to": "l_city_center"
+        },
+        {
+          "id": "e_west",
+          "label": "дверь: алхимическая лаборатория",
+          "dir": "west",
+          "to": "l_alchemy"
+        },
+        {
+          "id": "e_east",
+          "label": "дверь: плотницкая мастерская",
+          "dir": "east",
+          "to": "l_carpentry"
+        }
+      ],
+      "entities": [
+        {
+          "id": "npc_armorer",
+          "kind": "npc",
+          "name": "Торговец бронёй"
+        }
+      ]
+    },
+    {
+      "id": "l_city_center",
+      "name": "Центральная улица",
+      "text": "Три параллельные улицы сходятся здесь. На камне стоит староста; на запад — дорога в деревню, на восток — кузница, на север и юг — соседние улицы.",
+      "exits": [
+        {
+          "id": "e_north",
+          "label": "улица на север",
+          "dir": "north",
+          "to": "l_city_north"
+        },
+        {
+          "id": "e_south",
+          "label": "улица на юг",
+          "dir": "south",
+          "to": "l_city_south"
+        },
+        {
+          "id": "e_west",
+          "label": "дорога в деревню",
+          "dir": "west",
+          "to": "l_village"
+        },
+        {
+          "id": "e_east",
+          "label": "дверь: кузница",
+          "dir": "east",
+          "to": "l_forge"
+        }
+      ],
+      "entities": [
+        {
+          "id": "npc_city_elder",
+          "kind": "npc",
+          "name": "Староста города"
+        },
+        {
+          "id": "npc_weaponsmith",
+          "kind": "npc",
+          "name": "Оружейник"
+        }
+      ]
+    },
+    {
+      "id": "l_city_south",
+      "name": "Южная улица",
+      "text": "Тихая улица у городской стены. На север — центральная улица; на востоке — ворота склада.",
+      "exits": [
+        {
+          "id": "e_north",
+          "label": "улица на север",
+          "dir": "north",
+          "to": "l_city_center"
+        },
+        {
+          "id": "e_east",
+          "label": "дверь: склад",
+          "dir": "east",
+          "to": "l_warehouse"
+        }
+      ],
+      "entities": []
+    },
+    {
+      "id": "l_forge",
+      "name": "Кузница",
+      "text": "Горн дышит жаром, наковальня звенит под молотом. На запад — выход на центральную улицу.",
+      "exits": [
+        {
+          "id": "e_west",
+          "label": "на центральную улицу",
+          "dir": "west",
+          "to": "l_city_center"
+        }
+      ],
+      "entities": [
+        {
+          "id": "st_forge",
+          "kind": "object",
+          "name": "Наковальня",
+          "station": "forge"
+        }
+      ]
+    },
+    {
+      "id": "l_carpentry",
+      "name": "Плотницкая мастерская",
+      "text": "Стружка под ногами, стойки с инструментом. На запад — выход на северную улицу.",
+      "exits": [
+        {
+          "id": "e_west",
+          "label": "на северную улицу",
+          "dir": "west",
+          "to": "l_city_north"
+        }
+      ],
+      "entities": [
+        {
+          "id": "st_bench_city",
+          "kind": "object",
+          "name": "Верстак плотника",
+          "station": "workbench"
+        }
+      ]
+    },
+    {
+      "id": "l_alchemy",
+      "name": "Алхимическая лаборатория",
+      "text": "Сосуды с настойками, запах трав. На восток — выход на северную улицу.",
+      "exits": [
+        {
+          "id": "e_east",
+          "label": "на северную улицу",
+          "dir": "east",
+          "to": "l_city_north"
+        }
+      ],
+      "entities": [
+        {
+          "id": "st_alchemy_city",
+          "kind": "object",
+          "name": "Алхимический стол",
+          "station": "alchemy_table"
+        },
+        {
+          "id": "npc_alchemist",
+          "kind": "npc",
+          "name": "Алхимик"
+        }
+      ]
+    },
+    {
+      "id": "l_warehouse",
+      "name": "Склад",
+      "text": "Сумрак, ящики до потолка, скрип крысиных когтей. В дальнем углу — тень непропорциональной величины. На запад — выход на южную улицу.",
+      "exits": [
+        {
+          "id": "e_west",
+          "label": "на южную улицу",
+          "dir": "west",
+          "to": "l_city_south"
+        }
+      ],
+      "entities": [
+        {
+          "id": "m_rat_1",
+          "kind": "monster",
+          "name": "Крыса",
+          "hp": {
+            "cur": 6,
+            "max": 6
+          },
+          "difficulty": 1,
+          "drops": [
+            "gold_coin"
+          ]
+        },
+        {
+          "id": "m_rat_2",
+          "kind": "monster",
+          "name": "Крыса",
+          "hp": {
+            "cur": 6,
+            "max": 6
+          },
+          "difficulty": 1,
+          "drops": [
+            "gold_coin"
+          ]
+        },
+        {
+          "id": "m_rat_3",
+          "kind": "monster",
+          "name": "Крыса",
+          "hp": {
+            "cur": 7,
+            "max": 7
+          },
+          "difficulty": 1,
+          "drops": [
+            "gold_coin",
+            "herb"
+          ]
+        },
+        {
+          "id": "m_giant_rat",
+          "kind": "monster",
+          "name": "Огромная крыса",
+          "hp": {
+            "cur": 60,
+            "max": 60
+          },
+          "tags": [
+            "aggro"
+          ],
+          "aggro": true,
+          "difficulty": 6,
+          "drops": [
+            "potion_heal",
+            "gold_coin",
+            "herb"
           ]
         }
       ]

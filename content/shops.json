@@ -1,0 +1,97 @@
+{
+  "npcs": [
+    {
+      "id": "npc_elder",
+      "markup": 1.15,
+      "currencies": [
+        {
+          "currency": "gold_coin",
+          "rate": 1.0,
+          "items": [
+            "potion_heal",
+            "rune_fire",
+            "armor_bronze",
+            "sword_knight"
+          ]
+        },
+        {
+          "currency": "gem_str",
+          "rate": 0.05,
+          "items": [
+            "potion_heal",
+            "rune_fire",
+            "armor_bronze",
+            "sword_knight"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "npc_city_elder",
+      "markup": 1.1,
+      "currencies": [
+        {
+          "currency": "gold_coin",
+          "rate": 1.0,
+          "items": [
+            "potion_heal",
+            "armor_bronze",
+            "sword_knight",
+            "dagger_knife"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "npc_weaponsmith",
+      "markup": 1.15,
+      "currencies": [
+        {
+          "currency": "gold_coin",
+          "rate": 1.0,
+          "items": [
+            "dagger_knife",
+            "sword_knight",
+            "bow_hunter",
+            "axe_war",
+            "hammer_battle",
+            "twohand_sword"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "npc_armorer",
+      "markup": 1.12,
+      "currencies": [
+        {
+          "currency": "gold_coin",
+          "rate": 1.0,
+          "items": [
+            "armor_leather",
+            "armor_bronze",
+            "helmet_leather",
+            "boots_traveler",
+            "chainmail",
+            "greaves_iron"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "npc_alchemist",
+      "markup": 1.05,
+      "currencies": [
+        {
+          "currency": "gold_coin",
+          "rate": 1.0,
+          "items": [
+            "potion_heal",
+            "herb",
+            "scroll_frost"
+          ]
+        }
+      ]
+    }
+  ]
+}

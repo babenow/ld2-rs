@@ -7,22 +7,26 @@
 //! меню — инлайн под строкой (вместо попапа по курсору), тултипы не используются.
 
 use ely::overlays::Dialog;
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stateful};
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stateful, Window};
 use ld2_core::l10n::{format_duration, t, tf, Key};
-use ld2_core::store::{crime_kind_title, filter_active_statuses, local_epoch, AppStore, LogKind};
+use ld2_core::store::{
+    crime_kind_title, filter_active_statuses, local_epoch, Act, AppStore, LogKind, NpcDialogView,
+};
 use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
 
 use crate::palette::Palette;
+use ely::buttons::IconButton;
 use ely::forms::Choice;
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
+use super::quests::goals_summary;
 use super::sheet::rarity_label;
 use super::social::show_party;
-use super::{btn, hex_to_u32, Click, LogTab, Root, INSCRIBE_MS};
+use super::{act_btn, act_btn_hover, btn, hex_to_u32, Click, LogTab, PopupKind, Root, INSCRIBE_MS};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -129,7 +133,367 @@ impl Root {
                     .into_any_element(),
             );
         }
+        // M18/F38: диалог NPC — попап-окно (см. npc_window), не модалка.
         None
+    }
+
+    /// M18/F39: панель магазина внутри окна диалога: вкладки валют
+    /// торговца, баланс по активной валюте, товары с ценами (сервер
+    /// считает наценки/скидки), покупка цветом показывает нехватку
+    /// средств (сервер всё равно авторитет — `E_NOT_ENOUGH_MONEY`).
+    fn shop_view(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        dialog: &NpcDialogView,
+    ) -> Div {
+        let lang = self.lang;
+        let Some(shop) = dialog.shop.clone() else {
+            return div().size_full();
+        };
+        let active = dialog
+            .shop_currency
+            .as_deref()
+            .and_then(|currency| shop.tabs.iter().find(|tab| tab.currency == currency))
+            .or_else(|| shop.tabs.first());
+        let Some(tab) = active else {
+            return div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::ShopEmpty));
+        };
+
+        // Вкладки валют торговца.
+        let choices: Vec<Choice> = shop
+            .tabs
+            .iter()
+            .map(|tab| Choice::new(tab.currency.as_str(), tab.currency_name.clone()))
+            .collect();
+        let this = cx.entity();
+        let tabs = Tabs::new("ld2-shop-tabs", choices, tab.currency.as_str()).on_change(
+            move |value, _window, acx| {
+                let value = value.to_string();
+                this.update(acx, |root, cx| {
+                    if let Some(view) = root.store.npc_dialog.as_mut() {
+                        view.shop_currency = Some(value);
+                    }
+                    cx.notify();
+                });
+            },
+        );
+
+        // Баланс по активной валюте — из снапшота.
+        let balance: i64 = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|snap| {
+                snap.char
+                    .inventory
+                    .iter()
+                    .filter(|item| item.def_id.as_deref() == Some(tab.currency.as_str()))
+                    .map(|item| item.qty.unwrap_or(0))
+                    .sum()
+            })
+            .unwrap_or(0);
+
+        // M18/F41: колонка на весь бокс — гибкий отступ прижимает
+        // кнопку возврата к нижнему краю панели.
+        let mut col = div().flex().flex_col().gap_1().size_full();
+        // M18/F41: сверху подпись, что вкладка — это валюта торговца.
+        col = col.child(
+            div()
+                .text_size(px(11.0))
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::ShopCurrency)),
+        );
+        col = col.child(tabs);
+        col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
+        col = col.child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(tf(lang, Key::ShopOwned, &[("n", &balance.to_string())])),
+        );
+        for item in &tab.items {
+            let afford = balance >= item.price;
+            let mut right = div().flex().flex_row().gap_2().items_center();
+            right = right.child(
+                div()
+                    .text_size(px(13.0))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(rgb(if afford { pal.text } else { pal.danger }))
+                    .child(format!("{}", item.price)),
+            );
+            let entity_id = dialog.id.clone();
+            let currency = tab.currency.clone();
+            let def_id = item.def_id.clone();
+            right = right.child(act_btn_hover(
+                cx,
+                t(lang, Key::BtnBuy),
+                pal.panel,
+                pal.selection,
+                if afford { pal.text } else { pal.danger },
+                move |this, cx| {
+                    let cmd = ld2_protocol::cmd::ShopBuy {
+                        entity_id: entity_id.clone(),
+                        currency: currency.clone(),
+                        def_id: def_id.clone(),
+                    };
+                    this.send_cmd(&cmd, Act::ShopBuy);
+                    let _ = cx;
+                },
+            ));
+            let mut left = div().flex().flex_row().gap_2().items_center();
+            left = left.child(div().text_size(px(13.0)).child(item.name.clone()));
+            if item.qty > 1 {
+                left = left.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(pal.muted))
+                        .child(format!("×{}", item.qty)),
+                );
+            }
+            // M18/F40: строка товара — подсветка наведения, клик
+            // открывает карточку информации (тот же item_detail, что
+            // «Описание» в меню предмета).
+            let row_id = format!("ld2-shop-item-{}", item.def_id);
+            let detail = item.item.clone();
+            col = col.child(
+                div()
+                    .id(row_id)
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .px_1()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(pal.selection)))
+                    .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(snapshot) = &detail {
+                            this.store.close_upgrade();
+                            this.upgrade_progress = None;
+                            this.store.item_detail = serde_json::to_value(snapshot).ok();
+                            // M18/F53: описание предмета — карточка-попап.
+                            this.open_popup(PopupKind::Item);
+                        }
+                        cx.notify();
+                    }))
+                    .child(left)
+                    .child(right),
+            );
+        }
+        // M18/F41: «К диалогу» — отступ растягивает колонку, кнопка
+        // прижата к низу слева (дублирует иконку в шапке окна).
+        col = col.child(div().flex_grow_1().min_h_0());
+        col = col.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_start()
+                .pt_1()
+                .child(act_btn_hover(
+                    cx,
+                    t(lang, Key::ShopBack),
+                    pal.panel,
+                    pal.selection,
+                    pal.text,
+                    |this, cx| {
+                        if let Some(view) = this.store.npc_dialog.as_mut() {
+                            view.shop = None;
+                            view.shop_currency = None;
+                        }
+                        let _ = cx;
+                    },
+                )),
+        );
+        col
+    }
+
+    /// M18/F44: панель обучения внутри окна диалога (паритет магазина,
+    /// ADR-009): список навыков тренера с ценой; клик шлёт
+    /// `cmd/skill.train` — если обучение невозможно, причину сообщает
+    /// сервер (`E_SKILL_NOT_READY`, `E_XP_POOL`, `E_INGREDIENTS`…) тостом.
+    fn training_view(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        dialog: &NpcDialogView,
+    ) -> Div {
+        let lang = self.lang;
+        let mut col = div().flex().flex_col().gap_1().size_full();
+        col = col.child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::BtnTraining)),
+        );
+        for entry in &dialog.training {
+            let skill = self
+                .store
+                .snapshot
+                .as_ref()
+                .and_then(|snap| snap.char.skills.iter().find(|s| s.id == entry.skill))
+                .cloned();
+            let (name, scale) = match &skill {
+                Some(skill) => (
+                    skill.name.clone().unwrap_or_else(|| skill.id.clone()),
+                    format!("{}/{}", skill.xp, skill.xp_to_next),
+                ),
+                None => (entry.skill.clone(), "—".to_string()),
+            };
+            // Плата: очки опыта (обязательно) + золото + предметы.
+            let mut cost = t(lang, Key::TrainingPoints).replace("{n}", &entry.points.to_string());
+            if entry.gold > 0 {
+                cost.push_str(" · ");
+                cost.push_str(&t(lang, Key::TrainingGold).replace("{n}", &entry.gold.to_string()));
+            }
+            for item in &entry.items {
+                cost.push_str(&format!(" · {} ×{}", item.def_id, item.qty));
+            }
+            let entity_id = dialog.id.clone();
+            let skill_id = entry.skill.clone();
+            // Кнопка активна всегда — почему нельзя, отвечает сервер.
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .child(
+                        div()
+                            .flex_grow_1()
+                            .min_w_0()
+                            .child(format!("{name} · {scale}")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.muted))
+                            .child(cost),
+                    )
+                    .child(act_btn(
+                        cx,
+                        t(lang, Key::BtnTrain),
+                        pal.accent,
+                        pal.accent_text,
+                        move |this, cx| {
+                            let cmd = ld2_protocol::cmd::SkillTrain {
+                                entity_id: entity_id.clone(),
+                                skill_id: skill_id.clone(),
+                            };
+                            this.send_cmd(&cmd, Act::Invest);
+                            let _ = cx;
+                        },
+                    )),
+            );
+        }
+        // «К диалогу» — внизу слева (паритет панели магазина F41).
+        col = col.child(div().flex_grow_1().min_h_0());
+        col = col.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_start()
+                .pt_1()
+                .child(act_btn_hover(
+                    cx,
+                    t(lang, Key::ShopBack),
+                    pal.panel,
+                    pal.selection,
+                    pal.text,
+                    |this, cx| {
+                        if let Some(view) = this.store.npc_dialog.as_mut() {
+                            view.training_open = false;
+                        }
+                        let _ = cx;
+                    },
+                )),
+        );
+        col
+    }
+
+    /// M18/F38: **окно диалога NPC как окно персонажа** — попап-шелл
+    /// (`popup_window`: drag/resize, общий scrim, Esc/×; порядок слоёв —
+    /// верхний в группе). Гейт — наличие `store.npc_dialog`; закрытие
+    /// (Esc/scrim/×/терминальный ответ) чистит состояние в store.
+    pub(crate) fn npc_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        // M18/F46: окно закрыто — сбрасываем длину ленты, чтобы при
+        // следующем открытии stick-to-bottom отработал заново.
+        let Some(dialog) = self.store.npc_dialog.clone() else {
+            self.npc_seen = 0;
+            return None;
+        };
+        let lang = self.lang;
+        // M18/F39/F44: открытый магазин или панель обучения заменяет
+        // транскрипт (иконка «назад» возвращает к диалогу).
+        let body = if dialog.shop.is_some() {
+            self.shop_view(cx, pal, &dialog)
+        } else if dialog.training_open {
+            self.training_view(cx, pal, &dialog)
+        } else {
+            self.npc_dialog_view(cx, pal, &dialog)
+        };
+
+        // M18/F41: контекстные кнопки диалога — иконки слева в шапке
+        // окна (статус-бар убран; «Квесты»/«Обучение» убраны по решению
+        // пользователя). Тултипы — тексты l10n, что и были у кнопок.
+        let mut leading = div().flex().flex_row().gap_1().items_center();
+        if dialog.shop.is_some() || dialog.training_open {
+            // Открыт магазин/обучение — возврат к транскрипту (иконка
+            // «назад»); чистим обе панели (M18/F44).
+            leading = leading.child(
+                IconButton::new("ld2-npc-back", IconName::ArrowLeft)
+                    .tooltip(t(lang, Key::ShopBack))
+                    .on_click(cx.listener(|root, _, _, cx| {
+                        if let Some(view) = root.store.npc_dialog.as_mut() {
+                            view.shop = None;
+                            view.shop_currency = None;
+                            view.training_open = false;
+                        }
+                        cx.notify();
+                    })),
+            );
+        } else if dialog.actions.iter().any(|action| action == "shop") {
+            let entity_id = dialog.id.clone();
+            leading = leading.child(
+                IconButton::new("ld2-npc-shop", IconName::DollarSign)
+                    .tooltip(t(lang, Key::BtnShop))
+                    .on_click(cx.listener(move |root, _, _, cx| {
+                        let cmd = ld2_protocol::cmd::ShopList {
+                            entity_id: entity_id.clone(),
+                        };
+                        root.send_cmd(&cmd, Act::ShopList);
+                        cx.notify();
+                    })),
+            );
+        }
+
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Npc,
+            dialog.name.clone(),
+            Some(leading),
+            body,
+            None,
+        ))
     }
 
     pub(crate) fn game_screen(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
@@ -533,20 +897,27 @@ impl Root {
             .border_color(rgb(pal.border))
             .cursor_pointer()
             .hover(move |s| s.bg(rgb(pal.selection)))
+            .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener({
                     let id = id.clone();
                     move |this, _, _, cx| {
-                        if matches!(
-                            this.store
-                                .snapshot
-                                .as_ref()
-                                .and_then(|s| { s.location.entities.iter().find(|e| e.id == id) })
-                                .map(|e| e.kind),
-                            Some(EntityKind::Monster) | Some(EntityKind::Player)
-                        ) {
-                            this.store.select_target(id.clone());
+                        let kind = this
+                            .store
+                            .snapshot
+                            .as_ref()
+                            .and_then(|s| s.location.entities.iter().find(|e| e.id == id))
+                            .map(|e| e.kind);
+                        match kind {
+                            Some(EntityKind::Monster) | Some(EntityKind::Player) => {
+                                this.store.select_target(id.clone());
+                            }
+                            // M18/F35: клик по NPC → диалог (поговорить/квесты).
+                            Some(EntityKind::Npc) => {
+                                this.on_click(Click::NpcTalk(id.clone()), cx);
+                            }
+                            _ => {}
                         }
                         cx.notify();
                     }
@@ -584,7 +955,15 @@ impl Root {
                 this.update(acx, |root, cx| root.on_click(click.clone(), cx));
             })
         };
-        let mut menu = Menu::new().item(mk(
+        let mut menu = Menu::new();
+        if entity.kind == EntityKind::Npc {
+            // M18/F35: диалог NPC — поговорить/квесты.
+            menu = menu.item(mk(
+                t(lang, Key::BtnTalk).to_string(),
+                Click::NpcTalk(id.clone()),
+            ));
+        }
+        menu = menu.item(mk(
             t(lang, Key::Examine).to_string(),
             Click::Examine(id.clone()),
         ));
@@ -1060,6 +1439,233 @@ impl Root {
                 )
                 .mt(px(10.0)),
             )
+    }
+
+    /// M18/F35: окно диалога NPC: приветствие, реплики (текст готов —
+    /// `{name}` подставляет сервер) и секция «Квесты» с кнопкой
+    /// «Принять» (`cmd/quest.accept`; принятый исчезает по
+    /// `evt/quest/updated` — store чистит `npc_dialog.quests`).
+    fn npc_dialog_view(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        dialog: &NpcDialogView,
+    ) -> Div {
+        let lang = self.lang;
+        let now_ms = self.now_ms();
+
+        // M18/F46: stick-to-bottom — новая строка возвращает ленту вниз
+        // (паттерн журнала/чата): последнее сообщение всегда снизу.
+        let len = dialog.transcript.len();
+        if len != self.npc_seen {
+            self.npc_seen = len;
+            if len > 0 {
+                self.npc_scroll.scroll_to_bottom();
+            }
+        }
+
+        // ── Зона 1: история диалога — растёт снизу вверх, шрифт крупнее ──
+        let mut history = div().flex().flex_col().gap_2().justify_start();
+        for line in &dialog.transcript {
+            let text = if line.me {
+                format!("{}: {}", t(lang, Key::DialogYou), line.text)
+            } else {
+                line.text.clone()
+            };
+            history = history.child(
+                div()
+                    .text_size(px(15.0))
+                    .font_weight(if line.me {
+                        gpui::FontWeight::BOLD
+                    } else {
+                        gpui::FontWeight::NORMAL
+                    })
+                    .text_color(rgb(if line.me { pal.accent } else { pal.text }))
+                    .child(text),
+            );
+        }
+        let history_zone = div().flex_grow_1().min_h_0().child(
+            ScrollArea::new("ld2-npc-history")
+                .vertical()
+                .flex_grow_1()
+                .min_h_0()
+                .child(history),
+        );
+
+        // ── Зона 2: реплики персонажа и предложения NPC (внизу) ──
+        let mut actions = div().flex().flex_col().gap_1();
+        // Ответы текущего узла — шаги ветки (моя реплика в ленту сразу,
+        // сервер отвечает новым узлом; без ответов диалог закончен).
+        if let Some(node) = &dialog.node {
+            for reply in &node.replies {
+                // M18/F44: реплика-действие — открываем панель обучения
+                // (паритет магазина), npc.reply не шлётся.
+                if reply.action.as_deref() == Some("train") {
+                    actions = actions.child(act_btn_hover(
+                        cx,
+                        reply.text.clone(),
+                        pal.panel,
+                        pal.selection,
+                        pal.text,
+                        |this, cx| {
+                            if let Some(view) = this.store.npc_dialog.as_mut() {
+                                view.training_open = true;
+                            }
+                            let _ = cx;
+                        },
+                    ));
+                    continue;
+                }
+                // M18/F43: реплика-действие — открываем магазин вместо
+                // перехода по ветке (тот же флоу, что иконка в шапке).
+                if reply.action.as_deref() == Some("shop") {
+                    let entity_id = dialog.id.clone();
+                    actions = actions.child(act_btn_hover(
+                        cx,
+                        reply.text.clone(),
+                        pal.panel,
+                        pal.selection,
+                        pal.text,
+                        move |this, cx| {
+                            let cmd = ld2_protocol::cmd::ShopList {
+                                entity_id: entity_id.clone(),
+                            };
+                            this.send_cmd(&cmd, Act::ShopList);
+                            let _ = cx;
+                        },
+                    ));
+                    continue;
+                }
+                // M18/F42: живой отсчёт таймера (ADR-008) — остаток по
+                // абсолютному дедлайну; ноль → окно истекло, реплика
+                // снова активна.
+                let wait_left = reply
+                    .wait_s
+                    .map(|wait_s| {
+                        reply
+                            .wait_until_ms
+                            .map(|until| ((until - now_ms).max(0) / 1000) as u64)
+                            .unwrap_or(wait_s)
+                    })
+                    .filter(|left| *left > 0);
+                if let Some(wait_left) = wait_left {
+                    actions = actions.child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(pal.panel))
+                            .text_size(px(13.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format!(
+                                "{} ({:02}:{:02})",
+                                reply.text,
+                                wait_left / 60,
+                                wait_left % 60
+                            )),
+                    );
+                    continue;
+                }
+                // M18/F46: дефис перед репликой убран.
+                let label = reply.text.clone();
+                let entity_id = dialog.id.clone();
+                let node_id = node.id.clone();
+                let reply_id = reply.id.clone();
+                let text = reply.text.clone();
+                // M18/F38: реплики персонажа подсвечиваются при наведении.
+                actions = actions.child(act_btn_hover(
+                    cx,
+                    label,
+                    pal.panel,
+                    pal.selection,
+                    pal.text,
+                    move |this, cx| {
+                        if let Some(view) = this.store.npc_dialog.as_mut() {
+                            view.transcript.push(ld2_core::store::NpcTranscriptLine {
+                                me: true,
+                                text: text.clone(),
+                            });
+                        }
+                        let cmd = ld2_protocol::cmd::NpcReply {
+                            entity_id: entity_id.clone(),
+                            node_id: node_id.clone(),
+                            reply_id: reply_id.clone(),
+                        };
+                        this.send_cmd(&cmd, Act::NpcReply);
+                        let _ = cx;
+                    },
+                ));
+            }
+        }
+        if !dialog.quests.is_empty() {
+            actions = actions.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::QuestsTab)),
+            );
+            for quest in &dialog.quests {
+                let mut card = div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .border_1()
+                    .border_color(rgb(pal.border))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(quest.title.clone().unwrap_or_else(|| quest.id.clone())),
+                    );
+                if !quest.goals.is_empty() {
+                    card = card.child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format!("• {}", goals_summary(quest))),
+                    );
+                }
+                if let Some(reward) = &quest.reward_preview {
+                    if let Some(xp) = reward.xp {
+                        card = card.child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(rgb(pal.muted))
+                                .child(format!("{}: {xp} XP", t(lang, Key::RewardLabel))),
+                        );
+                    }
+                }
+                let qid = quest.id.clone();
+                card = card.child(act_btn(
+                    cx,
+                    t(lang, Key::BtnAccept),
+                    pal.accent,
+                    pal.accent_text,
+                    move |this, cx| {
+                        let cmd = ld2_protocol::cmd::QuestAccept {
+                            quest_id: qid.clone(),
+                        };
+                        this.send_cmd(&cmd, Act::Quest);
+                        let _ = cx;
+                    },
+                ));
+                actions = actions.child(card);
+            }
+        }
+
+        // M18/F46: две горизонтальные зоны — история сверху (на весь
+        // остаток окна), реплики персонажа внизу у разделителя.
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .size_full()
+            .child(history_zone)
+            .child(div().h(px(1.0)).bg(rgb(pal.border)))
+            .child(actions)
     }
 
     fn examine_view(

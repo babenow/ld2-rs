@@ -28,6 +28,9 @@ pub struct SessionConfig {
     pub inventory: InventoryConfig,
     pub upgrade: UpgradeConfig,
     pub magic: MagicConfig,
+    /// M18/F36: лимит текущих квестов (§5, DoD: конфиг, не код).
+    #[serde(default = "default_quest_max_active")]
+    pub quests: QuestsConfig,
     #[serde(default)]
     pub characters: Vec<CharacterSummary>,
     /// Незнакомые поля — сохраняем и игнорируем (§2.3, §11).
@@ -106,14 +109,35 @@ pub struct UpgradeConfig {
     pub max_level: u32,
     pub preview: bool,
     pub shows_chance: bool,
+    /// M18/F53: длительность анимации улучшения, сек (прогресс-бар).
+    #[serde(default = "default_upgrade_duration_s")]
+    pub duration_s: f64,
+}
+
+fn default_upgrade_duration_s() -> f64 {
+    3.0
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MagicConfig {
-    /// Способ восстановления зарядов рун: `item` (масло алхимика), … (D4).
+    /// Способ восстановления зарядов рун (D4; M18/F58c оживил ключ):
+    /// `time` — тикер по серверному `rune_recharge_s`, `item` — только
+    /// извлечением. Клиенту — только для отображения/логики окон.
     pub rune_recharge: String,
     pub scroll_requires_target: bool,
     pub mana: ManaConfig,
+}
+
+/// M18/F36: квесты §5 — лимит текущих (взятых: active/turn_in) квестов;
+/// старый сервер без поля → 10 (§11).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestsConfig {
+    pub max_active: u32,
+}
+
+/// Фолбэк лимита квестов для клиентов со старым сервером (§11).
+fn default_quest_max_active() -> QuestsConfig {
+    QuestsConfig { max_active: 10 }
 }
 
 /// Реген маны (D4, §5): вне боя — секунд на полный бар, в бою — %/сек.

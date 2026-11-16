@@ -23,6 +23,11 @@ pub struct AppState {
     shutdown: tokio::sync::watch::Sender<bool>,
     /// Социальное состояние в памяти: группы (ФР-14, M12.7b) — эфемерно.
     pub social: Mutex<SocialState>,
+    /// M18/F35: диалоги NPC в памяти (`content/dialogs.json`, при старте;
+    /// без БД — в отличие от кулдаунов `every_s`).
+    pub dialogs: std::collections::HashMap<String, crate::dialogs::DialogNpc>,
+    /// M18/F39: магазины NPC в памяти (`content/shops.json`, при старте).
+    pub shops: std::collections::HashMap<String, crate::shops::ShopNpc>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -30,6 +35,15 @@ pub type SharedState = Arc<AppState>;
 impl AppState {
     pub fn new(config: Config, pool: PgPool) -> Self {
         let (shutdown, _) = tokio::sync::watch::channel(false);
+        // M18/F35: сломанный dialogs.json не валит сервер — warn + пусто
+        // (валидность контента ловят контент-тесты в CI).
+        let dialogs = crate::dialogs::load(&config.world.content_dir)
+            .map_err(|e| tracing::warn!("диалоги NPC не загружены: {e}"))
+            .unwrap_or_default();
+        // M18/F39: сломанный shops.json — warn + пусто (контент-тесты в CI).
+        let shops = crate::shops::load(&config.world.content_dir)
+            .map_err(|e| tracing::warn!("магазины NPC не загружены: {e}"))
+            .unwrap_or_default();
         Self {
             config: Arc::new(config),
             pool,
@@ -37,6 +51,8 @@ impl AppState {
             world: Mutex::new(World::default()),
             shutdown,
             social: Mutex::new(SocialState::default()),
+            dialogs,
+            shops,
         }
     }
 

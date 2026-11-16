@@ -20,16 +20,17 @@ use gpui::{
 };
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{
-    crime_kind_title, filter_active_statuses, local_epoch, Act, Screen, UpgradeView,
+    crime_kind_title, filter_active_buffs, filter_active_statuses, local_epoch, Act, Screen,
+    UpgradeView,
 };
 use ld2_protocol::cmd::{
-    CharXpInvest, CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave,
-    GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse, QuestAbandon, QuestAccept,
-    QuestTurnIn, SocketExtract, SocketInsert, UpgradePreview, UpgradeStart,
+    CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave, GuildRankSet,
+    ItemDrop, ItemEquip, ItemUnequip, ItemUse, SocketExtract, SocketInsert, UpgradePreview,
 };
-use ld2_protocol::types::{CharacterState, ItemSnapshot, QuestPhase, Severity, SkillSnapshot};
+use ld2_protocol::types::{CharacterState, ItemSnapshot, Severity, SkillSnapshot};
 
 use crate::palette::Palette;
+use crate::rune_glyph;
 use ely::buttons::IconButton;
 use ely::forms::{Choice, Input, Select};
 use ely::layout::ScrollArea;
@@ -37,6 +38,7 @@ use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
 use ely::primitives::{IconName, Tooltip};
 
+use super::quests::goals_summary;
 use super::{
     act_btn, char_card_origin, clamp_char_size, scrollable_tab, PopupDrag, PopupKind, PopupResize,
     Root,
@@ -52,20 +54,19 @@ pub(crate) enum SheetTab {
     Professions,
     /// Репутация фракций — наполняется в F27.
     Reputation,
-    Quests,
+    // M18/F36: «Квесты» переехали в отдельное окно (правило дубликатов).
     Guild,
 }
 
 impl SheetTab {
     /// M16/F29b: «Инвентарь» убран из окна — он живёт в отдельном
     /// окне рюкзака (правило дубликатов).
-    fn all() -> [(SheetTab, Key); 6] {
+    fn all() -> [(SheetTab, Key); 5] {
         [
             (SheetTab::Params, Key::SheetParams),
             (SheetTab::Skills, Key::SheetSkills),
             (SheetTab::Professions, Key::ProfessionsTab),
             (SheetTab::Reputation, Key::SheetReputation),
-            (SheetTab::Quests, Key::QuestsTab),
             (SheetTab::Guild, Key::GuildTab),
         ]
     }
@@ -77,7 +78,6 @@ impl SheetTab {
             SheetTab::Skills => IconName::Zap,
             SheetTab::Professions => IconName::Wrench,
             SheetTab::Reputation => IconName::Shield,
-            SheetTab::Quests => IconName::ListChecks,
             SheetTab::Guild => IconName::Flag,
         }
     }
@@ -88,7 +88,6 @@ impl SheetTab {
             SheetTab::Skills => "skills",
             SheetTab::Professions => "professions",
             SheetTab::Reputation => "reputation",
-            SheetTab::Quests => "quests",
             SheetTab::Guild => "guild",
         }
     }
@@ -98,12 +97,12 @@ impl SheetTab {
             "skills" => SheetTab::Skills,
             "professions" => SheetTab::Professions,
             "reputation" => SheetTab::Reputation,
-            "quests" => SheetTab::Quests,
             "guild" => SheetTab::Guild,
             // M15/F25: старые значения удалённых вкладок (attrs/statuses)
             // из сохранённого конфига → «Параметры» (ближайшая инфо-вкладка);
-            // M16/F29b: «inventory» переехал в окно рюкзака.
-            "attrs" | "statuses" | "inventory" => SheetTab::Params,
+            // M16/F29b: «inventory» переехал в окно рюкзака;
+            // M18/F36: «quests» переехал в отдельное окно.
+            "attrs" | "statuses" | "inventory" | "quests" => SheetTab::Params,
             _ => SheetTab::Params,
         }
     }
@@ -134,6 +133,36 @@ const LEARN_CATALOG: [(&str, Key); 7] = [
 /// M18/F32: типы целей инкрустации — руна идёт только в оружие
 /// (`weapon`/`staff`), самоцвет (`gem`) — только в броню (`armor`).
 /// Общая для окна «Куда инкрустировать…» и окна сокетов; сервер
+/// M18/F58f (баг «инкрустация через меню камня»): первый свободный
+/// слот, который **принимает** тип вставки по `accepts` (ADR-012:
+/// самоцвет — только в gem-слот, руна — в рунный). У старого сервера
+/// поля нет — прежнее поведение: первый свободный (§11).
+pub(crate) fn first_compatible_socket(
+    sockets: &[ld2_protocol::types::Socket],
+    insert_type: &str,
+) -> Option<usize> {
+    sockets.iter().position(|s| {
+        s.rune.is_none()
+            && match s.accepts.as_deref() {
+                Some(accepts) => accepts == insert_type,
+                None => true,
+            }
+    })
+}
+
+/// M18/F58f: дубликаты рун не стакаются (указание заказчика) — есть
+/// ли в сокетах предмета руна с таким именем (сервер откажет
+/// `E_DUPLICATE_RUNE`, §9; фильтр списка — чтобы не предлагать).
+pub(crate) fn rune_already_inserted<'a>(
+    name: &str,
+    sockets: impl IntoIterator<Item = &'a ld2_protocol::types::Socket>,
+) -> bool {
+    sockets
+        .into_iter()
+        .filter_map(|s| s.rune.as_ref())
+        .any(|r| r.name == name)
+}
+
 /// проверяет то же правило (`socket.insert`, истина §7).
 pub(crate) fn inscribe_target_allowed(insert_type: &str, target_type: &str) -> bool {
     match insert_type {
@@ -143,43 +172,38 @@ pub(crate) fn inscribe_target_allowed(insert_type: &str, target_type: &str) -> b
     }
 }
 
+/// M18/F58 (ADR-012): можно ли вставить `insert_type` в предмет — есть
+/// ли **свободный** слот, который его принимает (по `accepts` самого
+/// слота). Отсюда самоцветы в оружие и отказ «руна в гемный слот».
+///
+/// У старого сервера поля `accepts` нет → прежнее правило по типу
+/// предмета (`inscribe_target_allowed`), §11 — клиент фолбэчит.
+pub(crate) fn inscribe_target_possible(insert_type: &str, item: &ItemSnapshot) -> bool {
+    if !matches!(insert_type, "rune" | "gem") {
+        return false;
+    }
+    item.sockets.iter().flatten().any(|socket| {
+        if socket.rune.is_some() {
+            return false; // слот занят
+        }
+        match socket.accepts.as_deref() {
+            Some(accepts) => accepts == insert_type,
+            // Старый сервер: фолбэк — прежнее правило по типу предмета.
+            None => inscribe_target_allowed(insert_type, item.item_type.as_str()),
+        }
+    })
+}
+
 impl Root {
-    /// M11.2: диалоги листа (ФР-07/09/10): предмет/улучшение/инкрустация.
+    /// M11.2: диалоги листа (ФР-07/09/10): инкрустация/выбор цели.
+    /// M18/F53: описание предмета и заточка — попапы (см.
+    /// `item_window`/`upgrade_window`), не Ely-модалки.
     pub(crate) fn sheet_dialog(
         &mut self,
         cx: &mut Context<'_, Self>,
         pal: &Palette,
     ) -> Option<AnyElement> {
-        if let Some(detail) = self.store.item_detail.clone() {
-            let name = detail["name"].as_str().unwrap_or("?").to_string();
-            let body = self.item_view(cx, pal, detail).into_any_element();
-            let close = self.dismiss(cx, |r| r.store.item_detail = None);
-            return Some(
-                Dialog::new("ld2-item", name, close)
-                    .child(body)
-                    .into_any_element(),
-            );
-        }
-        if let Some(view) = self.store.upgrade.clone() {
-            let title = view.item_name.clone();
-            let body = self.upgrade_view(cx, pal, &view).into_any_element();
-            let close = self.dismiss(cx, |r| r.store.upgrade = None);
-            return Some(
-                Dialog::new("ld2-upgrade", title, close)
-                    .child(body)
-                    .into_any_element(),
-            );
-        }
-        if let Some(staff_uid) = self.store.socketing.clone() {
-            let title = t(self.lang, Key::SocketingTitle).to_string();
-            let body = self.socket_view(cx, pal, staff_uid).into_any_element();
-            let close = self.dismiss(cx, |r| r.store.close_socketing());
-            return Some(
-                Dialog::new("ld2-socket", title, close)
-                    .child(body)
-                    .into_any_element(),
-            );
-        }
+        // M18: окно сокетов — popup (`socket_window`), не модалка.
         // M17/F30a: выбор оружия под инкрустацию руны (пункт меню руны).
         if let Some(rune_uid) = self.store.inscribe.clone() {
             let title = t(self.lang, Key::InscribePick).to_string();
@@ -192,6 +216,209 @@ impl Root {
             );
         }
         None
+    }
+
+    /// M18/F53: описание предмета — карточка-попап (как окно
+    /// персонажа): шапка с названием и крестиком, без затемнения.
+    pub(crate) fn item_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let detail = self.store.item_detail.clone()?;
+        let title = detail["name"].as_str().unwrap_or("?").to_string();
+        // M18/F57: контент прокручивается — описание (статы, бонусы,
+        // сокеты, цена) не помещалось в высоту карточки и обрезалось.
+        //
+        // Обёртка обязана быть **flex-колонкой**: ScrollArea рисует
+        // ребёнка с `.size_full()` внутри `overflow_hidden`, поэтому его
+        // собственная высота должна быть ограничена снаружи. Без `.flex().flex_col()`
+        // его `flex_grow_1().min_h_0()` игнорируется (родитель не
+        // flex-контейнер), высота равна контенту — скролла нет.
+        // Приём сверен с `character_left_column` (рабочий).
+        let body = div().flex().flex_col().flex_grow_1().min_h_0().child(
+            ScrollArea::new("ld2-item-detail")
+                .vertical()
+                .flex_grow_1()
+                .min_h_0()
+                .child(self.item_view(cx, pal, detail)),
+        );
+        Some(self.popup_window(window, cx, pal, PopupKind::Item, title, None, body, None))
+    }
+
+    /// M18/F53: окно заточки — карточка-попап (как окно персонажа):
+    /// шапка с названием предмета и крестиком, без затемняющего
+    /// overlay; прогресс-бар и результат — внутри карточки.
+    pub(crate) fn upgrade_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        // M18/F55: гейт окна — флаг «список показан», а не наличие
+        // камня/предмета: последний камень потрачен → sharpen_stone
+        // снят, но окно обязано пережить это, иначе «назад» закрывал
+        // его вовсе (жалоба M18/F55).
+        if !self.store.sharpen_list {
+            return None;
+        }
+        let stone = self.store.sharpen_stone.clone();
+        let view = self.store.upgrade.clone();
+        let (title, leading, body) = match view {
+            Some(view) => (
+                view.item_name.clone(),
+                // «Назад» к списку — как в окне диалога NPC (M18/F41).
+                Some(self.sharpen_back_btn(cx)),
+                self.upgrade_view(cx, pal, &view),
+            ),
+            None => (
+                stone.map(|st| st.name).unwrap_or_default(),
+                None,
+                self.sharpen_list_view(cx, pal),
+            ),
+        };
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Upgrade,
+            title,
+            leading,
+            body,
+            None,
+        ))
+    }
+
+    /// M18/F54: кнопка «назад» в шапке окна заточки — возврат от
+    /// экрана заточки к списку предметов (само окно не закрывается).
+    fn sharpen_back_btn(&mut self, cx: &mut Context<'_, Self>) -> Div {
+        div().child(
+            IconButton::new("ld2-sharpen-back", IconName::ArrowLeft)
+                .tooltip(t(self.lang, Key::BtnBack))
+                .on_click(cx.listener(|root, _, _, cx| {
+                    root.store.close_upgrade();
+                    root.upgrade_progress = None;
+                    cx.notify();
+                })),
+        )
+    }
+
+    /// M18/F54: экран 1 — предметы, которые можно заточить (строки как
+    /// в магазине торговца): название/уровень слева, «+N» справа;
+    /// клик → экран заточки этого предмета.
+    fn sharpen_list_view(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let max_level = self
+            .store
+            .session
+            .as_ref()
+            .map(|s| s.upgrade.max_level)
+            .unwrap_or(9) as i32;
+        let Some(snap) = self.store.snapshot.clone() else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        // M18/F55: камень потрачен (последний) — список предметов не
+        // показываем: без него сервер не даст превью. Вместо пустоты —
+        // заглушка, чтобы было понятно, почему дальше идти некуда.
+        if self.store.sharpen_stone.is_none() {
+            return div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.danger))
+                .child(t(lang, Key::SharpenNoStone));
+        }
+        // M18/F54: качество камня — фиксированная шапка **над**
+        // списком (не уезжает при прокрутке), строки — в ScrollArea:
+        // предметов больше, чем помещается в карточку.
+        let header = self.store.sharpen_stone.clone().map(|stone| {
+            let sign = if stone.quality >= 0 { "+" } else { "" };
+            div()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .bg(rgb(pal.panel))
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(format!(
+                    "{}: {}{}%",
+                    t(lang, Key::StatQuality),
+                    sign,
+                    stone.quality
+                ))
+        });
+        let mut list = div().flex().flex_col().gap_1();
+        let mut found = false;
+        for item in &snap.char.inventory {
+            // Все улучшаемые типы (M18/F54: камни — для всех), до потолка.
+            if !matches!(item.item_type.as_str(), "weapon" | "armor" | "staff")
+                || item.upgrade >= max_level
+            {
+                continue;
+            }
+            found = true;
+            let uid = item.uid.clone();
+            let name = item.name.clone();
+            let upgrade = item.upgrade;
+            list = list.child(
+                div()
+                    .id(format!("ld2-sharpen-{uid}"))
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(pal.selection)))
+                    .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        // Экран 2: превью этого предмета (камень уже активен).
+                        this.store.open_upgrade(uid.clone(), name.clone());
+                        let cmd = UpgradePreview {
+                            item_uid: uid.clone(),
+                        };
+                        this.send_cmd(&cmd, Act::Preview);
+                        cx.notify();
+                    }))
+                    .child(item_label_row(item, rarity_color(&item.rarity, pal)))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(format!("+{upgrade}")),
+                    ),
+            );
+        }
+        if !found {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::SharpenNoItems)),
+            );
+        }
+        // Шапка (качество камня) закреплена, список прокручивается —
+        // ScrollArea занимает остаток карточки (как окно NPC/персонажа).
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .size_full()
+            .min_h_0()
+            .children(header)
+            .child(
+                ScrollArea::new("ld2-sharpen-list")
+                    .vertical()
+                    .flex_grow_1()
+                    .min_h_0()
+                    .child(list),
+            )
     }
 
     /// M17/F30a: список оружия, куда можно инкрустировать руну —
@@ -220,14 +447,10 @@ impl Root {
             .map(|i| i.item_type.clone())
             .unwrap_or_default();
         for item in &snap.char.inventory {
-            // M18/F32: руна → оружие/посох, самоцвет → броня.
-            if !inscribe_target_allowed(&insert_type, &item.item_type) {
-                continue;
-            }
-            let Some(sockets) = item.sockets.as_ref() else {
-                continue;
-            };
-            if !sockets.iter().any(|s| s.rune.is_none()) {
+            // M18/F58: принимает ли слот предмета (accepts) — заменяет
+            // прежнее правило по типу предмета + проверку свободного
+            // слота; старый сервер — фолбэк (§11).
+            if !inscribe_target_possible(&insert_type, item) {
                 continue;
             }
             found = true;
@@ -249,11 +472,7 @@ impl Root {
                         this.start_inscribe(rune.clone(), uid.clone());
                         cx.notify();
                     }))
-                    .child(
-                        div()
-                            .text_color(rgb(rarity_color(&item.rarity, pal)))
-                            .child(format!("{} {}", item.name, badges(item))),
-                    ),
+                    .child(item_label_row(item, rarity_color(&item.rarity, pal))),
             );
         }
         if !found {
@@ -369,7 +588,16 @@ impl Root {
             .min_h_0()
             .child(self.character_left_column(cx, pal))
             .child(self.character_tabs(cx, pal));
-        Some(self.popup_window(window, cx, pal, PopupKind::Character, title, body, None))
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Character,
+            title,
+            None,
+            body,
+            None,
+        ))
     }
 
     /// M16/F29b: оболочка всплывающего окна (механика M15/F25b–g):
@@ -387,6 +615,9 @@ impl Root {
         pal: &Palette,
         kind: PopupKind,
         title: impl Into<SharedString>,
+        // M18/F41: кнопки действий слева в шапке (окно диалога NPC —
+        // магазин/«К диалогу»); у остальных окон — None.
+        leading: Option<Div>,
         body: Div,
         // M16/F29g: нижняя панель под телом (по аналогии с шапкой).
         footer: Option<Div>,
@@ -421,12 +652,46 @@ impl Root {
                     root.popup_scrim_down = false;
                 }),
             )
-            .child(div().font_weight(gpui::FontWeight::BOLD).child(title))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    // M18/F41: контекстные кнопки диалога — слева от
+                    // заголовка (бывший статус-бар переехал сюда).
+                    .children(leading)
+                    .child(div().font_weight(gpui::FontWeight::BOLD).child(title)),
+            )
             .child(
                 IconButton::new(format!("{id}-close"), IconName::X)
                     .tooltip(t(lang, Key::BtnClose))
                     .on_click(cx.listener(move |root, _, _, cx| {
                         root.popup_mut(kind).open = false;
+                        // M18/F38: окно диалога закрывается вместе со своим
+                        // состоянием (гейт рендера — наличие npc_dialog).
+                        if kind == PopupKind::Npc {
+                            tracing::debug!("закрытие диалога NPC: крестик");
+                            root.store.npc_dialog = None;
+                        }
+                        // M18/F53: окно заточки и описание предмета —
+                        // гейт рендера — наличие состояния в store.
+                        if kind == PopupKind::Upgrade {
+                            tracing::debug!("закрытие окна заточки: крестик");
+                            root.store.close_upgrade();
+                            root.store.sharpen_stone = None;
+                            root.store.sharpen_list = false;
+                            root.upgrade_progress = None;
+                        }
+                        if kind == PopupKind::Item {
+                            tracing::debug!("закрытие описания предмета: крестик");
+                            root.store.item_detail = None;
+                        }
+                        if kind == PopupKind::Socketing {
+                            tracing::debug!("закрытие окна сокетов: крестик");
+                            root.store.close_socketing();
+                            root.socket_pick = None;
+                        }
                         cx.notify();
                     })),
             )
@@ -611,12 +876,15 @@ impl Root {
         col = col.child(self.character_xp_block(pal));
         col = col.child(self.equip_block(cx, pal));
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
+        // M18/F58f: активные баффы рун — над статусами (ADR-012 §6).
+        col = col.child(self.buffs_block(pal));
+        col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
         col = col.child(self.statuses_block(cx, pal));
         div()
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(360.0))
+            .w(px(420.0))
             .min_h_0()
             .child(
                 ScrollArea::new("ld2-char-left")
@@ -723,7 +991,6 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::CharComingSoon)),
             SheetTab::Skills => self.tab_skills(cx, pal),
-            SheetTab::Quests => self.tab_quests(cx, pal),
             SheetTab::Professions => self.tab_professions(cx, pal),
             SheetTab::Guild => self.tab_guild(cx, pal),
         };
@@ -914,7 +1181,7 @@ impl Root {
                     .child(t(lang, key)),
             );
             for skill in group {
-                col = col.child(self.skill_row(cx, pal, skill, pool));
+                col = col.child(self.skill_row(cx, pal, skill));
             }
         }
         // Строки без известной группы — в конце: старый сервер (group =
@@ -930,19 +1197,19 @@ impl Root {
             })
             .collect();
         for skill in rest {
-            col = col.child(self.skill_row(cx, pal, skill, pool));
+            col = col.child(self.skill_row(cx, pal, skill));
         }
         col
     }
 
     /// M15/F28: строка навыка (перенос из таба) — название/ранг,
-    /// тултип описания, ⓘ-карточка, прогресс и вложение XP из пула.
+    /// тултип описания, ⓘ-карточка, прогресс; M18/F44: при полной
+    /// шкале — подсказка «возможно повышение ранга».
     fn skill_row(
         &mut self,
         cx: &mut Context<'_, Self>,
         pal: &Palette,
         skill: &SkillSnapshot,
-        pool: i64,
     ) -> impl gpui::IntoElement {
         let lang = self.lang;
         let name = skill.name.clone().unwrap_or_else(|| skill.id.clone());
@@ -992,39 +1259,17 @@ impl Root {
                 pal.accent,
                 pal,
             ));
-        // Вложение очков из пула (D3/D4, ФР-04).
-        if pool > 0 {
-            let mut buttons = div().flex().flex_row().gap_1();
-            for (label, points) in [("+1", 1_i64), ("+5", 5_i64)] {
-                let sid = id.clone();
-                buttons =
-                    buttons.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
-                        this.invest(&sid, points.min(pool));
-                        let _ = cx;
-                    }));
-            }
-            let sid = id.clone();
-            buttons = buttons.child(act_btn(
-                cx,
-                t(lang, Key::MaxLabel),
-                pal.panel,
-                pal.text,
-                move |this, cx| {
-                    this.invest(&sid, pool);
-                    let _ = cx;
-                },
-            ));
-            row = row.child(buttons);
+        // M18/F44: вложение очков из пула убрано (ADR-009) — повышение
+        // ранга только у тренера в диалоге; при полной шкале — подсказка.
+        if skill.xp_to_next > 0 && skill.xp >= skill.xp_to_next {
+            row = row.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(pal.accent))
+                    .child(t(lang, Key::SkillReady)),
+            );
         }
         row
-    }
-
-    fn invest(&mut self, skill_id: &str, points: i64) {
-        let cmd = CharXpInvest {
-            skill_id: skill_id.to_string(),
-            points,
-        };
-        self.send_cmd(&cmd, Act::Invest);
     }
 
     // ── вкладка «Атрибуты» ────────────────────────────────────────────────
@@ -1093,69 +1338,116 @@ impl Root {
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(t(lang, Key::EquipLabel)),
         );
+        // M18 (фича): строки собираем — ниже раскладываем в две
+        // колонки одинаковой высоты; слоты рук — отдельным блоком
+        // внизу (указание заказчика).
+        let mut rows: Vec<AnyElement> = Vec::new();
+        let mut hand_rows: Vec<AnyElement> = Vec::new();
         for slot in &equip_slots {
             let uid = snap.char.equip.get(slot).cloned().flatten();
             let item = uid
                 .as_ref()
                 .and_then(|u| snap.char.inventory.iter().find(|i| i.uid == *u));
-            // M16/F29d: подпись слева, предмет — по правому краю;
-            // кнопки «Снять»/«Описание» убраны в контекстное меню.
+            // M18 (указание заказчика): карточка слота — вертикально:
+            // **название слота в верхней строке**, предмет ниже (правым
+            // краем); кнопки «Снять»/«Описание» — в контекстном меню.
+            // M18: id обязателен для hover-состояния (gpui отслеживает
+            // наведение у идентифицированных элементов — подсветка
+            // карточки; без id работал только mouse_down).
+            // min_h + stretch — одинаковые высота/ширина карточек;
+            // выделение цветом предмета раскидывается на детей через
+            // наследование text_color (label/название/столбцы —
+            // контрастные при hover карточки).
             let mut row = div()
+                .id(format!("ld2-equip-card-{slot}"))
+                // Одинаковые высота и ширина карточек (указание
+                // заказчика): min_h + stretch поперёк колонки.
+                .min_h(px(76.0))
+                .self_stretch()
                 .flex()
-                .flex_row()
-                .gap_2()
-                .items_center()
+                .flex_col()
+                .gap_1()
                 .px_2()
                 .py_1()
                 .rounded_md()
                 .bg(rgb(pal.panel))
+                // Каждый слот визуально заметен — рамка в цвете
+                // границ панели.
+                .border_1()
+                .border_color(rgb(pal.border))
                 .cursor_pointer()
-                .child(
-                    div()
-                        .w(px(72.0))
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(slot_label(lang, slot)),
-                );
+                // Подсветка: пустой слот — общий selection, занятый —
+                // цветом предмета (ветки ниже); клик — контекстное меню.
+                ;
+            // Label слота: muted (контрастный текст при выделении
+            // отменён заказчиком — выделяется только рамка).
+            row = row.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(slot_label(lang, slot)),
+            );
             let Some(item) = item else {
-                // M17/F30b: левая рука закрыта, пока в правой двуручник.
-                let twohand = snap
-                    .char
-                    .equip
-                    .get("main_hand")
-                    .cloned()
-                    .flatten()
-                    .and_then(|u| snap.char.inventory.iter().find(|i| i.uid == u))
-                    .is_some_and(|i| i.hands.unwrap_or(1) >= 2);
-                let blocked = slot == "off_hand" && twohand;
+                // M18 (указание заказчика): пустые слоты — **не
+                // подсвечиваются** и выглядят disabled (приглушены);
+                // «Заблокировано двуручным оружием» больше нет — слот
+                // показывается как обычный пустой (метка слота сверху
+                // повторяет слот оружия).
                 row = row.child(
                     div()
-                        .flex_grow_1()
                         .text_size(px(12.0))
-                        .text_color(rgb(if blocked { pal.warn } else { pal.muted }))
-                        .child(if blocked {
-                            t(lang, Key::SlotBlocked)
-                        } else {
-                            t(lang, Key::EmptySlot)
-                        }),
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::EmptySlot)),
                 );
-                col = col.child(row);
+                row = row.opacity(0.55);
+                if matches!(slot.as_str(), "main_hand" | "off_hand") {
+                    hand_rows.push(row.into_any_element());
+                } else {
+                    rows.push(row.into_any_element());
+                }
                 continue;
             };
             let color = rarity_color(&item.rarity, pal);
             // Отступ-заполнитель прижимает предмет к правому краю.
-            row =
-                row.child(div().flex_grow_1())
-                    .child(div().text_color(rgb(color)).child(format!(
-                        "{} {}",
-                        item.name,
-                        badges(item)
-                    )));
+            // M18/F58f: подпись как в рюкзаке (указание заказчика) —
+            // слоты второй строкой под названием (`item_label_stack`).
+            // M18 (указание заказчика): карточка одетого предмета —
+            // ниже названия слота идёт **название предмета**, ниже —
+            // **столбцы самоцветов/рун** (иконки слотов отдельной
+            // строкой, левым краем).
+            let mut name_line = div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .items_baseline()
+                .text_color(rgb(color))
+                .child(div().child(item.name.clone()));
+            if item.upgrade > 0 {
+                name_line = name_line.child(div().child(format!("+{}", item.upgrade)));
+            }
+            if let Some(qty) = item.qty.filter(|q| *q > 1) {
+                name_line = name_line.child(div().child(format!("×{qty}")));
+            }
+            row = row.child(name_line);
+            if let Some(sockets) = item.sockets.as_ref().filter(|s| !s.is_empty()) {
+                row = row.child(
+                    div()
+                        .text_color(rgb(color))
+                        .child(socket_icons_row(item.item_type.as_str(), sockets)),
+                );
+            }
+            // M18 (указание заказчика): выделение — **только рамка**
+            // цветом предмета при наведении; фон и тексты не меняются
+            // (контрастный текст отменён — баг при скролле).
+            row = row.hover(move |st| st.border_color(rgb(color)));
             // Меню предмета (F29d): Описание и Снять — вместо кнопок.
             let mut menu = Menu::new();
             let detail = serde_json::to_value(item).unwrap_or_default();
             menu = menu.item(menu_item(cx, t(lang, Key::MenuDesc), move |this, _cx| {
+                this.store.close_upgrade();
+                this.upgrade_progress = None;
                 this.store.item_detail = Some(detail.clone());
+                this.open_popup(PopupKind::Item);
             }));
             let slot_for_cmd = slot.clone();
             menu = menu.item(menu_item(
@@ -1168,6 +1460,27 @@ impl Root {
                     this.send_cmd(&cmd, Act::Unequip);
                 },
             ));
+            // M18 (указание заказчика): пункт «Инкрустация» — и в
+            // разделе экипировки окна персонажа, если у вещи есть
+            // слоты (пустые или занятые); тот же popup, что рюкзак.
+            if item
+                .sockets
+                .as_ref()
+                .is_some_and(|sockets| !sockets.is_empty())
+            {
+                let uid = item.uid.clone();
+                menu = menu.item(menu_item(
+                    cx,
+                    t(lang, Key::BtnSocketing),
+                    move |this, _cx| {
+                        this.store.item_detail = None;
+                        this.store.close_upgrade();
+                        this.upgrade_progress = None;
+                        this.store.open_socketing(uid.clone());
+                        this.open_popup(PopupKind::Socketing);
+                    },
+                ));
+            }
             // Запрос меню: левый и правый клик по строке (номер растёт —
             // Ely переоткрывает; в manual-режиме host-правый клик выключен).
             let request = match &self.equip_menu {
@@ -1194,7 +1507,41 @@ impl Root {
                         }),
                     ),
                 );
-            col = col.child(row);
+            if matches!(slot.as_str(), "main_hand" | "off_hand") {
+                hand_rows.push(row.into_any_element());
+            } else {
+                rows.push(row.into_any_element());
+            }
+        }
+
+        // Две колонки одинаковой высоты: ряд растягивает обе до
+        // самой длинной (flex stretch), ширины равны (flex_grow).
+        let two_cols = |items: Vec<AnyElement>| -> Div {
+            let half = items.len().div_ceil(2);
+            let mut left = div().flex().flex_col().gap_1().min_w_0().flex_grow_1();
+            let mut right = div().flex().flex_col().gap_1().min_w_0().flex_grow_1();
+            for (i, row) in items.into_iter().enumerate() {
+                if i < half {
+                    left = left.child(row);
+                } else {
+                    right = right.child(row);
+                }
+            }
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_stretch()
+                .child(left)
+                .child(right)
+        };
+        col = col.child(two_cols(rows));
+
+        // M18 (указание заказчика): слоты рук — в самый низ, ниже всей
+        // экипировки, отделены чертой.
+        if !hand_rows.is_empty() {
+            col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
+            col = col.child(two_cols(hand_rows));
         }
 
         col
@@ -1211,14 +1558,20 @@ impl Root {
         let lang = self.lang;
         let mut menu = Menu::new();
 
-        // Использовать (свиток/зелье/…).
+        // Использовать (свиток/зелье/…); M18/F54: камень усиления —
+        // отдельный ack (Act::Sharpen) + открытие окна заточки.
         let uid = item.uid.clone();
+        let is_stone = item.item_type == "upgrade_stone";
         menu = menu.item(menu_item(cx, t(lang, Key::MenuUse), move |this, _cx| {
             let cmd = ItemUse {
                 item_uid: uid.clone(),
                 target_id: None,
             };
-            this.send_cmd(&cmd, Act::Drop);
+            this.send_cmd(&cmd, if is_stone { Act::Sharpen } else { Act::Drop });
+            if is_stone {
+                // Геометрия карточки (гейт рендера — sharpen_stone из ack).
+                this.open_popup(PopupKind::Upgrade);
+            }
         }));
 
         // M17/F30a/F30c: инкрустация руны ИЛИ самоцвета — окно
@@ -1249,19 +1602,53 @@ impl Root {
             }
         }
 
+        // M18 (указание заказчика): пункт «Инкрустация» — в разделе
+        // экипировки (после «Надеть»), если есть слоты рун или
+        // самоцветов — **свободные или занятые** (любой слот слотом;
+        // пустой список — не показываем).
+        let has_sockets = item
+            .sockets
+            .as_ref()
+            .is_some_and(|sockets| !sockets.is_empty());
+        if has_sockets {
+            let uid = item.uid.clone();
+            menu = menu.item(menu_item(
+                cx,
+                t(lang, Key::BtnSocketing),
+                move |this, _cx| {
+                    // Окно сокетов — popup-диалог (аналогично
+                    // описанию/заточке); соседние попапы закрываем.
+                    this.store.item_detail = None;
+                    this.store.close_upgrade();
+                    this.upgrade_progress = None;
+                    this.store.open_socketing(uid.clone());
+                    this.open_popup(PopupKind::Socketing);
+                },
+            ));
+        }
+
         // Улучшение (ФР-10): до максимума из конфига сервера.
+        // M18/F54: сервер требует активный камень — пункт показываем
+        // только когда камень уже выбран (иначе `E_INGREDIENTS`).
         let max_level = self
             .store
             .session
             .as_ref()
             .map(|s| s.upgrade.max_level)
             .unwrap_or(9) as i32;
-        let upgradable = matches!(item.item_type.as_str(), "weapon" | "armor" | "staff");
+        let upgradable = matches!(item.item_type.as_str(), "weapon" | "armor" | "staff")
+            && self.store.sharpen_stone.is_some();
         if upgradable && item.upgrade < max_level {
             let uid = item.uid.clone();
             let name = item.name.clone();
             menu = menu.item(menu_item(cx, t(lang, Key::UpgradeBtn), move |this, _cx| {
+                // M18/F53: раньше модал-диспетчер показывал одну модалку
+                // за раз — теперь попапы, закрываем соседнее вручную.
+                this.store.item_detail = None;
                 this.store.open_upgrade(uid.clone(), name.clone());
+                // M18/F53: карточка заточки — как окно персонажа
+                // (базовый размер/позиция, без затемнения).
+                this.open_popup(PopupKind::Upgrade);
                 let cmd = UpgradePreview {
                     item_uid: uid.clone(),
                 };
@@ -1269,23 +1656,13 @@ impl Root {
             }));
         }
 
-        // Инкрустация (ФР-09): предмет с сокетами — посох или меч
-        // (M17/F30a: сокеты у любого оружия).
-        if item.sockets.is_some() {
-            let uid = item.uid.clone();
-            menu = menu.item(menu_item(
-                cx,
-                t(lang, Key::BtnSocketing),
-                move |this, _cx| {
-                    this.store.open_socketing(uid.clone());
-                },
-            ));
-        }
-
         // Описание / Выбросить.
         let detail = serde_json::to_value(item).unwrap_or_default();
         menu = menu.item(menu_item(cx, t(lang, Key::MenuDesc), move |this, _cx| {
+            this.store.close_upgrade();
+            this.upgrade_progress = None;
             this.store.item_detail = Some(detail.clone());
+            this.open_popup(PopupKind::Item);
         }));
         let uid = item.uid.clone();
         menu = menu.item(menu_item(cx, t(lang, Key::MenuDrop), move |this, _cx| {
@@ -1302,6 +1679,56 @@ impl Root {
 
     /// M15/F25: статусы со временем + журнал нарушений — низ левой
     /// колонки (перенос из вкладки «Статусы» по правилу дубликатов).
+    /// M18/F58f (ADR-012 §6): активные баффы рун — название (серверная
+    /// строка §8), стак и обратный отсчёт до снятия (по серверным срокам
+    /// как у статусов: now = локальное + offset, §1.1).
+    fn buffs_block(&self, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let mut col = div().flex().flex_col().gap_1().child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(t(lang, Key::BuffsHeader)),
+        );
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return col.child(
+                div()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::Loading)),
+            );
+        };
+        let now = local_epoch() + self.store.time_offset;
+        let active = filter_active_buffs(&snap.char.buffs, now);
+        if active.is_empty() {
+            return col.child(
+                div()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::NoBuffs)),
+            );
+        }
+        for buff in active {
+            let left = buff.expires_at - now;
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .child(div().child(buff.title.clone()))
+                    .child(
+                        div()
+                            .text_color(rgb(pal.accent))
+                            .child(format!("×{}", buff.stacks)),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(pal.muted))
+                            .child(format_duration(lang, left)),
+                    ),
+            );
+        }
+        col
+    }
+
     fn statuses_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let Some(snap) = self.store.snapshot.clone() else {
@@ -1383,148 +1810,6 @@ impl Root {
                         format_duration(lang, entry.total_s)
                     )),
             );
-        }
-        col
-    }
-
-    // ── вкладка «Квесты» (ФР-12) ──────────────────────────────────────────
-
-    fn tab_quests(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let lang = self.lang;
-        let Some(snap) = self.store.snapshot.clone() else {
-            return div()
-                .text_color(rgb(pal.muted))
-                .child(t(lang, Key::Loading));
-        };
-        if snap.char.quests.is_empty() {
-            return div()
-                .text_color(rgb(pal.muted))
-                .child(t(lang, Key::NoQuests));
-        }
-        let mut col = div().flex().flex_col().gap_2();
-        for quest in &snap.char.quests {
-            let tracked = self.store.quest_tracker.contains(&quest.id);
-            let (state_key, color) = match quest.state {
-                QuestPhase::Available => (Key::StateAvailable, 0x98_c3_79),
-                QuestPhase::Active => (Key::StateActive, 0xab_b2_bf),
-                QuestPhase::TurnIn => (Key::StateTurnIn, 0xd1_9a_66),
-                QuestPhase::Done => (Key::StateDone, 0x61_af_ef),
-            };
-            let mut card = div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.border))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(div().text_color(rgb(color)).child(t(lang, state_key)))
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(quest.title.clone().unwrap_or_else(|| quest.id.clone())),
-                        ),
-                );
-
-            // Трекер (ФР-12): максимум 3, переключение.
-            let qid = quest.id.clone();
-            card = card.child(act_btn(
-                cx,
-                if tracked {
-                    t(lang, Key::TrackedBtn)
-                } else {
-                    t(lang, Key::TrackBtn)
-                },
-                if tracked { pal.accent } else { pal.panel },
-                pal.text,
-                move |this, cx| {
-                    this.store.toggle_quest_tracker(&qid);
-                    let _ = cx;
-                },
-            ));
-
-            // Кнопки состояния (§7).
-            let mut actions = div().flex().flex_row().gap_1();
-            match quest.state {
-                QuestPhase::Available => {
-                    let qid = quest.id.clone();
-                    actions = actions.child(act_btn(
-                        cx,
-                        t(lang, Key::BtnAccept),
-                        pal.accent,
-                        pal.accent_text,
-                        move |this, cx| {
-                            let cmd = QuestAccept {
-                                quest_id: qid.clone(),
-                            };
-                            this.send_cmd(&cmd, Act::Quest);
-                            let _ = cx;
-                        },
-                    ));
-                }
-                QuestPhase::Active => {
-                    let qid = quest.id.clone();
-                    actions = actions.child(act_btn(
-                        cx,
-                        t(lang, Key::BtnAbandon),
-                        pal.panel,
-                        pal.danger,
-                        move |this, cx| {
-                            let cmd = QuestAbandon {
-                                quest_id: qid.clone(),
-                            };
-                            this.send_cmd(&cmd, Act::Quest);
-                            let _ = cx;
-                        },
-                    ));
-                }
-                QuestPhase::TurnIn => {
-                    let qid = quest.id.clone();
-                    actions = actions.child(act_btn(
-                        cx,
-                        t(lang, Key::BtnTurnIn),
-                        pal.accent,
-                        pal.accent_text,
-                        move |this, cx| {
-                            let cmd = QuestTurnIn {
-                                quest_id: qid.clone(),
-                            };
-                            this.send_cmd(&cmd, Act::Quest);
-                            let _ = cx;
-                        },
-                    ));
-                }
-                QuestPhase::Done => {}
-            }
-            card = card.child(actions);
-
-            if !quest.goals.is_empty() {
-                card = card.child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(format!("• {}", goals_summary(quest))),
-                );
-            }
-            if let Some(reward) = &quest.reward_preview {
-                if let Some(xp) = reward.xp {
-                    card = card.child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(rgb(pal.muted))
-                            .child(format!("{}: {xp} XP", t(lang, Key::RewardLabel))),
-                    );
-                }
-            }
-            col = col.child(card);
         }
         col
     }
@@ -1980,20 +2265,162 @@ impl Root {
         let lang = self.lang;
         let rarity = detail["rarity"].as_str().unwrap_or("common");
         let item_type = detail["type"].as_str().unwrap_or("?");
-        let mut col = div().flex().flex_col().gap_1().child(
+        // M18/F57: справа запас под скроллбар (приём character_left_column)
+        // — иначе индикатор прокрутки наезжал на жирные значения статов.
+        let mut col = div().flex().flex_col().gap_1().pr(px(16.0));
+        // M18/F58f: у рун — глиф предмета сразу под названием (шапка
+        // окна), вверху тела (указание заказчика).
+        if item_type == "rune" {
+            let name = detail["name"].as_str().unwrap_or("rune");
+            let glyph = detail["stats"].get("glyph").and_then(|v| v.as_str());
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_baseline()
+                    .child(crate::rune_glyph::glyph_div_for(glyph, name)),
+            );
+        } else if item_type == "gem" {
+            // M18/F58f: у самоцвета — знак раритета под названием
+            // (указание заказчика: рюкзак и описание).
+            col = col.child(div().flex().flex_row().items_baseline().child(
+                crate::gem_glyph::gem_symbol_div(detail["rarity"].as_str().unwrap_or("")),
+            ));
+        }
+        // M18/F58f: у рун уровень заточки в описании не нужен
+        // (указание заказчика) — только «редкость · тип».
+        let header = if item_type == "rune" {
+            format!(
+                "{} · {}",
+                rarity_label(lang, rarity),
+                type_label(lang, item_type)
+            )
+        } else {
+            format!(
+                "{} · {} · +{}",
+                rarity_label(lang, rarity),
+                type_label(lang, item_type),
+                detail["upgrade"].as_i64().unwrap_or(0)
+            )
+        };
+        col = col.child(
             div()
                 .text_color(rgb(rarity_color(rarity, pal)))
-                .child(format!(
-                    "{} · {} · +{}",
-                    rarity_label(lang, rarity),
-                    type_label(lang, item_type),
-                    detail["upgrade"].as_i64().unwrap_or(0)
-                )),
+                .child(header),
         );
+        // M18/F58f: слоты — вторая строка под «редкость · тип · +N»,
+        // руна-слот первым; иконки различают руны и самоцветы.
+        if let Ok(sockets) =
+            serde_json::from_value::<Vec<ld2_protocol::types::Socket>>(detail["sockets"].clone())
+        {
+            if !sockets.is_empty() {
+                // Цвет слотов — как у предмета (rarity-цвет строки).
+                col = col.child(
+                    div()
+                        .text_color(rgb(rarity_color(rarity, pal)))
+                        .child(socket_icons_row(item_type, &sockets)),
+                );
+            }
+        }
         if let Some(stats) = detail["stats"].as_object() {
+            // M18/F58f: строка-пара «label: value» в стиле статов окна.
+            let kv = |label: String, value: String| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .child(div().text_color(rgb(pal.muted)).child(label))
+                    .child(div().font_weight(gpui::FontWeight::BOLD).child(value))
+            };
             for (key, value) in stats {
                 // M16/F29e: ключи и значения — на языке игрока
                 // (школы — свои названия; прочие значения — как есть).
+                // M18/F53: `param` — вложенный объект {id: значение};
+                // показываем каждое производное как «Критический удар: +3%».
+                if key == "param" {
+                    if let Some(params) = value.as_object() {
+                        for (pid, pval) in params {
+                            let raw = pval
+                                .as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| pval.to_string());
+                            let suffix = if param_is_percent(pid) { "%" } else { "" };
+                            col = col.child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .justify_between()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .bg(rgb(pal.panel))
+                                    .child(
+                                        div()
+                                            .text_color(rgb(pal.muted))
+                                            .child(param_label(lang, pid)),
+                                    )
+                                    .child(
+                                        div()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .child(format!("{}{}", raw, suffix)),
+                                    ),
+                            );
+                        }
+                        continue;
+                    }
+                }
+                // M18/F58f: описание рун (указание заказчика) — без
+                // технического glyph, шанс — в процентах, бафф/эффект —
+                // читаемые строки вместо JSON.
+                if key == "glyph" {
+                    continue;
+                }
+                if key == "chance" {
+                    let pct = (value.as_f64().unwrap_or(0.0) * 100.0).round() as i64;
+                    col = col.child(kv(
+                        t(lang, Key::RuneProcChance).to_string(),
+                        format!("{pct}%"),
+                    ));
+                    continue;
+                }
+                if key == "buff" {
+                    if let Some(b) = value.as_object() {
+                        let param = b.get("param").and_then(|v| v.as_str()).unwrap_or("");
+                        let val = b.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let dur = b.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let stacks = b.get("max_stacks").and_then(|v| v.as_i64()).unwrap_or(1);
+                        col = col.child(kv(
+                            param_label(lang, param),
+                            format!("+{val} · {} · ×{stacks}", format_duration(lang, dur)),
+                        ));
+                    }
+                    continue;
+                }
+                if key == "effect" {
+                    if let Some(e) = value.as_object() {
+                        let kind = e.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                        let val = e.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let dur = format_duration(
+                            lang,
+                            e.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(0),
+                        );
+                        let (label, val_s) = match kind {
+                            "bleed" => (
+                                t(lang, Key::EffectBleed).to_string(),
+                                format!("{val}{} · {dur}", t(lang, Key::PerSecond)),
+                            ),
+                            "stun" => (t(lang, Key::EffectStun).to_string(), dur.clone()),
+                            "root" => (t(lang, Key::EffectRoot).to_string(), dur.clone()),
+                            other => (other.to_string(), dur),
+                        };
+                        col = col.child(kv(label, val_s));
+                    }
+                    continue;
+                }
                 let raw = value
                     .as_str()
                     .map(str::to_string)
@@ -2011,19 +2438,157 @@ impl Root {
                 } else {
                     raw
                 };
-                col = col.child(div().child(format!("{}: {}", stat_label(lang, key), value)));
+                col = col.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_between()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(pal.panel))
+                        .child(
+                            div()
+                                .text_color(rgb(pal.muted))
+                                .child(stat_label(lang, key)),
+                        )
+                        .child(div().font_weight(gpui::FontWeight::BOLD).child(value)),
+                );
+            }
+        }
+        // M18/F47/ADR-010: бонусы предмета — «Сила +3», «Точность +4%»,
+        // «Владение мечом +2» (контент + инстанс, слитые сервером).
+        if let Some(bonuses) = detail["bonuses"].as_array() {
+            if !bonuses.is_empty() {
+                col = col.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::ItemBonuses)),
+                );
+                for bonus in bonuses {
+                    let kind = bonus["kind"].as_str().unwrap_or_default();
+                    let id = bonus["id"].as_str().unwrap_or_default();
+                    let value = bonus["value"].as_i64().unwrap_or(0);
+                    let pct = bonus["pct"].as_bool().unwrap_or(false);
+                    let name = match kind {
+                        "attr" => attr_label(lang, id),
+                        "param" => param_label(lang, id),
+                        "skill" => self
+                            .store
+                            .snapshot
+                            .as_ref()
+                            .and_then(|snap| snap.char.skills.iter().find(|skill| skill.id == id))
+                            .and_then(|skill| skill.name.clone())
+                            .unwrap_or_else(|| id.to_string()),
+                        _ => id.to_string(),
+                    };
+                    let sign = if value >= 0 { "+" } else { "" };
+                    // M18/F56: та же плитка, что у статов выше —
+                    // label приглушённым слева, значение жирным вправо
+                    // (иначе бонусы «плыли» относительно статов).
+                    col = col.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .justify_between()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(pal.panel))
+                            .child(div().text_color(rgb(pal.muted)).child(name))
+                            .child(div().font_weight(gpui::FontWeight::BOLD).child(format!(
+                                "{}{}{}",
+                                sign,
+                                value,
+                                if pct { "%" } else { "" }
+                            ))),
+                    );
+                }
             }
         }
         if let Some(sockets) = detail["sockets"].as_array() {
             for socket in sockets {
+                // M18/F58f: знаки рунных слотов — глифы шрифта Dwarven
+                // Runes (rune_glyph); слоты самоцветов — прежние ◈/○.
+                let is_rune_slot = socket["accepts"].as_str() != Some("gem");
                 if let Some(rune) = socket["rune"].as_object() {
                     // M17/F30c: самоцвет — без зарядов (заряды у рун).
-                    let label = if rune["spell"].as_str().is_some_and(|s| s.is_empty()) {
-                        format!("◈ {}", rune["name"])
+                    // M18/F58f: знак — контент-поле `glyph`, фолбэк — хеш.
+                    // Доступ к Map — только через `.get()`: индексация
+                    // отсутствующего ключа у serde_json::Map паникует
+                    // («no entry found for key» — вылет при открытии
+                    // описания).
+                    let name = rune.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let glyph =
+                        rune_glyph::glyph_div_for(rune.get("glyph").and_then(|v| v.as_str()), name);
+                    let label = if is_rune_slot {
+                        if rune
+                            .get("spell")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| s.is_empty())
+                        {
+                            name.to_string()
+                        } else {
+                            format!(
+                                "{}: {}/{}",
+                                name,
+                                rune.get("charges").and_then(|v| v.as_i64()).unwrap_or(0),
+                                rune.get("max").and_then(|v| v.as_i64()).unwrap_or(0)
+                            )
+                        }
                     } else {
-                        format!("◈ {}: {}/{}", rune["name"], rune["charges"], rune["max"])
+                        name.to_string()
                     };
-                    col = col.child(div().child(label));
+                    // M18/F58f: под занятым слотом — подробности, что
+                    // даёт вставка (урон/шанс/бафф/эффект/трата; сервер
+                    // формирует строки, §8).
+                    let mut cell = div().flex().flex_col().child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_1()
+                            .items_baseline()
+                            .child(if is_rune_slot {
+                                glyph
+                            } else {
+                                // M18/F58f (правка заказчика): занятый
+                                // самоцвет — знак его раритета (Symbola);
+                                // старый сервер без rarity — прежний ◈
+                                // (§11).
+                                match rune.get("rarity").and_then(|v| v.as_str()) {
+                                    Some(rarity) => crate::gem_glyph::gem_symbol_div(rarity),
+                                    None => div().child("◈"),
+                                }
+                            })
+                            .child(div().child(label)),
+                    );
+                    // `.get`, а не `rune["detail"]`: у serde_json::Map
+                    // индексация отсутствующего ключа паникует (в
+                    // отличие от Value → Null) — вылет при открытии
+                    // описания рун без подписи (M18/F58f).
+                    if let Some(details) = rune.get("detail").and_then(|d| d.as_array()) {
+                        for line in details.iter().filter_map(|d| d.as_str()) {
+                            cell = cell.child(
+                                div()
+                                    .pl(px(20.0))
+                                    .text_color(rgb(pal.muted))
+                                    .child(line.to_string()),
+                            );
+                        }
+                    }
+                    col = col.child(cell);
+                } else if is_rune_slot {
+                    let glyph = rune_glyph::empty_slot_glyph_div();
+                    col = col.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_1()
+                            .items_baseline()
+                            .child(glyph)
+                            .child(div().text_color(rgb(pal.muted)).child("—")),
+                    );
                 } else {
                     col = col.child(div().text_color(rgb(pal.muted)).child("○ —"));
                 }
@@ -2048,6 +2613,37 @@ impl Root {
         ))
     }
 
+    /// M18/F55: итог заточки для показа прямо на экране заточки —
+    /// карточка зелёным при успехе и красным при провале (разрушение /
+    /// без изменений). Вызывается и в ветке «превью ещё нет», и в
+    /// основной — итог переживает автопревью.
+    fn sharpen_result_line(&self, lang: Lang, pal: &Palette, res: &serde_json::Value) -> Div {
+        let ok = res.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        let (text, color) = if ok {
+            let n = res.get("new_upgrade").and_then(|v| v.as_u64()).unwrap_or(0);
+            (
+                tf(lang, Key::SharpenResultOk, &[("s", &n.to_string())]),
+                pal.success,
+            )
+        } else if res
+            .get("item_destroyed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            (t(lang, Key::SharpenResultBroken).to_string(), pal.danger)
+        } else {
+            (t(lang, Key::SharpenResultFail).to_string(), pal.danger)
+        };
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .font_weight(gpui::FontWeight::BOLD)
+            .text_color(rgb(color))
+            .child(text)
+    }
+
     /// Улучшение (ФР-10): «сейчас +N → после +M», шанс, стоимость (§7).
     pub(crate) fn upgrade_view(
         &mut self,
@@ -2057,25 +2653,34 @@ impl Root {
     ) -> Div {
         let lang = self.lang;
         let pending = self.store.pending == Some(Act::Upgrade);
+        let progress = self
+            .upgrade_progress
+            .as_ref()
+            .filter(|p| p.0 == view.item_uid)
+            .cloned();
         let mut col = div().flex().flex_col().gap_1();
         let Some(preview) = view.preview.clone() else {
-            col = col.child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::Loading)),
-            );
-            col = col.child(act_btn(
-                cx,
-                t(lang, Key::Exit),
-                pal.panel,
-                pal.text,
-                |this, cx| {
-                    this.store.close_upgrade();
-                    let _ = cx;
-                },
-            ));
+            if let Some(res) = view.result.as_ref() {
+                // M18/F55: итог броска — прямо на экране заточки,
+                // зелёный успех / красный провал (а не уведомление ОС).
+                col = col.child(self.sharpen_result_line(lang, pal, res));
+            } else {
+                col = col.child(
+                    div()
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::Loading)),
+                );
+            }
+            // M18/F53: кнопки внизу нет — закрытие крестиком в шапке.
             return col;
         };
+
+        // M18/F55: итог прошлого броска остаётся виден на том же
+        // экране (автопревью его не затирает) — гасится только при
+        // старте следующего улучшения.
+        if let Some(res) = view.result.as_ref() {
+            col = col.child(self.sharpen_result_line(lang, pal, res));
+        }
 
         let current = self
             .store
@@ -2120,22 +2725,61 @@ impl Root {
             }
         }
 
+        // M18/F53: что будет при неудаче — из capability `upgrade.rules`.
+        let fail_rule = self
+            .store
+            .session
+            .as_ref()
+            .and_then(|s| s.features.get("upgrade.rules"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("keep");
+        let fail_text = match fail_rule {
+            "level_down" => "При неудаче: уровень снижается на 1 (не ниже 0).",
+            "break_on_fail" => "При неудаче: предмет разрушается.",
+            _ => "При неудаче: уровень не меняется, предмет сохраняется.",
+        };
+        col = col.child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(fail_text),
+        );
+
         let preview_id = preview["preview_id"]
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let can_start = !preview_id.is_empty() && !pending;
+        let can_start = !preview_id.is_empty() && !pending && progress.is_none();
+        if let Some((_uid, _pid, started, duration)) = progress.clone() {
+            let now = self.now_ms();
+            let left = (started + duration - now).max(0);
+            let frac = ((now - started) as f32 / duration.max(1) as f32).clamp(0.0, 1.0);
+            let secs = (left + 999) / 1000;
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .mt(px(8.0))
+                    .child(
+                        div().h(px(6.0)).rounded_md().bg(rgb(pal.border)).child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(frac))
+                                .rounded_md()
+                                .bg(rgb(pal.warn)),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format!("{}… {} с", t(lang, Key::Loading), secs)),
+                    ),
+            );
+        }
+        // M18/F53: внизу только «Улучшить» — закрытие крестиком в шапке.
         let mut row = div().flex().flex_row().gap_2().mt(px(8.0));
-        row = row.child(act_btn(
-            cx,
-            t(lang, Key::Exit),
-            pal.panel,
-            pal.text,
-            |this, cx| {
-                this.store.close_upgrade();
-                let _ = cx;
-            },
-        ));
         let uid = view.item_uid.clone();
         if can_start {
             row = row.child(act_btn(
@@ -2144,11 +2788,21 @@ impl Root {
                 pal.warn,
                 0xffffff,
                 move |this, cx| {
-                    let cmd = UpgradeStart {
-                        item_uid: uid.clone(),
-                        preview_id: preview_id.clone(),
-                    };
-                    this.send_cmd(&cmd, Act::Upgrade);
+                    // M18/F53: прогресс 3 с (из настроек сервера), затем
+                    // отправка cmd/upgrade.start (root::tick).
+                    let duration_ms = this
+                        .store
+                        .session
+                        .as_ref()
+                        .map(|s| (s.upgrade.duration_s * 1000.0).round() as i64)
+                        .unwrap_or(3_000);
+                    // M18/F55: прошлый итог не должен висеть во время
+                    // прогресса нового броска.
+                    if let Some(v) = this.store.upgrade.as_mut() {
+                        v.result = None;
+                    }
+                    this.upgrade_progress =
+                        Some((uid.clone(), preview_id.clone(), this.now_ms(), duration_ms));
                     let _ = cx;
                 },
             ));
@@ -2172,6 +2826,157 @@ impl Root {
     }
 
     /// Инкрустация посоха (ФР-09).
+    /// M18: окно сокетов (инкрустация через меню оружия) — popup-диалог
+    /// с шапкой и крестиком (раньше — модалка модал-диспетчера).
+    pub(crate) fn socket_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let staff_uid = self.store.socketing.clone()?;
+        // M18 (указание заказчика): окно «Инкрустация» — две страницы
+        // (слоты → выбор вставки), на второй — кнопка «Назад» в шапке
+        // (паттерн окна заточки).
+        let title = t(self.lang, Key::SocketingTitle).to_string();
+        let lang = self.lang;
+        let leading = self.socket_pick.is_some().then(|| {
+            div().child(
+                IconButton::new("ld2-socket-back", IconName::ArrowLeft)
+                    .tooltip(t(lang, Key::BtnBack))
+                    .on_click(cx.listener(|root, _, _, cx| {
+                        root.socket_pick = None;
+                        cx.notify();
+                    })),
+            )
+        });
+        let inner = match self.socket_pick {
+            Some(index) => self.pick_list_view(cx, pal, staff_uid, index),
+            None => self.socket_view(cx, pal, staff_uid),
+        };
+        // Обёртка-флекс-колонка под ScrollArea — приём item_window (M18/F57).
+        let body = div().flex().flex_col().flex_grow_1().min_h_0().child(
+            ScrollArea::new("ld2-socketing-scroll")
+                .vertical()
+                .flex_grow_1()
+                .min_h_0()
+                .child(inner),
+        );
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Socketing,
+            title,
+            leading,
+            body,
+            None,
+        ))
+    }
+
+    /// M18 (указание заказчика): окно выбора вставки — список рун или
+    /// самоцветов для выбранного слота, **по типу магазина в диалогах**
+    /// (строки: слева предмет — справа действие); клик по строке —
+    /// процесс инкрустации в этот слот, окно закрывается.
+    pub(crate) fn pick_list_view(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        staff_uid: String,
+        index: u32,
+    ) -> Div {
+        let lang = self.lang;
+        let Some(snap) = self.store.snapshot.clone() else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        let Some(staff) = snap
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == staff_uid)
+            .cloned()
+        else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading));
+        };
+        let Some(socket) = staff.sockets.iter().flatten().find(|s| s.index == index) else {
+            return div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::NoRunes));
+        };
+        // Список: принимает ли слот вставку (accepts; §11 — фолбэк по
+        // типу цели), для рун — без уже вставленных (дубликаты).
+        let inserts: Vec<ItemSnapshot> = snap
+            .char
+            .inventory
+            .iter()
+            .filter(|i| match socket.accepts.as_deref() {
+                Some(accepts) => i.item_type == accepts,
+                None => inscribe_target_allowed(&i.item_type, staff.item_type.as_str()),
+            })
+            .filter(|i| {
+                i.item_type != "rune"
+                    || !rune_already_inserted(&i.name, staff.sockets.iter().flatten())
+            })
+            .cloned()
+            .collect();
+
+        // Строки в стиле магазина (game::shop_view): панель, подсветка
+        // наведения, клик по строке → действие.
+        let mut col = div().flex().flex_col().gap_1().flex_grow_1().min_h_0();
+        if inserts.is_empty() {
+            col = col.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::NoRunes)),
+            );
+        }
+        for item in &inserts {
+            let pick = item.uid.clone();
+            let pick_staff = staff_uid.clone();
+            let row_id = format!("ld2-pick-{}", item.uid);
+            col = col.child(
+                div()
+                    .id(row_id)
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .cursor_pointer()
+                    .hover(move |st| st.bg(rgb(pal.selection)))
+                    .child(item_label_row(item, rarity_color(&item.rarity, pal)))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(pal.muted))
+                            .child(t(lang, Key::InsertRune)),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        // Процесс инкрустации: вставка в выбранный слот.
+                        let cmd = SocketInsert {
+                            staff_uid: pick_staff.clone(),
+                            socket_index: index,
+                            rune_uid: pick.clone(),
+                        };
+                        this.send_cmd(&cmd, Act::Socket);
+                        this.socket_pick = None;
+                        cx.notify();
+                    })),
+            );
+        }
+        col
+    }
+
     pub(crate) fn socket_view(
         &mut self,
         cx: &mut Context<'_, Self>,
@@ -2203,18 +3008,55 @@ impl Root {
             .char
             .inventory
             .iter()
-            .filter(|i| inscribe_target_allowed(insert_type, &i.item_type))
+            // M18/F58f (баг): принимает слот — его `accepts`, а не тип
+            // предмета (ADR-012): для цели (staff) с gem-слотами в списке
+            // должны быть и самоцветы; заодно — только вставки, которым
+            // есть свободный подходящий слот.
+            .filter(|i| inscribe_target_possible(&i.item_type, &staff))
+            // M18/F58f: уже вставленные руны не предлагаем (дубликаты
+            // не стакаются — сервер и так откажет, §9).
+            .filter(|i| {
+                insert_type != "rune"
+                    || !rune_already_inserted(&i.name, staff.sockets.iter().flatten())
+            })
             .cloned()
             .collect();
 
         let mut col = div().flex().flex_col().gap_1();
         for socket in staff.sockets.iter().flatten() {
             let mut row = div().flex().flex_row().gap_2().items_center();
-            row = row.child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(format!("◈ {}", socket.index)),
-            );
+            // M18/F58f: маркер руна-слота — глиф Dwarven Runes
+            // (пустой слот — свой глиф); слот самоцвета — ◈, а у
+            // **инкрустированного** — знак его раритета (Symbola):
+            // указание заказчика — глиф по рангу рядом со selfцветом.
+            if socket.accepts.as_deref() == Some("gem") {
+                // M18 (указание заказчика): **пустой** слот после
+                // извлечения камня — пустой кружочек (как у рунного),
+                // а не ромбик ◈ (читался как занятый).
+                let marker = match &socket.rune {
+                    Some(rune) => match rune.rarity.as_deref() {
+                        Some(rarity) => crate::gem_glyph::gem_symbol_div(rarity),
+                        None => div().child("◈"),
+                    },
+                    None => div().child("\u{25CB}"),
+                };
+                row = row.child(marker);
+                if socket.rune.is_none() {
+                    row = row.child(
+                        div()
+                            .text_color(rgb(pal.muted))
+                            .child(socket.index.to_string()),
+                    );
+                }
+            } else {
+                row = row.child(match &socket.rune {
+                    Some(rune) => rune_glyph::glyph_div_for(rune.glyph.as_deref(), &rune.name),
+                    // M18 (указание заказчика): пустой рунный слот —
+                    // **пустой квадратик**; индекс слота рядом с рунами
+                    // не показывается (как и возле занятых рун).
+                    None => rune_glyph::empty_slot_glyph_div(),
+                });
+            }
             match &socket.rune {
                 Some(rune) => {
                     let index = socket.index;
@@ -2242,28 +3084,61 @@ impl Root {
                     ));
                 }
                 None => {
-                    if runes.is_empty() {
+                    // M18/F58f (баг «слот принимает только руны»): слот
+                    // принимает по СВОЕМУ accepts — в рунный слот не
+                    // предлагаем самоцветы и наоборот (ADR-012); у старого
+                    // сервера поля нет — фолбэк по типу цели (§11).
+                    let slot_inserts: Vec<&ItemSnapshot> = runes
+                        .iter()
+                        .filter(|i| match socket.accepts.as_deref() {
+                            Some(accepts) => i.item_type == accepts,
+                            None => inscribe_target_allowed(&i.item_type, staff.item_type.as_str()),
+                        })
+                        .collect();
+                    let index = socket.index;
+                    if slot_inserts.is_empty() {
                         row = row.child(
                             div()
                                 .text_color(rgb(pal.muted))
                                 .child(t(lang, Key::NoRunes)),
                         );
-                    }
-                    for rune in &runes {
-                        let index = socket.index;
-                        let suid = staff.uid.clone();
-                        let ruid = rune.uid.clone();
-                        let label = format!("{}: {}", t(lang, Key::InsertRune), rune.name);
-                        row =
-                            row.child(act_btn(cx, label, pal.panel, pal.text, move |this, cx| {
-                                let cmd = SocketInsert {
-                                    staff_uid: suid.clone(),
-                                    socket_index: index,
-                                    rune_uid: ruid.clone(),
-                                };
-                                this.send_cmd(&cmd, Act::Socket);
-                                let _ = cx;
-                            }));
+                    } else {
+                        // M18 (указание заказчика): клик по пустому слоту
+                        // открывает **новое окно** со списком самоцветов
+                        // или рун для этого слота (по типу магазина в
+                        // диалогах) — `pick_window`.
+                        // M18 (указание заказчика): подсказка — по типу
+                        // слота (самоцвет/руна), не многоточие.
+                        let hint = match socket.accepts.as_deref() {
+                            Some("gem") => t(lang, Key::PickGem),
+                            Some(_) => t(lang, Key::PickRune),
+                            None => t(
+                                lang,
+                                if staff.item_type == "armor" {
+                                    Key::PickGem
+                                } else {
+                                    Key::PickRune
+                                },
+                            ),
+                        };
+                        row = row
+                            .cursor_pointer()
+                            .hover(|st| st.bg(rgb(pal.selection)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    // Вторая страница окна — список вставок
+                                    // этого слота (кнопка «Назад» в шапке).
+                                    this.socket_pick = Some(index);
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(rgb(pal.muted))
+                                    .child(hint),
+                            );
                     }
                 }
             }
@@ -2285,18 +3160,6 @@ impl Root {
 }
 
 // ── вспомогательные ────────────────────────────────────────────────────────
-
-/// Сводка целей квеста: «Волков убито 4/5» или текст цели.
-fn goals_summary(q: &ld2_protocol::types::QuestState) -> String {
-    q.goals
-        .iter()
-        .map(|g| match (g.cur, g.need) {
-            (Some(cur), Some(need)) => format!("{} {cur}/{need}", g.text),
-            _ => g.text.clone(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
 
 /// Название профессии: l10n-ключ по id, фолбэк — сам id.
 fn prof_label(lang: Lang, id: &str) -> String {
@@ -2331,21 +3194,156 @@ fn xp_kv_row(pal: &Palette, label: &str, value: &str) -> Div {
         )
 }
 
-/// Бейджи плитки: +N, сокеты ◈○, количество ×N (паритет egui).
-pub(crate) fn badges(item: &ItemSnapshot) -> String {
-    let mut parts: Vec<String> = Vec::new();
+/// M18/F58f: как рисовать слот — **рунный знаком руны** (шрифт
+/// Dwarven Runes), слот самоцвета — прежними ◈/○. Пустой рунный слот
+/// отличим от пустого слота самоцвета (требование заказчика).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SlotIcon {
+    /// Рунный слот: `Some(glyph)` — заполнен (глиф руны), `None` — пуст.
+    Rune(Option<char>),
+    /// Слот самоцвета: `filled` — заполнен; `rarity` — раритет
+    /// вставленного (wire `RuneInfo.rarity`): есть → знак раритета
+    /// (Symbola), нет (старый сервер/запись, §11) → прежний ◈;
+    /// пустой слот → ○.
+    Gem {
+        filled: bool,
+        rarity: Option<String>,
+    },
+}
+
+/// M18/F58f: иконка слота. `accepts` из wire решает; у старого сервера
+/// (поля нет) — фолбэк по типу предмета (как в инкрустации, §11):
+/// броня — самоцветы, прочее — руны.
+pub(crate) fn slot_icon(item_type: &str, socket: &ld2_protocol::types::Socket) -> SlotIcon {
+    // Неизвестное/отсутствующее значение — фолбэк по типу (§11).
+    let is_gem = match socket.accepts.as_deref() {
+        Some("gem") => true,
+        Some("rune") => false,
+        _ => item_type == "armor",
+    };
+    if is_gem {
+        SlotIcon::Gem {
+            filled: socket.rune.is_some(),
+            rarity: socket.rune.as_ref().and_then(|r| r.rarity.clone()),
+        }
+    } else {
+        SlotIcon::Rune(
+            socket
+                .rune
+                .as_ref()
+                .map(|r| crate::rune_glyph::resolve_glyph(r.glyph.as_deref(), &r.name)),
+        )
+    }
+}
+
+/// M18/F58f: ряд иконок слотов — **руна-слоты первыми** (требование
+/// UI), далее слоты самоцветов; внутри группы — порядок `index`.
+pub(crate) fn socket_icons_row(item_type: &str, sockets: &[ld2_protocol::types::Socket]) -> Div {
+    let mut rune_slots: Vec<&ld2_protocol::types::Socket> = Vec::new();
+    let mut gem_slots: Vec<&ld2_protocol::types::Socket> = Vec::new();
+    for s in sockets {
+        match s.accepts.as_deref() {
+            Some("gem") => gem_slots.push(s),
+            // Рунный (и неизвестный/отсутствующий — фолбэк §11) —
+            // старый сервер: сохраняем прежний порядок.
+            _ => rune_slots.push(s),
+        }
+    }
+    let mut row = div().flex().flex_row().gap_1().items_center();
+    for s in rune_slots.into_iter().chain(gem_slots) {
+        row = row.child(slot_icon_div(item_type, s));
+    }
+    row
+}
+
+/// M18/F58f: одна иконка слота (глиф руны шрифтом Dwarven Runes либо ◈/○).
+fn slot_icon_div(item_type: &str, socket: &ld2_protocol::types::Socket) -> Div {
+    match slot_icon(item_type, socket) {
+        SlotIcon::Rune(Some(glyph)) => crate::rune_glyph::glyph_div(glyph),
+        SlotIcon::Rune(None) => crate::rune_glyph::empty_slot_glyph_div(),
+        // Занятый самоцвет — знак его раритета (Symbola); у старого
+        // сервера без поля rarity — прежний ◈ (§11).
+        SlotIcon::Gem {
+            filled: true,
+            rarity: Some(r),
+        } => crate::gem_glyph::gem_symbol_div(&r),
+        SlotIcon::Gem {
+            filled: true,
+            rarity: None,
+        } => div().child("◈"),
+        SlotIcon::Gem { filled: false, .. } => div().child("○"),
+    }
+}
+
+/// M18/F58f: бейджи строкой-рядом: +N, иконки слотов, ×N (паритет
+/// egui; слоты нарисованы Div'ами — смешанные шрифты, §13).
+pub(crate) fn badges_row(item: &ItemSnapshot) -> Div {
+    let mut row = div().flex().flex_row().gap_1().items_center();
     if item.upgrade > 0 {
-        parts.push(format!("+{}", item.upgrade));
+        row = row.child(div().child(format!("+{}", item.upgrade)));
     }
     if let Some(sockets) = &item.sockets {
-        let filled = sockets.iter().filter(|s| s.rune.is_some()).count();
-        let empty = sockets.len() - filled;
-        parts.push(format!("{}{}", "◈".repeat(filled), "○".repeat(empty)));
+        row = row.child(socket_icons_row(item.item_type.as_str(), sockets));
     }
     if let Some(qty) = item.qty.filter(|q| *q > 1) {
-        parts.push(format!("×{qty}"));
+        row = row.child(div().child(format!("×{qty}")));
     }
-    parts.join(" ")
+    row
+}
+
+/// M18/F58f: подпись предмета в **рюкзаке** — строка1: название,
+/// +N, ×N; строка2: иконки слотов (указание заказчика: слоты — на
+/// новую строку). Слоты — Div'ами: руны их шрифтом.
+pub(crate) fn item_label_stack(item: &ItemSnapshot, color: u32) -> Div {
+    let mut row = div()
+        .flex()
+        .flex_row()
+        .gap_1()
+        .items_center()
+        .text_color(rgb(color));
+    // M18/F58f: у самоцвета — знак раритета (Symbola) перед названием
+    // (указание заказчика: рюкзак и описание).
+    if item.item_type == "gem" {
+        row = row.child(crate::gem_glyph::gem_symbol_div(&item.rarity));
+    }
+    row = row.child(div().child(item.name.clone()));
+    if item.upgrade > 0 {
+        row = row.child(div().child(format!("+{}", item.upgrade)));
+    }
+    if let Some(qty) = item.qty.filter(|q| *q > 1) {
+        row = row.child(div().child(format!("×{qty}")));
+    }
+    // Слоты — вплотную под названием (без промежутка), тем же
+    // цветом, что и предмет (указание заказчика).
+    //
+    // M18/F58f (ADR-012 «делегаты списков»): вторая строка есть
+    // **всегда** — у предметов без слотов невидимый заполнитель той же
+    // высоты (□ как пустой слот, `invisible`): строки рюкзака одинаковой
+    // высоты, а не «рваные» (одна строка vs две).
+    let mut col = div().flex().flex_col().child(row);
+    let second = match &item.sockets {
+        Some(sockets) if !sockets.is_empty() => div()
+            .text_color(rgb(color))
+            .child(socket_icons_row(item.item_type.as_str(), sockets)),
+        // Невидимый дубль высоты строки иконок (тот же символ, что
+        // пустой руна-слот — идентичная линейная высота).
+        _ => div().invisible().child("\u{25A1}"),
+    };
+    col = col.child(second);
+    col
+}
+
+/// M18/F58f: подпись предмета в списках: название + бейджи (ряд Div'ов
+/// — слоты рун рисуются их шрифтом).
+pub(crate) fn item_label_row(item: &ItemSnapshot, color: u32) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .gap_1()
+        .items_center()
+        .text_color(rgb(color))
+        .child(div().child(item.name.clone()))
+        .child(badges_row(item))
 }
 
 /// Редкость → цвет (палитра §7.4).
@@ -2372,7 +3370,7 @@ pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
         "uncommon" => 0x98_c3_79,
         "rare" => 0x61_af_ef,
         "epic" => 0xa0_52_2d,
-        "legendary" => 0xe5_c0_7b,
+        "legendary" => 0x66_06_b2,
         _ => pal.text,
     }
 }
@@ -2447,6 +3445,8 @@ pub(crate) fn type_label(lang: Lang, item_type: &str) -> String {
         "shield" => t(lang, Key::ItemTypeShield),
         "artifact" => t(lang, Key::ItemTypeArtifact),
         "gem" => t(lang, Key::ItemTypeGem),
+        // M18/F54: камни усиления (заточка).
+        "upgrade_stone" => t(lang, Key::ItemTypeStone),
         other => other,
     }
     .to_string()
@@ -2466,9 +3466,54 @@ pub(crate) fn stat_label(lang: Lang, stat: &str) -> String {
         "max" => t(lang, Key::StatMax),
         "attr" => t(lang, Key::StatAttr),
         "value" => t(lang, Key::StatValue),
+        // M18/F54: качество камня усиления (процентные пункты).
+        "quality" => t(lang, Key::StatQuality),
         other => other,
     }
     .to_string()
+}
+
+/// M18/F47: id производного параметра → название (бонусы предмета,
+/// ADR-010); `damage` — общая метка «Урон».
+pub(crate) fn param_label(lang: Lang, id: &str) -> String {
+    let key = match id {
+        "accuracy" => Key::ParAccuracy,
+        "damage" | "damage_min" | "damage_max" => Key::ParDamage,
+        "crit_chance" => Key::ParCritChance,
+        "crit_damage" => Key::ParCritDamage,
+        "armor" => Key::ParArmor,
+        "dodge" => Key::ParDodge,
+        "parry_min" | "parry_max" => Key::ParParry,
+        "parry_chance" => Key::ParParryChance,
+        "block_min" | "block_max" => Key::ParBlock,
+        "block_chance" => Key::ParBlockChance,
+        "magic_defense" => Key::ParMagicDefense,
+        "magic_dodge" => Key::ParMagicDodge,
+        "magic_resist" => Key::ParMagicResist,
+        "magic_dispel" => Key::ParMagicDispel,
+        "magic_crit_damage" => Key::ParMagicCritDamage,
+        "magic_crit_chance" => Key::ParMagicCritChance,
+        _ => return id.to_string(),
+    };
+    t(lang, key).to_string()
+}
+
+/// M18: производные параметры, которые измеряются в процентах.
+pub(crate) fn param_is_percent(id: &str) -> bool {
+    matches!(
+        id,
+        "accuracy"
+            | "crit_chance"
+            | "crit_damage"
+            | "dodge"
+            | "parry_chance"
+            | "block_chance"
+            | "magic_dodge"
+            | "magic_resist"
+            | "magic_dispel"
+            | "magic_crit_damage"
+            | "magic_crit_chance"
+    )
 }
 
 /// M16/F29e: школа магии (значение `school`; fallback — сырое).
@@ -2544,6 +3589,194 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
 mod tests {
     use super::*;
 
+    /// M18/F58f: под инкрустацию выбирается слот, принимающий тип
+    /// вставки — самоцвет не идёт в рунный слот (баг меню камня).
+    #[test]
+    fn first_compatible_socket_respects_accepts() {
+        use ld2_protocol::types::{RuneInfo, Socket};
+        let slot = |index: u32, accepts: Option<&str>, filled: bool| Socket {
+            index,
+            accepts: accepts.map(str::to_string),
+            rune: filled.then(|| RuneInfo {
+                name: "x".into(),
+                spell: String::new(),
+                charges: 1,
+                max: 1,
+                damage: None,
+                def_id: None,
+                glyph: None,
+                detail: None,
+                rarity: None,
+            }),
+        };
+        // Оружие: rune, rune, gem — гем идёт в слот2, руна в свободный0.
+        let weapon = [
+            slot(0, Some("rune"), false),
+            slot(1, Some("rune"), false),
+            slot(2, Some("gem"), false),
+        ];
+        assert_eq!(first_compatible_socket(&weapon, "gem"), Some(2));
+        assert_eq!(first_compatible_socket(&weapon, "rune"), Some(0));
+        // Занятый слот пропускается.
+        let weapon = [
+            slot(0, Some("rune"), true),
+            slot(1, Some("rune"), false),
+            slot(2, Some("gem"), false),
+        ];
+        assert_eq!(first_compatible_socket(&weapon, "rune"), Some(1));
+        // Старый сервер без accepts: первый свободный (§11).
+        let legacy = [slot(0, None, false), slot(1, None, false)];
+        assert_eq!(first_compatible_socket(&legacy, "gem"), Some(0));
+        // Подходящего слота нет — None.
+        let rune_only = [slot(0, Some("rune"), true)];
+        assert_eq!(first_compatible_socket(&rune_only, "gem"), None);
+        assert_eq!(first_compatible_socket(&[], "rune"), None);
+    }
+
+    /// M18/F58f: дубликаты рун — вставленная руна больше не
+    /// предлагается для этого предмета; чужие имена не трогаются.
+    #[test]
+    fn rune_already_inserted_detects_duplicates() {
+        use ld2_protocol::types::{RuneInfo, Socket};
+        let socket_with = |rune_name: &str| Socket {
+            index: 0,
+            accepts: Some("rune".into()),
+            rune: Some(RuneInfo {
+                name: rune_name.into(),
+                spell: "fire_dart".into(),
+                charges: 7,
+                max: 10,
+                damage: None,
+                def_id: None,
+                glyph: Some("f".into()),
+                detail: None,
+                rarity: None,
+            }),
+        };
+        let occupied = socket_with("Руна огня");
+        let free = Socket {
+            index: 1,
+            accepts: Some("rune".into()),
+            rune: None,
+        };
+        let sockets = [occupied, free];
+        assert!(
+            rune_already_inserted("Руна огня", sockets.iter()),
+            "вставленная руна найдена"
+        );
+        assert!(
+            !rune_already_inserted("Руна мороза", sockets.iter()),
+            "другая руна не блокируется"
+        );
+        // Пустые слоты ничего не блокируют.
+        let empty = [Socket {
+            index: 1,
+            accepts: Some("rune".into()),
+            rune: None,
+        }];
+        assert!(!rune_already_inserted("Руна огня", empty.iter()));
+    }
+
+    /// M18/F58f: иконка слота — рунный слот даёт глиф руны (из поля
+    /// glyph, фолбэк — хеш имени), слот самоцвета — ◈/○; у старого
+    /// сервера без `accepts` — фолбэк по типу предмета (§11).
+    #[test]
+    fn slot_icon_distinguishes_runes_and_gems() {
+        use ld2_protocol::types::{RuneInfo, Socket};
+        let sock = |accepts: Option<&str>, filled: bool| Socket {
+            index: 0,
+            accepts: accepts.map(str::to_string),
+            rune: filled.then(|| RuneInfo {
+                name: "Руна огня".into(),
+                spell: "fire_dart".into(),
+                charges: 7,
+                max: 10,
+                damage: None,
+                def_id: None,
+                glyph: Some("f".into()),
+                detail: None,
+                rarity: None,
+            }),
+        };
+
+        // Рунный слот: заполненный — глиф из контента (f), пустой — None.
+        assert_eq!(
+            slot_icon("weapon", &sock(Some("rune"), true)),
+            SlotIcon::Rune(Some('f')),
+            "заполненный рунный — глиф поля glyph"
+        );
+        assert_eq!(
+            slot_icon("weapon", &sock(Some("rune"), false)),
+            SlotIcon::Rune(None),
+            "пустой рунный — отличается от пустого самоцвета"
+        );
+        // Слот самоцвета: пустой ○; занятый — раритет из wire (тут
+        // None — фолбэк §11) либо знак раритета, если поле есть.
+        assert_eq!(
+            slot_icon("armor", &sock(Some("gem"), false)),
+            SlotIcon::Gem {
+                filled: false,
+                rarity: None
+            }
+        );
+        let with_rarity = Socket {
+            index: 0,
+            accepts: Some("gem".into()),
+            rune: Some(RuneInfo {
+                name: "Самоцвет силы".into(),
+                spell: String::new(),
+                charges: 0,
+                max: 0,
+                damage: None,
+                def_id: None,
+                glyph: None,
+                detail: None,
+                rarity: Some("rare".into()),
+            }),
+        };
+        assert_eq!(
+            slot_icon("armor", &with_rarity),
+            SlotIcon::Gem {
+                filled: true,
+                rarity: Some("rare".into())
+            },
+            "занятый самоцвет несёт раритет для знака"
+        );
+        // Старый сервер без accepts: фолбэк по типу — броня = самоцвет,
+        // оружие = руна.
+        assert_eq!(
+            slot_icon("armor", &sock(None, false)),
+            SlotIcon::Gem {
+                filled: false,
+                rarity: None
+            },
+            "фолбэк: броня — слоты самоцветов"
+        );
+        assert_eq!(
+            slot_icon("weapon", &sock(None, true)),
+            SlotIcon::Rune(Some('f')),
+            "фолбэк: оружие — рунные слоты"
+        );
+        // Неизвестное значение accepts — как отсутствующее (§11).
+        assert_eq!(
+            slot_icon("armor", &sock(Some("mystery"), false)),
+            SlotIcon::Gem {
+                filled: false,
+                rarity: None
+            }
+        );
+        // Занятый рунный слот — РОВНО глиф (не ◈, не квадрат):
+        // пустой (□) и занятый (глиф руны) различимы.
+        let occupied = slot_icon("weapon", &sock(Some("rune"), true));
+        let empty = slot_icon("weapon", &sock(Some("rune"), false));
+        assert_eq!(occupied, SlotIcon::Rune(Some('f')));
+        assert_ne!(
+            format!("{occupied:?}"),
+            format!("{empty:?}"),
+            "занят ≠ пуст"
+        );
+    }
+
     /// M18/F32: руна идёт только в оружие (weapon/staff), самоцвет —
     /// только в броню (armor); неизвестный тип вставки — ничего.
     #[test]
@@ -2562,6 +3795,104 @@ mod tests {
         assert!(
             !inscribe_target_allowed("potion", "weapon"),
             "не инкрустация"
+        );
+    }
+
+    /// M18/F58 (ADR-012): вставку решает `accepts` слота — отсюда
+    /// самоцветы в оружие и отказ «руна в гемный слот»; у старого
+    /// сервера (поля нет) — прежнее правило по типу предмета.
+    #[test]
+    fn inscribe_target_possible_by_socket_accepts() {
+        use ld2_protocol::types::{ItemSnapshot, Socket};
+
+        let item = |item_type: &str, sockets: Vec<Socket>| ItemSnapshot {
+            slot: None,
+            hands: None,
+            def_id: None,
+            uid: "i_t".into(),
+            item_type: item_type.into(),
+            name: "Тест".into(),
+            rarity: "common".into(),
+            upgrade: 0,
+            stats: Default::default(),
+            requires: None,
+            sockets: Some(sockets),
+            qty: Some(1),
+            gold_value: None,
+            bonuses: None,
+            extra: Default::default(),
+        };
+        let free = |accepts: Option<&str>, index: u32| Socket {
+            index,
+            rune: None,
+            accepts: accepts.map(str::to_string),
+        };
+        let filled = |index: u32| Socket {
+            index,
+            rune: Some(ld2_protocol::types::RuneInfo {
+                name: "Руна".into(),
+                spell: "fire_dart".into(),
+                charges: 1,
+                max: 1,
+                damage: None,
+                def_id: None,
+                glyph: None,
+                detail: None,
+                rarity: None,
+            }),
+            accepts: Some("rune".into()),
+        };
+
+        // Новый сервер: тип слота решает всё.
+        let sword = item(
+            "weapon",
+            vec![free(Some("gem"), 0), free(Some("rune"), 1), filled(2)],
+        );
+        assert!(
+            inscribe_target_possible("gem", &sword),
+            "самоцвет в оружие — слот accepts:gem (F58)"
+        );
+        assert!(
+            inscribe_target_possible("rune", &sword),
+            "руна в рунный слот"
+        );
+        assert!(
+            !inscribe_target_possible("potion", &sword),
+            "не инкрустация"
+        );
+
+        // Занятый слот не предлагается.
+        let only_filled = item("weapon", vec![filled(0)]);
+        assert!(
+            !inscribe_target_possible("rune", &only_filled),
+            "слот занят"
+        );
+
+        // Гемный слот руне не подходит.
+        let gem_only = item("weapon", vec![free(Some("gem"), 0)]);
+        assert!(
+            !inscribe_target_possible("rune", &gem_only),
+            "руна в гемный слот"
+        );
+
+        // Старый сервер (без accepts) — прежнее правило по типу.
+        let legacy_weapon = item("weapon", vec![free(None, 0)]);
+        assert!(
+            inscribe_target_possible("rune", &legacy_weapon),
+            "фолбэк: руна в оружие"
+        );
+        assert!(
+            !inscribe_target_possible("gem", &legacy_weapon),
+            "фолбэк: самоцвет в оружие — как раньше"
+        );
+        let legacy_armor = item("armor", vec![free(None, 0)]);
+        assert!(
+            inscribe_target_possible("gem", &legacy_armor),
+            "фолбэк: гем в броню"
+        );
+        assert!(
+            !inscribe_target_possible("rune", &legacy_armor),
+            "фолбэк: руна в броню"
         );
     }
 
@@ -2625,14 +3956,7 @@ mod tests {
         let tabs: Vec<&'static str> = SheetTab::all().iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(
             tabs,
-            [
-                "params",
-                "skills",
-                "professions",
-                "reputation",
-                "quests",
-                "guild"
-            ],
+            ["params", "skills", "professions", "reputation", "guild"],
             "порядок вкладок правой колонки"
         );
         for (tab, _) in SheetTab::all() {
@@ -2642,6 +3966,8 @@ mod tests {
         // из сохранённого конфига маппятся на «Параметры».
         assert_eq!(SheetTab::parse("attrs"), SheetTab::Params);
         assert_eq!(SheetTab::parse("statuses"), SheetTab::Params);
+        // M18/F36: вкладка «Квесты» переехала в отдельное окно.
+        assert_eq!(SheetTab::parse("quests"), SheetTab::Params);
         assert_eq!(SheetTab::parse("inventory"), SheetTab::Params);
     }
 }

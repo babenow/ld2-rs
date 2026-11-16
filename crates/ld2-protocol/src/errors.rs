@@ -37,6 +37,8 @@ pub enum ErrorCode {
     CharLimit,
     NameTaken,
     BadProfile,
+    /// Неизвестное значение `gender` в `char.create` (M18/F34).
+    BadGender,
     NotInLocation,
     /// В локации нет тренера для профессии/навыка (M14).
     NoTrainer,
@@ -48,6 +50,9 @@ pub enum ErrorCode {
     NoCharges,
     NotEnoughMp,
     NoRuneSlot,
+    /// M18/F58f: та же руна уже вставлена в предмет — дубликаты не
+    /// стакаются (указание заказчика; §11.2: новый код совместим).
+    DuplicateRune,
     RequirementAttr,
     Profession,
     InventoryFull,
@@ -63,7 +68,13 @@ pub enum ErrorCode {
     Permission,
     XpPool,
     RankCap,
+    /// M18/F44: шкала навыка не заполнена на 100 % (ADR-009).
+    SkillNotReady,
     ProfessionLimit,
+    /// M18/F36: взятых квестов больше `quests.max_active` (§5).
+    QuestLimit,
+    /// M18/F39: не хватает валюты на покупку в магазине NPC.
+    NotEnoughMoney,
     StationRequired,
     ToolMissing,
     Ingredients,
@@ -89,6 +100,7 @@ impl ErrorCode {
             Self::CharLimit => "E_CHAR_LIMIT",
             Self::NameTaken => "E_NAME_TAKEN",
             Self::BadProfile => "E_BAD_PROFILE",
+            Self::BadGender => "E_BAD_GENDER",
             Self::NotInLocation => "E_NOT_IN_LOCATION",
             Self::NoTrainer => "E_NO_TRAINER",
             Self::ExitBlocked => "E_EXIT_BLOCKED",
@@ -99,6 +111,7 @@ impl ErrorCode {
             Self::NoCharges => "E_NO_CHARGES",
             Self::NotEnoughMp => "E_NOT_ENOUGH_MP",
             Self::NoRuneSlot => "E_NO_RUNE_SLOT",
+            Self::DuplicateRune => "E_DUPLICATE_RUNE",
             Self::RequirementAttr => "E_REQUIREMENT_ATTR",
             Self::Profession => "E_PROFESSION",
             Self::InventoryFull => "E_INVENTORY_FULL",
@@ -113,7 +126,10 @@ impl ErrorCode {
             Self::Permission => "E_PERMISSION",
             Self::XpPool => "E_XP_POOL",
             Self::RankCap => "E_RANK_CAP",
+            Self::SkillNotReady => "E_SKILL_NOT_READY",
             Self::ProfessionLimit => "E_PROFESSION_LIMIT",
+            Self::QuestLimit => "E_QUEST_LIMIT",
+            Self::NotEnoughMoney => "E_NOT_ENOUGH_MONEY",
             Self::StationRequired => "E_STATION_REQUIRED",
             Self::ToolMissing => "E_TOOL_MISSING",
             Self::Ingredients => "E_INGREDIENTS",
@@ -141,6 +157,7 @@ impl FromStr for ErrorCode {
             "E_CHAR_LIMIT" => Self::CharLimit,
             "E_NAME_TAKEN" => Self::NameTaken,
             "E_BAD_PROFILE" => Self::BadProfile,
+            "E_BAD_GENDER" => Self::BadGender,
             "E_NOT_IN_LOCATION" => Self::NotInLocation,
             "E_NO_TRAINER" => Self::NoTrainer,
             "E_EXIT_BLOCKED" => Self::ExitBlocked,
@@ -151,6 +168,7 @@ impl FromStr for ErrorCode {
             "E_NO_CHARGES" => Self::NoCharges,
             "E_NOT_ENOUGH_MP" => Self::NotEnoughMp,
             "E_NO_RUNE_SLOT" => Self::NoRuneSlot,
+            "E_DUPLICATE_RUNE" => Self::DuplicateRune,
             "E_REQUIREMENT_ATTR" => Self::RequirementAttr,
             "E_PROFESSION" => Self::Profession,
             "E_INVENTORY_FULL" => Self::InventoryFull,
@@ -166,6 +184,8 @@ impl FromStr for ErrorCode {
             "E_XP_POOL" => Self::XpPool,
             "E_RANK_CAP" => Self::RankCap,
             "E_PROFESSION_LIMIT" => Self::ProfessionLimit,
+            "E_QUEST_LIMIT" => Self::QuestLimit,
+            "E_NOT_ENOUGH_MONEY" => Self::NotEnoughMoney,
             "E_STATION_REQUIRED" => Self::StationRequired,
             "E_TOOL_MISSING" => Self::ToolMissing,
             "E_INGREDIENTS" => Self::Ingredients,
@@ -218,6 +238,8 @@ mod tests {
         "E_XP_POOL",
         "E_RANK_CAP",
         "E_PROFESSION_LIMIT",
+        "E_QUEST_LIMIT",
+        "E_NOT_ENOUGH_MONEY",
         "E_STATION_REQUIRED",
         "E_TOOL_MISSING",
         "E_INGREDIENTS",
@@ -226,6 +248,7 @@ mod tests {
         "E_PERMISSION",
         "E_TOO_LARGE",
         "E_INTERNAL",
+        "E_BAD_GENDER",
     ];
 
     #[test]

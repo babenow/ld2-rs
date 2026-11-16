@@ -145,7 +145,7 @@ pub fn derive(
     let magic_crit_damage = 50 + int / 5;
     let magic_crit_chance = (5 + int * 3 / 10 + rank(skills, "arcana") / 2).clamp(0, 100);
 
-    DerivedParams {
+    let mut params = DerivedParams {
         accuracy,
         damage_min,
         damage_max,
@@ -165,7 +165,91 @@ pub fn derive(
         magic_dispel,
         magic_crit_damage,
         magic_crit_chance,
+    };
+    // M18/F47: бонусы надетых предметов (ADR-010).
+    apply_param_bonuses(&mut params, equipped);
+    params
+}
+
+/// M18/F47/ADR-010: бонусы `kind=param` надетых предметов. Плоские
+/// прибавляются к итогу, проценты **складываются** и применяются к
+/// полученному итогу (решение 2026-11-13 — «сумма % к итогу»);
+/// шансы/точность ограничиваются их диапазонами. `damage` — обе границы.
+fn apply_param_bonuses(params: &mut DerivedParams, equipped: &[ItemSnapshot]) {
+    let mut flat: BTreeMap<&str, i64> = BTreeMap::new();
+    let mut pct: BTreeMap<&str, i64> = BTreeMap::new();
+    for item in equipped {
+        for bonus in item.bonuses.iter().flatten() {
+            if bonus.kind != "param" {
+                continue;
+            }
+            if bonus.pct {
+                *pct.entry(bonus.id.as_str()).or_insert(0) += bonus.value;
+            } else {
+                *flat.entry(bonus.id.as_str()).or_insert(0) += bonus.value;
+            }
+        }
     }
+    apply_maps(params, &flat, &pct);
+}
+
+/// M18/F58d (ADR-012 §6): активные баффы рун применяются к параметрам
+/// той же механикой, что бонусы предметов: `value × стаков` (плоское)
+/// или `pct × стаков` (процент к итогу).
+pub fn apply_buffs(params: &mut DerivedParams, buffs: &[(String, i64, bool, i32)]) {
+    if buffs.is_empty() {
+        return;
+    }
+    let mut flat: BTreeMap<&str, i64> = BTreeMap::new();
+    let mut pct: BTreeMap<&str, i64> = BTreeMap::new();
+    for (param, value, is_pct, stacks) in buffs {
+        let total = value * i64::from((*stacks).max(1));
+        if *is_pct {
+            *pct.entry(param.as_str()).or_insert(0) += total;
+        } else {
+            *flat.entry(param.as_str()).or_insert(0) += total;
+        }
+    }
+    apply_maps(params, &flat, &pct);
+}
+
+/// Ядро применения `flat`/`pct`-маппинга к параметрам (общее для
+/// бонусов предметов и баффов рун).
+fn apply_maps(params: &mut DerivedParams, flat: &BTreeMap<&str, i64>, pct: &BTreeMap<&str, i64>) {
+    if flat.is_empty() && pct.is_empty() {
+        return;
+    }
+    let add = |value: i64, id: &str| -> i64 {
+        let base = value + flat.get(id).copied().unwrap_or(0);
+        let p = pct.get(id).copied().unwrap_or(0);
+        ((base as f64) * (1.0 + p as f64 / 100.0)).round() as i64
+    };
+    // `damage` — общая метка: двигает и минимум, и максимум.
+    let dmg_flat = flat.get("damage").copied().unwrap_or(0);
+    let dmg_pct = pct.get("damage").copied().unwrap_or(0);
+    let dmg = |value: i64| -> i64 {
+        let base = value + dmg_flat;
+        ((base as f64) * (1.0 + dmg_pct as f64 / 100.0)).round() as i64
+    };
+    params.accuracy = add(params.accuracy, "accuracy").clamp(1, 99);
+    params.damage_min = dmg(params.damage_min).max(0);
+    params.damage_max = dmg(params.damage_max).max(0);
+    params.crit_chance = add(params.crit_chance, "crit_chance").clamp(0, 100);
+    params.crit_damage = add(params.crit_damage, "crit_damage").max(0);
+    params.armor = add(params.armor, "armor").max(0);
+    params.dodge = add(params.dodge, "dodge").clamp(0, 60);
+    params.parry_min = add(params.parry_min, "parry_min").max(0);
+    params.parry_max = add(params.parry_max, "parry_max").max(0);
+    params.parry_chance = add(params.parry_chance, "parry_chance").clamp(0, 60);
+    params.block_min = add(params.block_min, "block_min").max(0);
+    params.block_max = add(params.block_max, "block_max").max(0);
+    params.block_chance = add(params.block_chance, "block_chance").clamp(0, 60);
+    params.magic_defense = add(params.magic_defense, "magic_defense").max(0);
+    params.magic_dodge = add(params.magic_dodge, "magic_dodge").clamp(0, 100);
+    params.magic_resist = add(params.magic_resist, "magic_resist").max(0);
+    params.magic_dispel = add(params.magic_dispel, "magic_dispel").clamp(0, 99);
+    params.magic_crit_damage = add(params.magic_crit_damage, "magic_crit_damage").max(0);
+    params.magic_crit_chance = add(params.magic_crit_chance, "magic_crit_chance").clamp(0, 100);
 }
 
 #[cfg(test)]
@@ -206,6 +290,7 @@ mod tests {
             sockets: None,
             qty: None,
             gold_value: None,
+            bonuses: None,
             extra: extra.as_object().cloned().unwrap_or_default(),
         }
     }
@@ -282,7 +367,11 @@ mod tests {
                     max: 10,
                     damage: Some(damage),
                     def_id: None,
+                    glyph: None,
+                    detail: None,
+                    rarity: None,
                 }),
+                accepts: Some("rune".into()),
             }])
         };
         // Меч 6..9 + руна +10: (6+10+5 str) / (9+10+5).
@@ -323,5 +412,89 @@ mod tests {
             d.dodge >= 0 && d.crit_chance >= 0,
             "нет отрицательных шансов"
         );
+    }
+
+    /// M18/F58d (ADR-012 §6): баффы рун применяются к параметрам той же
+    /// механикой, что бонусы предметов: value×стаков, pct×стаков.
+    #[test]
+    fn buffs_apply_flat_and_percent_by_stacks() {
+        let attrs = attrs10();
+        let base = derive(&attrs, &[], &[], 10);
+        let flat = vec![("accuracy".to_string(), 5i64, false, 2i32)];
+        let mut d = base.clone();
+        apply_buffs(&mut d, &flat);
+        assert_eq!(d.accuracy, base.accuracy + 10, "плоское × стаков");
+        // Проценты — к итогу после плоских.
+        let pct = vec![("armor".to_string(), 10i64, true, 3i32)];
+        let mut d = base.clone();
+        apply_buffs(&mut d, &pct);
+        assert!(
+            d.armor as f64 >= (base.armor as f64) * 1.3 - 1.0,
+            "pct × стаков к итогу: {} vs {}",
+            d.armor,
+            base.armor
+        );
+        // Пустой список — без изменений.
+        let mut d = base.clone();
+        apply_buffs(&mut d, &[]);
+        assert_eq!(d, base, "нет баффов — нет изменений");
+    }
+
+    /// M18/F47/ADR-010: бонусы надетых предметов — плоские прибавляются
+    /// к итогу, проценты складываются и применяются к итогу после
+    /// плоских; метка `damage` двигает обе границы урона.
+    #[test]
+    fn equipped_bonuses_add_flat_and_percent() {
+        use ld2_protocol::types::ItemBonus;
+
+        let attrs = attrs10();
+        let plain = derive(
+            &attrs,
+            &[],
+            &[item(serde_json::json!({"armor": 5}), serde_json::json!({}))],
+            10,
+        );
+        assert_eq!(plain.armor, 5, "без бонусов — только стат предмета");
+
+        let mut armor_item = item(serde_json::json!({"armor": 5}), serde_json::json!({}));
+        armor_item.bonuses = Some(vec![
+            ItemBonus {
+                kind: "param".into(),
+                id: "armor".into(),
+                value: 7,
+                pct: false,
+            },
+            ItemBonus {
+                kind: "param".into(),
+                id: "armor".into(),
+                value: 50,
+                pct: true,
+            },
+            ItemBonus {
+                kind: "attr".into(),
+                id: "str".into(),
+                value: 3,
+                pct: false,
+            },
+        ]);
+        let with_bonus = derive(&attrs, &[], &[armor_item], 10);
+        // 5 + 7 = 12; 12 × 1.5 = 18 — проценты к итогу после плоских.
+        assert_eq!(with_bonus.armor, 18, "плоский + процент к итогу");
+        // kind=attr в derive не участвует (его применяет session).
+        assert_eq!(
+            with_bonus.damage_min, plain.damage_min,
+            "attr не в параметрах"
+        );
+
+        let mut weapon = item(serde_json::json!({"dmg": "10..20"}), serde_json::json!({}));
+        weapon.bonuses = Some(vec![ItemBonus {
+            kind: "param".into(),
+            id: "damage".into(),
+            value: 2,
+            pct: false,
+        }]);
+        let dmg = derive(&attrs, &[], &[weapon], 10);
+        assert_eq!(dmg.damage_min, 17, "min: 10 + str/2 + 2");
+        assert_eq!(dmg.damage_max, 27, "max: 20 + str/2 + 2");
     }
 }

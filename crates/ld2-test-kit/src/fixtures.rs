@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 
 use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::features::{
-    ChatConfig, CrimeConfig, CrimeKind, InventoryConfig, MagicConfig, ManaConfig, RefreshToken,
-    ServerInfo, SessionConfig, SessionTokens, UpgradeConfig,
+    ChatConfig, CrimeConfig, CrimeKind, InventoryConfig, MagicConfig, ManaConfig, QuestsConfig,
+    RefreshToken, ServerInfo, SessionConfig, SessionTokens, UpgradeConfig,
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, Exit,
@@ -176,6 +176,7 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
             max_level: UPGRADE_MAX,
             preview: true,
             shows_chance: true,
+            duration_s: 3.0,
         },
         magic: MagicConfig {
             rune_recharge: "item".into(),
@@ -186,6 +187,8 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
                 rune_cost: 10,
             },
         },
+        // M18/F36: лимит текущих квестов (§5).
+        quests: QuestsConfig { max_active: 10 },
         characters: vec![character_summary()],
         extra: Default::default(),
     }
@@ -330,16 +333,22 @@ pub fn staff_item() -> ItemSnapshot {
                     max: 10,
                     damage: None,
                     def_id: None,
+                    glyph: None,
+                    detail: None,
+                    rarity: None,
                 }),
+                accepts: Some("rune".into()),
             },
             Socket {
                 index: 1,
                 rune: None,
+                accepts: Some("rune".into()),
             },
         ]),
         qty: None,
         gold_value: Some(120),
         extra: Default::default(),
+        bonuses: None,
     }
 }
 
@@ -361,6 +370,7 @@ pub fn scroll_item() -> ItemSnapshot {
         qty: Some(1),
         gold_value: Some(30),
         extra: Default::default(),
+        bonuses: None,
     }
 }
 
@@ -385,6 +395,7 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
         qty: Some(1),
         gold_value: Some(20),
         extra: Default::default(),
+        bonuses: None,
     }
 }
 
@@ -412,6 +423,7 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
             sockets: None,
             qty: Some(3),
             gold_value: Some(5),
+            bonuses: None,
             extra: Default::default(),
         })
         .collect()
@@ -421,7 +433,10 @@ pub fn character(id: &str, name: &str) -> CharacterState {
     CharacterState {
         id: id.into(),
         name: name.into(),
+        // M18/F58d: баффов нет — пусто (заполняется тикером рун).
+        buffs: Vec::new(),
         profile: Some("warrior".into()),
+        gender: "male".into(),
         attrs: BTreeMap::from([("str".to_string(), 14i64), ("int".to_string(), 9i64)]),
         skills: vec![
             SkillSnapshot {
@@ -499,6 +514,7 @@ pub fn quest_wolves() -> QuestState {
             xp: Some(450),
             items: vec![],
         }),
+        reward_label: Some("450 XP в пул".into()),
         extra: Default::default(),
     }
 }

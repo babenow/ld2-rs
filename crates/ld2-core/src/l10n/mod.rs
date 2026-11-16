@@ -89,6 +89,10 @@ pub enum Key {
     ProfileArcher,
     ProfileMage,
     ProfileHint,
+    // M18/F34: пол при создании персонажа.
+    GenderLabel,
+    GenderMale,
+    GenderFemale,
     DeleteTitle,
     DeleteConfirm,
     DeleteTypeNick,
@@ -111,6 +115,8 @@ pub enum Key {
     HistoryLabel,
     LogLabel,
     Examine,
+    /// M18/F35: пункт контекстного меню NPC — открыть диалог.
+    BtnTalk,
     Attack,
     EntityDetailTitle,
     AltNavHint,
@@ -164,6 +170,28 @@ pub enum Key {
     TakeLoot,
     LootPlayerWarn,
     NoStatuses,
+    // M18/F58f: активные баффы рун в окне персонажа (ADR-012 §6)
+    BuffsHeader,
+    NoBuffs,
+    // M18/F58f: заполненность рюкзака в статус-баре (новая фича)
+    BackpackUsage,
+    // M18: подсказка выбора в слот окна инкрустации (по типу слота)
+    PickRune,
+    PickGem,
+    // M19: discovery подключения (§15): поле домена и ошибки резолва
+    SettingsDomain,
+    DiscUnreachable,
+    DiscBadDoc,
+    DiscContract,
+    DiscMinClient,
+    DiscInsecure,
+    StatusResolveFailed,
+    // M18/F58f: описание руны — шанс авто-приёма и эффекты вместо JSON
+    RuneProcChance,
+    EffectBleed,
+    EffectStun,
+    EffectRoot,
+    PerSecond,
     JournalEmpty,
     DurHm,
     DurMs,
@@ -269,6 +297,22 @@ pub enum Key {
     On,
     Off,
     BtnClose,
+    /// M18/F54: «назад» в шапке окна заточки (список предметов).
+    BtnBack,
+    /// M18/F54: тип предмета «камень усиления».
+    ItemTypeStone,
+    /// M18/F54: качество камня усиления (`stats.quality`, % пункты).
+    StatQuality,
+    /// M18/F54: в списке нет предметов, доступных для заточки.
+    SharpenNoItems,
+    /// M18/F55: в списке нет выбранного камня (последний потрачен).
+    SharpenNoStone,
+    /// M18/F55: итог заточки на экране — успех (`{s}` = новый уровень).
+    SharpenResultOk,
+    /// M18/F55: итог заточки — провал, уровень не изменился.
+    SharpenResultFail,
+    /// M18/F55: итог заточки — провал, предмет разрушен.
+    SharpenResultBroken,
     NotifyDeath,
     NotifyPartyInvite,
     NotifyGuildInvite,
@@ -437,6 +481,13 @@ pub enum Key {
     SpellFireDart,
     SpellFrostBolt,
     SpellStormBolt,
+    // M18/F58d: руны воина/лучника (ADR-012 §5).
+    SpellPrecision,
+    SpellFury,
+    SpellFortitude,
+    SpellHemorrhage,
+    SpellConcussion,
+    SpellEntangle,
     // M17/F30e: название ресурса класса (полоса слева)
     RageLabel,
     EnergyLabel,
@@ -447,6 +498,32 @@ pub enum Key {
     InscribeNoWeapons,
     BpCurrencies,
     HkOpenBackpack,
+    // M18/F36: окно квестов (кнопка/хоткей, вкладки, статус-бар).
+    HkOpenQuests,
+    QuestsTabCurrent,
+    QuestsTabDone,
+    QuestsStatusCurrent,
+    QuestsStatusDone,
+    QuestsPick,
+    // M18/F37: реплики персонажа в транскрипте диалога.
+    DialogYou,
+    // M18/F38: кнопка «Обучение» в статус-баре диалога (тренер).
+    BtnTraining,
+    // M18/F39: магазин NPC.
+    BtnShop,
+    BtnBuy,
+    ShopBack,
+    ShopOwned,
+    ShopEmpty,
+    // M18/F41: надпись над вкладками магазина — вкладка это валюта.
+    ShopCurrency,
+    // M18/F47: бонусы предмета в карточке (ADR-010).
+    ItemBonuses,
+    // M18/F44: обучение навыков в диалоге тренера (ADR-009).
+    BtnTrain,
+    SkillReady,
+    TrainingPoints,
+    TrainingGold,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -579,6 +656,9 @@ mod tests {
         Key::ProfileArcher,
         Key::ProfileMage,
         Key::ProfileHint,
+        Key::GenderLabel,
+        Key::GenderMale,
+        Key::GenderFemale,
         Key::DeleteTitle,
         Key::DeleteConfirm,
         Key::DeleteTypeNick,
@@ -600,6 +680,7 @@ mod tests {
         Key::HistoryLabel,
         Key::LogLabel,
         Key::Examine,
+        Key::BtnTalk,
         Key::Attack,
         Key::EntityDetailTitle,
         Key::AltNavHint,
@@ -650,6 +731,23 @@ mod tests {
         Key::TakeLoot,
         Key::LootPlayerWarn,
         Key::NoStatuses,
+        Key::BuffsHeader,
+        Key::NoBuffs,
+        Key::BackpackUsage,
+        Key::PickRune,
+        Key::PickGem,
+        Key::SettingsDomain,
+        Key::DiscUnreachable,
+        Key::DiscBadDoc,
+        Key::DiscContract,
+        Key::DiscMinClient,
+        Key::DiscInsecure,
+        Key::StatusResolveFailed,
+        Key::RuneProcChance,
+        Key::EffectBleed,
+        Key::EffectStun,
+        Key::EffectRoot,
+        Key::PerSecond,
         Key::JournalEmpty,
         Key::DurHm,
         Key::DurMs,
@@ -751,6 +849,14 @@ mod tests {
         Key::On,
         Key::Off,
         Key::BtnClose,
+        Key::BtnBack,
+        Key::ItemTypeStone,
+        Key::StatQuality,
+        Key::SharpenNoItems,
+        Key::SharpenNoStone,
+        Key::SharpenResultOk,
+        Key::SharpenResultFail,
+        Key::SharpenResultBroken,
         Key::NotifyDeath,
         Key::NotifyPartyInvite,
         Key::NotifyGuildInvite,
@@ -895,6 +1001,13 @@ mod tests {
         Key::SpellFireDart,
         Key::SpellFrostBolt,
         Key::SpellStormBolt,
+        // M18/F58d: руны воина/лучника
+        Key::SpellPrecision,
+        Key::SpellFury,
+        Key::SpellFortitude,
+        Key::SpellHemorrhage,
+        Key::SpellConcussion,
+        Key::SpellEntangle,
         // M17/F30e: ресурсы по классам
         Key::RageLabel,
         Key::EnergyLabel,
@@ -905,6 +1018,25 @@ mod tests {
         Key::InscribeNoWeapons,
         Key::BpCurrencies,
         Key::HkOpenBackpack,
+        Key::HkOpenQuests,
+        Key::QuestsTabCurrent,
+        Key::QuestsTabDone,
+        Key::QuestsStatusCurrent,
+        Key::QuestsStatusDone,
+        Key::QuestsPick,
+        Key::DialogYou,
+        Key::BtnTraining,
+        Key::BtnShop,
+        Key::BtnBuy,
+        Key::ShopBack,
+        Key::ShopOwned,
+        Key::ShopEmpty,
+        Key::ShopCurrency,
+        Key::ItemBonuses,
+        Key::BtnTrain,
+        Key::SkillReady,
+        Key::TrainingPoints,
+        Key::TrainingGold,
     ];
 
     #[test]

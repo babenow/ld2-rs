@@ -117,7 +117,8 @@ async fn trainer_takes_quest_item_as_payment() {
     assert_eq!(ack["result"], "ok", "с предметом: {ack}");
     assert_eq!(herbs_left(&db_url, &char_id).await, 0, "трава ушла тренеру");
 
-    // Вложение XP тоже платится предметом: без травы — отказ.
+    // M18/F44: обучение навыку тоже платится предметом (плата из
+    // диалога: fire — 100 золота + трава): без травы — отказ.
     let cfg = common::test_config(&db_url, |_| {});
     let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
     sqlx::query("UPDATE characters SET xp_pool = 1000 WHERE id = $1")
@@ -125,29 +126,31 @@ async fn trainer_takes_quest_item_as_payment() {
         .execute(&pool)
         .await
         .expect("пул");
+    common::set_skill(&pool, &char_id, "fire", 10_000_000, 0).await;
     pool.close().await;
     give_gold(&mut c, 100).await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "fire" }),
         )
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(
         ack["error"]["code"], "E_INGREDIENTS",
-        "invest без предмета: {ack}"
+        "обучение без предмета: {ack}"
     );
 
-    // Принесли вторую траву → вложение проходит, трава списана.
+    // Принесли траву → обучение проходит, трава списана (шкала всё
+    // ещё полная — неудачная попытка ничего не меняла).
     give(&mut c, "herb").await;
     let seq = c
         .send(
-            "cmd/char.xp_invest",
-            json!({ "skill_id": "sword", "points": 10 }),
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "fire" }),
         )
         .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "invest с предметом");
+    assert_eq!(c.ack(seq).await["result"], "ok", "обучение с предметом");
     assert_eq!(
         herbs_left(&db_url, &char_id).await,
         0,

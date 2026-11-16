@@ -7,7 +7,7 @@ use ely::layout::{Card, ScrollArea};
 use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div};
 use ld2_core::l10n::{t, tf, Key};
-use ld2_core::store::{local_epoch, Act, Profile};
+use ld2_core::store::{local_epoch, Act, Gender, Profile};
 use ld2_protocol::cmd::{CharCreate, CharSelect};
 
 use crate::palette::{palette, Palette};
@@ -306,6 +306,29 @@ impl Root {
                 .child(t(lang, Key::ProfileHint)),
         );
 
+        // M18/F34: пол — ряд кнопок под профилем; задаётся при создании
+        // (диалоги NPC «знают» пол, F35).
+        col = col.child(
+            div()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::GenderLabel)),
+        );
+        let gender = self.create_gender;
+        let mut genders = div().flex().flex_row().gap_1();
+        for candidate in Gender::all() {
+            let selected = gender == candidate;
+            genders = genders.child(act_btn(
+                cx,
+                t(lang, candidate.label_key()),
+                if selected { pal.accent } else { pal.panel },
+                if selected { pal.accent_text } else { pal.text },
+                move |this, _cx| {
+                    this.create_gender = candidate;
+                },
+            ));
+        }
+        col = col.child(genders);
+
         // Имя персонажа.
         col = col.child(
             div()
@@ -348,6 +371,8 @@ impl Root {
                     let cmd = CharCreate {
                         name: cmd_name.clone(),
                         profile: cmd_profile.clone(),
+                        // M18/F34: пол из селектора формы.
+                        gender: Some(this.create_gender.value().to_string()),
                     };
                     match this.transport.send(&cmd) {
                         Ok(_) => {
