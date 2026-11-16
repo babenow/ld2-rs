@@ -94,6 +94,9 @@ pub enum Act {
     /// (M20, заготовка): ack — только ошибки.
     DialogChoice,
     DialogSubmit,
+    /// `cmd/resource.gather` (M20/F20b) — ошибки (нет ресурса/ранг/
+    /// инструмент) → world_error.
+    Gather,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -776,6 +779,8 @@ impl AppStore {
                 Act::Party | Act::Trade | Act::GuildBrowse | Act::Guild => self.notice = Some(msg),
                 // Игровые диалоги (M20, заготовка) — ошибки тостом.
                 Act::DialogChoice | Act::DialogSubmit => self.notice = Some(msg),
+                // Добыча (M20/F20b): отказы — в мир (как Examine/Move).
+                Act::Gather => self.world_error = Some(msg),
             }
             return vec![];
         }
@@ -843,7 +848,8 @@ impl AppStore {
             | Act::ChatDelete
             | Act::Trade
             | Act::DialogChoice
-            | Act::DialogSubmit => {
+            | Act::DialogSubmit
+            | Act::Gather => {
                 // результат событиями (§8); npc.talk/npc.reply
                 // обрабатываются ниже отдельными блоками (M18/F35/F37);
                 // диалоги (M20) — ack только подтверждает выбор/ввод.

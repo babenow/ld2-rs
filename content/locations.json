@@ -36,7 +36,9 @@
               "tailor",
               "cook",
               "herbalist",
-              "hunter"
+              "hunter",
+              "woodcutting",
+              "mining"
             ],
             "skills": [
               "sword",
@@ -146,6 +148,66 @@
             "dagger_knife",
             "potion_heal"
           ]
+        },
+        {
+          "id": "r_forest_herb",
+          "kind": "resource",
+          "name": "Трава",
+          "resource": "herb",
+          "max": 1,
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+          "despawn_when_empty": true,
+          "profession": "herbalist",
+          "min_rank": 1,
+          "tool": "sickle"
+        },
+        {
+          "id": "r_forest_tree",
+          "kind": "resource",
+          "name": "Дуб",
+          "resource": "wood_oak",
+          "max": 2,
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          },
+          "despawn_when_empty": false,
+          "profession": "woodcutting",
+          "min_rank": 1,
+          "tool": "axe"
+        },
+        {
+          "id": "r_forest_branches",
+          "kind": "resource",
+          "name": "Ветки",
+          "resource": "branches",
+          "max": 5,
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+          "despawn_when_empty": false,
+          "profession": "woodcutting",
+          "min_rank": 1,
+          "tool": "axe"
+        },
+        {
+          "id": "r_forest_ore",
+          "kind": "resource",
+          "name": "Медная жила",
+          "resource": "ore_copper",
+          "max": 3,
+          "respawn": {
+            "min_s": 90,
+            "max_s": 180
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 1,
+          "tool": "pickaxe"
         }
       ]
     },

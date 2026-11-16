@@ -3,6 +3,29 @@
 use crate::config::{LevelSection, SkillsSection, UpgradeSection};
 
 /// Порог ранга: `round(base_xp × growth^rank)` (skills.md §2.2, D25).
+/// M20/F20b: применить XP профессии (паритет крафта): рост ранга,
+/// пока хватает порога и не достигнут потолка → `(xp, rank)`.
+pub fn profession_xp_apply(
+    cfg: &crate::config::ProfessionsSection,
+    xp: i64,
+    rank: i32,
+) -> (i64, i32) {
+    let mut xp = xp;
+    let mut rank = rank;
+    loop {
+        if rank as u32 >= cfg.rank_max {
+            break;
+        }
+        let need = ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64;
+        if xp < need {
+            break;
+        }
+        xp -= need;
+        rank += 1;
+    }
+    (xp, rank)
+}
+
 pub fn xp_to_next(rank: u32, cfg: &SkillsSection) -> i64 {
     ((cfg.base_xp as f64) * cfg.growth.powi(rank as i32)).round() as i64
 }

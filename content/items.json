@@ -970,6 +970,56 @@
       "qty": 1
     },
     {
+      "id": "axe",
+      "type": "axe",
+      "name": "Топор",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "pickaxe",
+      "type": "pickaxe",
+      "name": "Кирка",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "sickle",
+      "type": "sickle",
+      "name": "Серп",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "ore_copper",
+      "type": "ore_copper",
+      "name": "Медная руда",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 6,
+      "qty": 1
+    },
+    {
+      "id": "branches",
+      "type": "branches",
+      "name": "Ветки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 1,
+      "qty": 1
+    },
+    {
       "id": "herb",
       "type": "herb",
       "name": "Трава",

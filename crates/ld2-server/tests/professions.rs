@@ -119,7 +119,7 @@ async fn craft_requires_profession_station_tool_and_items() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "рецепты: {ack}");
     let recipes = ack["payload"]["recipes"].as_array().expect("recipes");
-    assert!(recipes.len() >= 4, "контент рецептов: {recipes:?}");
+    assert!(recipes.len() >= 3, "контент рецептов: {recipes:?}");
     let potion = recipes
         .iter()
         .find(|r| r["id"] == "rec_potion_heal")
@@ -187,30 +187,35 @@ async fn craft_requires_profession_station_tool_and_items() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_INGREDIENTS", "нет травы: {ack}");
 
-    // 5) Рецепт без станка/тула: сначала нужна профессия.
+    // 5) Рецепт чужой профессии: ранг проверяется первым → E_RANK_CAP
+    // (M20: «Сбор в поле» удалён — трава только из объектов-ресурсов).
     let seq = c
         .send(
             "cmd/craft.start",
-            json!({ "recipe_id": "rec_herb_bundle", "qty": 1 }),
+            json!({ "recipe_id": "rec_staff_oak", "qty": 1 }),
         )
         .await;
     let ack = c.ack(seq).await;
-    assert_eq!(ack["error"]["code"], "E_RANK_CAP", "травник: {ack}");
+    assert_eq!(ack["error"]["code"], "E_RANK_CAP", "резчик: {ack}");
 
-    // Вторичная профессия — лимит первичных не трогает.
+    // Резчик — вторая первичная (лимит 2 в конфиге — ок).
     let seq = c
-        .send("cmd/craft.learn", json!({ "profession_id": "herbalist" }))
+        .send("cmd/craft.learn", json!({ "profession_id": "woodcarver" }))
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
     c.wait_event("evt/craft/profession").await;
+    // Ранг есть → верстак в деревне есть, но нет стамески.
     let seq = c
         .send(
             "cmd/craft.start",
-            json!({ "recipe_id": "rec_herb_bundle", "qty": 1 }),
+            json!({ "recipe_id": "rec_staff_oak", "qty": 1 }),
         )
         .await;
     let ack = c.ack(seq).await;
-    assert_eq!(ack["result"], "ok", "сбор без требований: {ack}");
+    assert_eq!(
+        ack["error"]["code"], "E_TOOL_MISSING",
+        "нет стамески: {ack}"
+    );
 }
 
 #[tokio::test]
@@ -219,7 +224,7 @@ async fn craft_job_finishes_and_survives_restart() {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
     };
-    // Рецепт сбора: 2 с, без станка/тула/ингредиентов.
+    // Рецепт зелья: 3 с, станок/тул/травы — даём заранее.
     let server = common::start_server_guarded(&db_url, |_| {}).await;
     let ws = server.ws.clone();
     let (mut c, login, _char) = in_world(&ws).await;
@@ -227,15 +232,20 @@ async fn craft_job_finishes_and_survives_restart() {
     give_gold(&mut c, 1000).await;
 
     let seq = c
-        .send("cmd/craft.learn", json!({ "profession_id": "herbalist" }))
+        .send("cmd/craft.learn", json!({ "profession_id": "alchemist" }))
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
     c.wait_event("evt/craft/profession").await;
 
+    give(&mut c, "tool_flask").await;
+    for _ in 0..4 {
+        give(&mut c, "herb").await;
+    }
+
     let seq = c
         .send(
             "cmd/craft.start",
-            json!({ "recipe_id": "rec_herb_bundle", "qty": 2 }),
+            json!({ "recipe_id": "rec_potion_heal", "qty": 2 }),
         )
         .await;
     let ack = c.ack(seq).await;
@@ -256,22 +266,34 @@ async fn craft_job_finishes_and_survives_restart() {
     assert_eq!(c2.ack(seq).await["result"], "ok");
     c2.wait_event("evt/session.start").await;
 
-    // Готовность: тик-луп шлёт evt/craft/result (4 с от старта, ждём 6).
-    let result = c2.wait(|v| v["type"] == "evt/craft/result").await;
-    assert_eq!(result["payload"]["recipe_id"], "rec_herb_bundle");
+    // Готовность: тик-луп шлёт evt/craft/result; джоб = time_s × qty
+    // (3 × 2 = 6 с), а wait() ждёт максимум 5 с — опрашиваем дольше.
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let v = c2.recv_json().await;
+            if v["type"] == "evt/craft/result" {
+                return v;
+            }
+        }
+    })
+    .await
+    .expect("evt/craft/result");
+    assert_eq!(result["payload"]["recipe_id"], "rec_potion_heal");
     assert_eq!(result["payload"]["ok"], true, "успех: {result}");
     let made = result["payload"]["made"].as_array().expect("made");
     assert_eq!(made.len(), 1, "один стак: {made:?}");
-    // Рецепт выдаёт 2 травы × qty=2 → 4 (output.qty × qty).
-    assert_eq!(made[0]["qty"], 4, "output 2 × qty 2");
+    // Рецепт выдаёт 1 зелье × qty=2 → 2 (output.qty × qty).
+    assert_eq!(made[0]["qty"], 2, "output 1 × qty 2");
     let item_uid = made[0]["uid"].as_str().expect("uid").to_string();
 
-    // Предмет в инвентаре + XP профессии.
+    // Предмет в инвентаре + XP профессии (65 × 2 = 130 → ранг 2).
     let prof = c2.wait_event("evt/craft/profession").await;
-    assert_eq!(prof["payload"]["profession"]["id"], "herbalist");
+    assert_eq!(prof["payload"]["profession"]["id"], "alchemist");
+    let rank = prof["payload"]["profession"]["rank"].as_i64().unwrap_or(0);
+    let xp = prof["payload"]["profession"]["xp"].as_i64().unwrap_or(0);
     assert!(
-        prof["payload"]["profession"]["xp"].as_i64().unwrap_or(0) >= 80,
-        "XP за 2 крафта: {prof}"
+        rank >= 2 || xp >= 65,
+        "XP за 2 крафта (rank={rank}, xp={xp}): {prof}"
     );
 
     let seq = c2

@@ -19,6 +19,8 @@ pub enum RespawnKind {
     Mob { corpse_id: Option<String> },
     /// Статический лут: сброс `loot_taken` по префиксу `loot:<entity>:%`.
     Loot,
+    /// M20/F20b: ресурс — восстановить `current = max` (жилы/травы).
+    Resource,
 }
 
 /// M20: запись очереди возрождений (тёплое время мира, не
@@ -142,6 +144,49 @@ pub struct LiveCorpse {
     pub loot: Vec<Option<String>>,
     /// M20: когда труп создан (epoch-с) — TTL-удаление (`corpse_ttl_s`).
     pub born_at: i64,
+}
+
+/// M20/F20b: объект-ресурс в локации (жила/дерево/трава): `current`
+/// убывает по 1 за добычу, при 0 — респавн `[min_s, max_s]`; трава
+/// (`despawn_when_empty`) при исчерпании скрывается до респавна.
+#[derive(Debug, Clone)]
+pub struct ResourceNode {
+    pub id: String,
+    pub location_id: String,
+    pub name: String,
+    /// Предмет-выход (content `resource`), 1 за добычу.
+    pub def_id: String,
+    pub max: i64,
+    pub current: i64,
+    pub respawn: (i64, i64),
+    pub despawn_when_empty: bool,
+    /// Скрыт до респавна (трава после исчерпания).
+    pub hidden: bool,
+    /// Требуемая профессия + ранг (отказ — `E_PROFESSION`).
+    pub profession: Option<String>,
+    pub min_rank: i32,
+    /// Тип инструмента (`item_type` в инвентаре, `E_TOOL_MISSING`).
+    pub tool: Option<String>,
+}
+
+impl ResourceNode {
+    /// Проводной вид §6 (spawn/снапшот): запас — как шкала hp
+    /// (`{cur, max}`), клиент рисует бар и патчит через `entity/move`.
+    pub fn entity(&self) -> Entity {
+        Entity {
+            id: self.id.clone(),
+            kind: EntityKind::Resource,
+            name: self.name.clone(),
+            hp: Some(Hp {
+                cur: self.current,
+                max: self.max,
+            }),
+            tags: None,
+            was_player: None,
+            aggro: None,
+            extra: Default::default(),
+        }
+    }
 }
 
 /// M20: предмет, лежащий в локации (выброшенный игроком): виден всем,
@@ -272,6 +317,8 @@ pub struct World {
     /// M20: респавн-диапазоны сущностей контента (для лута —
     /// сброс `loot:<entity>:%` по расписанию).
     entity_respawn: HashMap<String, (i64, i64)>,
+    /// M20/F20b: объекты-ресурсы локаций (`current` — состояние мира).
+    resources: HashMap<String, ResourceNode>,
 }
 
 impl World {
@@ -434,6 +481,44 @@ impl World {
                 }
                 if let Some(range) = respawn {
                     self.entity_respawn.insert(e.id.clone(), range);
+                }
+                // M20/F20b: объект-ресурс — параметры из extra.
+                if e.kind == EntityKind::Resource {
+                    if let Some(def_id) = extra.get("resource").and_then(|v| v.as_str()) {
+                        let max = extra
+                            .get("max")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(1)
+                            .max(1);
+                        self.resources.insert(
+                            e.id.clone(),
+                            ResourceNode {
+                                id: e.id.clone(),
+                                location_id: location_id.clone(),
+                                name: e.name.clone(),
+                                def_id: def_id.to_string(),
+                                max,
+                                current: max,
+                                respawn: respawn.unwrap_or((60, 120)),
+                                despawn_when_empty: extra
+                                    .get("despawn_when_empty")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false),
+                                hidden: false,
+                                profession: extra
+                                    .get("profession")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from),
+                                min_rank: extra
+                                    .get("min_rank")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(1)
+                                    .clamp(1, 30) as i32,
+                                tool: extra.get("tool").and_then(|v| v.as_str()).map(String::from),
+                            },
+                        );
+                    }
+                    continue;
                 }
                 if e.kind != EntityKind::Monster {
                     continue;
@@ -733,6 +818,16 @@ impl World {
                 extra,
             });
         }
+        // M20/F20b: ресурсы (скрытые — до респавна не показываются).
+        let mut nodes: Vec<&ResourceNode> = self
+            .resources
+            .values()
+            .filter(|r| r.location_id == loc_id && !r.hidden)
+            .collect();
+        nodes.sort_by(|a, b| a.id.cmp(&b.id));
+        for node in nodes {
+            snapshot.entities.push(node.entity());
+        }
         snapshot
     }
 
@@ -917,6 +1012,50 @@ impl World {
         self.corpses.remove(corpse_id)
     }
 
+    // ─── M20/F20b: объекты-ресурсы ────────────────────────────────────────
+
+    pub fn resource(&self, entity_id: &str) -> Option<&ResourceNode> {
+        self.resources.get(entity_id)
+    }
+
+    /// M20/F20b: добыть 1 единицу (валидации инструмента/ранга — на
+    /// сервере до вызова): `Some(узел после)`; `None` — нет в этой
+    /// локации / скрыт / исчерпан.
+    pub fn try_gather(&mut self, entity_id: &str, location_id: &str) -> Option<ResourceNode> {
+        let node = self.resources.get_mut(entity_id)?;
+        if node.location_id != location_id || node.hidden || node.current <= 0 {
+            return None;
+        }
+        node.current -= 1;
+        let exhausted = node.current == 0;
+        let (min_s, max_s, despawn) = (node.respawn.0, node.respawn.1, node.despawn_when_empty);
+        if exhausted {
+            // Респавн до max — по тому же диапазону min..max.
+            let at = crate::time::now_epoch() + rand_range(min_s, max_s);
+            self.respawn_queue.push(RespawnEntry {
+                entity_id: entity_id.to_string(),
+                location_id: location_id.to_string(),
+                kind: RespawnKind::Resource,
+                at,
+            });
+            if despawn {
+                node.hidden = true;
+            }
+        }
+        Some(node.clone())
+    }
+
+    /// M20/F20b: восстановить ресурс до max (шаг `respawn_step`);
+    /// `(узел, был_скрыт)` — был_скрыт → `evt/entity/spawn`, иначе
+    /// патч шкалы через `evt/entity/move`.
+    pub fn respawn_resource(&mut self, entity_id: &str) -> Option<(ResourceNode, bool)> {
+        let node = self.resources.get_mut(entity_id)?;
+        let was_hidden = node.hidden;
+        node.current = node.max;
+        node.hidden = false;
+        Some((node.clone(), was_hidden))
+    }
+
     /// Взять лот-слот из динамического трупа; `None` — уже взят/нет слота.
     pub fn take_dynamic_loot(&mut self, corpse_id: &str, index: usize) -> Option<String> {
         let corpse = self.corpses.get_mut(corpse_id)?;
@@ -1030,6 +1169,94 @@ mod tests {
             world.due_respawns(base + 600).is_empty(),
             "очередь пуста (дедуп лута)"
         );
+    }
+
+    /// Сущности локации из снапшота (`build_location` мутирует вход).
+    fn loc_entities(world: &World, loc_id: &str) -> Vec<ld2_protocol::types::Entity> {
+        world
+            .build_location(ld2_protocol::types::LocationSnapshot {
+                id: loc_id.to_string(),
+                name: loc_id.to_string(),
+                flags: Vec::new(),
+                text: String::new(),
+                exits: Vec::new(),
+                entities: Vec::new(),
+                extra: Default::default(),
+            })
+            .entities
+    }
+
+    /// M20/F20b: ресурс убывает по 1 за добычу; при 0 — респавн
+    /// min..max; трава (despawn_when_empty) скрывается, жила остаётся
+    /// видимой и исчерпанной до возобновления.
+    #[test]
+    fn resource_gather_exhausts_and_respawns() {
+        let mut world = World::default();
+        let row = (
+            "l_t".to_string(),
+            serde_json::json!([
+                {"id": "r_vein", "kind": "resource", "name": "Жила",
+                 "resource": "ore_copper", "max": 2,
+                 "respawn": {"min_s": 5, "max_s": 10},
+                 "despawn_when_empty": false,
+                 "profession": "mining", "min_rank": 1, "tool": "pickaxe"},
+                {"id": "r_herb", "kind": "resource", "name": "Трава",
+                 "resource": "herb", "max": 1,
+                 "respawn": {"min_s": 30, "max_s": 60},
+                 "despawn_when_empty": true,
+                 "profession": "herbalist", "min_rank": 1, "tool": "sickle"}
+            ]),
+        );
+        world.seed_mobs(&[row], None);
+
+        // Стартовый запас = max, параметры из контента, в снапшоте есть.
+        let vein = world.resource("r_vein").expect("жида");
+        assert_eq!((vein.current, vein.max), (2, 2));
+        assert_eq!(vein.tool.as_deref(), Some("pickaxe"));
+        assert!(loc_entities(&world, "l_t")
+            .iter()
+            .any(|e| e.id == "r_vein" && e.kind == EntityKind::Resource));
+
+        // Добыча: −1 за действие; чужая локация — отказ.
+        assert!(
+            world.try_gather("r_vein", "l_x").is_none(),
+            "не в своей локации"
+        );
+        assert_eq!(world.try_gather("r_vein", "l_t").unwrap().current, 1);
+        // Исчерпание: жила остаётся видимой, в очереди респавн min..max.
+        let after = world.try_gather("r_vein", "l_t").unwrap();
+        assert_eq!(after.current, 0);
+        assert!(!after.hidden, "жида остаётся на месте");
+        let base = crate::time::now_epoch();
+        assert!(world.due_respawns(base + 4).is_empty(), "до min (5 с)");
+        let due = world.due_respawns(base + 60);
+        assert!(
+            due.iter().any(|e| e.entity_id == "r_vein"
+                && matches!(e.kind, RespawnKind::Resource)
+                && (base..=base + 10).contains(&e.at)),
+            "респавн в [5,10]: {due:?}"
+        );
+        let (node, was_hidden) = world.respawn_resource("r_vein").unwrap();
+        assert!(!was_hidden, "жида не скрывалась");
+        assert_eq!(node.current, 2, "восстановление до max");
+
+        // Трава: исчерпание скрывает до респавна (despawn_when_empty).
+        let after = world.try_gather("r_herb", "l_t").unwrap();
+        assert_eq!((after.current, after.hidden), (0, true));
+        assert!(
+            !loc_entities(&world, "l_t").iter().any(|e| e.id == "r_herb"),
+            "исчерпанная трава скрыта"
+        );
+        assert!(
+            world
+                .due_respawns(base + 60)
+                .iter()
+                .any(|e| e.entity_id == "r_herb"),
+            "респавн травы в очереди"
+        );
+        let (node, was_hidden) = world.respawn_resource("r_herb").unwrap();
+        assert!(was_hidden, "была скрыта");
+        assert_eq!((node.current, node.hidden), (1, false), "вернулась");
     }
 
     /// M20: дефолт `[world]` применяется только к мобам без своего

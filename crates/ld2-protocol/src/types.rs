@@ -34,6 +34,8 @@ pub enum EntityKind {
     Npc,
     Corpse,
     Object,
+    /// M20/F20b: объект-ресурс (жила/дерево/трава) — `cmd/resource.gather`.
+    Resource,
 }
 
 /// Строка в `location.entities` (§6). `was_player` — ключевой маркер трупа

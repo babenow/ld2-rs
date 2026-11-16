@@ -846,6 +846,9 @@ impl Root {
             (Key::MonstersLabel, EntityKind::Monster),
             (Key::NpcsLabel, EntityKind::Npc),
             (Key::CorpsesLabel, EntityKind::Corpse),
+            // M20/F20b: объекты-ресурсы и предметы на земле.
+            (Key::ResourcesLabel, EntityKind::Resource),
+            (Key::ObjectsLabel, EntityKind::Object),
         ] {
             let group: Vec<Entity> = loc
                 .entities
@@ -903,12 +906,16 @@ impl Root {
                 cx.listener({
                     let id = id.clone();
                     move |this, _, _, cx| {
-                        let kind = this
+                        let found = this
                             .store
                             .snapshot
                             .as_ref()
-                            .and_then(|s| s.location.entities.iter().find(|e| e.id == id))
-                            .map(|e| e.kind);
+                            .and_then(|s| s.location.entities.iter().find(|e| e.id == id));
+                        let kind = found.map(|e| e.kind);
+                        // M20/F20c: предмет на земле (extra.ground).
+                        let ground = found.is_some_and(|e| {
+                            e.extra.get("ground").and_then(|v| v.as_bool()) == Some(true)
+                        });
                         match kind {
                             Some(EntityKind::Monster) | Some(EntityKind::Player) => {
                                 this.store.select_target(id.clone());
@@ -916,6 +923,11 @@ impl Root {
                             // M18/F35: клик по NPC → диалог (поговорить/квесты).
                             Some(EntityKind::Npc) => {
                                 this.on_click(Click::NpcTalk(id.clone()), cx);
+                            }
+                            // M20/F20c: левый клик по предмету на земле —
+                            // подобрать (как «Подобрать» в меню).
+                            Some(EntityKind::Object) if ground => {
+                                this.on_click(Click::UseItem(id.clone()), cx);
                             }
                             _ => {}
                         }
@@ -967,6 +979,21 @@ impl Root {
             t(lang, Key::Examine).to_string(),
             Click::Examine(id.clone()),
         ));
+        // M20/F20b: добыча ресурса; F20c: подбор предмета с земли.
+        if entity.kind == EntityKind::Resource {
+            menu = menu.item(mk(
+                t(lang, Key::GatherBtn).to_string(),
+                Click::Gather(id.clone()),
+            ));
+        }
+        if entity.kind == EntityKind::Object
+            && entity.extra.get("ground").and_then(|v| v.as_bool()) == Some(true)
+        {
+            menu = menu.item(mk(
+                t(lang, Key::PickUpBtn).to_string(),
+                Click::UseItem(id.clone()),
+            ));
+        }
         if attackable {
             menu = menu.item(mk(
                 t(lang, Key::Attack).to_string(),
