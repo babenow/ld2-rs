@@ -133,20 +133,6 @@ const LEARN_CATALOG: [(&str, Key); 7] = [
 /// M18/F32: типы целей инкрустации — руна идёт только в оружие
 /// (`weapon`/`staff`), самоцвет (`gem`) — только в броню (`armor`).
 /// Общая для окна «Куда инкрустировать…» и окна сокетов; сервер
-/// M18 (указание заказчика): «противоположный» цвет к фону предмета —
-/// по яркости (BT.601): светлый фон → чёрный текст, тёмный → белый.
-/// Нужен, когда карточка подсвечена цветом редкости.
-pub(crate) fn contrasting_text(color: u32) -> u32 {
-    let r = (color >> 16) & 0xff;
-    let g = (color >> 8) & 0xff;
-    let b = color & 0xff;
-    if (r * 299 + g * 587 + b * 114) / 1000 > 140 {
-        0x000000
-    } else {
-        0xffffff
-    }
-}
-
 /// M18/F58f (баг «инкрустация через меню камня»): первый свободный
 /// слот, который **принимает** тип вставки по `accepts` (ADR-012:
 /// самоцвет — только в gem-слот, руна — в рунный). У старого сервера
@@ -1362,9 +1348,6 @@ impl Root {
             let item = uid
                 .as_ref()
                 .and_then(|u| snap.char.inventory.iter().find(|i| i.uid == *u));
-            // M18 (указание заказчика): цвет редкости занятого слота —
-            // для выделения и контрастных текстов (группа ниже).
-            let card_color = item.as_ref().map(|i| rarity_color(&i.rarity, pal));
             // M18 (указание заказчика): карточка слота — вертикально:
             // **название слота в верхней строке**, предмет ниже (правым
             // краем); кнопки «Снять»/«Описание» — в контекстном меню.
@@ -1396,17 +1379,14 @@ impl Root {
                 // Подсветка: пустой слот — общий selection, занятый —
                 // цветом предмета (ветки ниже); клик — контекстное меню.
                 ;
-            // Label слота (указание заказчика): при выделении карточки
-            // — контрастный. Механизм — наследование от hover-стиля
-            // карточки (работает для детей без своего text_color;
-            // group_hover НЕ перекрывал собственный цвет label): у
-            // занятого слота label без своего цвета (normal — цвет
-            // редкости, hover — противоположный), у пустого — muted.
-            let mut label = div().text_size(px(12.0));
-            if card_color.is_none() {
-                label = label.text_color(rgb(pal.muted));
-            }
-            row = row.child(label.child(slot_label(lang, slot)));
+            // Label слота: muted (контрастный текст при выделении
+            // отменён заказчиком — выделяется только рамка).
+            row = row.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(slot_label(lang, slot)),
+            );
             let Some(item) = item else {
                 // M17/F30b: левая рука закрыта, пока в правой двуручник.
                 let twohand = snap
@@ -1428,7 +1408,8 @@ impl Root {
                             t(lang, Key::EmptySlot)
                         }),
                 );
-                row = row.hover(|st| st.bg(rgb(pal.selection)));
+                // Выделение — только рамка (указание заказчика).
+                row = row.hover(|st| st.border_color(rgb(pal.accent)));
                 if matches!(slot.as_str(), "main_hand" | "off_hand") {
                     hand_rows.push(row.into_any_element());
                 } else {
@@ -1444,13 +1425,12 @@ impl Root {
             // ниже названия слота идёт **название предмета**, ниже —
             // **столбцы самоцветов/рун** (иконки слотов отдельной
             // строкой, левым краем).
-            // Название: без своего цвета — normal (цвет редкости) и
-            // hover (противоположный) наследуются от карточки.
             let mut name_line = div()
                 .flex()
                 .flex_row()
                 .gap_1()
                 .items_baseline()
+                .text_color(rgb(color))
                 .child(div().child(item.name.clone()));
             if item.upgrade > 0 {
                 name_line = name_line.child(div().child(format!("+{}", item.upgrade)));
@@ -1460,17 +1440,16 @@ impl Root {
             }
             row = row.child(name_line);
             if let Some(sockets) = item.sockets.as_ref().filter(|s| !s.is_empty()) {
-                // Цвет слотов наследуется от карточки (цвет редкости);
-                // при выделении (группа) — контрастный.
-                row = row.child(div().child(socket_icons_row(item.item_type.as_str(), sockets)));
+                row = row.child(
+                    div()
+                        .text_color(rgb(color))
+                        .child(socket_icons_row(item.item_type.as_str(), sockets)),
+                );
             }
-            // M18 (указание заказчика): выделение карточки — **цветом
-            // предмета** (полный), название — противоположным к нему
-            // (наследуется детьми без своего text_color); label слота
-            // и «Пусто» держат свой muted.
-            row = row
-                .text_color(rgb(color))
-                .hover(move |st| st.bg(rgb(color)).text_color(rgb(contrasting_text(color))));
+            // M18 (указание заказчика): выделение — **только рамка**
+            // цветом предмета при наведении; фон и тексты не меняются
+            // (контрастный текст отменён — баг при скролле).
+            row = row.hover(move |st| st.border_color(rgb(color)));
             // Меню предмета (F29d): Описание и Снять — вместо кнопок.
             let mut menu = Menu::new();
             let detail = serde_json::to_value(item).unwrap_or_default();
@@ -3619,20 +3598,6 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// M18: контрастный цвет — светлые редкости → чёрный текст,
-    /// тёмные → белый (карточка подсвечена цветом предмета).
-    #[test]
-    fn contrasting_text_matches_brightness() {
-        // uncommon 0x98c379 (светлый зелёный) → чёрный.
-        assert_eq!(contrasting_text(0x98c379), 0x000000);
-        // rare 0x61afef (светлый синий) → чёрный.
-        assert_eq!(contrasting_text(0x61afef), 0x000000);
-        // legendary 0x6606b2 (тёмный фиолетовый) → белый.
-        assert_eq!(contrasting_text(0x6606b2), 0xffffff);
-        // epic 0xa0522d (тёмный коричневый) → белый.
-        assert_eq!(contrasting_text(0xa0522d), 0xffffff);
-    }
 
     /// M18/F58f: под инкрустацию выбирается слот, принимающий тип
     /// вставки — самоцвет не идёт в рунный слот (баг меню камня).
