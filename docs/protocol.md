@@ -253,7 +253,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 
 // SkillSnapshot
 { "id": "sword", "name": "Владение мечом", "description": "+2% физ. урона мечом",
-  "rank": 3, "xp": 612, "xp_to_next": 480 }      // description опционально (M14/F17)
+  "rank": 3, "level": 120, "xp": 300, "xp_to_next": 436 }  // M21: level — вторая шкала (границы рангов кратно 50)
 
 // BuffState (M18/F58d, ADR-012 §6): активный бафф руны в char.buffs
 { "kind": "rune_marksman", "title": "Меткость",     // kind — ключ, title — для UI
@@ -310,9 +310,11 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune, char?}` | − | извлечение (цель надета — ack несёт `char`, M18/F32) |
 | `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после»; **M18/F54:** без активного камня → `E_INGREDIENTS`; `chance` уже включает бонус камня × рейты сервера |
 | `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение; **M18/F54:** тратит 1 шт. активного камня (`evt/item/state` qty−1 либо `evt/item/removed`), камень сбрасывается |
-| `craft.list` | `{}` | `{professions[]}` | + | мои профессии: id/ранг/xp |
+| `craft.list` | `{}` | `{professions[]}` | + | мои профессии: id/ранг/уровень/xp (+ `extra`: `rank_span`, `rank_up_gold`) |
 | `craft.recipes` | `{profession?}` | `{recipes[]}` | + | список рецептов |
 | `craft.learn` | `{profession_id}` | `{profession}` | − | изучить профессию у NPC |
+| `craft.reset` | `{profession_id}` | `{profession_id}` | − | забыть профессию (окно профессий): прогресс теряется, слот основной освобождается; `E_PROFESSION` — не изучена |
+| `craft.rank_up` | `{profession_id}` | `{profession}` | − | M21: повысить ранг **у тренера** (уровень ≥ границы → `E_LEVEL_REQUIRED`, без тренера → `E_NO_TRAINER`, без золота → `E_INGREDIENTS`; цена `round(base × growth^ранг)`) |
 | `craft.start` | `{recipe_id, qty}` | `{}` (→ `evt/craft/result`) | − | крафт |
 | `quest.list` | `{}` | `{quests[]}` | + | журнал квестов |
 | `quest.accept` / `quest.turn_in` / `quest.abandon` | `{quest_id}` | `{quest}` | − | взаимодействие; `accept` ограничен `quests.max_active` (§5, M18/F36 → `E_QUEST_LIMIT`) |
@@ -390,7 +392,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/dialog/open` | `{ id, kind: "page"\|"execute", title, pages: [{id, text, actions: [{id, label}]}], inputs: [{id, label, kind, default}] }` | M20: игровой диалог — многостраничный (кнопки действий + «Назад» на клиенте) или execute (поля ввода → `cmd/dialog.submit`) — **заготовка** |
 | `evt/upgrade/result` | `{ uid, ok, new_upgrade?, item_destroyed?, cost {} }` | итог улучшения |
 | `evt/craft/result` | `{ recipe_id, ok, made: [{uid, qty}], consumed [] }` | итог крафта |
-| `evt/craft/profession` | `{ profession: { id, rank, xp, xp_to_next } }` | профессия изучена/ранг повышен |
+| `evt/craft/profession` | `{ profession: { id, rank, level, xp, xp_to_next } }` | профессия изучена / уровень растёт / ранг повышен (M21: `level` — вторая шкала) |
 | `evt/quest/progress` | `{ quest: QuestState }` | прогресс цели |
 | `evt/quest/updated` | `{ quest: QuestState }` | смена состояния (взят/сдан/доступен) |
 
@@ -458,6 +460,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_PERMISSION` | нет прав роли аккаунта (модерация чата, M14/F19) |
 | `E_XP_POOL` | не хватает очков опыта (`skill.train`) |
 | `E_RANK_CAP` | достигнут потолок ранга навыка/профессии |
+| `E_LEVEL_REQUIRED` | M21: уровень профессии не набран до границы ранга (`craft.rank_up`/награда квеста) |
 | `E_SKILL_NOT_READY` | шкала навыка не заполнена на 100 % — повышение ранга недоступно (`skill.train`, M18/F44) |
 | `E_PROFESSION_LIMIT` | превышен `profession_limit` первичных профессий |
 | `E_STATION_REQUIRED` | для рецепта нет станка в локации |

@@ -24,15 +24,15 @@ use ld2_core::store::{
     UpgradeView,
 };
 use ld2_protocol::cmd::{
-    CraftLearn, CraftRecipes, CraftStart, CrimeLog, GuildBrowse, GuildLeave, GuildRankSet,
-    ItemDrop, ItemEquip, ItemUnequip, ItemUse, SocketExtract, SocketInsert, UpgradePreview,
+    CrimeLog, GuildBrowse, GuildLeave, GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse,
+    SocketExtract, SocketInsert, UpgradePreview,
 };
 use ld2_protocol::types::{CharacterState, ItemSnapshot, Severity, SkillSnapshot};
 
 use crate::palette::Palette;
 use crate::rune_glyph;
 use ely::buttons::IconButton;
-use ely::forms::{Choice, Input, Select};
+use ely::forms::{Choice, Input};
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
@@ -51,7 +51,6 @@ pub(crate) enum SheetTab {
     /// Производные характеристики — наполняется в F26.
     Params,
     Skills,
-    Professions,
     /// Репутация фракций — наполняется в F27.
     Reputation,
     // M18/F36: «Квесты» переехали в отдельное окно (правило дубликатов).
@@ -61,11 +60,10 @@ pub(crate) enum SheetTab {
 impl SheetTab {
     /// M16/F29b: «Инвентарь» убран из окна — он живёт в отдельном
     /// окне рюкзака (правило дубликатов).
-    fn all() -> [(SheetTab, Key); 5] {
+    fn all() -> [(SheetTab, Key); 4] {
         [
             (SheetTab::Params, Key::SheetParams),
             (SheetTab::Skills, Key::SheetSkills),
-            (SheetTab::Professions, Key::ProfessionsTab),
             (SheetTab::Reputation, Key::SheetReputation),
             (SheetTab::Guild, Key::GuildTab),
         ]
@@ -76,7 +74,6 @@ impl SheetTab {
         match self {
             SheetTab::Params => IconName::Gauge,
             SheetTab::Skills => IconName::Zap,
-            SheetTab::Professions => IconName::Wrench,
             SheetTab::Reputation => IconName::Shield,
             SheetTab::Guild => IconName::Flag,
         }
@@ -86,7 +83,6 @@ impl SheetTab {
         match self {
             SheetTab::Params => "params",
             SheetTab::Skills => "skills",
-            SheetTab::Professions => "professions",
             SheetTab::Reputation => "reputation",
             SheetTab::Guild => "guild",
         }
@@ -95,14 +91,14 @@ impl SheetTab {
     pub(crate) fn parse(s: &str) -> Self {
         match s {
             "skills" => SheetTab::Skills,
-            "professions" => SheetTab::Professions,
             "reputation" => SheetTab::Reputation,
             "guild" => SheetTab::Guild,
             // M15/F25: старые значения удалённых вкладок (attrs/statuses)
             // из сохранённого конфига → «Параметры» (ближайшая инфо-вкладка);
             // M16/F29b: «inventory» переехал в окно рюкзака;
-            // M18/F36: «quests» переехал в отдельное окно.
-            "attrs" | "statuses" | "inventory" | "quests" => SheetTab::Params,
+            // M18/F36: «quests» переехал в отдельное окно;
+            // M21: «professions» — окно профессий (как квесты).
+            "attrs" | "statuses" | "inventory" | "quests" | "professions" => SheetTab::Params,
             _ => SheetTab::Params,
         }
     }
@@ -117,17 +113,6 @@ const SKILL_GROUPS: [(&str, Key); 6] = [
     ("stealth", Key::SkillGroupStealth),
     ("practice", Key::SkillGroupPractice),
     ("social", Key::SkillGroupSocial),
-];
-
-/// Демо-каталог профессий для обучения (skills.md §5; сервер валидирует).
-const LEARN_CATALOG: [(&str, Key); 7] = [
-    ("blacksmith", Key::ProfBlacksmith),
-    ("alchemist", Key::ProfAlchemist),
-    ("woodcarver", Key::ProfWoodcarver),
-    ("tailor", Key::ProfTailor),
-    ("cook", Key::ProfCook),
-    ("herbalist", Key::ProfHerbalist),
-    ("hunter", Key::ProfHunter),
 ];
 
 /// M18/F32: типы целей инкрустации — руна идёт только в оружие
@@ -559,10 +544,6 @@ impl Root {
             if !self.store.crime_log_loaded {
                 self.store.crime_log_loaded = true;
                 self.send_cmd(&CrimeLog { limit: Some(50) }, Act::CrimeLog);
-            }
-            if self.sheet_tab == SheetTab::Professions && !self.store.recipes_loaded {
-                self.store.recipes_loaded = true;
-                self.send_cmd(&CraftRecipes { profession: None }, Act::Craft);
             }
             if self.sheet_tab == SheetTab::Guild && !self.store.guild_browse_loaded {
                 self.store.guild_browse_loaded = true;
@@ -999,7 +980,6 @@ impl Root {
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::CharComingSoon)),
             SheetTab::Skills => self.tab_skills(cx, pal),
-            SheetTab::Professions => self.tab_professions(cx, pal),
             SheetTab::Guild => self.tab_guild(cx, pal),
         };
         // M16/F29f: справа запас под скроллбар — цифры значений не
@@ -1010,9 +990,6 @@ impl Root {
         col = col.child(match tab {
             SheetTab::Skills => scrollable_tab("ld2-skills-scroll", &self.skills_scroll, body),
             SheetTab::Params => scrollable_tab("ld2-params-scroll", &self.params_scroll, body),
-            SheetTab::Professions => {
-                scrollable_tab("ld2-professions-scroll", &self.professions_scroll, body)
-            }
             _ => body,
         });
         col
@@ -1832,221 +1809,6 @@ impl Root {
                         format_duration(lang, entry.total_s)
                     )),
             );
-        }
-        col
-    }
-
-    // ── вкладка «Профессии» (ФР-08) ───────────────────────────────────────
-
-    fn tab_professions(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let lang = self.lang;
-        let Some(snap) = self.store.snapshot.clone() else {
-            return div()
-                .text_color(rgb(pal.muted))
-                .child(t(lang, Key::Loading));
-        };
-        let mut col = div().flex().flex_col().gap_2();
-
-        // Изученные профессии: ранги и XP (ФР-08).
-        for prof in &snap.char.professions {
-            col = col.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .px_2()
-                    .rounded_md()
-                    .bg(rgb(pal.panel))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .child(div().child(prof_label(lang, &prof.id)))
-                            .child(div().text_color(rgb(pal.muted)).child(
-                                t(lang, Key::RankFmt).replace("{r}", &prof.rank.to_string()),
-                            )),
-                    )
-                    .child(bar(
-                        if prof.xp_to_next > 0 {
-                            prof.xp as f32 / prof.xp_to_next as f32
-                        } else {
-                            0.0
-                        },
-                        format!("{}/{}", prof.xp, prof.xp_to_next),
-                        pal.accent,
-                        pal,
-                    )),
-            );
-        }
-
-        // M11.3: обучение — Select Ely + подтверждение (отклонение
-        // «ряд кнопок вместо combobox» снят).
-        let available: Vec<(&'static str, Key)> = LEARN_CATALOG
-            .iter()
-            .copied()
-            .filter(|(id, _)| !snap.char.professions.iter().any(|p| p.id == *id))
-            .collect();
-        if !available.is_empty() {
-            let choices: Vec<Choice> = available
-                .iter()
-                .map(|(id, key)| Choice::new(*id, t(lang, *key)))
-                .collect();
-            let pick = self.learn_pick.clone();
-            let this = cx.entity();
-            let mut row = div().flex().flex_row().gap_2().items_center();
-            row = row.child(div().flex_grow_1().child({
-                let this = this.clone();
-                let sel =
-                    Select::new("ld2-learn-prof", choices).placeholder(t(lang, Key::LearnLabel));
-                match pick {
-                    Some(value) => sel.selected(value),
-                    None => sel,
-                }
-                .on_change(move |value, _window, acx| {
-                    let value = value.to_string();
-                    this.update(acx, |root, _cx| root.learn_pick = Some(value));
-                })
-            }));
-            if let Some(id) = self.learn_pick.clone() {
-                row = row.child(act_btn(
-                    cx,
-                    t(lang, Key::LearnLabel),
-                    pal.accent,
-                    pal.accent_text,
-                    move |this, cx| {
-                        let cmd = CraftLearn {
-                            profession_id: id.clone(),
-                        };
-                        this.send_cmd(&cmd, Act::Learn);
-                        let _ = cx;
-                    },
-                ));
-            }
-            col = col.child(row);
-        }
-
-        col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
-        col = col.child(
-            div()
-                .font_weight(gpui::FontWeight::BOLD)
-                .child(t(lang, Key::RecipesLabel)),
-        );
-        if self.store.recipes.is_empty() {
-            col = col.child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::NoRecipes)),
-            );
-        }
-
-        // Рецепты: требования, ингредиенты (красные при нехватке — ФР-08).
-        let recipes = self.store.recipes.clone();
-        for recipe in &recipes {
-            let recipe_id = recipe["id"].as_str().unwrap_or_default().to_string();
-            let name = recipe["name"].as_str().unwrap_or("?").to_string();
-            let profession = recipe["profession"].as_str().unwrap_or("").to_string();
-            let rank = recipe["rank"].as_i64().unwrap_or(0);
-            let station = recipe["station_label"].as_str().unwrap_or("").to_string();
-
-            let mut ingredients_ok = true;
-            let mut ingredient_lines: Vec<(String, bool)> = Vec::new();
-            if let Some(inputs) = recipe["inputs"].as_array() {
-                for input in inputs {
-                    let need_type = input["type"].as_str().unwrap_or_default();
-                    let need_qty = input["qty"].as_i64().unwrap_or(1);
-                    let have: i64 = snap
-                        .char
-                        .inventory
-                        .iter()
-                        .filter(|i| i.item_type == need_type)
-                        .map(|i| i.qty.unwrap_or(1))
-                        .sum();
-                    let ok = have >= need_qty;
-                    if !ok {
-                        ingredients_ok = false;
-                    }
-                    ingredient_lines.push((format!("{need_type}: {have}/{need_qty}"), ok));
-                }
-            }
-
-            let mut card = div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.border))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(div().child(name.clone()))
-                        .child(div().text_size(px(12.0)).text_color(rgb(pal.muted)).child(
-                            format!(
-                                "· {} · {}",
-                                prof_label(lang, &profession),
-                                t(lang, Key::RankFmt).replace("{r}", &rank.to_string())
-                            ),
-                        )),
-                );
-
-            // Крафт: кнопка активна при полном наборе и вне ожидания (§7).
-            let pending = self.store.pending == Some(Act::Craft);
-            if ingredients_ok && !pending {
-                card = card.child(act_btn(
-                    cx,
-                    t(lang, Key::BtnCraft),
-                    pal.accent,
-                    pal.accent_text,
-                    move |this, cx| {
-                        let cmd = CraftStart {
-                            recipe_id: recipe_id.clone(),
-                            qty: 1,
-                        };
-                        this.send_cmd(&cmd, Act::Craft);
-                        let _ = cx;
-                    },
-                ));
-            } else {
-                card = card.child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgb(pal.border))
-                        .text_color(rgb(pal.muted))
-                        .child(t(lang, Key::BtnCraft)),
-                );
-            }
-
-            if !station.is_empty() {
-                card = card.child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(station),
-                );
-            }
-            for (line, ok) in ingredient_lines {
-                card = card.child(if ok {
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(format!("• {line}"))
-                } else {
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.danger))
-                        .child(format!("• {}: {}", t(lang, Key::MissingIngredients), line))
-                });
-            }
-            col = col.child(card);
         }
         col
     }
@@ -3183,23 +2945,6 @@ impl Root {
 
 // ── вспомогательные ────────────────────────────────────────────────────────
 
-/// Название профессии: l10n-ключ по id, фолбэк — сам id.
-fn prof_label(lang: Lang, id: &str) -> String {
-    let key = match id {
-        "blacksmith" => Some(Key::ProfBlacksmith),
-        "alchemist" => Some(Key::ProfAlchemist),
-        "scribe" => Some(Key::ProfScribe),
-        "woodcarver" => Some(Key::ProfWoodcarver),
-        "tailor" => Some(Key::ProfTailor),
-        "cook" => Some(Key::ProfCook),
-        "herbalist" => Some(Key::ProfHerbalist),
-        "hunter" => Some(Key::ProfHunter),
-        _ => None,
-    };
-    key.map(|k| t(lang, k).to_string())
-        .unwrap_or_else(|| id.to_string())
-}
-
 /// M15/F25: строка «подпись … значение» в панели опыта окна персонажа.
 fn xp_kv_row(pal: &Palette, label: &str, value: &str) -> Div {
     div()
@@ -3971,14 +3716,15 @@ mod tests {
     }
 
     /// M15/F25: состав и порядок вкладок окна — по спеке пользователя
-    /// (Параметры | Навыки | Профессии | Репутация + нетронутые);
-    /// M16/F29b: «Инвентарь» убран (окно рюкзака — отдельное).
+    /// (Параметры | Навыки | Репутация + нетронутые); M16/F29b:
+    /// «Инвентарь» убран (окно рюкзака — отдельное); M21: «Профессии»
+    /// убраны (отдельное окно, как квесты).
     #[test]
     fn character_window_tabs_cover_spec() {
         let tabs: Vec<&'static str> = SheetTab::all().iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(
             tabs,
-            ["params", "skills", "professions", "reputation", "guild"],
+            ["params", "skills", "reputation", "guild"],
             "порядок вкладок правой колонки"
         );
         for (tab, _) in SheetTab::all() {

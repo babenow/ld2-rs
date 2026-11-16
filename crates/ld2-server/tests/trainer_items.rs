@@ -33,6 +33,12 @@ fn content_with_item_price() -> PathBuf {
                 entity["trainer"]["price"]["items"] = json!([
                     { "type": "herb", "qty": 1 }
                 ]);
+                // M21: у профессий своя цена (`price_profession`) — в
+                // этом тесте она же + предмет (иначе фолбэк на500).
+                entity["trainer"]["price_profession"] = json!({
+                    "gold_base": 100,
+                    "items": [{ "type": "herb", "qty": 1 }]
+                });
                 touched = true;
             }
         }

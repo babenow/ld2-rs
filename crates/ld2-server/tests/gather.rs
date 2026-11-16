@@ -161,7 +161,8 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         .sum();
     assert_eq!(herb, 1, "собрана1 трава: {inv:?}");
 
-    // XP профессии (паритет крафта): шахта ≥65 за3 добычи.
+    // M21: добыча растит УРОВЕНЬ (3×65 XP → уровень ≥4, остаток
+    // переносится); ранг остаётся1 — его даёт тренер/награда.
     let profs = snap["payload"]["char"]["professions"]
         .as_array()
         .expect("professions");
@@ -170,9 +171,11 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         .find(|p| p["id"] == "mining")
         .expect("шахтёр в снапшоте");
     assert!(
-        mining["xp"].as_i64().unwrap_or(0) >= 65,
-        "XP за добычу: {profs:?}"
+        mining["level"].as_i64().unwrap_or(0) >= 4,
+        "уровень за добычу: {profs:?}"
     );
+    assert_eq!(mining["rank"], 1, "ранг без тренера не растёт");
+    assert_eq!(mining["rank_span"], 50, "границы рангов в extra");
 }
 
 #[tokio::test]

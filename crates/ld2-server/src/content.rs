@@ -231,13 +231,17 @@ pub struct ContentGoal {
     pub text: String,
 }
 
-/// Награда квеста: XP в пул + предметы.
+/// Награда квеста: XP в пул + предметы; M21 — опционально
+/// **повышение ранга профессии** (`rank_up: "<profession_id>"`):
+/// та же граница уровней, что у тренера, но без золота.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ContentReward {
     #[serde(default)]
     pub xp: i64,
     #[serde(default)]
     pub items: Vec<ContentInput>,
+    #[serde(default)]
+    pub rank_up: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

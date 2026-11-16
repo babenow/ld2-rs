@@ -68,6 +68,9 @@ pub enum ErrorCode {
     Permission,
     XpPool,
     RankCap,
+    /// M21: уровень профессии не набран до границы ранга
+    /// (`craft.rank_up`, награда квеста с `rank_up`).
+    LevelRequired,
     /// M18/F44: шкала навыка не заполнена на 100 % (ADR-009).
     SkillNotReady,
     ProfessionLimit,
@@ -126,6 +129,7 @@ impl ErrorCode {
             Self::Permission => "E_PERMISSION",
             Self::XpPool => "E_XP_POOL",
             Self::RankCap => "E_RANK_CAP",
+            Self::LevelRequired => "E_LEVEL_REQUIRED",
             Self::SkillNotReady => "E_SKILL_NOT_READY",
             Self::ProfessionLimit => "E_PROFESSION_LIMIT",
             Self::QuestLimit => "E_QUEST_LIMIT",
@@ -183,6 +187,7 @@ impl FromStr for ErrorCode {
             "E_PERMISSION" => Self::Permission,
             "E_XP_POOL" => Self::XpPool,
             "E_RANK_CAP" => Self::RankCap,
+            "E_LEVEL_REQUIRED" => Self::LevelRequired,
             "E_PROFESSION_LIMIT" => Self::ProfessionLimit,
             "E_QUEST_LIMIT" => Self::QuestLimit,
             "E_NOT_ENOUGH_MONEY" => Self::NotEnoughMoney,

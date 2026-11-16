@@ -306,6 +306,10 @@ pub struct QuestState {
 pub struct ProfessionSnapshot {
     pub id: String,
     pub rank: u32,
+    /// M21: уровень профессии (0..max_level) — вторая шкала; ранг
+    /// определяется границами уровней (кратно rank_span).
+    #[serde(default)]
+    pub level: u32,
     pub xp: i64,
     pub xp_to_next: i64,
     #[serde(flatten, default)]

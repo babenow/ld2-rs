@@ -170,6 +170,10 @@ pub struct Hotkeys {
     /// Открыть/закрыть окно квестов (дефолт «j» — journal).
     #[serde(default = "hk_quests")]
     pub open_quests: String,
+    // ── M21: окно профессий ──
+    /// Открыть/закрыть окно профессий (дефолт «p» — profession).
+    #[serde(default = "hk_professions")]
+    pub open_professions: String,
 }
 
 fn hk_alt_up() -> String {
@@ -214,6 +218,9 @@ fn hk_backpack() -> String {
 fn hk_quests() -> String {
     "j".into()
 }
+fn hk_professions() -> String {
+    "p".into()
+}
 
 impl Default for Hotkeys {
     fn default() -> Self {
@@ -232,6 +239,7 @@ impl Default for Hotkeys {
             open_character: hk_char(),
             open_backpack: hk_backpack(),
             open_quests: hk_quests(),
+            open_professions: hk_professions(),
         }
     }
 }
@@ -254,6 +262,7 @@ impl Hotkeys {
             ("open_character", &mut self.open_character),
             ("open_backpack", &mut self.open_backpack),
             ("open_quests", &mut self.open_quests),
+            ("open_professions", &mut self.open_professions),
         ]
     }
 }
@@ -426,6 +435,7 @@ mod tests {
         assert_eq!(cfg.hotkeys.open_backpack, "i");
         // M18/F36: окно квестов — дефолт старого файла.
         assert_eq!(cfg.hotkeys.open_quests, "j");
+        assert_eq!(cfg.hotkeys.open_professions, "p", "окно профессий (M21)");
         assert_eq!(cfg.backpack_tab, "all");
         // M16/F29j: «запомнить пароль» в старом конфиге выключено.
         assert!(!cfg.remember_password);

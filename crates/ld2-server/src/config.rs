@@ -303,19 +303,30 @@ impl Default for ResourceSection {
 }
 
 /// Баланс профессий (skills.md §8 `[professions]`, D25 — из конфига).
+/// M21: две шкалы — **уровень** (0…`max_level`, XP-порог растёт) и
+/// **ранг** (1…`ceil(max_level/rank_span)`, границы кратно `rank_span`;
+/// повышение — у тренера за золото или наградой квеста).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfessionsSection {
-    /// Предел ранга профессии (skills.md §5.1: 1…7).
-    pub rank_max: u32,
     /// XP за успешный крафт: `base + per_rank × ранг_рецепта`.
     pub xp_per_craft_base: i64,
     pub xp_per_craft_per_rank: i64,
-    /// Порог ранга: `round(base × growth^rank)`.
-    pub xp_to_next_base: i64,
-    pub xp_growth: f64,
     /// Доля XP при неудаче (skills.md §5.1).
     pub fail_xp_ratio: f64,
+    /// Порог уровня: `round(base × growth^L)` — каждый уровень дороже
+    /// (согласовано: `40 × 1.02^L`).
+    pub level_xp_base: i64,
+    pub level_xp_growth: f64,
+    /// Потолок уровня (на нём опыт перестаёт копиться; верхний ранг
+    /// «Мастер» заканчивает на этом уровне).
+    pub max_level: u32,
+    /// Уровней в ранге — границы рангов кратно этому (50).
+    pub rank_span: u32,
+    /// Цена повышения ранга у тренера: `round(base × growth^ранг)`
+    /// (согласовано: `200 × 1.5^ранг`).
+    pub rank_up_gold_base: i64,
+    pub rank_up_gold_growth: f64,
 }
 
 /// M20: диапазон респавна в секундах — два числа `{min_s, max_s}`,
@@ -604,20 +615,34 @@ impl Config {
             }
         }
 
-        // [gameplay.professions] (M12.6)
-        if self.gameplay.professions.rank_max == 0 {
-            out.push("gameplay.professions.rank_max: должен быть ≥ 1".into());
-        }
+        // [gameplay.professions] (M12.6; M21 — две шкалы)
         if self.gameplay.professions.xp_per_craft_base < 0
             || self.gameplay.professions.xp_per_craft_per_rank < 0
-            || self.gameplay.professions.xp_to_next_base < 1
         {
-            out.push("gameplay.professions.xp_*: base ≥ 0, per_rank ≥ 0, to_next ≥ 1".into());
+            out.push("gameplay.professions.xp_per_craft_*: должно быть ≥ 0".into());
         }
-        if self.gameplay.professions.xp_growth < 1.0 {
+        if self.gameplay.professions.level_xp_base < 1 {
+            out.push("gameplay.professions.level_xp_base: должен быть ≥ 1".into());
+        }
+        if self.gameplay.professions.level_xp_growth < 1.0 {
             out.push(format!(
-                "gameplay.professions.xp_growth: должен быть ≥ 1.0 (получено: {})",
-                self.gameplay.professions.xp_growth
+                "gameplay.professions.level_xp_growth: должен быть ≥ 1.0 (получено: {})",
+                self.gameplay.professions.level_xp_growth
+            ));
+        }
+        if self.gameplay.professions.max_level == 0 {
+            out.push("gameplay.professions.max_level: должен быть ≥ 1".into());
+        }
+        if self.gameplay.professions.rank_span == 0 {
+            out.push("gameplay.professions.rank_span: должен быть ≥ 1".into());
+        }
+        if self.gameplay.professions.rank_up_gold_base < 0
+            || self.gameplay.professions.rank_up_gold_growth < 1.0
+        {
+            out.push(format!(
+                "gameplay.professions.rank_up_gold_*: base ≥ 0, growth ≥ 1.0 (получено: {} / {})",
+                self.gameplay.professions.rank_up_gold_base,
+                self.gameplay.professions.rank_up_gold_growth
             ));
         }
         if !(0.0..=1.0).contains(&self.gameplay.professions.fail_xp_ratio) {

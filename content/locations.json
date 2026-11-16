@@ -28,6 +28,9 @@
           "kind": "npc",
           "name": "Староста",
           "trainer": {
+            "price_profession": {
+              "gold_base": 500
+            },
             "professions": [
               "blacksmith",
               "alchemist",
@@ -36,9 +39,13 @@
               "tailor",
               "cook",
               "herbalist",
-              "hunter",
               "woodcutting",
-              "mining"
+              "mining",
+              "skinning",
+              "leatherworking",
+              "jeweler",
+              "fishing",
+              "medic"
             ],
             "skills": [
               "sword",

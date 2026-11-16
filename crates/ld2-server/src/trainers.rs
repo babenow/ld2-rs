@@ -60,7 +60,17 @@ pub async fn trainer_price(
         if !teaches {
             continue;
         }
-        let price = marker.get("price").cloned().unwrap_or_default();
+        // M21: у профессий — своя (дорогая) цена `price_profession`
+        // (500 з.); навыки и fallback — общий маркер `price`.
+        let price_key = match kind {
+            TrainerKind::Profession => "price_profession",
+            TrainerKind::Skill => "price",
+        };
+        let price = marker
+            .get(price_key)
+            .or_else(|| marker.get("price"))
+            .cloned()
+            .unwrap_or_default();
         let items = price
             .get("items")
             .and_then(|v| v.as_array())

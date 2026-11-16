@@ -6,6 +6,34 @@ mod common;
 use common::in_world;
 use serde_json::json;
 
+/// Начислить золото (обучение у тренера платное — M21).
+async fn give_gold(c: &mut ld2_test_kit::WsClient, amount: i64) {
+    let seq = c
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "system", "text": format!("/scenario gold {amount}") }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+}
+
+/// Установить уровень профессии (граница ранга награды — M21).
+async fn set_prof_level(db_url: &str, char_id: &str, profession: &str, level: i32) {
+    let cfg = common::test_config(db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    sqlx::query(
+        "UPDATE character_professions SET level = $1 \
+         WHERE character_id = $2 AND profession_id = $3",
+    )
+    .bind(level)
+    .bind(char_id)
+    .bind(profession)
+    .execute(&pool)
+    .await
+    .expect("уровень профессии");
+    pool.close().await;
+}
+
 #[tokio::test]
 async fn quest_accept_progress_turn_in_flow() {
     let Some(db_url) = common::test_url() else {
@@ -13,7 +41,18 @@ async fn quest_accept_progress_turn_in_flow() {
         return;
     };
     let ws = common::start_ws_server(&db_url).await;
-    let (mut c, _login, _char) = in_world(&ws).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+
+    // M21: награда квеста — «+1 ранг Снятия шкур»: профессия
+    // изучена заранее (иначе сдача блокируется с понятной ошибкой).
+    give_gold(&mut c, 1000).await;
+    let seq = c
+        .send("cmd/craft.learn", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "learn skinning");
+    c.wait_event("evt/craft/profession").await;
+    // Граница ранга (уровень50) — условие награды (M21).
+    set_prof_level(&db_url, &char_id, "skinning", 50).await;
 
     // Журнал: квест доступен (не взят).
     let seq = c.send("cmd/quest.list", json!({})).await;
