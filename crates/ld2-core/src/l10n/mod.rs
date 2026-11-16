@@ -218,6 +218,8 @@ pub enum Key {
     ResetProfConfirm,
     HkOpenProfessions,
     // M21: карточка профессии — шкалы и ранги
+    ProfSlotFirst,
+    ProfSlotSecond,
     ProfLevelLabel,
     ProfRankUpBtn,
     ProfRankUpHint,
@@ -801,6 +803,8 @@ mod tests {
         Key::ResetProf,
         Key::ResetProfConfirm,
         Key::HkOpenProfessions,
+        Key::ProfSlotFirst,
+        Key::ProfSlotSecond,
         Key::ProfLevelLabel,
         Key::ProfRankUpBtn,
         Key::ProfRankUpHint,
