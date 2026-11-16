@@ -215,7 +215,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 { "cur": 45, "max": 60 }
 
 // Entity (строка в location.entities)
-{ "id": "p_77", "kind": "player",           // player | monster | npc | corpse | object
+{ "id": "p_77", "kind": "player",           // player | monster | npc | corpse | object | resource
   "name": "Марк",
   "hp": { "cur": 30, "max": 55 },           // у npc/corpse может отсутствовать
   "tags": ["marauder"],                     // любые игровые теги-статусы
@@ -337,6 +337,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `state.resync` | `{last_state_version}` | `{}` (→ snapshot/delta) | + | восстановление |
 | `ping` | `{}` | `{}` (→ `evt/pong`) | + | RTT |
 | `time.sync` | `{}` | `{}` (→ `evt/time.sync`) | + | калибровка времени |
+| `resource.gather` | `{ entity_id }` | `{}` | − | M20/F20b: добыча 1 единицы ресурса (инструмент + ранг профессии на сервере; отказы: `E_TOOL_MISSING`/`E_PROFESSION`/`E_TARGET_GONE`) |
 | `dialog.choice` | `{ dialog_id, page_id, action_id }` | `{}` | − | M20: выбор действия в игровом многостраничном диалоге (**заготовка**) |
 | `dialog.submit` | `{ dialog_id, values {id → значение} }` | `{ values }` | − | M20: ввод execute-диалога — сервер возвращает набор вводов обработчику (**заготовка**) |
 

@@ -249,6 +249,23 @@ pub async fn loot_taken_exists(
     .await
 }
 
+/// M20/F20b: есть ли у персонажа предмет с этим `item_type`
+/// (паритет проверки инструмента крафта).
+pub async fn has_item_type(
+    pool: &PgPool,
+    char_id: &str,
+    item_type: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM items i JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = $2)",
+    )
+    .bind(char_id)
+    .bind(item_type)
+    .fetch_one(pool)
+    .await
+}
+
 /// M20: сброс статического лута сущности (респавн) — все персонажи
 /// могут взять лут заново. Сравнение по префиксу `loot:<entity>:`
 /// (без LIKE — `_` в id не должен быть wildcard).

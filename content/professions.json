@@ -7,6 +7,8 @@
     { "id": "tailor", "name": "Портной", "type": "primary" },
     { "id": "cook", "name": "Повар", "type": "primary" },
     { "id": "herbalist", "name": "Травник", "type": "secondary" },
+    { "id": "woodcutting", "name": "Лесоруб", "type": "secondary" },
+    { "id": "mining", "name": "Шахтёр", "type": "secondary" },
     { "id": "hunter", "name": "Охотник", "type": "secondary" }
   ]
 }

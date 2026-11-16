@@ -10,15 +10,15 @@ use ld2_protocol::cmd::{
     CombatAttack, CraftLearn, CraftRecipes, CraftStart, CrimeLog, EntityInfo, GuildBrowse,
     GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip, ItemMove,
     ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcReply, NpcTalk,
-    PartyAccept, PartyInvite, PartyKick, ShopBuy, ShopList, SkillTrain, SkillUse, SocketExtract,
-    SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold,
-    UpgradePreview, UpgradeStart,
+    PartyAccept, PartyInvite, PartyKick, ResourceGather, ShopBuy, ShopList, SkillTrain, SkillUse,
+    SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose,
+    TradeSetGold, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
     CastSource, CharStats, CharXp, CombatCooldown, CombatHit, CombatKind, CraftProfession,
-    CrimeAdded, EntityHp, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState, LocationChanged,
-    MagicCast, Pong, StateSnapshot, TimeSync, UpgradeResult,
+    CrimeAdded, EntityDespawn, EntityHp, EntityMove, ItemAdded, ItemRemovalReason, ItemRemoved,
+    ItemState, LocationChanged, MagicCast, Pong, StateSnapshot, TimeSync, UpgradeResult,
 };
 use ld2_protocol::types::{
     CharacterState, CharacterSummary, CrimeLogEntry, CrimeState, CrimeStatus, Entity, EquipMap, Hp,
@@ -225,6 +225,8 @@ impl Session {
             "cmd/magic.scroll_cast" => self.magic_scroll_cast(env, seq).await,
             "cmd/socket.insert" => self.socket_insert(env, seq).await,
             "cmd/socket.extract" => self.socket_extract(env, seq).await,
+            // добыча ресурсов (M20/F20b)
+            "cmd/resource.gather" => self.resource_gather(env, seq).await,
             // игровые диалоги (M20 — заготовка)
             "cmd/dialog.choice" => self.dialog_choice(env, seq).await,
             "cmd/dialog.submit" => self.dialog_submit(env, seq).await,
@@ -2141,6 +2143,15 @@ impl Session {
         if cmd.item_uid.starts_with("loot:") {
             return self.take_loot(seq, &char_id, &cmd.item_uid).await;
         }
+        // M20/F20c: предмет на земле (id `gN`) — подбор любым игроком
+        // в текущей локации (uid инвентаря `i_…` — коллизии нет).
+        let ground = {
+            let world = self.state.world.lock().expect("мир");
+            world.ground_item(&cmd.item_uid).cloned()
+        };
+        if let Some(ground) = ground {
+            return self.ground_pickup(seq, &char_id, ground).await;
+        }
         let pool = &self.state.pool;
         let Some(item) = (match db::items::find(pool, &cmd.item_uid, &char_id).await {
             Ok(item) => item,
@@ -2729,6 +2740,300 @@ impl Session {
 
     /// `cmd/item.drop` (§7): полный выброс → `evt/item/removed`
     /// (reason=dropped), частичный → `evt/item/state` с новым qty.
+    /// M20/F20c: подобрать наземный предмет — место в инвентаре
+    /// проверяется до изъятия (паритет `take_loot`), изъятие из мира
+    /// атомарно (гонка двух подбирающих → `E_ITEM_GONE`).
+    async fn ground_pickup(
+        &mut self,
+        seq: u32,
+        char_id: &str,
+        ground: crate::world::GroundItem,
+    ) -> Vec<Out> {
+        let current = self.current_location(char_id).await;
+        if ground.location_id != current {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "предмета нет")];
+        }
+        let pool = &self.state.pool;
+        let Some(def) = (match db::items::def(pool, &ground.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("подбор (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "нет определения")];
+        };
+        let slots = self.state.config.gameplay.inventory.slots;
+        match Self::take_loot_fits(pool, char_id, &ground.def_id, slots).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::InventoryFull,
+                    "инвентарь заполнен",
+                )];
+            }
+            Err(e) => {
+                warn!("подбор (слоты): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let taken = {
+            let mut world = self.state.world.lock().expect("мир");
+            world.take_ground(&ground.id)
+        };
+        let Some(taken) = taken else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "уже подобрано")];
+        };
+        let (row, stacked) =
+            match db::items::grant_stacking(pool, char_id, &taken.def_id, taken.qty).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("подбор (выдача): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+        // Снять с земли — всем в локации (объект исчезает).
+        let despawn_text = event_payload_text(
+            "evt/entity/despawn",
+            &EntityDespawn {
+                entity_id: taken.id.clone(),
+                location_id: taken.location_id.clone(),
+                kind: Some(ld2_protocol::types::EntityKind::Object),
+            },
+        );
+        {
+            let world = self.state.world.lock().expect("мир");
+            for addr in world.chars_in_location(&taken.location_id) {
+                if let Some(text) = &despawn_text {
+                    world.send_to_char(&addr, text.clone());
+                }
+            }
+        }
+        // Выдача себе — стак → патч qty, иначе added (паритет take_loot).
+        let item = item_snapshot(&row, &def);
+        let ev = if stacked {
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(row.qty));
+            out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: row.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            )
+        } else {
+            out_event(
+                "evt/item/added",
+                None,
+                serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+            )
+        };
+        vec![Self::ack_payload(seq, &serde_json::json!({})), ev]
+    }
+
+    /// M20/F20b: добыча ресурса — инструмент (`item_type` в
+    /// инвентаре), ранг профессии, выдача 1 шт. + XP (паритет крафта),
+    /// уменьшение запаса; патч шкалы/десктронизация — всем в локации.
+    async fn resource_gather(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ResourceGather>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let current = self.current_location(&char_id).await;
+        let pool = &self.state.pool;
+        // 1) узел: в текущей локации, видим, запас жив.
+        let node = {
+            let world = self.state.world.lock().expect("мир");
+            match world.resource(&cmd.entity_id) {
+                Some(n) if n.location_id == current && !n.hidden && n.current > 0 => n.clone(),
+                _ => {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "ресурс недоступен")];
+                }
+            }
+        };
+        // 2) инструмент: предмет с item_type (паритет инструмента крафта).
+        if let Some(tool) = &node.tool {
+            let has = match db::items::has_item_type(pool, &char_id, tool).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("gather (инструмент): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            if !has {
+                return vec![Self::err(seq, ErrorCode::ToolMissing, "нужен инструмент")];
+            }
+        }
+        // 3) ранг профессии (профессия должна быть изучена).
+        let mut prof_xp: Option<(String, i64, i32)> = None;
+        if let Some(prof) = &node.profession {
+            let learned = match db::professions::learned(pool, &char_id).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("gather (профессии): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            match learned.iter().find(|(id, _, _)| id == prof) {
+                Some((_, xp, rank)) if *rank >= node.min_rank => {
+                    prof_xp = Some((prof.clone(), *xp, *rank));
+                }
+                Some(_) => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::Profession,
+                        "ранг профессии ниже требуемого",
+                    )];
+                }
+                None => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::Profession,
+                        "профессия не изучена",
+                    )];
+                }
+            }
+        }
+        // 4) место в инвентаре до уменьшения запаса (паритет take_loot).
+        let slots = self.state.config.gameplay.inventory.slots;
+        match Self::take_loot_fits(pool, &char_id, &node.def_id, slots).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::InventoryFull,
+                    "инвентарь заполнен",
+                )];
+            }
+            Err(e) => {
+                warn!("gather (слоты): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        // 5) добыча в мире: −1 запас (при 0 — респавн, трава — скрытие).
+        let after = {
+            let mut world = self.state.world.lock().expect("мир");
+            world.try_gather(&cmd.entity_id, &current)
+        };
+        let Some(after) = after else {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "ресурс исчерпан")];
+        };
+        // 6) выдача предмета (место проверено выше).
+        let Some(def) = (match db::items::def(pool, &node.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("gather (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "нет определения")];
+        };
+        let (row, stacked) = match db::items::grant_stacking(pool, &char_id, &node.def_id, 1).await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("gather (выдача): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        let item = item_snapshot(&row, &def);
+        outs.push(if stacked {
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(row.qty));
+            out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: row.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            )
+        } else {
+            out_event(
+                "evt/item/added",
+                None,
+                serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
+            )
+        });
+        // 7) XP профессии (паритет крафта) → снапшот себе.
+        if let Some((prof, xp_old, rank)) = prof_xp {
+            let cfg = &self.state.config.gameplay.professions;
+            let gain = cfg.xp_per_craft_base + cfg.xp_per_craft_per_rank * i64::from(rank);
+            let (xp_new, rank_new) = crate::systems::profession_xp_apply(cfg, xp_old + gain, rank);
+            if let Err(e) = db::professions::grant_xp(pool, &char_id, &prof, xp_new, rank_new).await
+            {
+                warn!("gather (XP профессии {char_id}): {e}");
+            } else {
+                let rank_u32 = rank_new.max(1) as u32;
+                let xp_to_next = if rank_u32 >= cfg.rank_max {
+                    0
+                } else {
+                    ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank_new)).round() as i64
+                };
+                let text = event_payload_text(
+                    "evt/craft/profession",
+                    &CraftProfession {
+                        profession: ld2_protocol::types::ProfessionSnapshot {
+                            id: prof,
+                            rank: rank_u32,
+                            xp: xp_new,
+                            xp_to_next,
+                            extra: Default::default(),
+                        },
+                    },
+                );
+                if let Some(text) = text {
+                    outs.push(Out::Text(text));
+                }
+            }
+        }
+        // 8) запас в локации: трава исчезла → despawn, жила/дерево →
+        // патч шкалы (паттерн entity/move).
+        let world_evt = if after.hidden {
+            event_payload_text(
+                "evt/entity/despawn",
+                &EntityDespawn {
+                    entity_id: after.id.clone(),
+                    location_id: after.location_id.clone(),
+                    kind: Some(ld2_protocol::types::EntityKind::Resource),
+                },
+            )
+        } else {
+            let mut patch = serde_json::Map::new();
+            patch.insert(
+                "hp".into(),
+                serde_json::json!({"cur": after.current, "max": after.max}),
+            );
+            event_payload_text(
+                "evt/entity/move",
+                &EntityMove {
+                    entity_id: after.id.clone(),
+                    patch,
+                },
+            )
+        };
+        {
+            let world = self.state.world.lock().expect("мир");
+            for addr in world.chars_in_location(&after.location_id) {
+                if let Some(text) = &world_evt {
+                    world.send_to_char(&addr, text.clone());
+                }
+            }
+        }
+        outs
+    }
+
     /// M20 (заготовка): выбор действия в многостраничном диалоге —
     /// подтверждение без переходов (серверные переходы появятся с
     /// контентом игровых диалогов); ack с echo выбора.

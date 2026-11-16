@@ -1126,6 +1126,46 @@ async fn respawn_step(state: &SharedState) {
                     warn!("респавн лута ({}): {e}", entry.entity_id);
                 }
             }
+            crate::world::RespawnKind::Resource => {
+                let restored = {
+                    let mut world = state.world.lock().expect("мир");
+                    world.respawn_resource(&entry.entity_id)
+                };
+                let Some((node, was_hidden)) = restored else {
+                    continue; // нет узла (не должен случиться)
+                };
+                let world = state.world.lock().expect("мир");
+                if was_hidden {
+                    // Трава исчезала → возвращается видимой.
+                    let text = event_text(
+                        "evt/entity/spawn",
+                        &ld2_protocol::evt::EntitySpawn {
+                            entity: node.entity(),
+                            location_id: entry.location_id.clone(),
+                        },
+                    );
+                    for addr in world.chars_in_location(&entry.location_id) {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                } else {
+                    // Жилы/деревья остаются — только патч шкалы запаса.
+                    let mut patch = serde_json::Map::new();
+                    patch.insert(
+                        "hp".into(),
+                        serde_json::json!({"cur": node.current, "max": node.max}),
+                    );
+                    let text = event_text(
+                        "evt/entity/move",
+                        &ld2_protocol::evt::EntityMove {
+                            entity_id: node.id.clone(),
+                            patch,
+                        },
+                    );
+                    for addr in world.chars_in_location(&entry.location_id) {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                }
+            }
         }
     }
 }
@@ -1386,25 +1426,16 @@ async fn profession_xp_step(
     let learned = crate::db::professions::learned(&state.pool, char_id)
         .await
         .ok()?;
-    let (mut xp, mut rank) = learned
+    let (xp, rank) = learned
         .iter()
         .find(|(id, _, _)| *id == recipe.profession)
         .map(|(_, x, r)| (*x, *r))
         .unwrap_or((0, 1));
+    let mut xp = xp;
     xp += gain;
     let cfg = &state.config.gameplay.professions;
-    // Рост ранга, пока хватает порога и не достигнут потолок.
-    loop {
-        if rank as u32 >= cfg.rank_max {
-            break;
-        }
-        let need = ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64;
-        if xp < need {
-            break;
-        }
-        xp -= need;
-        rank += 1;
-    }
+    // Рост ранга (паритетный helper — M20/F20b).
+    let (xp, rank) = crate::systems::profession_xp_apply(cfg, xp, rank);
     if let Err(e) =
         crate::db::professions::grant_xp(&state.pool, char_id, &recipe.profession, xp, rank).await
     {

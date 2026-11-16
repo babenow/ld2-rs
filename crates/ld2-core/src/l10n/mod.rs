@@ -190,6 +190,11 @@ pub enum Key {
     QtyLabel,
     // M20: execute-диалог — отправка ввода
     DialogSend,
+    // M20/F20b+c: группы сущностей и действия ресурсов/земли
+    ResourcesLabel,
+    ObjectsLabel,
+    GatherBtn,
+    PickUpBtn,
     // M18/F58f: описание руны — шанс авто-приёма и эффекты вместо JSON
     RuneProcChance,
     EffectBleed,
@@ -749,6 +754,10 @@ mod tests {
         Key::StatusResolveFailed,
         Key::QtyLabel,
         Key::DialogSend,
+        Key::ResourcesLabel,
+        Key::ObjectsLabel,
+        Key::GatherBtn,
+        Key::PickUpBtn,
         Key::RuneProcChance,
         Key::EffectBleed,
         Key::EffectStun,

@@ -219,6 +219,13 @@ pub struct SocketExtract {
     pub socket_index: u32,
 }
 
+/// M20/F20b: добыча ресурса — взять 1 единицу из объекта-ресурса
+/// (инструмент и ранг профессии проверяет сервер).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ResourceGather {
+    pub entity_id: String,
+}
+
 /// M20: выбор действия в многостраничном игровом диалоге (заготовка).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct DialogChoice {
@@ -471,6 +478,7 @@ impl_commands!(
     (MagicRuneCast, "cmd/magic.rune_cast", false),
     (SocketInsert, "cmd/socket.insert", false),
     (SocketExtract, "cmd/socket.extract", false),
+    (ResourceGather, "cmd/resource.gather", false),
     (DialogChoice, "cmd/dialog.choice", false),
     (DialogSubmit, "cmd/dialog.submit", false),
     (UpgradePreview, "cmd/upgrade.preview", true),

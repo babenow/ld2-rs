@@ -225,6 +225,8 @@ pub(crate) enum Click {
     /// Лут трупа игрока: открыть подтверждение (uid, name) — ФР-11.
     LootTakeMarker(String, String),
     LootCancel,
+    /// M20/F20b: добыть объект-ресурс (`cmd/resource.gather`).
+    Gather(String),
     CloseDetail,
     SwitchChar,
 }
@@ -1932,6 +1934,13 @@ impl Root {
                 }
             }
             Click::LootCancel => self.store.clear_loot_confirm(),
+            Click::Gather(id) => {
+                let cmd = ld2_protocol::cmd::ResourceGather { entity_id: id };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::Gather),
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+            }
             Click::CloseDetail => self.store.entity_detail = None,
             Click::SwitchChar => self.open_exit(ExitKind::SwitchChar, cx),
         }
