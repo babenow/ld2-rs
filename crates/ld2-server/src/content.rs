@@ -688,7 +688,9 @@ mod tests {
             // M18/F37/F38: дерево диалога — корень существует (любой
             // диалог начинается со стартовой реплики), ответы ведут
             // на существующие строки, id ответов уникальны (в пределах
-            // NPC), ветки ацикличны (DFS от корня).
+            // NPC); переходы — произвольный граф: циклы-возвраты к
+            // развилкам разрешены (уточнение заказчика M19: «в диалогах
+            // можно всегда вернуться к развилке репликой»).
             assert!(
                 npc.root.is_some(),
                 "у {npc_id} нет root — диалог без стартовой реплики"
@@ -758,32 +760,10 @@ mod tests {
                     }
                 }
             }
-            // Ацикличность: тройной обход (граф маленький).
-            fn has_cycle<'a>(
-                node: &'a str,
-                edges: &std::collections::HashMap<&'a str, Vec<&'a str>>,
-                visiting: &mut std::collections::HashSet<&'a str>,
-                done: &mut std::collections::HashSet<&'a str>,
-            ) -> bool {
-                if done.contains(node) {
-                    return false;
-                }
-                if !visiting.insert(node) {
-                    return true;
-                }
-                let cyclic = edges
-                    .get(node)
-                    .is_some_and(|nexts| nexts.iter().any(|n| has_cycle(n, edges, visiting, done)));
-                visiting.remove(node);
-                done.insert(node);
-                cyclic
-            }
-            let mut visiting = std::collections::HashSet::new();
-            let mut done = std::collections::HashSet::new();
-            assert!(
-                !has_cycle(root, &edges, &mut visiting, &mut done),
-                "цикл в ветках диалога {npc_id}"
-            );
+            // M19 (уточнение заказчика): ацикличность больше не
+            // проверяется — возвраты к развилкам (циклы через root)
+            // легальны; остаются проверки id/next/action/when выше.
+            assert!(!edges.is_empty() || npc.lines.len() <= 1, "нет переходов");
         }
     }
 
