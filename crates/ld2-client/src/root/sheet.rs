@@ -692,6 +692,14 @@ impl Root {
                             root.store.close_socketing();
                             root.socket_pick = None;
                         }
+                        if kind == PopupKind::Quantity {
+                            tracing::debug!("закрытие окна количества: крестик");
+                            root.quantity_pick = None;
+                        }
+                        if kind == PopupKind::Dialog {
+                            tracing::debug!("закрытие игрового диалога: крестик");
+                            root.close_game_dialog();
+                        }
                         cx.notify();
                     })),
             )
@@ -1665,12 +1673,26 @@ impl Root {
             this.open_popup(PopupKind::Item);
         }));
         let uid = item.uid.clone();
+        let max_qty = item.qty.unwrap_or(1);
+        let item_name = item.name.clone();
         menu = menu.item(menu_item(cx, t(lang, Key::MenuDrop), move |this, _cx| {
-            let cmd = ItemDrop {
-                item_uid: uid.clone(),
-                qty: None,
-            };
-            this.send_cmd(&cmd, Act::Drop);
+            // M20: больше одного — окно выбора количества (поле цифр +
+            // ползунок, переиспользуемое); одна штука — сброс сразу.
+            if max_qty > 1 {
+                this.quantity_pick = Some(super::quantity::QuantityPick {
+                    action: super::quantity::QuantityAction::Drop { uid: uid.clone() },
+                    item_name: item_name.clone(),
+                    max: max_qty,
+                    qty: 1,
+                });
+                this.open_popup(PopupKind::Quantity);
+            } else {
+                let cmd = ItemDrop {
+                    item_uid: uid.clone(),
+                    qty: None,
+                };
+                this.send_cmd(&cmd, Act::Drop);
+            }
         }));
         menu
     }

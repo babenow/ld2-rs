@@ -137,6 +137,11 @@ rune_cost = 10
 content_dir = "content"    # статический контент (JSON) → сид в PostgreSQL (D26)
 tick_hz = 10               # тик-луп мира (D31), 1..=100
 autosave_interval_s = 30   # периодический флаш онлайн-состояния (D27)
+# M20: TTL (с; 0 — не удалять) и дефолтный респавн мобов без
+# `respawn` в контенте (нет поля и дефолта — не возрождаются)
+#corpse_ttl_s = 60         # трупы — вместе с неразобранным лутом
+#drop_ttl_s = 60           # выброшенные предметы
+#respawn_default = { min_s = 60, max_s = 120 }
 
 [skills]                   # skills.md §8: xp_to_next = round(base_xp × growth^rank)
 base_xp = 120

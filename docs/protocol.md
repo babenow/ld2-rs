@@ -337,6 +337,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `state.resync` | `{last_state_version}` | `{}` (→ snapshot/delta) | + | восстановление |
 | `ping` | `{}` | `{}` (→ `evt/pong`) | + | RTT |
 | `time.sync` | `{}` | `{}` (→ `evt/time.sync`) | + | калибровка времени |
+| `dialog.choice` | `{ dialog_id, page_id, action_id }` | `{}` | − | M20: выбор действия в игровом многостраничном диалоге (**заготовка**) |
+| `dialog.submit` | `{ dialog_id, values {id → значение} }` | `{ values }` | − | M20: ввод execute-диалога — сервер возвращает набор вводов обработчику (**заготовка**) |
 
 **Ограничения текста чата:** `chat.max_len`, `chat.cooldown_s` из §5; превышение → `E_RATE_LIMITED` c `retry_after_s`.
 
@@ -364,7 +366,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/entity/spawn` | `{ entity: Entity, location_id }` | появление сущности |
 | `evt/entity/move` | `{ entity_id, patch }` | перемещение/изменение внутри локации |
 | `evt/entity/hp` | `{ entity_id, hp }` | смена HP |
-| `evt/entity/despawn` | `{ entity_id, location_id }` | исчезновение (смерть/уход) |
+| `evt/entity/despawn` | `{ entity_id, location_id, kind? }` | исчезновение (смерть/уход/TTL); `kind` M20 — «{name} исчез» для предмета |
 | `evt/corpse/created` | `{ entity: Entity, loot_count }` | труп (`was_player` различает игрока) |
 | `evt/corpse/looted` | `{ corpse_id, by, by_name, was_player }` | лут собран; если `was_player` — клиент показывает предупреждение о статусе |
 
@@ -382,6 +384,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/item/added` | `{ item: ItemSnapshot }` | предмет получен |
 | `evt/item/removed` | `{ uid, reason }` | потерян/израсходован (`reason` = consumed\|traded\|dropped\|lost_on_death) |
 | `evt/item/state` | `{ uid, patch }` | патч предмета (upgrade, sockets, qty) |
+| `evt/item/dropped` | `{ char_id, by_name, gender, qty, item_name }` | M20: выброс — журнал «{by} выбросил(а)…» / «Вы выбросили…» (всем в локации) |
+| `evt/item/expired` | `{ uid, name }` | M20: предмет в локации исчез по TTL — «{name} исчез» |
+| `evt/dialog/open` | `{ id, kind: "page"\|"execute", title, pages: [{id, text, actions: [{id, label}]}], inputs: [{id, label, kind, default}] }` | M20: игровой диалог — многостраничный (кнопки действий + «Назад» на клиенте) или execute (поля ввода → `cmd/dialog.submit`) — **заготовка** |
 | `evt/upgrade/result` | `{ uid, ok, new_upgrade?, item_destroyed?, cost {} }` | итог улучшения |
 | `evt/craft/result` | `{ recipe_id, ok, made: [{uid, qty}], consumed [] }` | итог крафта |
 | `evt/craft/profession` | `{ profession: { id, rank, xp, xp_to_next } }` | профессия изучена/ранг повышен |

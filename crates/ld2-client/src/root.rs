@@ -18,7 +18,9 @@ use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove};
 mod backpack;
 mod chars;
 mod chat;
+mod dialog;
 mod game;
+mod quantity;
 mod quests;
 mod register;
 mod sheet;
@@ -79,6 +81,10 @@ enum PopupKind {
     Upgrade,
     /// M18: окно сокетов (инкрустация через меню оружия) — popup.
     Socketing,
+    /// M20: окно выбора количества (переиспользуемое: выброс…).
+    Quantity,
+    /// M20: окно игрового диалога (заготовка: страницы/ввод).
+    Dialog,
 }
 
 impl PopupKind {
@@ -92,6 +98,8 @@ impl PopupKind {
             PopupKind::Item => "ld2-item",
             PopupKind::Upgrade => "ld2-upgrade",
             PopupKind::Socketing => "ld2-socket",
+            PopupKind::Quantity => "ld2-quantity",
+            PopupKind::Dialog => "ld2-dialog",
         }
     }
 }
@@ -116,8 +124,15 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
         PopupKind::Upgrade => {}
         // M18: окно сокетов контекстных меню не использует.
         PopupKind::Socketing => {}
+        // M20: окно количества открывается из меню предмета.
+        PopupKind::Quantity => {}
+        // M20: игровой диалог открывает `evt/dialog/open`.
+        PopupKind::Dialog => {}
     }
 }
+
+/// M20: text-поля execute-диалога — (id поля, поле ввода).
+type DialogTextFields = Vec<(String, Entity<TextInput>)>;
 
 /// M16/F29b: состояние всплывающего окна — геометрия drag/resize и
 /// флаг «жест начат на scrim» (M15/F25e: закрыть может только
@@ -292,9 +307,24 @@ pub struct Root {
     item_popup: PopupState,
     /// M18: окно сокетов (инкрустация через меню оружия) — popup.
     socket_popup: PopupState,
+    /// M20: окно выбора количества — popup.
+    quantity_popup: PopupState,
+    /// M20: окно игрового диалога (заготовка) — popup.
+    dialog_popup: PopupState,
     /// M18: вторая страница окна инкрустации — выбранный слот
     /// (список вставок); `None` — страница слотов.
     socket_pick: Option<u32>,
+    /// M20: открытое окно выбора количества (заготовка под покупку…).
+    quantity_pick: Option<quantity::QuantityPick>,
+    /// M20: игровой диалог (заготовка) — индекс текущей страницы.
+    dialog_page: usize,
+    /// M20: execute-диалог — значения number-полей (id → строка).
+    dialog_values: std::collections::HashMap<String, String>,
+    /// M20: execute-диалог — text-поля (`Entity<TextInput>`; создаются
+    /// под диалог, хранятся `(dialog_id, [(input_id, поле)])`).
+    dialog_inputs: Option<(String, DialogTextFields)>,
+    /// M20: id последнего открытого диалога — сброс страницы/полей.
+    dialog_seen: Option<String>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
     upgrade_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
@@ -548,7 +578,19 @@ impl Root {
                 delta: (0.0, -40.0),
                 ..PopupState::new((440.0, 420.0))
             },
+            // M20: окно количества — компактная карточка по центру.
+            quantity_popup: PopupState {
+                delta: (0.0, -60.0),
+                ..PopupState::new((400.0, 280.0))
+            },
+            // M20: окно игрового диалога — карточка по центру.
+            dialog_popup: PopupState::new((560.0, 460.0)),
             socket_pick: None,
+            quantity_pick: None,
+            dialog_page: 0,
+            dialog_values: std::collections::HashMap::new(),
+            dialog_inputs: None,
+            dialog_seen: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
             upgrade_popup: PopupState {
@@ -1147,6 +1189,13 @@ impl Root {
                 cx.notify();
                 return;
             }
+            // M20: окно количества — верхний слой.
+            if self.quantity_pick.is_some() {
+                self.quantity_pick = None;
+                self.quantity_popup.open = false;
+                cx.notify();
+                return;
+            }
             // M18: окно сокетов — верхний слой группы попапов; Esc
             // сначала возвращает со второй страницы к списку слотов.
             if self.store.socketing.is_some() {
@@ -1165,6 +1214,13 @@ impl Root {
             if self.store.item_detail.is_some() {
                 tracing::debug!("закрытие описания предмета: Esc");
                 self.store.item_detail = None;
+                cx.notify();
+                return;
+            }
+            // M20: игровой диалог — верхний слой (заготовка).
+            if self.store.dialog.is_some() {
+                tracing::debug!("закрытие игрового диалога: Esc");
+                self.close_game_dialog();
                 cx.notify();
                 return;
             }
@@ -1363,6 +1419,8 @@ impl Root {
             PopupKind::Item => &mut self.item_popup,
             PopupKind::Upgrade => &mut self.upgrade_popup,
             PopupKind::Socketing => &mut self.socket_popup,
+            PopupKind::Quantity => &mut self.quantity_popup,
+            PopupKind::Dialog => &mut self.dialog_popup,
         }
     }
 
@@ -1376,6 +1434,8 @@ impl Root {
             PopupKind::Item => &self.item_popup,
             PopupKind::Upgrade => &self.upgrade_popup,
             PopupKind::Socketing => &self.socket_popup,
+            PopupKind::Quantity => &self.quantity_popup,
+            PopupKind::Dialog => &self.dialog_popup,
         }
     }
 
@@ -1399,6 +1459,8 @@ impl Root {
             PopupKind::Item => ((vw * 0.28).clamp(320.0, 480.0), 420.0),
             PopupKind::Upgrade => (440.0, 360.0),
             PopupKind::Socketing => (440.0, 420.0),
+            PopupKind::Quantity => (400.0, 280.0),
+            PopupKind::Dialog => (560.0, 460.0),
         }
     }
 
@@ -1421,6 +1483,8 @@ impl Root {
             PopupKind::Item => (80.0, -20.0),
             PopupKind::Upgrade => (0.0, -40.0),
             PopupKind::Socketing => (0.0, -40.0),
+            PopupKind::Quantity => (0.0, -60.0),
+            PopupKind::Dialog => (0.0, -40.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1443,6 +1507,10 @@ impl Root {
             PopupKind::Upgrade => {}
             // M18: окно сокетов открывает контекстное меню.
             PopupKind::Socketing => {}
+            // M20: окно количества — состояние уже установлено вызывающим.
+            PopupKind::Quantity => {}
+            // M20: окно диалога открывает `evt/dialog/open`.
+            PopupKind::Dialog => {}
         }
     }
 
@@ -1512,10 +1580,12 @@ impl Root {
     /// верхнее открытое окно (рюкзак, затем персонаж).
     fn popup_scrim(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
         let npc_open = self.store.npc_dialog.is_some();
+        let dialog_open = self.store.dialog.is_some();
         if !self.char_popup.open
             && !self.backpack_popup.open
             && !self.quests_popup.open
             && !npc_open
+            && !dialog_open
         {
             return None;
         }
@@ -1548,7 +1618,10 @@ impl Root {
                                     // Верхнее окно: сокеты → заточка →
                                     // описание → диалог → квесты → рюкзак →
                                     // персонаж.
-                                    if root.store.socketing.is_some() {
+                                    if root.quantity_pick.is_some() {
+                                        root.quantity_pick = None;
+                                        root.quantity_popup.open = false;
+                                    } else if root.store.socketing.is_some() {
                                         if root.socket_pick.is_some() {
                                             root.socket_pick = None;
                                         } else {
@@ -1564,6 +1637,9 @@ impl Root {
                                         root.upgrade_progress = None;
                                     } else if root.store.item_detail.is_some() {
                                         root.store.item_detail = None;
+                                    } else if root.store.dialog.is_some() {
+                                        tracing::debug!("закрытие игрового диалога: скрим");
+                                        root.close_game_dialog();
                                     } else if root.store.npc_dialog.is_some() {
                                         tracing::debug!("закрытие диалога NPC: скрим");
                                         root.store.npc_dialog = None;
@@ -3559,6 +3635,15 @@ impl Render for Root {
             // M18: окно сокетов (инкрустация через меню оружия) —
             // popup-диалог, как другие окна (карточка с крестиком).
             .when_some(self.socket_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M20: окно выбора количества — поверх окна сокетов.
+            .when_some(self.quantity_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M20: окно игрового диалога (заготовка) — поверх окна
+            // количества.
+            .when_some(self.dialog_window(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))

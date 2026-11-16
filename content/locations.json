@@ -128,7 +128,11 @@
           ],
           "aggro": true,
           "difficulty": 3,
-          "drops": [
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          },
+                    "drops": [
             "potion_heal",
             "gold_coin"
           ]
@@ -330,7 +334,11 @@
             "max": 6
           },
           "difficulty": 1,
-          "drops": [
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+                    "drops": [
             "gold_coin"
           ]
         },
@@ -343,7 +351,11 @@
             "max": 6
           },
           "difficulty": 1,
-          "drops": [
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+                    "drops": [
             "gold_coin"
           ]
         },
@@ -356,7 +368,11 @@
             "max": 7
           },
           "difficulty": 1,
-          "drops": [
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+                    "drops": [
             "gold_coin",
             "herb"
           ]
@@ -374,7 +390,11 @@
           ],
           "aggro": true,
           "difficulty": 6,
-          "drops": [
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          },
+                    "drops": [
             "potion_heal",
             "gold_coin",
             "herb"

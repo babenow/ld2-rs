@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, VecDeque};
 use ld2_protocol::evt::{
     CharDeath, CharStats, CharXp, ChatMessage, CombatCooldown, CombatHit, CorpseCreated,
     CorpseLooted, CrimeAdded, CrimeRemoved, CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove,
-    EntitySpawn, GuildLogEntry, ItemAdded, ItemRemoved, LocationChanged, MagicCast, StateSnapshot,
-    TimeSync as TimeSyncEvent,
+    EntitySpawn, GuildLogEntry, ItemAdded, ItemDropped, ItemExpired, ItemRemovalReason,
+    ItemRemoved, LocationChanged, MagicCast, StateSnapshot, TimeSync as TimeSyncEvent,
 };
 use ld2_protocol::types::{
     CharacterSummary, CrimeLogEntry, CrimeStatus, GuildState, Hp, LocationSnapshot, PartyState,
@@ -90,6 +90,10 @@ pub enum Act {
     GuildBrowse,
     /// `guild.*` — ack несёт `{guild}` на create/join, остальное — события.
     Guild,
+    /// `cmd/dialog.choice`/`cmd/dialog.submit` — игровые диалоги
+    /// (M20, заготовка): ack — только ошибки.
+    DialogChoice,
+    DialogSubmit,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -210,6 +214,9 @@ pub struct AppStore {
     pub sharpen_list: bool,
     /// Открытая инкрустация (ФР-09): uid посоха.
     pub socketing: Option<String>,
+    /// M20: открытый игровой диалог (заготовка: страницы/ввод из
+    /// `evt/dialog/open`; окно — `PopupKind::Dialog`).
+    pub dialog: Option<ld2_protocol::evt::DialogOpen>,
     /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
     pub inscribe: Option<String>,
     /// Смещение часов сервера (evt/time.sync): server = local + offset.
@@ -599,6 +606,7 @@ impl AppStore {
             sharpen_stone: None,
             sharpen_list: false,
             socketing: None,
+            dialog: None,
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
             time_offset: 0,
@@ -766,6 +774,8 @@ impl AppStore {
                 Act::Chat | Act::ChatDelete => self.notice = Some(msg),
                 // Соцдомен: ошибки (E_TRADE_STALE, E_PARTY_FULL §9) — тостом.
                 Act::Party | Act::Trade | Act::GuildBrowse | Act::Guild => self.notice = Some(msg),
+                // Игровые диалоги (M20, заготовка) — ошибки тостом.
+                Act::DialogChoice | Act::DialogSubmit => self.notice = Some(msg),
             }
             return vec![];
         }
@@ -831,9 +841,12 @@ impl AppStore {
             | Act::Quest
             | Act::Chat
             | Act::ChatDelete
-            | Act::Trade => {
+            | Act::Trade
+            | Act::DialogChoice
+            | Act::DialogSubmit => {
                 // результат событиями (§8); npc.talk/npc.reply
-                // обрабатываются ниже отдельными блоками (M18/F35/F37)
+                // обрабатываются ниже отдельными блоками (M18/F35/F37);
+                // диалоги (M20) — ack только подтверждает выбор/ввод.
             }
             Act::Party => {
                 // §7: party.create/accept несут {party}.
@@ -1454,7 +1467,52 @@ impl AppStore {
                         view.preview = None;
                     }
                 }
-                self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
+                // M20: при выбросе строку даёт `evt/item/dropped`
+                // («Вы выбросили…»), а не «Потеряно».
+                if !matches!(removed.reason, ItemRemovalReason::Dropped) {
+                    self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
+                }
+                vec![]
+            }
+            "evt/item/dropped" => {
+                // M20: выброс предмета — журнал всем в локации; свой
+                // char_id → «Вы выбросили…», иначе по полу «выбросил(а)».
+                let Ok(dropped) = serde_json::from_value::<ItemDropped>(payload) else {
+                    return vec![];
+                };
+                // Строки журнала — по конвенции store (русские
+                // литералы, как «Потеряно:»); свой char_id → «Вы…».
+                let mine = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.char.id == dropped.char_id);
+                let qty = dropped.qty;
+                let text = if mine {
+                    format!("Вы выбросили {qty} {}", dropped.item_name)
+                } else if dropped.gender == "female" {
+                    format!("{} выбросила {qty} {}", dropped.by_name, dropped.item_name)
+                } else {
+                    format!("{} выбросил {qty} {}", dropped.by_name, dropped.item_name)
+                };
+                self.push_log(LogKind::Loot, text);
+                vec![]
+            }
+            "evt/item/expired" => {
+                // M20: предмет в локации исчез по TTL.
+                let Ok(expired) = serde_json::from_value::<ItemExpired>(payload) else {
+                    return vec![];
+                };
+                self.push_log(LogKind::Loot, format!("{} исчез", expired.name));
+                vec![]
+            }
+            "evt/dialog/open" => {
+                // M20: игровой диалог (заготовка) — гейт рендера окна
+                // (`PopupKind::Dialog`) — наличие состояния, как у NPC.
+                let Ok(open) = serde_json::from_value::<ld2_protocol::evt::DialogOpen>(payload)
+                else {
+                    return vec![];
+                };
+                self.dialog = Some(open);
                 vec![]
             }
             "evt/item/state" => {
@@ -2032,6 +2090,7 @@ impl AppStore {
         self.entity_detail = None;
         self.upgrade = None;
         self.socketing = None;
+        self.dialog = None;
         self.target = None;
         self.loot_confirm = None;
         self.quest_tracker.clear();
@@ -2104,6 +2163,7 @@ impl AppStore {
         self.death = None;
         self.upgrade = None;
         self.socketing = None;
+        self.dialog = None;
         self.quest_tracker.clear();
         self.npc_dialog = None;
         // ФР-13: переключение персонажа сбрасывает историю чата.

@@ -10,6 +10,67 @@ use tokio::sync::mpsc::UnboundedSender as SyncSender;
 
 use ld2_protocol::types::{Entity, EntityKind, Hp};
 
+/// M20: что возрождается (дизайн M20: `RespawnEntry {entity_id,
+/// location_id, kind, at}`; `at = now + random(min..max)`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RespawnKind {
+    /// Моб: вернуть из шаблона сида; `corpse_id` — старый труп
+    /// (удалить вместе с возвратом).
+    Mob { corpse_id: Option<String> },
+    /// Статический лут: сброс `loot_taken` по префиксу `loot:<entity>:%`.
+    Loot,
+}
+
+/// M20: запись очереди возрождений (тёплое время мира, не
+/// персистентно: рестарт → сид).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RespawnEntry {
+    pub entity_id: String,
+    pub location_id: String,
+    pub kind: RespawnKind,
+    /// Epoch-с, когда возрождать.
+    pub at: i64,
+}
+
+/// M20: элемент таблицы лута — предмет и шанс выпадения (0..1);
+/// простая строка в контенте → `chance = 1.0` (прежнее поведение).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropEntry {
+    pub def_id: String,
+    pub chance: f64,
+}
+
+/// Бросок шанса (0..1): getrandom уже в графе (auth/tick).
+fn roll_chance(chance: f64) -> bool {
+    if chance >= 1.0 {
+        return true;
+    }
+    if chance <= 0.0 {
+        return false;
+    }
+    let mut buf = [0u8; 2];
+    if getrandom::fill(&mut buf).is_err() {
+        return true; // без RNG лут не теряем (как раньше — всегда)
+    }
+    (u16::from_be_bytes(buf) as f64) / (u16::MAX as f64) < chance
+}
+
+/// M20: случайные секунды в `[min, max]` (респавн-диапазоны;
+/// getrandom уже в графе). `max < min` → `min`.
+fn rand_range(min: i64, max: i64) -> i64 {
+    let min = min.max(0);
+    let max = max.max(0);
+    if max <= min {
+        return min;
+    }
+    let mut buf = [0u8; 8];
+    if getrandom::fill(&mut buf).is_err() {
+        return min;
+    }
+    let span = (max - min + 1) as u64;
+    min + (u64::from_be_bytes(buf) % span) as i64
+}
+
 /// Живой моб локации (создаётся из сида, умирает → труп).
 #[derive(Debug, Clone)]
 pub struct LiveMob {
@@ -20,8 +81,9 @@ pub struct LiveMob {
     pub hp_max: i64,
     /// Сложность 1..10 — XP убийства (skills.md §2.3).
     pub difficulty: i64,
-    /// Определения лута (content `drops`) — попадают в труп.
-    pub drops: Vec<String>,
+    /// Таблица лута (M20): строки контента = шанс1.0, объекты с
+    /// `chance` 0..1 — по шансу; в труп попадают только выпавшие.
+    pub drops: Vec<DropEntry>,
     pub tags: Vec<String>,
     pub aggro: bool,
     /// Урон моба (content `damage`, по умолчанию 4).
@@ -41,6 +103,11 @@ pub struct LiveMob {
     pub bleed_next_at: i64,
     /// Кто наложил кровотечение — XP за добивание от DoT.
     pub bleed_src: Option<String>,
+    /// M20: респавн-диапазон (content `respawn {min_s,max_s}` или
+    /// дефолт `[world]`); `None` — не возрождается.
+    pub respawn: Option<(i64, i64)>,
+    /// M20: стартовый HP из сида — восстанавливается при респавне.
+    pub hp_start: i64,
 }
 
 impl LiveMob {
@@ -73,6 +140,24 @@ pub struct LiveCorpse {
     pub location_id: String,
     pub name: String,
     pub loot: Vec<Option<String>>,
+    /// M20: когда труп создан (epoch-с) — TTL-удаление (`corpse_ttl_s`).
+    pub born_at: i64,
+}
+
+/// M20: предмет, лежащий в локации (выброшенный игроком): виден всем,
+/// подбираем любым игроком, исчезает по `drop_ttl_s`.
+#[derive(Debug, Clone)]
+pub struct GroundItem {
+    pub id: String,
+    pub location_id: String,
+    /// Название (для журнала/осмотра без запроса в БД).
+    pub name: String,
+    pub def_id: String,
+    pub qty: i64,
+    /// Кто бросил (char_id) — для журнала.
+    pub dropped_by: String,
+    /// Epoch-секунда исчезновения.
+    pub expires_at: i64,
 }
 
 impl LiveCorpse {
@@ -175,6 +260,18 @@ pub struct World {
     /// в `plan_combat` (как `char_hits`: вход/экипировка/инкрустация).
     char_runes: HashMap<String, Vec<SocketedRune>>,
     corpse_seq: u64,
+    /// M20: предметы, лежащие в локациях (выбросы) + TTL-удаление.
+    ground_items: HashMap<String, GroundItem>,
+    ground_seq: u64,
+    /// M20: очередь возрождений (мобы и статический лут) — тёплое
+    /// время мира, при рестарте сбрасывается (дизайн M20).
+    respawn_queue: Vec<RespawnEntry>,
+    /// M20: шаблоны мобов из сида — источник данных для возврата
+    /// (живой моб удаляется при смерти).
+    mob_seed: HashMap<String, LiveMob>,
+    /// M20: респавн-диапазоны сущностей контента (для лута —
+    /// сброс `loot:<entity>:%` по расписанию).
+    entity_respawn: HashMap<String, (i64, i64)>,
 }
 
 impl World {
@@ -309,52 +406,101 @@ impl World {
     }
 
     /// Загрузить живых мобов из сида (вызывается после content-сида).
-    pub fn seed_mobs(&mut self, rows: &[(String, serde_json::Value)]) {
+    /// `default_respawn` — дефолтный диапазон `[world]` для мобов
+    /// без `respawn` в контенте (M20, решение 5).
+    pub fn seed_mobs(
+        &mut self,
+        rows: &[(String, serde_json::Value)],
+        default_respawn: Option<(i64, i64)>,
+    ) {
         for (location_id, entities) in rows {
             let entities: Vec<Entity> =
                 serde_json::from_value(entities.clone()).unwrap_or_default();
             for e in entities {
+                let extra = &e.extra;
+                // M20: `respawn {min_s,max_s}` у любой сущности
+                // (мобам — дефолт [world]); отрицательные → 0,
+                // min/max приводятся к порядку.
+                let mut respawn = extra
+                    .get("respawn")
+                    .and_then(|v| v.as_object())
+                    .and_then(|o| {
+                        let min = o.get("min_s")?.as_i64()?.max(0);
+                        let max = o.get("max_s")?.as_i64()?.max(0);
+                        Some(if min <= max { (min, max) } else { (max, min) })
+                    });
+                if respawn.is_none() && e.kind == EntityKind::Monster {
+                    respawn = default_respawn;
+                }
+                if let Some(range) = respawn {
+                    self.entity_respawn.insert(e.id.clone(), range);
+                }
                 if e.kind != EntityKind::Monster {
                     continue;
                 }
-                let extra = &e.extra;
                 let difficulty = extra
                     .get("difficulty")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(1)
                     .clamp(1, 10);
-                let drops = extra
+                // M20: drops — строки (шанс1.0) или объекты
+                // {def_id|id, chance 0..1} (таблица лута).
+                let drops: Vec<DropEntry> = extra
                     .get("drops")
                     .and_then(|v| v.as_array())
                     .map(|a| {
                         a.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
+                            .filter_map(|v| {
+                                if let Some(def_id) = v.as_str() {
+                                    return Some(DropEntry {
+                                        def_id: def_id.to_string(),
+                                        chance: 1.0,
+                                    });
+                                }
+                                let obj = v.as_object()?;
+                                let def_id = obj
+                                    .get("def_id")
+                                    .or_else(|| obj.get("id"))
+                                    .and_then(|x| x.as_str())?;
+                                let chance = obj
+                                    .get("chance")
+                                    .and_then(|x| x.as_f64())
+                                    .unwrap_or(1.0)
+                                    .clamp(0.0, 1.0);
+                                Some(DropEntry {
+                                    def_id: def_id.to_string(),
+                                    chance,
+                                })
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
                 let damage = extra.get("damage").and_then(|v| v.as_i64()).unwrap_or(4);
-                self.mobs.insert(
-                    e.id.clone(),
-                    LiveMob {
-                        id: e.id.clone(),
-                        location_id: location_id.clone(),
-                        name: e.name.clone(),
-                        hp: e.hp.map(|hp| hp.cur).unwrap_or(1),
-                        hp_max: e.hp.map(|hp| hp.max).unwrap_or(1),
-                        difficulty,
-                        drops,
-                        tags: e.tags.clone().unwrap_or_default(),
-                        aggro: e.aggro.unwrap_or(false),
-                        damage,
-                        next_attack_at: 0,
-                        stun_until: 0,
-                        root_until: 0,
-                        bleed_dps: 0,
-                        bleed_until: 0,
-                        bleed_next_at: 0,
-                        bleed_src: None,
-                    },
-                );
+                let hp_start = e.hp.map(|hp| hp.cur).unwrap_or(1);
+                let mob = LiveMob {
+                    id: e.id.clone(),
+                    location_id: location_id.clone(),
+                    name: e.name.clone(),
+                    hp: hp_start,
+                    hp_max: e.hp.map(|hp| hp.max).unwrap_or(1),
+                    difficulty,
+                    drops,
+                    tags: e.tags.clone().unwrap_or_default(),
+                    aggro: e.aggro.unwrap_or(false),
+                    damage,
+                    next_attack_at: 0,
+                    stun_until: 0,
+                    root_until: 0,
+                    bleed_dps: 0,
+                    bleed_until: 0,
+                    bleed_next_at: 0,
+                    bleed_src: None,
+                    respawn,
+                    hp_start,
+                };
+                // M20: шаблон сида — источник данных при респавне.
+                self.mob_seed.insert(e.id.clone(), mob.clone());
+                self.mobs.insert(e.id.clone(), mob);
             }
         }
     }
@@ -563,6 +709,30 @@ impl World {
         for corpse in corpses {
             snapshot.entities.push(corpse.entity());
         }
+        // M20: предметы, лежащие в локации (выбросы) — как объекты с
+        // маркером ground (подбор через `cmd/item.use` по id).
+        let mut ground: Vec<&GroundItem> = self
+            .ground_items
+            .values()
+            .filter(|g| g.location_id == loc_id)
+            .collect();
+        ground.sort_by(|a, b| a.id.cmp(&b.id));
+        for item in ground {
+            let mut extra = serde_json::Map::new();
+            extra.insert("ground".into(), serde_json::json!(true));
+            extra.insert("def_id".into(), serde_json::json!(item.def_id));
+            extra.insert("qty".into(), serde_json::json!(item.qty));
+            snapshot.entities.push(Entity {
+                id: item.id.clone(),
+                kind: EntityKind::Object,
+                name: item.name.clone(),
+                hp: None,
+                tags: None,
+                was_player: None,
+                aggro: None,
+                extra,
+            });
+        }
         snapshot
     }
 
@@ -588,16 +758,163 @@ impl World {
         let mob = self.mobs.remove(mob_id)?;
         self.corpse_seq += 1;
         let corpse_id = format!("cor_d{}", self.corpse_seq);
+        // M20: таблица лута — в труп попадают только выпавшие по шансу
+        // (строки старого формата — всегда).
+        let loot: Vec<String> = mob
+            .drops
+            .iter()
+            .filter(|d| roll_chance(d.chance))
+            .map(|d| d.def_id.clone())
+            .collect();
         self.corpses.insert(
             corpse_id.clone(),
             LiveCorpse {
                 id: corpse_id.clone(),
                 location_id: mob.location_id.clone(),
                 name: format!("Труп: {}", mob.name),
-                loot: mob.drops.into_iter().map(Some).collect(),
+                loot: loot.into_iter().map(Some).collect(),
+                born_at: crate::time::now_epoch(),
             },
         );
+        // M20: респавн-диапазон моба → очередь возрождений.
+        if let Some((min_s, max_s)) = mob.respawn {
+            let at = crate::time::now_epoch() + rand_range(min_s, max_s);
+            self.respawn_queue.push(RespawnEntry {
+                entity_id: mob.id.clone(),
+                location_id: mob.location_id.clone(),
+                kind: RespawnKind::Mob {
+                    corpse_id: Some(corpse_id.clone()),
+                },
+                at,
+            });
+        }
         Some(corpse_id)
+    }
+
+    // ─── M20: предметы в локациях (выбросы) и TTL трупов ────────────
+
+    /// Бросить предмет в локацию (item.drop); id наземного предмета.
+    pub fn drop_ground(
+        &mut self,
+        location_id: &str,
+        name: &str,
+        def_id: &str,
+        qty: i64,
+        dropped_by: &str,
+        expires_at: i64,
+    ) -> String {
+        self.ground_seq += 1;
+        let id = format!("g{}", self.ground_seq);
+        self.ground_items.insert(
+            id.clone(),
+            GroundItem {
+                id: id.clone(),
+                location_id: location_id.to_string(),
+                name: name.to_string(),
+                def_id: def_id.to_string(),
+                qty,
+                dropped_by: dropped_by.to_string(),
+                expires_at,
+            },
+        );
+        id
+    }
+
+    pub fn ground_item(&self, uid: &str) -> Option<&GroundItem> {
+        self.ground_items.get(uid)
+    }
+
+    /// Подобрать наземный предмет (удалить из локации).
+    pub fn take_ground(&mut self, uid: &str) -> Option<GroundItem> {
+        self.ground_items.remove(uid)
+    }
+
+    /// M20: просроченные наземные предметы — удалить и вернуть (для
+    /// рассылки «{name} исчез»); `ttl <= 0` — не удалять (выключено).
+    pub fn due_ground(&mut self, now: i64, ttl_s: i64) -> Vec<GroundItem> {
+        if ttl_s <= 0 {
+            return Vec::new();
+        }
+        let due: Vec<String> = self
+            .ground_items
+            .values()
+            .filter(|g| now >= g.expires_at)
+            .map(|g| g.id.clone())
+            .collect();
+        due.into_iter()
+            .filter_map(|id| self.ground_items.remove(&id))
+            .collect()
+    }
+
+    /// M20: трупы старше `corpse_ttl_s` — удалить и вернуть (для
+    /// рассылки despawn); `ttl <= 0` — не удалять.
+    pub fn due_corpses(&mut self, now: i64, ttl_s: i64) -> Vec<LiveCorpse> {
+        if ttl_s <= 0 {
+            return Vec::new();
+        }
+        let due: Vec<String> = self
+            .corpses
+            .values()
+            .filter(|c| now >= c.born_at + ttl_s)
+            .map(|c| c.id.clone())
+            .collect();
+        due.into_iter()
+            .filter_map(|id| self.corpses.remove(&id))
+            .collect()
+    }
+
+    // ─── M20: очередь возрождений ──────────────────────────────────────────
+
+    /// M20: статический лут сущности взят → возродить через её
+    /// `respawn {min_s,max_s}` (нет поля — однократно); повторные
+    /// взятия не плодят дубли записи в очереди.
+    pub fn schedule_loot_respawn(&mut self, entity_id: &str) {
+        let Some((min_s, max_s)) = self.entity_respawn.get(entity_id).copied() else {
+            return;
+        };
+        let pending = self
+            .respawn_queue
+            .iter()
+            .any(|e| e.entity_id == entity_id && matches!(e.kind, RespawnKind::Loot));
+        if pending {
+            return;
+        }
+        let at = crate::time::now_epoch() + rand_range(min_s, max_s);
+        let location_id = String::new(); // лут-сбросу локация не нужна
+        self.respawn_queue.push(RespawnEntry {
+            entity_id: entity_id.to_string(),
+            location_id,
+            kind: RespawnKind::Loot,
+            at,
+        });
+    }
+
+    /// M20: возрождения, срок которых наступил (по возрастанию `at`);
+    /// записи извлекаются — применение (возврат моба/сброс лута) за
+    /// вызывающим (тик-шаг `respawn_step`).
+    pub fn due_respawns(&mut self, now: i64) -> Vec<RespawnEntry> {
+        let (mut due, keep): (Vec<_>, Vec<_>) =
+            self.respawn_queue.drain(..).partition(|e| now >= e.at);
+        self.respawn_queue = keep;
+        due.sort_by_key(|e| e.at);
+        due
+    }
+
+    /// M20: вернуть моба из шаблона сида (стартовый HP) — проводной
+    /// вид для `evt/entity/spawn`; `None` — нет шаблона (не должен
+    /// случиться: шаблон живёт с сида).
+    pub fn respawn_mob(&mut self, entity_id: &str) -> Option<Entity> {
+        let mut mob = self.mob_seed.get(entity_id)?.clone();
+        mob.hp = mob.hp_start;
+        let entity = mob.entity();
+        self.mobs.insert(entity_id.to_string(), mob);
+        Some(entity)
+    }
+
+    /// M20: удалить старый труп погибшего моба (вместе с лутом — по
+    /// возврату респавна); `None` — уже удалён (TTL).
+    pub fn remove_corpse(&mut self, corpse_id: &str) -> Option<LiveCorpse> {
+        self.corpses.remove(corpse_id)
     }
 
     /// Взять лот-слот из динамического трупа; `None` — уже взят/нет слота.
@@ -632,6 +949,114 @@ impl World {
 mod tests {
     use super::*;
 
+    /// M20/F20a: `rand_range` — всегда в диапазоне [min, max]
+    /// (респавн-таймеры задаются двумя числами).
+    #[test]
+    fn rand_range_stays_within_bounds() {
+        for _ in 0..200 {
+            let v = rand_range(3, 7);
+            assert!((3..=7).contains(&v), "вне диапазона: {v}");
+        }
+        assert_eq!(rand_range(5, 5), 5, "равные границы");
+        assert_eq!(rand_range(7, 3), 7, "max < min → min");
+        assert_eq!(rand_range(-5, -1), 0, "отрицательные → 0");
+    }
+
+    /// M20/F20a: очередь возрождений — моб возвращается из шаблона
+    /// сида со стартовым HP (старый труп удаляется), лут-сброс
+    /// планируется один раз (дедуп повторных взятий).
+    #[test]
+    fn respawn_schedules_and_restores_mob() {
+        let mut world = World::default();
+        let row = (
+            "l_test".to_string(),
+            serde_json::json!([
+                {"id": "m_r", "kind": "monster", "name": "Крыса",
+                 "hp": {"cur": 6, "max": 6}, "difficulty": 1,
+                 "respawn": {"min_s": 5, "max_s": 10}},
+                {"id": "e_chest", "kind": "object", "name": "Сундук",
+                 "loot": ["gold_coin"],
+                 "respawn": {"min_s": 2, "max_s": 4}}
+            ]),
+        );
+        world.seed_mobs(&[row], None);
+        let base = crate::time::now_epoch();
+
+        // Лут: взяли → одна запись в очереди (повторные — дедуп).
+        world.schedule_loot_respawn("e_chest");
+        world.schedule_loot_respawn("e_chest");
+        // Моб убит → запись с трупом; до срока очередь пуста.
+        let corpse = world.kill_mob("m_r").expect("труп создаётся");
+        assert!(world.mob("m_r").is_none(), "моб мёртв");
+        assert!(
+            world.due_respawns(base + 1).is_empty(),
+            "до минимального срока (2 с) — пусто"
+        );
+
+        // Срок прошёл: обе записи, время в диапазонах контента.
+        let due = world.due_respawns(base + 60);
+        assert_eq!(due.len(), 2, "лут и моб по сроку: {due:?}");
+        let loot = due
+            .iter()
+            .find(|e| matches!(e.kind, RespawnKind::Loot))
+            .expect("лут-запись");
+        assert_eq!(loot.entity_id, "e_chest");
+        let mob_e = due
+            .iter()
+            .find(|e| matches!(e.kind, RespawnKind::Mob { .. }))
+            .expect("моб-запись");
+        assert_eq!(mob_e.entity_id, "m_r");
+        assert_eq!(mob_e.location_id, "l_test");
+        assert!((base..=base + 10).contains(&mob_e.at), "at в [5,10]");
+        assert!(
+            matches!(
+            &mob_e.kind,
+            RespawnKind::Mob {
+                corpse_id: Some(c)
+            } if c == &corpse
+            ),
+            "запись несёт труп: {:?}",
+            mob_e.kind
+        );
+
+        // Моб: снова в локации, стартовый HP; труп удалён; очередь пуста.
+        let entity = world.respawn_mob("m_r").expect("возврат из шаблона");
+        assert_eq!(entity.id, "m_r");
+        assert_eq!(entity.hp.map(|h| h.cur), Some(6));
+        assert!(world.mob("m_r").is_some());
+        assert!(world.remove_corpse(&corpse).is_some(), "старый труп ушёл");
+        assert!(world.remove_corpse(&corpse).is_none(), "уже удалён");
+        assert!(
+            world.due_respawns(base + 600).is_empty(),
+            "очередь пуста (дедуп лута)"
+        );
+    }
+
+    /// M20: дефолт `[world]` применяется только к мобам без своего
+    /// `respawn`; сущности без respawn и дефолта не возрождаются.
+    #[test]
+    fn respawn_default_fills_only_unconfigured_mobs() {
+        let mut world = World::default();
+        let row = (
+            "l_t".to_string(),
+            serde_json::json!([
+                {"id": "m_a", "kind": "monster", "name": "A",
+                 "hp": {"cur": 3, "max": 3}},
+                {"id": "m_b", "kind": "monster", "name": "B",
+                 "hp": {"cur": 3, "max": 3},
+                 "respawn": {"min_s": 40, "max_s": 50}},
+                {"id": "e_c", "kind": "object", "name": "C"}
+            ]),
+        );
+        world.seed_mobs(&[row], Some((60, 120)));
+        assert_eq!(world.entity_respawn.get("m_a"), Some(&(60, 120)));
+        assert_eq!(world.entity_respawn.get("m_b"), Some(&(40, 50)));
+        assert!(
+            !world.entity_respawn.contains_key("e_c"),
+            "дефолт не для не-мобов"
+        );
+    }
+
     /// M18/F58d: дебаффы рун — стан блокирует атаки до срока, bleed
     /// тикает по расписанию, корни хранятся (движение — позже).
     #[test]
@@ -645,7 +1070,7 @@ mod tests {
                 "difficulty": 3, "aggro": true, "damage": 6
             }]),
         );
-        world.seed_mobs(&[row]);
+        world.seed_mobs(&[row], None);
         let now = 1_000_000_i64;
 
         // Стан: активен ровно duration, потом снимается.

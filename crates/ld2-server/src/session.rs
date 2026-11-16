@@ -225,6 +225,9 @@ impl Session {
             "cmd/magic.scroll_cast" => self.magic_scroll_cast(env, seq).await,
             "cmd/socket.insert" => self.socket_insert(env, seq).await,
             "cmd/socket.extract" => self.socket_extract(env, seq).await,
+            // игровые диалоги (M20 — заготовка)
+            "cmd/dialog.choice" => self.dialog_choice(env, seq).await,
+            "cmd/dialog.submit" => self.dialog_submit(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
             "cmd/skill.train" => self.skill_train(env, seq).await,
             "cmd/item.use" => self.item_use(env, seq).await,
@@ -2455,6 +2458,12 @@ impl Session {
                     )
                 };
                 let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({})), ev];
+                // M20: у сущности указан respawn → лут вернётся через
+                // min..max (очередь мира, сброс `loot_taken` на тике).
+                {
+                    let mut world = self.state.world.lock().expect("мир");
+                    world.schedule_loot_respawn(entity_id);
+                }
                 // ФР-11: лут с трупа **игрока** → статус «Мародёр» (§10).
                 if entity.was_player.unwrap_or(false) {
                     if let Some((_, text)) = self.apply_crime(char_id, "marauder").await {
@@ -2720,6 +2729,56 @@ impl Session {
 
     /// `cmd/item.drop` (§7): полный выброс → `evt/item/removed`
     /// (reason=dropped), частичный → `evt/item/state` с новым qty.
+    /// M20 (заготовка): выбор действия в многостраничном диалоге —
+    /// подтверждение без переходов (серверные переходы появятся с
+    /// контентом игровых диалогов); ack с echo выбора.
+    async fn dialog_choice(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ld2_protocol::cmd::DialogChoice>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        tracing::debug!(
+            "dialog.choice: dialog={} page={} action={}",
+            cmd.dialog_id,
+            cmd.page_id,
+            cmd.action_id
+        );
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({
+                "dialog_id": cmd.dialog_id,
+                "page_id": cmd.page_id,
+                "action_id": cmd.action_id,
+            }),
+        )]
+    }
+
+    /// M20 (заготовка): ввод execute-диалога — сервер принимает набор
+    /// значений и возвращает его в ack (обратная связь «ввод получен»);
+    /// игровая обработка (квесты/настройки) подключится позже.
+    async fn dialog_submit(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ld2_protocol::cmd::DialogSubmit>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        tracing::debug!(
+            "dialog.submit: dialog={} values={:?}",
+            cmd.dialog_id,
+            cmd.values
+        );
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({
+                "dialog_id": cmd.dialog_id,
+                "values": cmd.values,
+            }),
+        )]
+    }
+
     async fn item_drop(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
@@ -2748,6 +2807,61 @@ impl Session {
                 ErrorCode::ItemGone,
                 "некорректное количество",
             )];
+        }
+        // M20: персонаж в локации → предмет лежит на земле до
+        // `drop_ttl_s` (подбираемый всеми), а не удаляется; не в мире —
+        // прежнее поведение. Объявление — всем в локации («{by}
+        // выбросил(а)…» / «Вы выбросили…» различает клиент по char_id).
+        let ground_loc = self
+            .state
+            .world
+            .lock()
+            .expect("мир")
+            .char_location(&char_id);
+        if let Some(location_id) = &ground_loc {
+            let def = match db::items::def(pool, &item.def_id).await {
+                Ok(Some(def)) => def,
+                Ok(None) => {
+                    return vec![Self::err(seq, ErrorCode::Internal, "нет определения")];
+                }
+                Err(e) => {
+                    warn!("item.drop (определение): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let ttl = self.state.config.world.drop_ttl_s;
+            let expires_at = crate::time::now_epoch() + ttl.max(0);
+            let (by_name, gender) = self
+                .char
+                .as_ref()
+                .map(|c| (c.name.clone(), c.gender.clone()))
+                .unwrap_or_else(|| ("Игрок".into(), "male".into()));
+            let dropped = {
+                let mut world = self.state.world.lock().expect("мир");
+                world.drop_ground(
+                    location_id,
+                    &def.name,
+                    &item.def_id,
+                    qty,
+                    &char_id,
+                    expires_at,
+                )
+            };
+            let payload = ld2_protocol::evt::ItemDropped {
+                char_id: char_id.clone(),
+                by_name,
+                gender,
+                qty,
+                item_name: def.name,
+            };
+            let dropped_text = crate::session::event_payload_text("evt/item/dropped", &payload);
+            let world = self.state.world.lock().expect("мир");
+            for addr in world.chars_in_location(location_id) {
+                if let Some(text) = &dropped_text {
+                    world.send_to_char(&addr, text.clone());
+                }
+            }
+            let _ = dropped; // id наземного предмета — для будущего подбора
         }
         if qty >= i64::from(item.qty) {
             if let Err(e) = db::items::delete(pool, &item.uid).await {
@@ -3063,6 +3177,83 @@ impl Session {
         // `/scenario give <def_id>` — dev-выдача предмета (тесты M12.5+).
         if let Some(def_id) = scenario.strip_prefix("give ") {
             return self.scenario_give(def_id.trim(), seq).await;
+        }
+        // `/scenario dialog page|execute` — M20: открыть тестовый
+        // игровой диалог (заготовка UI: многостраничный со страницами
+        // и действиями / execute с полями ввода).
+        if let Some(rest) = scenario.strip_prefix("dialog ") {
+            use ld2_protocol::evt::{DialogAction, DialogInput, DialogOpen, DialogPage};
+            let open = match rest.trim() {
+                "page" => DialogOpen {
+                    id: "dev_page".into(),
+                    kind: "page".into(),
+                    title: "Тестовый разговор".into(),
+                    pages: vec![
+                        DialogPage {
+                            id: "p1".into(),
+                            text: "Первая страница. «Дальше» — переход на вторую \
+                                   (заготовка go:<page_id>), «Пока» — закрыть окно."
+                                .into(),
+                            actions: vec![
+                                DialogAction {
+                                    id: "go:p2".into(),
+                                    label: "Дальше".into(),
+                                },
+                                DialogAction {
+                                    id: "close".into(),
+                                    label: "Пока".into(),
+                                },
+                            ],
+                        },
+                        DialogPage {
+                            id: "p2".into(),
+                            text: "Вторая страница — многостраничность работает. \
+                                   Кнопка «Назад» возвращает на первую."
+                                .into(),
+                            actions: vec![DialogAction {
+                                id: "close".into(),
+                                label: "Завершить".into(),
+                            }],
+                        },
+                    ],
+                    inputs: vec![],
+                },
+                "execute" => DialogOpen {
+                    id: "dev_execute".into(),
+                    kind: "execute".into(),
+                    title: "Наладка (execute)".into(),
+                    pages: vec![],
+                    inputs: vec![
+                        DialogInput {
+                            id: "who".into(),
+                            label: "Кого настроить".into(),
+                            kind: "text".into(),
+                            default: String::new(),
+                        },
+                        DialogInput {
+                            id: "count".into(),
+                            label: "Количество".into(),
+                            kind: "number".into(),
+                            default: "1".into(),
+                        },
+                    ],
+                },
+                _ => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::Internal,
+                        "формат: dialog page|execute",
+                    )];
+                }
+            };
+            return vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                out_event(
+                    "evt/dialog/open",
+                    None,
+                    serde_json::to_value(open).unwrap_or_default(),
+                ),
+            ];
         }
         // `/scenario gold <n>` — dev-начисление золота (тесты M12.5c).
         if let Some(amount) = scenario.strip_prefix("gold ") {
