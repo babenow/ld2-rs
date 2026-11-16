@@ -1,8 +1,9 @@
 //! M18/F36: **окно квестов** — всплывающее окно (паритет рюкзака) с
 //! двумя вкладками: «Текущие» (взятые: active/turn_in) и «Выполненные»
-//! (done). Слева — список с бейджем состояния и целями, справа —
-//! детали выбранного квеста (цели с прогрессом, награда, действия
-//! «Сдать»/«Бросить»/«Отслеживать»), внизу — статус-бар: текущие
+//! (done). Слева — **только названия** квестов (указание заказчика),
+//! справа — полная информация выбранного квеста: статус, цели с
+//! прогрессом, награда, действия «Сдать»/«Бросить»/«Отслеживать»,
+//! внизу — статус-бар: текущие
 //! `N / M` (лимит из `SessionConfig.quests.max_active`, §5 — конфиг
 //! сервера, не хардкод), выполненные — просто `N`.
 //!
@@ -307,8 +308,10 @@ impl Root {
         for quest in &items {
             let qid = quest.id.clone();
             let selected = self.selected_quest.as_deref() == Some(quest.id.as_str());
-            let (badge_key, badge_color) = state_badge(quest.state);
-            let mut card = div()
+            // M20/фикс: в левой колонке — только название квеста
+            // (статус/цели/награда — в правой колонке, «полная
+            // информация» по указанию заказчика).
+            let card = div()
                 .id(format!("ld2-quest-{qid}"))
                 .flex()
                 .flex_col()
@@ -328,30 +331,9 @@ impl Root {
                 }))
                 .child(
                     div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_size(px(11.0))
-                                .text_color(rgb(badge_color))
-                                .child(t(lang, badge_key)),
-                        )
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(quest.title.clone().unwrap_or_else(|| quest.id.clone())),
-                        ),
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(quest.title.clone().unwrap_or_else(|| quest.id.clone())),
                 );
-            if !quest.goals.is_empty() {
-                card = card.child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(format!("• {}", goals_summary(quest))),
-                );
-            }
             list = list.child(card);
         }
 
