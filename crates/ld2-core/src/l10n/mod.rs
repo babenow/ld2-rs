@@ -186,6 +186,10 @@ pub enum Key {
     DiscMinClient,
     DiscInsecure,
     StatusResolveFailed,
+    // M20: окно выбора количества (переиспользуемое)
+    QtyLabel,
+    // M20: execute-диалог — отправка ввода
+    DialogSend,
     // M18/F58f: описание руны — шанс авто-приёма и эффекты вместо JSON
     RuneProcChance,
     EffectBleed,
@@ -743,6 +747,8 @@ mod tests {
         Key::DiscMinClient,
         Key::DiscInsecure,
         Key::StatusResolveFailed,
+        Key::QtyLabel,
+        Key::DialogSend,
         Key::RuneProcChance,
         Key::EffectBleed,
         Key::EffectStun,

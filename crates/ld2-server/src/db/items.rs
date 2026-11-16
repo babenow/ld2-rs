@@ -249,6 +249,18 @@ pub async fn loot_taken_exists(
     .await
 }
 
+/// M20: сброс статического лута сущности (респавн) — все персонажи
+/// могут взять лут заново. Сравнение по префиксу `loot:<entity>:`
+/// (без LIKE — `_` в id не должен быть wildcard).
+pub async fn loot_taken_reset(pool: &PgPool, entity_id: &str) -> Result<u64, sqlx::Error> {
+    let prefix = format!("loot:{entity_id}:");
+    let res = sqlx::query("DELETE FROM loot_taken WHERE left(uid, length($1)) = $1")
+        .bind(&prefix)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
+}
+
 /// Взять лут одной транзакцией (D27): журнал взятого + инвентарь.
 /// `None` — уже взят (→ `E_ITEM_GONE`); `Some(row)` — новый инстанс.
 /// M18/F58f: подбор лута — однотипное в существующий простой стак

@@ -318,6 +318,14 @@ pub struct ProfessionsSection {
     pub fail_xp_ratio: f64,
 }
 
+/// M20: диапазон респавна в секундах — два числа `{min_s, max_s}`,
+/// факт возрождения случайный в диапазоне (план M20, требование 1).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct RespawnRange {
+    pub min_s: i64,
+    pub max_s: i64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldSection {
@@ -327,6 +335,27 @@ pub struct WorldSection {
     pub tick_hz: u32,
     /// Периодический флаш онлайн-состояния, с (D27).
     pub autosave_interval_s: u64,
+    /// M20: время жизни трупа, с (вместе с неразобранным лутом);
+    /// `0` — трупы не удаляются. Для теста —60.
+    #[serde(default = "default_corpse_ttl")]
+    pub corpse_ttl_s: i64,
+    /// M20: время жизни выброшенного предмета, с; `0` — не удаляется.
+    /// Для теста —60.
+    #[serde(default = "default_drop_ttl")]
+    pub drop_ttl_s: i64,
+    /// M20: дефолтный респавн мобов `{min_s, max_s}` — для мобов без
+    /// `respawn` в контенте; нет поля и нет дефолта — моб не
+    /// возрождается (план M20, решение 5).
+    #[serde(default)]
+    pub respawn_default: Option<RespawnRange>,
+}
+
+const fn default_corpse_ttl() -> i64 {
+    60
+}
+
+const fn default_drop_ttl() -> i64 {
+    60
 }
 
 /// Константы модели опыта навыков (skills.md §8 — «конфиг сервера», D25).

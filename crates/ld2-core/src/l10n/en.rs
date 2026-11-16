@@ -145,6 +145,8 @@ pub(super) fn t(key: Key) -> &'static str {
         DiscMinClient => "Client update required",
         DiscInsecure => "Insecure server address",
         StatusResolveFailed => "Connection problem",
+        QtyLabel => "Quantity",
+        DialogSend => "Send",
         RuneProcChance => "Proc chance",
         EffectBleed => "Bleed",
         EffectStun => "Stun",

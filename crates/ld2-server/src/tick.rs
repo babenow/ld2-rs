@@ -26,7 +26,14 @@ pub async fn init(state: &SharedState) -> Result<(), sqlx::Error> {
             .await?;
     {
         let mut world = state.world.lock().expect("мир");
-        world.seed_mobs(&rows);
+        world.seed_mobs(
+            &rows,
+            state
+                .config
+                .world
+                .respawn_default
+                .map(|r| (r.min_s, r.max_s)),
+        );
     }
     tokio::spawn(run(state.clone()));
     Ok(())
@@ -57,6 +64,11 @@ pub async fn run(state: SharedState) {
             crime_expire_step(&state).await;
             buff_expire_step(&state).await;
             craft_finish_step(&state).await;
+            // M20: TTL — выброшенные предметы и трупы исчезают.
+            ground_expire_step(&state).await;
+            corpse_expire_step(&state).await;
+            // M20: респавны мобов и статического лута по сроку.
+            respawn_step(&state).await;
             // M18/F58c: заряды рун (режим `time`; `item` — без тикера).
             recharge_acc += 1.0;
             let interval_s = state.config.gameplay.magic.rune_recharge_s;
@@ -682,6 +694,7 @@ pub(crate) fn mob_kill_effects(
             &EntityDespawn {
                 entity_id: target.to_string(),
                 location_id: loc.to_string(),
+                kind: Some(ld2_protocol::types::EntityKind::Monster),
             },
         );
         if let Some(corpse_id) = &corpse_id {
@@ -1055,6 +1068,131 @@ async fn regen_step(state: &SharedState) {
 }
 
 /// M18/F58d (ADR-012 §6): снятие истёкших баффов рун раз в секунду —
+/// M20: респавны по сроку (очередь `World`): моб возвращается из
+/// шаблона сида со стартовым HP → `evt/entity/spawn`, его старый труп
+/// уходит → `evt/entity/despawn` (kind=corpse); статический лут —
+/// сброс `loot_taken` в БД (без события — клиент осматривает заново).
+async fn respawn_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let due = {
+        let mut world = state.world.lock().expect("мир");
+        world.due_respawns(now)
+    };
+    for entry in due {
+        match entry.kind {
+            crate::world::RespawnKind::Mob { corpse_id } => {
+                let (entity, corpse_id) = {
+                    let mut world = state.world.lock().expect("мир");
+                    let entity = world.respawn_mob(&entry.entity_id);
+                    let corpse = corpse_id
+                        .as_deref()
+                        .and_then(|id| world.remove_corpse(id))
+                        .map(|c| c.id);
+                    (entity, corpse)
+                };
+                let Some(entity) = entity else {
+                    continue; // нет шаблона (не должен случиться)
+                };
+                let world = state.world.lock().expect("мир");
+                // Сначала старый труп (вместе с лутом), затем моб.
+                if let Some(corpse_id) = corpse_id {
+                    let text = event_text(
+                        "evt/entity/despawn",
+                        &ld2_protocol::evt::EntityDespawn {
+                            entity_id: corpse_id,
+                            location_id: entry.location_id.clone(),
+                            kind: Some(ld2_protocol::types::EntityKind::Corpse),
+                        },
+                    );
+                    for addr in world.chars_in_location(&entry.location_id) {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                }
+                let text = event_text(
+                    "evt/entity/spawn",
+                    &ld2_protocol::evt::EntitySpawn {
+                        entity,
+                        location_id: entry.location_id.clone(),
+                    },
+                );
+                for addr in world.chars_in_location(&entry.location_id) {
+                    world.send_to_char(&addr, text.clone());
+                }
+            }
+            crate::world::RespawnKind::Loot => {
+                if let Err(e) =
+                    crate::db::items::loot_taken_reset(&state.pool, &entry.entity_id).await
+                {
+                    warn!("респавн лута ({}): {e}", entry.entity_id);
+                }
+            }
+        }
+    }
+}
+
+/// M20: выброшенные предметы истекают по `drop_ttl_s` → «{name} исчез»
+/// всем в локации (`ttl <= 0` — выключено).
+async fn ground_expire_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let ttl = state.config.world.drop_ttl_s;
+    if ttl <= 0 {
+        return;
+    }
+    let expired: Vec<(String, ld2_protocol::evt::ItemExpired)> = {
+        let mut world = state.world.lock().expect("мир");
+        world
+            .due_ground(now, ttl)
+            .into_iter()
+            .map(|g| {
+                (
+                    g.location_id.clone(),
+                    ld2_protocol::evt::ItemExpired {
+                        uid: g.id,
+                        name: g.name,
+                    },
+                )
+            })
+            .collect()
+    };
+    for (loc, payload) in expired {
+        let text = event_text("evt/item/expired", &payload);
+        let world = state.world.lock().expect("мир");
+        for addr in world.chars_in_location(&loc) {
+            world.send_to_char(&addr, text.clone());
+        }
+    }
+}
+
+/// M20: трупы старше `corpse_ttl_s` исчезают (вместе с лутом) —
+/// `evt/entity/despawn` (kind=corpse → «{name} исчезает»).
+async fn corpse_expire_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let ttl = state.config.world.corpse_ttl_s;
+    if ttl <= 0 {
+        return;
+    }
+    let expired: Vec<(String, String)> = {
+        let mut world = state.world.lock().expect("мир");
+        world
+            .due_corpses(now, ttl)
+            .into_iter()
+            .map(|c| (c.location_id.clone(), c.id))
+            .collect()
+    };
+    for (loc, corpse_id) in expired {
+        let payload = ld2_protocol::evt::EntityDespawn {
+            entity_id: corpse_id,
+            location_id: loc.clone(),
+            kind: Some(ld2_protocol::types::EntityKind::Corpse),
+        };
+        let text = event_text("evt/entity/despawn", &payload);
+        let world = state.world.lock().expect("мир");
+        for addr in world.chars_in_location(&loc) {
+            world.send_to_char(&addr, text.clone());
+        }
+    }
+}
+
 /// клиенту шлётся **полная замена** списка `evt/char/buffs` (паттерн
 /// `evt/crime/status`); только онлайн-персонажи (как `regen_step`).
 async fn buff_expire_step(state: &SharedState) {

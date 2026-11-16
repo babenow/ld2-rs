@@ -178,6 +178,34 @@ pub struct EntityHp {
 pub struct EntityDespawn {
     pub entity_id: String,
     pub location_id: String,
+    /// M20: тип исчезнувшей сущности — клиент различает строки журнала
+    /// («{name} исчезает» vs «{name} исчез» для предмета); аддитивно
+    /// §11: старый сервер не шлёт → прежняя строка.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::types::EntityKind>,
+}
+
+/// M20: предмет в локации исчез (TTL выброса) — журнал «{name} исчез».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemExpired {
+    /// Id наземного предмета (на будущее; журналу нужно name).
+    pub uid: String,
+    pub name: String,
+}
+
+/// M20: выброс предмета в локации — журнал у всех, кто в локации
+/// (§8, аддитивно): «{by} выбросил(а) …» / «Вы выбросили …».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemDropped {
+    /// Кто бросил (`char_id`) — для строки «Вы …» у себя.
+    pub char_id: String,
+    /// Имя персонажа (для «{by} выбросил(а)»).
+    pub by_name: String,
+    /// `male`|`female` — выбор «выбросил/выбросила».
+    pub gender: String,
+    pub qty: i64,
+    /// Название предмета.
+    pub item_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -475,6 +503,54 @@ pub struct GuildLog {
     pub entry: GuildLogEntry,
 }
 
+/// M20: страница многостраничного игрового диалога (заготовка).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogPage {
+    pub id: String,
+    pub text: String,
+    /// Кнопки действий (для page-диалога).
+    #[serde(default)]
+    pub actions: Vec<DialogAction>,
+}
+
+/// M20: кнопка действия в игровом диалоге.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogAction {
+    pub id: String,
+    pub label: String,
+}
+
+/// M20: поле ввода execute-диалога («text» | «number»).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogInput {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "dialog_input_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub default: String,
+}
+
+fn dialog_input_kind() -> String {
+    "text".into()
+}
+
+/// M20: открытие игрового диалога — **заготовка** многостраничного
+/// (страницы + действия + кнопка «Назад» на клиенте) и execute-диалога
+/// (ввод данных → `cmd/dialog.submit` возвращает набор вводов).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogOpen {
+    /// Стабильный id диалога (для choice/submit).
+    pub id: String,
+    /// `page` | `execute`.
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub pages: Vec<DialogPage>,
+    #[serde(default)]
+    pub inputs: Vec<DialogInput>,
+}
+
 // ─── wire-типы (protocol.md §8) ──────────────────────────────────────────────
 
 impl_events!(
@@ -500,6 +576,9 @@ impl_events!(
     (ItemAdded, "evt/item/added"),
     (ItemRemoved, "evt/item/removed"),
     (ItemState, "evt/item/state"),
+    (ItemDropped, "evt/item/dropped"),
+    (ItemExpired, "evt/item/expired"),
+    (DialogOpen, "evt/dialog/open"),
     (UpgradeResult, "evt/upgrade/result"),
     (CraftResult, "evt/craft/result"),
     (CraftProfession, "evt/craft/profession"),

@@ -219,6 +219,23 @@ pub struct SocketExtract {
     pub socket_index: u32,
 }
 
+/// M20: выбор действия в многостраничном игровом диалоге (заготовка).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DialogChoice {
+    pub dialog_id: String,
+    pub page_id: String,
+    pub action_id: String,
+}
+
+/// M20: отправка ввода execute-диалога — набор значений полей
+/// (id поля → значение); сервер возвращает ввод обработчику диалога.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DialogSubmit {
+    pub dialog_id: String,
+    #[serde(default)]
+    pub values: serde_json::Map<String, serde_json::Value>,
+}
+
 // ─── улучшение предметов (ФР-10) ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -454,6 +471,8 @@ impl_commands!(
     (MagicRuneCast, "cmd/magic.rune_cast", false),
     (SocketInsert, "cmd/socket.insert", false),
     (SocketExtract, "cmd/socket.extract", false),
+    (DialogChoice, "cmd/dialog.choice", false),
+    (DialogSubmit, "cmd/dialog.submit", false),
     (UpgradePreview, "cmd/upgrade.preview", true),
     (UpgradeStart, "cmd/upgrade.start", false),
     (CraftList, "cmd/craft.list", true),
