@@ -27,7 +27,10 @@ use ely::primitives::{IconName, Tooltip};
 use super::quests::goals_summary;
 use super::sheet::rarity_label;
 use super::social::show_party;
-use super::{act_btn, act_btn_hover, btn, hex_to_u32, Click, LogTab, PopupKind, Root, INSCRIBE_MS};
+use super::{
+    act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, Click, LogTab, PopupKind, Root,
+    INSCRIBE_MS,
+};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -478,7 +481,9 @@ impl Root {
                     },
                 )),
         );
-        col
+        // M22: прокрутка контента панели обучения (навыки +
+        // профессии) — кнопка «К диалогу» остаётся под скроллом.
+        scrollable_tab("ld2-training-scroll", &self.training_scroll, col)
     }
 
     /// M18/F38: **окно диалога NPC как окно персонажа** — попап-шелл
