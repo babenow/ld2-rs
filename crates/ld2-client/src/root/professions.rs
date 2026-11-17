@@ -45,8 +45,9 @@ const PRIMARY: [&str; 11] = [
 /// primary не действуют) — в одну строку под основными.
 const SECONDARY: [&str; 3] = ["cook", "fishing", "medic"];
 
-/// Название профессии: l10n-ключ по id, фолбэк — сам id.
-fn prof_label(lang: Lang, id: &str) -> String {
+/// Название профессии: l10n-ключ по id, фолбэк — сам id
+/// (используется и панелью обучения в диалоге НПС — M21).
+pub(crate) fn prof_label(lang: Lang, id: &str) -> String {
     let key = match id {
         "herbalist" => Some(Key::ProfHerbalist),
         "alchemist" => Some(Key::ProfAlchemist),

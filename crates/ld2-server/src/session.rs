@@ -7564,6 +7564,27 @@ impl Session {
                 serde_json::to_value(&def.training).unwrap_or_else(|_| serde_json::json!([]))
             })
             .unwrap_or_else(|| serde_json::json!([]));
+        // M21: профессии, которым обучает этот NPC (маркер trainer
+        // сущности), с ценой `price_profession` — панель «Обучение»
+        // учит и профессиям (изучение — cmd/craft.learn).
+        let professions = {
+            let marker = entity.extra.get("trainer");
+            let ids: Vec<&str> = marker
+                .and_then(|m| m.get("professions"))
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            let price = marker
+                .and_then(|m| m.get("price_profession"))
+                .or_else(|| marker.and_then(|m| m.get("price")));
+            let gold = price
+                .and_then(|p| p.get("gold_base"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            ids.into_iter()
+                .map(|id| serde_json::json!({ "id": id, "gold": gold }))
+                .collect::<Vec<_>>()
+        };
         vec![Self::ack_payload(
             seq,
             &serde_json::json!({
@@ -7575,6 +7596,7 @@ impl Session {
                 "quests": quests,
                 "actions": actions,
                 "training": training,
+                "professions": professions,
             }),
         )]
     }
