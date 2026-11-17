@@ -970,6 +970,136 @@
       "qty": 1
     },
     {
+      "id": "skinning_knife",
+      "type": "skinning_knife",
+      "name": "Нож для снятия шкур",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q1",
+      "type": "hide_scraps",
+      "name": "Обрезки шкуры",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 2,
+      "qty": 1
+    },
+    {
+      "id": "hide_q1",
+      "type": "hide",
+      "name": "Шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 12,
+      "qty": 1
+    },
+    {
+      "id": "hide_q2",
+      "type": "hide",
+      "name": "Хорошая шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 24,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q2",
+      "type": "hide_scraps",
+      "name": "Хорошие обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 4,
+      "qty": 1
+    },
+    {
+      "id": "hide_q3",
+      "type": "hide",
+      "name": "Отличная шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 36,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q3",
+      "type": "hide_scraps",
+      "name": "Отличные обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 6,
+      "qty": 1
+    },
+    {
+      "id": "hide_q4",
+      "type": "hide",
+      "name": "Превосходная шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 48,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q4",
+      "type": "hide_scraps",
+      "name": "Превосходные обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 8,
+      "qty": 1
+    },
+    {
+      "id": "hide_q5",
+      "type": "hide",
+      "name": "Великолепная шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 60,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q5",
+      "type": "hide_scraps",
+      "name": "Великолепные обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 10,
+      "qty": 1
+    },
+    {
+      "id": "meat",
+      "type": "meat",
+      "name": "Мясо",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 8,
+      "qty": 1
+    },
+    {
+      "id": "offal",
+      "type": "offal",
+      "name": "Потроха",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
       "id": "axe",
       "type": "axe",
       "name": "Топор",

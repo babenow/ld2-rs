@@ -18,7 +18,7 @@ use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
-use super::sheet::{rarity_color, rarity_label};
+use super::sheet::rarity_label;
 use super::{scrollable_tab, PopupKind, Root};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
@@ -131,13 +131,11 @@ fn tab_for_type(item_type: &str) -> BackpackTab {
         "weapon" | "staff" => BackpackTab::Weapon,
         "potion" => BackpackTab::Potion,
         "rune" | "scroll" => BackpackTab::Magic,
-        "herb" | "wood_oak" | "parchment" | "ink" | "ore_copper" | "branches" => {
-            BackpackTab::Material
-        }
+        "herb" | "wood_oak" | "parchment" | "ink" | "ore_copper" | "branches" | "hide_scraps"
+        | "hide" | "meat" | "offal" => BackpackTab::Material,
         // M20/F20b: инструменты добычи (топор/кирка/серп) — к инструментам.
-        "flask" | "chisel" | "quill" | "upgrade_stone" | "axe" | "pickaxe" | "sickle" => {
-            BackpackTab::Tool
-        }
+        "flask" | "chisel" | "quill" | "upgrade_stone" | "axe" | "pickaxe" | "sickle"
+        | "skinning_knife" => BackpackTab::Tool,
         "money" => BackpackTab::Currencies,
         "armor" | "shield" => BackpackTab::Armor,
         "artifact" => BackpackTab::Artifact,
@@ -347,7 +345,7 @@ impl Root {
                 // (указание заказчика); слоты рун — их глифы.
                 .child(super::sheet::item_label_stack(
                     item,
-                    rarity_color(&item.rarity, pal),
+                    super::sheet::item_color(item, pal),
                 ));
             // ЛКМ — меню (после перетаскивания gpui подавляет клик; на
             // всякий случай — guard по активному drag), ПКМ — меню.

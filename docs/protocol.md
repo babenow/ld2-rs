@@ -289,7 +289,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `skill.train` | `{entity_id, skill_id}` | `{rank, xp, xp_to_next, pool_left}` | − | повышение ранга навыка **у тренера в диалоге** (M18/F44, ADR-009): гейты — тренер в локации (`E_NO_TRAINER`), **шкала 100 %** (`E_SKILL_NOT_READY`), очки опыта (`E_XP_POOL`), плата из контента диалога (`E_INGREDIENTS`), потолок/атрибут (`E_RANK_CAP`/`E_REQUIREMENT_ATTR`); списывает очки пула, шкала обнуляется; заменяет `char.xp_invest` |
 | `location.look` | `{}` | `{location}` | + | перерисовать локацию |
 | `location.move` | `{exit_id}` | `{location}` | − | переход |
-| `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа |
+| `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа; M22: у динамического трупа поле `inner[]` — лут освежевания (отдельный блок «Внутри», uid `inner:<corpse>:<idx>`) |
 | `npc.talk` | `{entity_id}` | `{dialog: {id, name}, node, quests[], actions[], training[]}` | + | диалог NPC: **корень ветки** (`node`: `{id, text, quest?, replies: [{id, text, wait_s?, action?}]}`; `wait_s` — секунды до конца кулдауна целевой строки: ответ показывается **неактивным** с таймером, без поля — активен; `action` — действие вместо перехода (`"shop"` → панель магазина, `"train"` → панель обучения; клиент шлёт `shop.list`/`skill.train`); ответы с не выполненными условиями скрыты; `node: null` — нет записи), доступные квесты, `actions`, `training: [{skill, points, gold, items?}]` — чему NPC учит и по какой цене; `professions: [{id, gold}]` — профессии NPC с ценой (M21, изучение — `craft.learn`) (M18/F35, ветки F37/F42/F43/F44; `greeting` убран — ADR-008, обучение — ADR-009) |
 | `npc.reply` | `{entity_id, node_id, reply_id}` | `{node: {...}\|null, quests[]}` | − | ответ персонажа — переход по ветке (`node` — форма из `npc.talk`, включая `wait_s`); `node: null` — конец диалога (M18/F37, ADR-008) |
 | `shop.list` | `{entity_id}` | `{shop: {tabs: [{currency, currency_name, items[]}]}}` | + | товары NPC с ценами (база `gold_value` × наценка сервера × наценка торговца × скидка; `actions` в `npc.talk` содержит `shop`) (M18/F39) |
@@ -339,6 +339,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `state.resync` | `{last_state_version}` | `{}` (→ snapshot/delta) | + | восстановление |
 | `ping` | `{}` | `{}` (→ `evt/pong`) | + | RTT |
 | `time.sync` | `{}` | `{}` (→ `evt/time.sync`) | + | калибровка времени |
+| `corpse.harvest` | `{ entity_id, action: "skin"\|"gut" }` | `{ action, name }` | − | снятие шкур: разделка трупа животного — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result`); ошибки: `E_PROFESSION` (не изучена), `E_TOOL_MISSING` (нет ножа), `E_LEVEL_REQUIRED` (требуемый уровень выше на25+), `E_TARGET_GONE` (нет флагов/уже разделано/нет трупа), `E_COOLDOWN` (уже разделываете) |
 | `resource.gather` | `{ entity_id }` | `{}` | − | M20/F20b: добыча 1 единицы ресурса (инструмент + ранг профессии на сервере; отказы: `E_TOOL_MISSING`/`E_PROFESSION`/`E_TARGET_GONE`) |
 | `dialog.choice` | `{ dialog_id, page_id, action_id }` | `{}` | − | M20: выбор действия в игровом многостраничном диалоге (**заготовка**) |
 | `dialog.submit` | `{ dialog_id, values {id → значение} }` | `{ values }` | − | M20: ввод execute-диалога — сервер возвращает набор вводов обработчику (**заготовка**) |
@@ -389,6 +390,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/item/state` | `{ uid, patch }` | патч предмета (upgrade, sockets, qty) |
 | `evt/item/dropped` | `{ char_id, by_name, gender, qty, item_name }` | M20: выброс — журнал «{by} выбросил(а)…» / «Вы выбросили…» (всем в локации) |
 | `evt/item/expired` | `{ uid, name }` | M20: предмет в локации исчез по TTL — «{name} исчез» |
+| `evt/harvest/result` | `{ entity_id, name, action, ok }` | снятие шкур: итог разделки — журнал «Вы освежевали труп …»/«Вы сняли шкуру с трупа …» (при `ok`), прогресс-бар чистится; лут добавляется в труп (`evt/corpse/created` — обновление) |
 | `evt/dialog/open` | `{ id, kind: "page"\|"execute", title, pages: [{id, text, actions: [{id, label}]}], inputs: [{id, label, kind, default}] }` | M20: игровой диалог — многостраничный (кнопки действий + «Назад» на клиенте) или execute (поля ввода → `cmd/dialog.submit`) — **заготовка** |
 | `evt/upgrade/result` | `{ uid, ok, new_upgrade?, item_destroyed?, cost {} }` | итог улучшения |
 | `evt/craft/result` | `{ recipe_id, ok, made: [{uid, qty}], consumed [] }` | итог крафта |

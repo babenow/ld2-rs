@@ -602,6 +602,8 @@ impl Root {
                     .child(self.entities_block(cx, pal, &snap.location))
                     // M17/F30a: каст-бар инкрустации — внизу, над панелью.
                     .children(self.inscribe_bar(pal, &snap))
+                    // M22: прогресс-бар разделки (5 с) над hotbar.
+                    .when_some(self.harvest_bar(pal), |d, b| d.child(b))
                     .child(self.hotbar(cx, pal, &snap))
                     .child(self.exits_row(cx, pal, &snap.location))
                     .children((self.store.target.is_some()).then(|| {
@@ -1043,6 +1045,40 @@ impl Root {
             t(lang, Key::Examine).to_string(),
             Click::Examine(id.clone()),
         ));
+        // Снятие шкур (M22): пункты — при изученной профессии, ноже
+        // и флагах трупа; сделанные действия скрываются (флаги
+        // skin_done/gut_done приходят в extra трупа).
+        if entity.kind == EntityKind::Corpse {
+            if let Some(harv) = entity.extra.get("harvest") {
+                let snap = self.store.snapshot.as_ref();
+                let learned =
+                    snap.is_some_and(|s| s.char.professions.iter().any(|p| p.id == "skinning"));
+                let knife = snap.is_some_and(|s| {
+                    s.char
+                        .inventory
+                        .iter()
+                        .any(|i| i.item_type == "skinning_knife")
+                });
+                if learned && knife {
+                    if harv.get("skin").and_then(|v| v.as_bool()) == Some(true)
+                        && harv.get("skin_done").and_then(|v| v.as_bool()) != Some(true)
+                    {
+                        menu = menu.item(mk(
+                            t(lang, Key::SkinBtn).to_string(),
+                            Click::Harvest(id.clone(), "skin".to_string()),
+                        ));
+                    }
+                    if harv.get("gut").and_then(|v| v.as_bool()) == Some(true)
+                        && harv.get("gut_done").and_then(|v| v.as_bool()) != Some(true)
+                    {
+                        menu = menu.item(mk(
+                            t(lang, Key::GutBtn).to_string(),
+                            Click::Harvest(id.clone(), "gut".to_string()),
+                        ));
+                    }
+                }
+            }
+        }
         // M20/F20b: добыча ресурса; F20c: подбор предмета с земли.
         if entity.kind == EntityKind::Resource {
             menu = menu.item(mk(
@@ -1088,6 +1124,25 @@ impl Root {
     /// побег → руны → свитки/зелья. Каждая кнопка учитывает собственный
     /// кулдаун и глобальный (приоритет — max) и показывает причину
     /// недоступности в тултипе.
+    /// M22: прогресс-бар разделки трупа (сервер-джоб5 с) — над
+    /// hotbar; чистится по `evt/harvest/result` или ошибке.
+    fn harvest_bar(&self, pal: &Palette) -> Option<Div> {
+        let h = self.store.harvest.as_ref()?;
+        let elapsed = (self.now_ms() - h.started_ms).max(0);
+        let frac = (elapsed as f32 / 5_000.0).clamp(0.0, 1.0);
+        let label = if h.action == "skin" {
+            t(self.lang, Key::SkinBtn)
+        } else {
+            t(self.lang, Key::GutBtn)
+        };
+        Some(div().flex().flex_row().justify_center().child(bar(
+            frac,
+            format!("{label} · {}", h.name),
+            pal.accent,
+            pal,
+        )))
+    }
+
     fn hotbar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette, snap: &StateSnapshot) -> Div {
         let lang = self.lang;
         let rune_cost = self
@@ -1820,6 +1875,41 @@ impl Root {
                             } else {
                                 Click::UseItem(uid2)
                             },
+                        ));
+                    }
+                    col = col.child(line);
+                }
+            }
+        }
+        // Снятие шкур (M22): лут освежевания — отдельный блок
+        // «Внутри» (мясо/потроха), взятие как у обычного лута.
+        if let Some(inner) = detail["inner"].as_array() {
+            if !inner.is_empty() {
+                col = col.child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(t(lang, Key::InnerLabel)),
+                );
+                for item in inner {
+                    let uid = item["uid"].as_str().unwrap_or_default().to_string();
+                    let iname = item["name"].as_str().unwrap_or("?").to_string();
+                    let itype = item["type"].as_str().unwrap_or("?");
+                    let color = super::sheet::quality_color(item["def_id"].as_str())
+                        .map(rgb)
+                        .unwrap_or_else(|| rgb(pal.text));
+                    let mut line = div().flex().flex_row().gap_2().items_center().child(
+                        div()
+                            .text_color(color)
+                            .child(format!("• {iname} ({itype})")),
+                    );
+                    if !looted {
+                        let uid2 = uid.clone();
+                        line = line.child(btn(
+                            cx,
+                            t(lang, Key::TakeLoot).to_string(),
+                            pal.panel,
+                            pal.accent,
+                            Click::UseItem(uid2),
                         ));
                     }
                     col = col.child(line);
