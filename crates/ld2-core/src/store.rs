@@ -457,6 +457,10 @@ pub struct NpcDialogView {
     /// паритет магазина); чистится вместе с окном диалога.
     #[serde(default)]
     pub training_open: bool,
+    /// M22: открыта ли ИСТОРИЯ диалога (полная лента по кнопке в
+    /// статусбаре окна); в самом диалоге — только текущая реплика.
+    #[serde(default)]
+    pub history_open: bool,
 }
 
 /// M18/F44: обучение навыку у NPC в диалоге (ADR-009) — повышение ранга
@@ -531,6 +535,8 @@ impl NpcDialogView {
             .unwrap_or_default(),
             // M18/F44: панель обучения закрыта — открывает реплика.
             training_open: false,
+            // M22: история закрыта — открывает кнопка в статусбаре.
+            history_open: false,
         })
     }
 }
@@ -1810,7 +1816,11 @@ impl AppStore {
                 if let Some(gain) = w.gain.filter(|g| *g > 0) {
                     self.push_log(LogKind::Xp, format!("{name}: опыт +{gain}"));
                 }
-                if old.is_some_and(|(level, _)| w.profession.level > level) {
+                // Условие устойчиво: если записи в снапшоте ещё не
+                // было (old=None) — сравниваем с0, иначе повышение
+                // терялось (фикс: строка «+N» приходила, а об уровне —
+                // нет).
+                if w.profession.level > old.map(|(level, _)| level).unwrap_or(0) {
                     self.push_log(
                         LogKind::Xp,
                         format!("Уровень профессии {name}: {}", w.profession.level),
@@ -2592,6 +2602,56 @@ pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M22: журнал опыта и повышения уровня профессии — обе строки
+    /// приходят (воспроизводство: «+600» было, «Уровень…» — нет,
+    /// когда в снапшоте не было записи профессии).
+    #[test]
+    fn profession_xp_and_level_up_log_lines() {
+        let mut store = in_game();
+        let first = serde_json::json!({
+            "profession": {
+                "id": "skinning", "rank": 1, "level": 14,
+                "xp": 18, "xp_to_next": 53, "extra": {}
+            },
+            "name": "Снятие шкур",
+            "gain": 600
+        });
+        store.apply_event("evt/craft/profession", Some(first));
+        let log = |store: &AppStore| -> Vec<String> {
+            store.log.iter().map(|l| l.text.clone()).collect()
+        };
+        let lines = log(&store);
+        assert!(
+            lines.iter().any(|t| t == "Снятие шкур: опыт +600"),
+            "строка опыта: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|t| t == "Уровень профессии Снятие шкур: 14"),
+            "строка уровня (записи в снапшоте не было): {lines:?}"
+        );
+        // Повторное событие без повышения уровня — новой строки нет.
+        let second = serde_json::json!({
+            "profession": {
+                "id": "skinning", "rank": 1, "level": 14,
+                "xp": 18, "xp_to_next": 53, "extra": {}
+            },
+            "name": "Снятие шкур",
+            "gain": 10
+        });
+        store.apply_event("evt/craft/profession", Some(second));
+        let lines = log(&store);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|t| t.as_str() == "Уровень профессии Снятие шкур: 14")
+                .count(),
+            1,
+            "уровень логируется один раз: {lines:?}"
+        );
+    }
 
     /// M14/F4: глобальный кулдаун — 1 с; повтор не укорачивает окно.
     #[test]

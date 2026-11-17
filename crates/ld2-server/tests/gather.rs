@@ -170,9 +170,11 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         .iter()
         .find(|p| p["id"] == "mining")
         .expect("шахтёр в снапшоте");
-    assert!(
-        mining["level"].as_i64().unwrap_or(0) >= 4,
-        "уровень за добычу: {profs:?}"
+    // M22: не больше1 уровня за действие →3 добычи = уровень3.
+    assert_eq!(
+        mining["level"].as_i64().unwrap_or(0),
+        3,
+        "уровень за3 добычи: {profs:?}"
     );
     assert_eq!(mining["rank"], 1, "ранг без тренера не растёт");
     assert_eq!(mining["rank_span"], 50, "границы рангов в extra");

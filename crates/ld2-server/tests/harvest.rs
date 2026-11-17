@@ -162,7 +162,9 @@ async fn harvest_gates_gut_and_skin_flow() {
     let prof = c.wait_event("evt/craft/profession").await;
     assert_eq!(prof["payload"]["profession"]["id"], "skinning");
     let level = prof["payload"]["profession"]["level"].as_i64().unwrap_or(0);
-    assert!(level >= 2, "уровень от100 XP: {prof}");
+    // M22: не больше1 уровня за начисление (600 XP → уровень1,
+    // шкала зажата новым порогом).
+    assert_eq!(level, 1, "ровно1 уровень за действие: {prof}");
 
     // Лут: дроп волка (2) + шкура/обрезки (1…3 с критом) — общий
     // список; «Внутри» не тронут.

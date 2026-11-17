@@ -9,10 +9,12 @@ pub fn profession_level_xp(cfg: &crate::config::ProfessionsSection, level: u32) 
     ((cfg.level_xp_base as f64) * cfg.level_xp_growth.powi(level as i32)).round() as i64
 }
 
-/// M21: начислить XP профессии с **автоматическим ростом уровня** —
-/// остаток переносится на следующий уровень; на `max_level` опыт
-/// перестаёт копиться (→0). Ранг не меняется (его даёт тренер или
-/// награда квеста). → `(xp, level)`.
+/// M21/M22: начислить XP профессии → **не больше одного уровня за
+/// одно начисление** (указание заказчика), но **избыточный опыт
+/// переносится на следующий уровень** (шкала может быть «полной» —
+/// уровень даст следующее начисление; потери остатка нет). На
+/// `max_level` опыт перестаёт копиться (→0). Ранг не меняется (его
+/// даёт тренер или награда квеста). → `(xp, level)`.
 pub fn profession_level_up(
     cfg: &crate::config::ProfessionsSection,
     xp: i64,
@@ -24,13 +26,12 @@ pub fn profession_level_up(
     }
     let mut xp = (xp + gain).max(0);
     let mut level = level;
-    while level < cfg.max_level {
-        let need = profession_level_xp(cfg, level);
-        if xp < need {
-            break;
-        }
+    let need = profession_level_xp(cfg, level);
+    if xp >= need {
         xp -= need;
         level += 1;
+        // Излишек остаётся в шкале (переносится), но второй уровень
+        // за одно начисление не выдаётся.
     }
     if level >= cfg.max_level {
         xp = 0; // потолок: опыт не копится
@@ -53,13 +54,14 @@ pub fn harvest_crit(rank: u32) -> f64 {
 }
 
 /// Снятие шкур: опыт за «Снятие шкуры» (освежевание не даёт опыта) —
-/// зависит от требуемого уровня животного: `база = треб ×20`, далее
-/// множитель по разнице (уровень персонажа − требуемый):
+/// зависит от требуемого уровня животного: `база = 10 + треб ×1.5`,
+/// далее множитель по разнице (уровень персонажа − требуемый):
 /// −10 и ниже →×1.5, в пределах ±10 →×1.0, +10…+24 →×0.5,
-/// +25 и выше →×0. Животное с требуемым уровнем выше персонажа на25+
-/// разделать нельзя (гейт — на сервере).
+/// +25 и выше →×0; **потолок40 за действие** (указание заказчика:
+/// «максимум30-40»). Животное с требуемым уровнем выше персонажа на
+/// 25+ разделать нельзя (гейт — на сервере).
 pub fn harvest_xp_gain(required: u32, char_level: u32) -> i64 {
-    let base = f64::from(required) * 20.0;
+    let base = 10.0 + f64::from(required) * 1.5;
     let diff = f64::from(char_level) - f64::from(required);
     let mult = if diff <= -10.0 {
         1.5
@@ -70,7 +72,7 @@ pub fn harvest_xp_gain(required: u32, char_level: u32) -> i64 {
     } else {
         0.0
     };
-    (base * mult).round() as i64
+    ((base * mult).round() as i64).min(40)
 }
 
 /// M21: снимок профессии для wire (§6): `xp_to_next` — порог
@@ -581,22 +583,31 @@ mod tests {
         assert!((harvest_crit(9) - 0.25).abs() < 1e-9, "ранг зажат5");
     }
 
-    /// M22: опыт за снятие шкуры — база «треб ×20» × множитель
-    /// по разнице уровней (таблица docs/professions.md §3).
+    /// M22: опыт за снятие шкуры — база «10 + треб ×1.5» × множитель
+    /// по разнице уровней, **потолок40 за действие**
+    /// (таблица docs/professions.md §3).
     #[test]
     fn harvest_xp_gain_by_level_diff() {
-        // diff −5 (ниже требования) →×1.
-        assert_eq!(harvest_xp_gain(5, 0), 100);
+        // diff −5 (ниже требования) →×1: round(10 +5×1.5) = 18.
+        assert_eq!(harvest_xp_gain(5, 0), 18);
         // ровно на уровне →×1.
-        assert_eq!(harvest_xp_gain(5, 5), 100);
-        // diff −10 и ниже →×1.5.
-        assert_eq!(harvest_xp_gain(10, 0), 300);
+        assert_eq!(harvest_xp_gain(5, 5), 18);
+        // diff −10 и ниже →×1.5: round(25×1.5) = 38.
+        assert_eq!(harvest_xp_gain(10, 0), 38);
         // diff +10…+24 →×0.5.
-        assert_eq!(harvest_xp_gain(5, 15), 50);
-        assert_eq!(harvest_xp_gain(5, 29), 50);
+        assert_eq!(harvest_xp_gain(5, 15), 9);
+        assert_eq!(harvest_xp_gain(5, 29), 9);
         // diff +25 и выше →×0.
         assert_eq!(harvest_xp_gain(5, 30), 0);
         assert_eq!(harvest_xp_gain(1, 26), 0);
+        // Потолок: сколько бы ни было «в плюс», не больше40.
+        assert_eq!(harvest_xp_gain(40, 0), 40, "потолок40");
+        assert_eq!(harvest_xp_gain(200, 0), 40, "потолок40");
+        assert_eq!(
+            harvest_xp_gain(200, 200),
+            40,
+            "на уровне — база выше потолка"
+        );
     }
 
     /// M21: формула уровня `round(40 × 1.02^L)` — растёт монотонно.
@@ -616,15 +627,21 @@ mod tests {
         assert!((5_000..=6_000).contains(&top), "потолочный уровень: {top}");
     }
 
-    /// M21: уровень растёт автоматически с переносом остатка; на
-    /// max_level опыт перестаёт копиться.
+    /// M21/M22: не больше **одного уровня** за одно начисление, но
+    /// **избыточный опыт переносится** на следующий уровень; на
+    /// max_level опыт не копится.
     #[test]
-    fn profession_level_up_carries_remainder_and_caps() {
+    fn profession_level_up_one_level_and_carry() {
         let cfg = prof_cfg();
-        // 100 XP: −40 (L1) −41 (L2) → остаток19.
-        assert_eq!(profession_level_up(&cfg, 0, 0, 100), (19, 2));
-        // Остаток переносится, а не сгорает.
-        assert_eq!(profession_level_up(&cfg, 19, 2, 0), (19, 2));
+        // 100 XP при пороге40 → ровно +1 уровень, остаток60 — в шкале.
+        assert_eq!(profession_level_up(&cfg, 0, 0, 100), (60, 1));
+        // Без заполнения шкалы — только опыт.
+        assert_eq!(profession_level_up(&cfg, 10, 0, 20), (30, 0));
+        // Излишек (641 −41 =600) целиком переносится, но уровней
+        // за начисление всё равно один.
+        assert_eq!(profession_level_up(&cfg, 41, 1, 600), (600, 2));
+        // Следующее начисление: шкала была полной → снова +1.
+        assert_eq!(profession_level_up(&cfg, 600, 2, 10), (600 - 42 + 10, 3));
         // Потолок: на L250 опыт не копится.
         assert_eq!(profession_level_up(&cfg, 40, 249, 10_000), (0, 250));
         assert_eq!(profession_level_up(&cfg, 7, 250, 100), (0, 250));
