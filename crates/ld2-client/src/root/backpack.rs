@@ -131,13 +131,11 @@ fn tab_for_type(item_type: &str) -> BackpackTab {
         "weapon" | "staff" => BackpackTab::Weapon,
         "potion" => BackpackTab::Potion,
         "rune" | "scroll" => BackpackTab::Magic,
-        "herb" | "wood_oak" | "parchment" | "ink" | "ore_copper" | "branches" => {
-            BackpackTab::Material
-        }
+        "herb" | "wood_oak" | "parchment" | "ink" | "ore_copper" | "branches" | "hide_scraps"
+        | "hide" | "meat" | "offal" => BackpackTab::Material,
         // M20/F20b: инструменты добычи (топор/кирка/серп) — к инструментам.
-        "flask" | "chisel" | "quill" | "upgrade_stone" | "axe" | "pickaxe" | "sickle" => {
-            BackpackTab::Tool
-        }
+        "flask" | "chisel" | "quill" | "upgrade_stone" | "axe" | "pickaxe" | "sickle"
+        | "skinning_knife" => BackpackTab::Tool,
         "money" => BackpackTab::Currencies,
         "armor" | "shield" => BackpackTab::Armor,
         "artifact" => BackpackTab::Artifact,

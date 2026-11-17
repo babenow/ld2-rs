@@ -970,6 +970,56 @@
       "qty": 1
     },
     {
+      "id": "skinning_knife",
+      "type": "skinning_knife",
+      "name": "Нож для снятия шкур",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps",
+      "type": "hide_scraps",
+      "name": "Обрезки шкуры",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 2,
+      "qty": 1
+    },
+    {
+      "id": "hide",
+      "type": "hide",
+      "name": "Шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 12,
+      "qty": 1
+    },
+    {
+      "id": "meat",
+      "type": "meat",
+      "name": "Мясо",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 8,
+      "qty": 1
+    },
+    {
+      "id": "offal",
+      "type": "offal",
+      "name": "Потроха",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
       "id": "axe",
       "type": "axe",
       "name": "Топор",

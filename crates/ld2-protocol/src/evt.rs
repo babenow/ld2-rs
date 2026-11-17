@@ -551,6 +551,19 @@ pub struct DialogOpen {
     pub inputs: Vec<DialogInput>,
 }
 
+/// Снятие шкур: разделка завершена — клиент чистит прогресс-бар и
+/// пишет в журнал «Вы освежевали труп …»/«Вы сняли шкуру с трупа …»
+/// (`ok=false` — труп исчез, сообщения нет).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HarvestResult {
+    pub entity_id: String,
+    /// Имя животного (без префикса «Труп:»).
+    pub name: String,
+    /// `skin` | `gut`.
+    pub action: String,
+    pub ok: bool,
+}
+
 // ─── wire-типы (protocol.md §8) ──────────────────────────────────────────────
 
 impl_events!(
@@ -578,6 +591,7 @@ impl_events!(
     (ItemState, "evt/item/state"),
     (ItemDropped, "evt/item/dropped"),
     (ItemExpired, "evt/item/expired"),
+    (HarvestResult, "evt/harvest/result"),
     (DialogOpen, "evt/dialog/open"),
     (UpgradeResult, "evt/upgrade/result"),
     (CraftResult, "evt/craft/result"),

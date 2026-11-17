@@ -339,6 +339,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `state.resync` | `{last_state_version}` | `{}` (→ snapshot/delta) | + | восстановление |
 | `ping` | `{}` | `{}` (→ `evt/pong`) | + | RTT |
 | `time.sync` | `{}` | `{}` (→ `evt/time.sync`) | + | калибровка времени |
+| `corpse.harvest` | `{ entity_id, action: "skin"\|"gut" }` | `{ action, name }` | − | снятие шкур: разделка трупа животного — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result`); ошибки: `E_PROFESSION` (не изучена), `E_TOOL_MISSING` (нет ножа), `E_LEVEL_REQUIRED` (требуемый уровень выше на25+), `E_TARGET_GONE` (нет флагов/уже разделано/нет трупа), `E_COOLDOWN` (уже разделываете) |
 | `resource.gather` | `{ entity_id }` | `{}` | − | M20/F20b: добыча 1 единицы ресурса (инструмент + ранг профессии на сервере; отказы: `E_TOOL_MISSING`/`E_PROFESSION`/`E_TARGET_GONE`) |
 | `dialog.choice` | `{ dialog_id, page_id, action_id }` | `{}` | − | M20: выбор действия в игровом многостраничном диалоге (**заготовка**) |
 | `dialog.submit` | `{ dialog_id, values {id → значение} }` | `{ values }` | − | M20: ввод execute-диалога — сервер возвращает набор вводов обработчику (**заготовка**) |
@@ -389,6 +390,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/item/state` | `{ uid, patch }` | патч предмета (upgrade, sockets, qty) |
 | `evt/item/dropped` | `{ char_id, by_name, gender, qty, item_name }` | M20: выброс — журнал «{by} выбросил(а)…» / «Вы выбросили…» (всем в локации) |
 | `evt/item/expired` | `{ uid, name }` | M20: предмет в локации исчез по TTL — «{name} исчез» |
+| `evt/harvest/result` | `{ entity_id, name, action, ok }` | снятие шкур: итог разделки — журнал «Вы освежевали труп …»/«Вы сняли шкуру с трупа …» (при `ok`), прогресс-бар чистится; лут добавляется в труп (`evt/corpse/created` — обновление) |
 | `evt/dialog/open` | `{ id, kind: "page"\|"execute", title, pages: [{id, text, actions: [{id, label}]}], inputs: [{id, label, kind, default}] }` | M20: игровой диалог — многостраничный (кнопки действий + «Назад» на клиенте) или execute (поля ввода → `cmd/dialog.submit`) — **заготовка** |
 | `evt/upgrade/result` | `{ uid, ok, new_upgrade?, item_destroyed?, cost {} }` | итог улучшения |
 | `evt/craft/result` | `{ recipe_id, ok, made: [{uid, qty}], consumed [] }` | итог крафта |

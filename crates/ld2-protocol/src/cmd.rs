@@ -233,6 +233,15 @@ pub struct CraftReset {
     pub profession_id: String,
 }
 
+/// Снятие шкур: начать разделку трупа — сервер-джоб на5 с
+/// (`action`: `skin` — снять шкуру, `gut` — освежевать); результат —
+/// `evt/harvest/result`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CorpseHarvest {
+    pub entity_id: String,
+    pub action: String,
+}
+
 /// M20/F20b: добыча ресурса — взять 1 единицу из объекта-ресурса
 /// (инструмент и ранг профессии проверяет сервер).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -493,6 +502,7 @@ impl_commands!(
     (SocketInsert, "cmd/socket.insert", false),
     (SocketExtract, "cmd/socket.extract", false),
     (ResourceGather, "cmd/resource.gather", false),
+    (CorpseHarvest, "cmd/corpse.harvest", false),
     (DialogChoice, "cmd/dialog.choice", false),
     (DialogSubmit, "cmd/dialog.submit", false),
     (UpgradePreview, "cmd/upgrade.preview", true),

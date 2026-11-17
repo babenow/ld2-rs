@@ -141,6 +141,11 @@
             "min_s": 60,
             "max_s": 120
           },
+                    "harvest": {
+                      "level": 5,
+                      "skin": true,
+                      "gut": true
+                    },
                     "drops": [
             "potion_heal",
             "gold_coin"
@@ -421,6 +426,11 @@
             "min_s": 30,
             "max_s": 60
           },
+                    "harvest": {
+                      "level": 1,
+                      "skin": true,
+                      "gut": true
+                    },
                     "drops": [
             "gold_coin"
           ]
@@ -438,6 +448,11 @@
             "min_s": 30,
             "max_s": 60
           },
+                    "harvest": {
+                      "level": 1,
+                      "skin": true,
+                      "gut": true
+                    },
                     "drops": [
             "gold_coin"
           ]
@@ -455,6 +470,11 @@
             "min_s": 30,
             "max_s": 60
           },
+                    "harvest": {
+                      "level": 1,
+                      "skin": true,
+                      "gut": true
+                    },
                     "drops": [
             "gold_coin",
             "herb"
@@ -477,6 +497,11 @@
             "min_s": 60,
             "max_s": 120
           },
+                    "harvest": {
+                      "level": 4,
+                      "skin": true,
+                      "gut": true
+                    },
                     "drops": [
             "potion_heal",
             "gold_coin",
