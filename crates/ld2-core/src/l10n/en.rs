@@ -180,6 +180,7 @@ pub(super) fn t(key: Key) -> &'static str {
         SkinBtn => "Skin",
         GutBtn => "Gut",
         InnerLabel => "Inside",
+        DialogHistory => "History",
         ProfRank2 => "Apprentice",
         ProfRank3 => "Craftsman",
         ProfRank4 => "Expert",

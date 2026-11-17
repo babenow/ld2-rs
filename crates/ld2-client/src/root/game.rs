@@ -509,6 +509,9 @@ impl Root {
             self.shop_view(cx, pal, &dialog)
         } else if dialog.training_open {
             self.training_view(cx, pal, &dialog)
+        } else if dialog.history_open {
+            // M22: полная лента — по кнопке «История» в статусбаре.
+            self.dialog_history_view(pal, &dialog)
         } else {
             self.npc_dialog_view(cx, pal, &dialog)
         };
@@ -517,6 +520,18 @@ impl Root {
         // окна (статус-бар убран; «Квесты»/«Обучение» убраны по решению
         // пользователя). Тултипы — тексты l10n, что и были у кнопок.
         let mut leading = div().flex().flex_row().gap_1().items_center();
+        // M22: история диалога — кнопка в статусбаре окна; в самом
+        // диалоге показывается только текущая реплика.
+        leading = leading.child(
+            IconButton::new("ld2-npc-history", IconName::BookOpen)
+                .tooltip(t(lang, Key::DialogHistory))
+                .on_click(cx.listener(|root, _, _, cx| {
+                    if let Some(view) = root.store.npc_dialog.as_mut() {
+                        view.history_open = !view.history_open;
+                    }
+                    cx.notify();
+                })),
+        );
         if dialog.shop.is_some() || dialog.training_open {
             // Открыт магазин/обучение — возврат к транскрипту (иконка
             // «назад»); чистим обе панели (M18/F44).
@@ -528,6 +543,7 @@ impl Root {
                             view.shop = None;
                             view.shop_currency = None;
                             view.training_open = false;
+                            view.history_open = false;
                         }
                         cx.notify();
                     })),
@@ -1039,6 +1055,13 @@ impl Root {
                 this.update(acx, |root, cx| root.on_click(click.clone(), cx));
             })
         };
+        // Готовый пункт меню + действие (для иконок/отключения M22).
+        let mk_item = |item: MenuItem, click: Click| {
+            let this = this.clone();
+            item.on_click(move |_window, acx| {
+                this.update(acx, |root, cx| root.on_click(click.clone(), cx));
+            })
+        };
         let mut menu = Menu::new();
         if entity.kind == EntityKind::Npc {
             // M18/F35: диалог NPC — поговорить/квесты.
@@ -1051,9 +1074,29 @@ impl Root {
             t(lang, Key::Examine).to_string(),
             Click::Examine(id.clone()),
         ));
+        // M20/F20b: добыча ресурса (инструмент/ранг — на сервере).
+        if entity.kind == EntityKind::Resource {
+            menu = menu.item(mk(
+                t(lang, Key::GatherBtn).to_string(),
+                Click::Gather(id.clone()),
+            ));
+        }
+        // M20/F20c: подбор предмета с земли (extra.ground).
+        if entity.kind == EntityKind::Object
+            && entity.extra.get("ground").and_then(|v| v.as_bool()) == Some(true)
+        {
+            menu = menu.item(mk(
+                t(lang, Key::PickUpBtn).to_string(),
+                Click::UseItem(id.clone()),
+            ));
+        }
         // Снятие шкур (M22): пункты — при изученной профессии, ноже
         // и флагах трупа; сделанные действия скрываются (флаги
-        // skin_done/gut_done приходят в extra трупа).
+        // skin_done/gut_done приходят в extra трупа). Иконка пункта
+        // «Снять шкуру» показывает множитель опыта: недостаточный
+        // уровень (гейт25+) → Lock + отключение (по указанию
+        // заказчика — вместо цвета), ×1.5 → Sparkles, ×1 → Check,
+        // ×0.5 → Minus, ×0 → EyeOff.
         if entity.kind == EntityKind::Corpse {
             if let Some(harv) = entity.extra.get("harvest") {
                 let snap = self.store.snapshot.as_ref();
@@ -1066,40 +1109,48 @@ impl Root {
                         .any(|i| i.item_type == "skinning_knife")
                 });
                 if learned && knife {
+                    let level = snap
+                        .and_then(|s| s.char.professions.iter().find(|p| p.id == "skinning"))
+                        .map(|p| p.level as i64)
+                        .unwrap_or(0);
+                    let required = harv.get("level").and_then(|v| v.as_i64()).unwrap_or(1);
+                    let diff = level - required;
+                    let blocked = required - level >= 25;
                     if harv.get("skin").and_then(|v| v.as_bool()) == Some(true)
                         && harv.get("skin_done").and_then(|v| v.as_bool()) != Some(true)
                     {
-                        menu = menu.item(mk(
-                            t(lang, Key::SkinBtn).to_string(),
-                            Click::Harvest(id.clone(), "skin".to_string()),
-                        ));
+                        let icon = if blocked {
+                            IconName::Lock
+                        } else if diff <= -10 {
+                            IconName::Sparkles // ×1.5 — как раритетный
+                        } else if diff <= 9 {
+                            IconName::Check // ×1 — зелёный
+                        } else if diff <= 24 {
+                            IconName::Minus // ×0.5 — серый
+                        } else {
+                            IconName::EyeOff // ×0 — опыта нет
+                        };
+                        let item = MenuItem::new(t(lang, Key::SkinBtn)).icon(icon);
+                        menu = menu.item(if blocked {
+                            item.disabled(true)
+                        } else {
+                            mk_item(item, Click::Harvest(id.clone(), "skin".to_string()))
+                        });
                     }
                     if harv.get("gut").and_then(|v| v.as_bool()) == Some(true)
                         && harv.get("gut_done").and_then(|v| v.as_bool()) != Some(true)
                     {
-                        menu = menu.item(mk(
-                            t(lang, Key::GutBtn).to_string(),
-                            Click::Harvest(id.clone(), "gut".to_string()),
-                        ));
+                        let item = MenuItem::new(t(lang, Key::GutBtn));
+                        menu = menu.item(if blocked {
+                            item.icon(IconName::Lock).disabled(true)
+                        } else {
+                            mk_item(item, Click::Harvest(id.clone(), "gut".to_string()))
+                        });
                     }
                 }
             }
         }
-        // M20/F20b: добыча ресурса; F20c: подбор предмета с земли.
-        if entity.kind == EntityKind::Resource {
-            menu = menu.item(mk(
-                t(lang, Key::GatherBtn).to_string(),
-                Click::Gather(id.clone()),
-            ));
-        }
-        if entity.kind == EntityKind::Object
-            && entity.extra.get("ground").and_then(|v| v.as_bool()) == Some(true)
-        {
-            menu = menu.item(mk(
-                t(lang, Key::PickUpBtn).to_string(),
-                Click::UseItem(id.clone()),
-            ));
-        }
+
         if attackable {
             menu = menu.item(mk(
                 t(lang, Key::Attack).to_string(),
@@ -1629,43 +1680,33 @@ impl Root {
         let lang = self.lang;
         let now_ms = self.now_ms();
 
-        // M18/F46: stick-to-bottom — новая строка возвращает ленту вниз
-        // (паттерн журнала/чата): последнее сообщение всегда снизу.
-        let len = dialog.transcript.len();
-        if len != self.npc_seen {
-            self.npc_seen = len;
-            if len > 0 {
-                self.npc_scroll.scroll_to_bottom();
-            }
-        }
-
-        // ── Зона 1: история диалога — растёт снизу вверх, шрифт крупнее ──
-        let mut history = div().flex().flex_col().gap_2().justify_start();
-        for line in &dialog.transcript {
-            let text = if line.me {
-                format!("{}: {}", t(lang, Key::DialogYou), line.text)
-            } else {
-                line.text.clone()
-            };
-            history = history.child(
-                div()
-                    .text_size(px(15.0))
-                    .font_weight(if line.me {
-                        gpui::FontWeight::BOLD
+        // M22: верхняя строка (30 %) — только ТЕКУЩАЯ реплика
+        // (полная лента — кнопка «История» в статусбаре); контент
+        // длиннее рамки — прокрутка.
+        let top = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .min_h_0()
+            .child(match dialog.transcript.last() {
+                Some(line) => {
+                    let text = if line.me {
+                        format!("{}: {}", t(lang, Key::DialogYou), line.text)
                     } else {
-                        gpui::FontWeight::NORMAL
-                    })
-                    .text_color(rgb(if line.me { pal.accent } else { pal.text }))
-                    .child(text),
-            );
-        }
-        let history_zone = div().flex_grow_1().min_h_0().child(
-            ScrollArea::new("ld2-npc-history")
-                .vertical()
-                .flex_grow_1()
-                .min_h_0()
-                .child(history),
-        );
+                        line.text.clone()
+                    };
+                    div()
+                        .text_size(px(15.0))
+                        .font_weight(if line.me {
+                            gpui::FontWeight::BOLD
+                        } else {
+                            gpui::FontWeight::NORMAL
+                        })
+                        .text_color(rgb(if line.me { pal.accent } else { pal.text }))
+                        .child(text)
+                }
+                None => div(),
+            });
 
         // ── Зона 2: реплики персонажа и предложения NPC (внизу) ──
         let mut actions = div().flex().flex_col().gap_1();
@@ -1831,16 +1872,72 @@ impl Root {
             }
         }
 
-        // M18/F46: две горизонтальные зоны — история сверху (на весь
-        // остаток окна), реплики персонажа внизу у разделителя.
+        // M22: две горизонтальные строки —30 % текущая реплика
+        // сверху,70 % реплики персонажа/контент внизу; каждая с
+        // прокруткой при выходе за рамки (указание заказчика).
         div()
             .flex()
             .flex_col()
             .gap_2()
             .size_full()
-            .child(history_zone)
+            .child(
+                div().h(gpui::relative(0.3)).min_h_0().child(
+                    ScrollArea::new("ld2-npc-current")
+                        .vertical()
+                        .flex_grow_1()
+                        .min_h_0()
+                        .child(top),
+                ),
+            )
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
-            .child(actions)
+            .child(
+                div().h(gpui::relative(0.7)).min_h_0().child(
+                    ScrollArea::new("ld2-npc-replies")
+                        .vertical()
+                        .flex_grow_1()
+                        .min_h_0()
+                        .child(actions),
+                ),
+            )
+    }
+
+    /// M22: история диалога — полная лента (кнопка «История» в
+    /// статусбаре окна); stick-to-bottom как была у ленты.
+    fn dialog_history_view(&mut self, pal: &Palette, dialog: &NpcDialogView) -> Div {
+        let lang = self.lang;
+        let len = dialog.transcript.len();
+        if len != self.npc_seen {
+            self.npc_seen = len;
+            if len > 0 {
+                self.npc_scroll.scroll_to_bottom();
+            }
+        }
+        let mut history = div().flex().flex_col().gap_2().justify_start();
+        for line in &dialog.transcript {
+            let text = if line.me {
+                format!("{}: {}", t(lang, Key::DialogYou), line.text)
+            } else {
+                line.text.clone()
+            };
+            history = history.child(
+                div()
+                    .text_size(px(15.0))
+                    .font_weight(if line.me {
+                        gpui::FontWeight::BOLD
+                    } else {
+                        gpui::FontWeight::NORMAL
+                    })
+                    .text_color(rgb(if line.me { pal.accent } else { pal.text }))
+                    .child(text),
+            );
+        }
+        div().flex().flex_col().gap_2().size_full().child(
+            ScrollArea::new("ld2-npc-history")
+                .vertical()
+                .flex_grow_1()
+                .min_h_0()
+                .child(history),
+        )
     }
 
     fn examine_view(

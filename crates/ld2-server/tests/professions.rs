@@ -503,9 +503,10 @@ async fn craft_job_finishes_and_survives_restart() {
     let level = prof["payload"]["profession"]["level"].as_i64().unwrap_or(0);
     let xp = prof["payload"]["profession"]["xp"].as_i64().unwrap_or(0);
     assert_eq!(rank, 1, "ранг без тренера не растёт: {prof}");
-    assert!(
-        level >= 3,
-        "уровень за 2 крафта (level={level}, xp={xp}): {prof}"
+    // M22: не больше1 уровня за начисление; излишек XP переносится.
+    assert_eq!(
+        level, 1,
+        "ровно1 уровень за крафт (level={level}, xp={xp}): {prof}"
     );
 
     let seq = c2
