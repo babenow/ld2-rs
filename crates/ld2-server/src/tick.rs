@@ -867,7 +867,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         }
     };
 
-    let (xp, rank, max_attr) = match (
+    let (xp, rank, max_attr, total_xp, char_name, gender) = match (
         crate::db::skills::learned_one(pool, &work.char_id, &skill_id).await,
         crate::db::characters::get(pool, &work.char_id).await,
     ) {
@@ -876,7 +876,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
                 serde_json::from_value(row.attrs).unwrap_or_default();
             let max_attr = attrs.values().max().copied().unwrap_or(0);
             let (xp, rank) = learned.unwrap_or((0, 0));
-            (xp, rank, max_attr)
+            (xp, rank, max_attr, row.total_xp, row.name, row.gender)
         }
         (Err(e), _) | (_, Err(e)) => {
             warn!("тик (XP {}): {e}", work.char_id);
@@ -891,6 +891,32 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         if let Err(e) = crate::db::characters::add_total_xp(pool, &work.char_id, work.amount).await
         {
             warn!("тик (total_xp {}): {e}", work.char_id);
+        }
+        // M22: новый уровень персонажа — анонс в локации (своему
+        // персонажу клиент пишет «Вы получили…» по char_id).
+        let level_cfg = &state.config.gameplay.level;
+        let (old_level, ..) = crate::systems::level_for_total(total_xp, level_cfg);
+        let (new_level, ..) = crate::systems::level_for_total(total_xp + work.amount, level_cfg);
+        if new_level > old_level {
+            let payload = ld2_protocol::evt::CharLevelUp {
+                char_id: work.char_id.clone(),
+                name: char_name.clone(),
+                gender: gender.clone(),
+                level: new_level,
+            };
+            let text = crate::session::event_text(
+                "evt/char/level_up",
+                None,
+                serde_json::to_value(payload).unwrap_or_default(),
+            );
+            if !text.is_empty() {
+                let world = state.world.lock().expect("мир");
+                if let Some(loc) = world.char_location(&work.char_id) {
+                    for addr in world.chars_in_location(&loc) {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                }
+            }
         }
     }
 
@@ -1257,6 +1283,14 @@ async fn harvest_step(state: &SharedState) {
                                 None,
                                 serde_json::to_value(ld2_protocol::evt::CraftProfession {
                                     profession: snapshot,
+                                    name: crate::db::professions::profession_name(
+                                        &state.pool,
+                                        "skinning",
+                                    )
+                                    .await
+                                    .ok()
+                                    .flatten(),
+                                    gain: Some(gain),
                                 })
                                 .unwrap_or_default(),
                             );
@@ -1577,11 +1611,17 @@ async fn profession_xp_step(
     }
     let snapshot =
         crate::systems::profession_snapshot(cfg, &recipe.profession, xp, rank, level_new);
+    let name = crate::db::professions::profession_name(&state.pool, &recipe.profession)
+        .await
+        .ok()
+        .flatten();
     let text = crate::session::event_text(
         "evt/craft/profession",
         None,
         serde_json::to_value(ld2_protocol::evt::CraftProfession {
             profession: snapshot,
+            name,
+            gain: Some(gain),
         })
         .unwrap_or_default(),
     );

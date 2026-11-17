@@ -142,7 +142,7 @@
             "max_s": 120
           },
                     "harvest": {
-                      "level": 5,
+                      "level": 20,
                       "skin": true,
                       "gut": true
                     },

@@ -390,11 +390,12 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/item/state` | `{ uid, patch }` | патч предмета (upgrade, sockets, qty) |
 | `evt/item/dropped` | `{ char_id, by_name, gender, qty, item_name }` | M20: выброс — журнал «{by} выбросил(а)…» / «Вы выбросили…» (всем в локации) |
 | `evt/item/expired` | `{ uid, name }` | M20: предмет в локации исчез по TTL — «{name} исчез» |
+| `evt/char/level_up` | `{ char_id, name, gender, level }` | M22: новый уровень персонажа — журнал «Вы получили новый уровень!…» (своему) / «{имя} получил(а) новый уровень!» (в локации) |
 | `evt/harvest/result` | `{ entity_id, name, action, ok }` | снятие шкур: итог разделки — журнал «Вы освежевали труп …»/«Вы сняли шкуру с трупа …» (при `ok`), прогресс-бар чистится; лут добавляется в труп (`evt/corpse/created` — обновление) |
 | `evt/dialog/open` | `{ id, kind: "page"\|"execute", title, pages: [{id, text, actions: [{id, label}]}], inputs: [{id, label, kind, default}] }` | M20: игровой диалог — многостраничный (кнопки действий + «Назад» на клиенте) или execute (поля ввода → `cmd/dialog.submit`) — **заготовка** |
 | `evt/upgrade/result` | `{ uid, ok, new_upgrade?, item_destroyed?, cost {} }` | итог улучшения |
 | `evt/craft/result` | `{ recipe_id, ok, made: [{uid, qty}], consumed [] }` | итог крафта |
-| `evt/craft/profession` | `{ profession: { id, rank, level, xp, xp_to_next } }` | профессия изучена / уровень растёт / ранг повышен (M21: `level` — вторая шкала) |
+| `evt/craft/profession` | `{ profession: { id, rank, level, xp, xp_to_next }, name?, gain? }` | профессия изучена / уровень растёт / ранг повышен (M21: `level` — вторая шкала; M22: `name` — рус. имя и `gain` — полученный опыт → журнал «{name}: опыт +{n}»/«Уровень профессии {name}: {level}») |
 | `evt/quest/progress` | `{ quest: QuestState }` | прогресс цели |
 | `evt/quest/updated` | `{ quest: QuestState }` | смена состояния (взят/сдан/доступен) |
 
