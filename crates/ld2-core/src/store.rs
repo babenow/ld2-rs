@@ -434,6 +434,9 @@ pub struct NpcDialogView {
     /// M18/F44: обучение у этого NPC (ADR-009) — навыки с ценой.
     #[serde(default)]
     pub training: Vec<NpcTraining>,
+    /// M21: профессии этого NPC с ценой (изучение — craft.learn).
+    #[serde(default)]
+    pub professions: Vec<NpcProfession>,
     /// M18/F44: открыта ли панель обучения (реплика `action=train`,
     /// паритет магазина); чистится вместе с окном диалога.
     #[serde(default)]
@@ -453,6 +456,16 @@ pub struct NpcTraining {
     /// Плата предметами.
     #[serde(default)]
     pub items: Vec<NpcTrainingItem>,
+}
+
+/// M21: профессия, которой обучает NPC в диалоге — цена золотом
+/// (`price_profession`); изучение — `cmd/craft.learn`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcProfession {
+    pub id: String,
+    /// Цена обучения золотом; старый сервер без поля →0.
+    #[serde(default)]
+    pub gold: i64,
 }
 
 /// M18/F44: предмет платы за обучение.
@@ -496,6 +509,10 @@ impl NpcDialogView {
             shop_currency: None,
             training: serde_json::from_value(payload.get("training").cloned().unwrap_or_default())
                 .unwrap_or_default(),
+            professions: serde_json::from_value(
+                payload.get("professions").cloned().unwrap_or_default(),
+            )
+            .unwrap_or_default(),
             // M18/F44: панель обучения закрыта — открывает реплика.
             training_open: false,
         })

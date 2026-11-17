@@ -11,6 +11,7 @@ use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stat
 use ld2_core::l10n::{format_duration, t, tf, Key};
 use ld2_core::store::{
     crime_kind_title, filter_active_statuses, local_epoch, Act, AppStore, LogKind, NpcDialogView,
+    NpcProfession,
 };
 use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
@@ -397,6 +398,63 @@ impl Root {
                         },
                     )),
             );
+        }
+        // M21: профессии этого NPC (изучение — cmd/craft.learn); уже
+        // изученные не показываем — снапшот обновляется по ack.
+        let learned: Vec<String> = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| s.char.professions.iter().map(|p| p.id.clone()).collect())
+            .unwrap_or_default();
+        let teachable: Vec<&NpcProfession> = dialog
+            .professions
+            .iter()
+            .filter(|p| !learned.contains(&p.id))
+            .collect();
+        if !teachable.is_empty() {
+            col = col.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::ProfessionsTab)),
+            );
+            for entry in teachable {
+                let name = super::professions::prof_label(lang, &entry.id);
+                let cost = t(lang, Key::TrainingGold).replace("{n}", &entry.gold.to_string());
+                let profession_id = entry.id.clone();
+                col = col.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .items_center()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(pal.panel))
+                        .child(div().flex_grow_1().min_w_0().child(name))
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(pal.muted))
+                                .child(cost),
+                        )
+                        .child(act_btn(
+                            cx,
+                            t(lang, Key::LearnLabel),
+                            pal.accent,
+                            pal.accent_text,
+                            move |this, cx| {
+                                let cmd = ld2_protocol::cmd::CraftLearn {
+                                    profession_id: profession_id.clone(),
+                                };
+                                this.send_cmd(&cmd, Act::Learn);
+                                let _ = cx;
+                            },
+                        )),
+                );
+            }
         }
         // «К диалогу» — внизу слева (паритет панели магазина F41).
         col = col.child(div().flex_grow_1().min_h_0());
