@@ -404,6 +404,8 @@ pub struct Root {
     /// M14/F3: обычная прокрутка вкладок листа «Навыки»/«Профессии».
     skills_scroll: ScrollHandle,
     professions_scroll: ScrollHandle,
+    /// M22: прокрутка панели обучения в диалоге НПС.
+    training_scroll: ScrollHandle,
     /// M16/F29b: прокрутка тела окна рюкзака (сетка предметов).
     backpack_scroll: ScrollHandle,
     /// M18/F36: скролл тела окна квестов.
@@ -646,6 +648,7 @@ impl Root {
             npc_seen: 0,
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
+            training_scroll: ScrollHandle::new(),
             backpack_scroll: ScrollHandle::new(),
             quests_scroll: ScrollHandle::new(),
             params_scroll: ScrollHandle::new(),
