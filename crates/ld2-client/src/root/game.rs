@@ -1137,12 +1137,34 @@ impl Root {
         } else {
             t(self.lang, Key::GutBtn)
         };
-        Some(div().flex().flex_row().justify_center().child(bar(
-            frac,
-            format!("{label} · {}", h.name),
-            pal.accent,
-            pal,
-        )))
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .items_center()
+                .child(
+                    div()
+                        .w(px(BAR_WIDTH))
+                        .h(px(10.0))
+                        .rounded_md()
+                        .bg(rgb(pal.border))
+                        .child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(frac.clamp(0.0, 1.0)))
+                                .rounded_md()
+                                .bg(rgb(pal.accent)),
+                        ),
+                )
+                // Описание — под прогресс-баром (указание заказчика).
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(pal.muted))
+                        .child(format!("{label} · {}", h.name)),
+                ),
+        )
     }
 
     fn hotbar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette, snap: &StateSnapshot) -> Div {

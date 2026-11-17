@@ -364,6 +364,13 @@ pub struct CraftResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CraftProfession {
     pub profession: ProfessionSnapshot,
+    /// M22: имя профессии (из контента, рус.) — журнал клиента.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// M22: полученное за действие количество опыта (`None`/0 —
+    /// журнал «{name}: опыт +{n}» не пишется).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -564,6 +571,17 @@ pub struct HarvestResult {
     pub ok: bool,
 }
 
+/// M22: новый уровень персонажа — журнал: себе «Вы получили новый
+/// уровень!…», остальным в локации «{имя} получил(а) новый уровень!».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharLevelUp {
+    pub char_id: String,
+    pub name: String,
+    /// `male` | `female` — «получил/получила».
+    pub gender: String,
+    pub level: u32,
+}
+
 // ─── wire-типы (protocol.md §8) ──────────────────────────────────────────────
 
 impl_events!(
@@ -592,6 +610,7 @@ impl_events!(
     (ItemDropped, "evt/item/dropped"),
     (ItemExpired, "evt/item/expired"),
     (HarvestResult, "evt/harvest/result"),
+    (CharLevelUp, "evt/char/level_up"),
     (DialogOpen, "evt/dialog/open"),
     (UpgradeResult, "evt/upgrade/result"),
     (CraftResult, "evt/craft/result"),

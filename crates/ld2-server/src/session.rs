@@ -3184,10 +3184,16 @@ impl Session {
             } else {
                 let snapshot =
                     crate::systems::profession_snapshot(cfg, &prof, xp_new, rank, level_new);
+                let name = db::professions::profession_name(pool, &prof)
+                    .await
+                    .ok()
+                    .flatten();
                 let text = event_payload_text(
                     "evt/craft/profession",
                     &CraftProfession {
                         profession: snapshot,
+                        name,
+                        gain: Some(gain),
                     },
                 );
                 if let Some(text) = text {
@@ -7202,6 +7208,8 @@ impl Session {
             None,
             serde_json::to_value(CraftProfession {
                 profession: snapshot,
+                name: None,
+                gain: None,
             })
             .unwrap_or_default(),
         ));
@@ -7378,6 +7386,8 @@ impl Session {
             None,
             serde_json::to_value(CraftProfession {
                 profession: snapshot,
+                name: None,
+                gain: None,
             })
             .unwrap_or_default(),
         ));
@@ -8388,7 +8398,12 @@ impl Session {
             outs.push(out_event(
                 "evt/craft/profession",
                 None,
-                serde_json::to_value(CraftProfession { profession }).unwrap_or_default(),
+                serde_json::to_value(CraftProfession {
+                    profession,
+                    name: None,
+                    gain: None,
+                })
+                .unwrap_or_default(),
             ));
         }
         outs

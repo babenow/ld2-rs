@@ -52,6 +52,17 @@ pub async fn learn(pool: &PgPool, char_id: &str, profession_id: &str) -> Result<
     Ok(result.rows_affected() == 1)
 }
 
+/// Имя профессии из контента (рус.) — журнал клиента (M22).
+pub async fn profession_name(
+    pool: &PgPool,
+    profession_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT name FROM professions WHERE id = $1")
+        .bind(profession_id)
+        .fetch_optional(pool)
+        .await
+}
+
 /// Забыть профессию (сброс из окна профессий): `false` — не изучена.
 pub async fn forget(
     pool: &PgPool,

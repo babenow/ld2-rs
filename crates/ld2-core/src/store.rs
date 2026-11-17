@@ -1398,10 +1398,40 @@ impl AppStore {
                 }
                 vec![]
             }
+            "evt/char/level_up" => {
+                // M22: новый уровень — журнал: себе «Вы получили…»,
+                // остальным в локации «{имя} получил(а)…».
+                let Ok(up) = serde_json::from_value::<ld2_protocol::evt::CharLevelUp>(payload)
+                else {
+                    return vec![];
+                };
+                let mine = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.char.id == up.char_id);
+                if mine {
+                    self.push_log(
+                        LogKind::Xp,
+                        format!("Вы получили новый уровень! Уровень персонажа: {}", up.level),
+                    );
+                } else {
+                    let verb = if up.gender == "female" {
+                        "получила"
+                    } else {
+                        "получил"
+                    };
+                    self.push_log(LogKind::Xp, format!("{} {} новый уровень!", up.name, verb));
+                }
+                vec![]
+            }
             "evt/char/xp" => {
                 let Ok(xp) = serde_json::from_value::<CharXp>(payload) else {
                     return vec![];
                 };
+                // M22: опыт персонажа — отдельная строка в журнале.
+                if xp.amount > 0 {
+                    self.push_log(LogKind::Xp, format!("Опыт +{}", xp.amount));
+                }
                 // Обновляем лист: навык и остаток пула (ФР-04).
                 if let Some(snap) = self.snapshot.as_mut() {
                     if let Some(pool) = xp.pool_left {
@@ -1741,10 +1771,21 @@ impl AppStore {
                 #[derive(serde::Deserialize)]
                 struct WithProfession {
                     profession: ld2_protocol::types::ProfessionSnapshot,
+                    #[serde(default)]
+                    name: Option<String>,
+                    #[serde(default)]
+                    gain: Option<i64>,
                 }
                 let Ok(w) = serde_json::from_value::<WithProfession>(payload) else {
                     return vec![];
                 };
+                let old = self.snapshot.as_ref().and_then(|s| {
+                    s.char
+                        .professions
+                        .iter()
+                        .find(|p| p.id == w.profession.id)
+                        .map(|p| (p.level, p.rank))
+                });
                 if let Some(snap) = self.snapshot.as_mut() {
                     if let Some(p) = snap
                         .char
@@ -1757,13 +1798,24 @@ impl AppStore {
                         snap.char.professions.push(w.profession.clone());
                     }
                 }
-                self.push_log(
-                    LogKind::Loot,
-                    format!(
-                        "Профессия «{}»: ранг {}",
-                        w.profession.id, w.profession.rank
-                    ),
-                );
+                // M22: журнал на русском (имя из контента) — ранг
+                // только при смене, опыт и уровень профессии отдельно.
+                let name = w.name.clone().unwrap_or_else(|| w.profession.id.clone());
+                if old.is_none_or(|(_, rank)| rank != w.profession.rank) {
+                    self.push_log(
+                        LogKind::Loot,
+                        format!("Профессия «{name}»: ранг {}", w.profession.rank),
+                    );
+                }
+                if let Some(gain) = w.gain.filter(|g| *g > 0) {
+                    self.push_log(LogKind::Xp, format!("{name}: опыт +{gain}"));
+                }
+                if old.is_some_and(|(level, _)| w.profession.level > level) {
+                    self.push_log(
+                        LogKind::Xp,
+                        format!("Уровень профессии {name}: {}", w.profession.level),
+                    );
+                }
                 vec![]
             }
             "evt/party/updated" => {
