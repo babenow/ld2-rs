@@ -602,8 +602,6 @@ impl Root {
                     .child(self.entities_block(cx, pal, &snap.location))
                     // M17/F30a: каст-бар инкрустации — внизу, над панелью.
                     .children(self.inscribe_bar(pal, &snap))
-                    // M22: прогресс-бар разделки (5 с) над hotbar.
-                    .when_some(self.harvest_bar(pal), |d, b| d.child(b))
                     .child(self.hotbar(cx, pal, &snap))
                     .child(self.exits_row(cx, pal, &snap.location))
                     .children((self.store.target.is_some()).then(|| {
@@ -687,6 +685,9 @@ impl Root {
                     snap.char.xp_pool
                 )),
         );
+        // M22: прогресс-бар разделки — под панелью персонажа
+        // (ХП/ресурс; плавность — быстрый тик в tick(), пока активен).
+        col = col.when_some(self.harvest_bar(pal), |d, b| d.child(b));
 
         // M14/F1: «Сменить персонажа»/«Выйти» переехали в меню шапки.
 
@@ -1124,8 +1125,9 @@ impl Root {
     /// побег → руны → свитки/зелья. Каждая кнопка учитывает собственный
     /// кулдаун и глобальный (приоритет — max) и показывает причину
     /// недоступности в тултипе.
-    /// M22: прогресс-бар разделки трупа (сервер-джоб5 с) — над
-    /// hotbar; чистится по `evt/harvest/result` или ошибке.
+    /// M22: прогресс-бар разделки трупа (сервер-джоб5 с) — под
+    /// панелью персонажа (ХП/ресурс); чистится по
+    /// `evt/harvest/result` или ошибке.
     fn harvest_bar(&self, pal: &Palette) -> Option<Div> {
         let h = self.store.harvest.as_ref()?;
         let elapsed = (self.now_ms() - h.started_ms).max(0);

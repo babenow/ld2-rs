@@ -733,6 +733,9 @@ impl Root {
         // (из настроек сервера) отправляем cmd/upgrade.start; модалка
         // закроется по evt/upgrade/result.
         let upgrade_progress_active = self.upgrade_progress.is_some();
+        // M22: прогресс-бар разделки (5 с) должен идти плавно —
+        // держим быстрый тик (50 мс) с notify, пока он активен.
+        let harvest_active = self.store.harvest.is_some();
         if let Some((uid, preview_id, _started, ends)) = self.upgrade_progress.clone() {
             // M18/F54: камень мог выбыть за 3 с прогресса — старт без
             // него сервер отверг бы; сбрасываем, ничего не отправляя.
@@ -810,12 +813,23 @@ impl Root {
             // M18/F53: прогресс улучшения в диалоге.
             || self.upgrade_progress.is_some();
 
-        if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active {
+        if had_events
+            || cd_active
+            || exit_active
+            || inscribe_active
+            || upgrade_progress_active
+            || harvest_active
+        {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
         Duration::from_millis(
-            if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active
+            if had_events
+                || cd_active
+                || exit_active
+                || inscribe_active
+                || upgrade_progress_active
+                || harvest_active
             {
                 50
             } else {
