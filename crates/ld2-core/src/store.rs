@@ -101,6 +101,8 @@ pub enum Act {
     CraftRankUp,
     /// `cmd/craft.reset` (M21) — сброс профессии: убрать из снапшота.
     ProfessionReset,
+    /// `cmd/corpse.harvest` (M22) — старт разделки; ошибки тостом.
+    Harvest,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -224,6 +226,10 @@ pub struct AppStore {
     /// M20: открытый игровой диалог (заготовка: страницы/ввод из
     /// `evt/dialog/open`; окно — `PopupKind::Dialog`).
     pub dialog: Option<ld2_protocol::evt::DialogOpen>,
+    /// Снятие шкур (M22): прогресс активной разделки (5 с) для
+    /// прогресс-бара; ставится клиентом при отправке, чистится по
+    /// `evt/harvest/result` или ошибке.
+    pub harvest: Option<HarvestProgress>,
     /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
     pub inscribe: Option<String>,
     /// Смещение часов сервера (evt/time.sync): server = local + offset.
@@ -404,6 +410,16 @@ pub struct NpcShopTab {
 pub struct NpcShopView {
     #[serde(default)]
     pub tabs: Vec<NpcShopTab>,
+}
+
+/// Снятие шкур (M22): прогресс-бар разделки на клиенте — старт
+/// (epoch-мс отправки команды), действие и имя животного.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HarvestProgress {
+    pub started_ms: i64,
+    /// `skin` | `gut`.
+    pub action: String,
+    pub name: String,
 }
 
 /// M18/F35/F37/F42: открытое окно диалога NPC — payload ack
@@ -631,6 +647,7 @@ impl AppStore {
             sharpen_list: false,
             socketing: None,
             dialog: None,
+            harvest: None,
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
             time_offset: 0,
@@ -804,6 +821,11 @@ impl AppStore {
                 Act::Gather => self.world_error = Some(msg),
                 // Профессии (M21): ранг/сброс — тосты (у тренера/граница).
                 Act::CraftRankUp | Act::ProfessionReset => self.notice = Some(msg),
+                // Снятие шкур (M22): отказ до старта — чистим бар.
+                Act::Harvest => {
+                    self.harvest = None;
+                    self.world_error = Some(msg);
+                }
             }
             return vec![];
         }
@@ -872,7 +894,8 @@ impl AppStore {
             | Act::Trade
             | Act::DialogChoice
             | Act::DialogSubmit
-            | Act::Gather => {
+            | Act::Gather
+            | Act::Harvest => {
                 // результат событиями (§8); npc.talk/npc.reply
                 // обрабатываются ниже отдельными блоками (M18/F35/F37);
                 // диалоги (M20) — ack только подтверждает выбор/ввод.
@@ -1338,14 +1361,18 @@ impl AppStore {
                 };
                 let mut added = false;
                 if let Some(snap) = self.snapshot.as_mut() {
-                    if !snap
+                    match snap
                         .location
                         .entities
                         .iter()
-                        .any(|e| e.id == corpse.entity.id)
+                        .position(|e| e.id == corpse.entity.id)
                     {
-                        added = true;
-                        snap.location.entities.push(corpse.entity);
+                        // Обновление (M22: лут/флаги разделки) — замена.
+                        Some(pos) => snap.location.entities[pos] = corpse.entity,
+                        None => {
+                            added = true;
+                            snap.location.entities.push(corpse.entity);
+                        }
                     }
                 }
                 if added {
@@ -1542,6 +1569,24 @@ impl AppStore {
                     return vec![];
                 };
                 self.push_log(LogKind::Loot, format!("{} исчез", expired.name));
+                vec![]
+            }
+            "evt/harvest/result" => {
+                // Снятие шкур (M22): чистим бар, пишем в журнал.
+                let Ok(result) =
+                    serde_json::from_value::<ld2_protocol::evt::HarvestResult>(payload)
+                else {
+                    return vec![];
+                };
+                self.harvest = None;
+                if result.ok {
+                    let text = if result.action == "skin" {
+                        format!("Вы сняли шкуру с трупа {}", result.name)
+                    } else {
+                        format!("Вы освежевали труп {}", result.name)
+                    };
+                    self.push_log(LogKind::Loot, text);
+                }
                 vec![]
             }
             "evt/dialog/open" => {

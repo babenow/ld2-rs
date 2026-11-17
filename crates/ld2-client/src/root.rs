@@ -235,6 +235,8 @@ pub(crate) enum Click {
     LootCancel,
     /// M20/F20b: добыть объект-ресурс (`cmd/resource.gather`).
     Gather(String),
+    /// M22: разделить труп (`action`: skin|gut) — сервер-джоб5 с.
+    Harvest(String, String),
     CloseDetail,
     SwitchChar,
 }
@@ -1993,6 +1995,33 @@ impl Root {
                 let cmd = ld2_protocol::cmd::ResourceGather { entity_id: id };
                 match self.transport.send(&cmd) {
                     Ok(_) => self.store.on_world_sent(Act::Gather),
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::Harvest(id, action) => {
+                // Имя животного — из трупа снапшота (без «Труп:»).
+                let name = self
+                    .store
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.location.entities.iter().find(|e| e.id == id))
+                    .map(|e| e.name.strip_prefix("Труп: ").unwrap_or(&e.name).to_string())
+                    .unwrap_or_default();
+                let cmd = ld2_protocol::cmd::CorpseHarvest {
+                    entity_id: id,
+                    action: action.clone(),
+                };
+                match self.transport.send(&cmd) {
+                    Ok(_) => {
+                        self.store.on_world_sent(Act::Harvest);
+                        // Прогресс-бар — с момента отправки (5 с);
+                        // отказ сервера чистит Act::Harvest (ошибка).
+                        self.store.harvest = Some(ld2_core::store::HarvestProgress {
+                            started_ms: self.now_ms(),
+                            action,
+                            name,
+                        });
+                    }
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }

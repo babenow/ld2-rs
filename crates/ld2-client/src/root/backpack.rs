@@ -18,7 +18,7 @@ use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
-use super::sheet::{rarity_color, rarity_label};
+use super::sheet::rarity_label;
 use super::{scrollable_tab, PopupKind, Root};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
@@ -345,7 +345,7 @@ impl Root {
                 // (указание заказчика); слоты рун — их глифы.
                 .child(super::sheet::item_label_stack(
                     item,
-                    rarity_color(&item.rarity, pal),
+                    super::sheet::item_color(item, pal),
                 ));
             // ЛКМ — меню (после перетаскивания gpui подавляет клик; на
             // всякий случай — guard по активному drag), ПКМ — меню.

@@ -371,7 +371,7 @@ impl Root {
                         this.send_cmd(&cmd, Act::Preview);
                         cx.notify();
                     }))
-                    .child(item_label_row(item, rarity_color(&item.rarity, pal)))
+                    .child(item_label_row(item, item_color(item, pal)))
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
@@ -457,7 +457,7 @@ impl Root {
                         this.start_inscribe(rune.clone(), uid.clone());
                         cx.notify();
                     }))
-                    .child(item_label_row(item, rarity_color(&item.rarity, pal))),
+                    .child(item_label_row(item, item_color(item, pal))),
             );
         }
         if !found {
@@ -1392,7 +1392,7 @@ impl Root {
                 }
                 continue;
             };
-            let color = rarity_color(&item.rarity, pal);
+            let color = item_color(item, pal);
             // Отступ-заполнитель прижимает предмет к правому краю.
             // M18/F58f: подпись как в рюкзаке (указание заказчика) —
             // слоты второй строкой под названием (`item_label_stack`).
@@ -2089,7 +2089,8 @@ impl Root {
         };
         col = col.child(
             div()
-                .text_color(rgb(rarity_color(rarity, pal)))
+                .text_color(rgb(quality_color(detail["def_id"].as_str())
+                    .unwrap_or_else(|| rarity_color(rarity, pal))))
                 .child(header),
         );
         // M18/F58f: слоты — вторая строка под «редкость · тип · +N»,
@@ -3140,6 +3141,31 @@ pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
         "legendary" => 0x66_06_b2,
         _ => pal.text,
     }
+}
+
+/// Снятие шкур (M22): цвета **качества** шкур/обрезок — своя
+/// палитра (**не** цвета редкости — указание заказчика); качество =
+/// ранг профессии (`hide_q1..5` / `hide_scraps_q1..5`).
+pub(crate) fn quality_color(def_id: Option<&str>) -> Option<u32> {
+    let id = def_id?;
+    let tier = id
+        .strip_prefix("hide_q")
+        .or_else(|| id.strip_prefix("hide_scraps_q"))?
+        .parse::<u32>()
+        .ok()?;
+    Some(match tier {
+        1 => 0x7a_6a_55,
+        2 => 0x96_79_3f,
+        3 => 0xb8_86_0b,
+        4 => 0xda_a5_20,
+        5 => 0xff_d7_00,
+        _ => return None,
+    })
+}
+
+/// Цвет названия предмета: качество (снятие шкур) иначе редкость.
+pub(crate) fn item_color(item: &ItemSnapshot, pal: &Palette) -> u32 {
+    quality_color(item.def_id.as_deref()).unwrap_or_else(|| rarity_color(&item.rarity, pal))
 }
 
 /// M16/F29e: название редкости (l10n; неизвестная — как есть).

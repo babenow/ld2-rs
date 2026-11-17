@@ -69,6 +69,8 @@ pub async fn run(state: SharedState) {
             corpse_expire_step(&state).await;
             // M20: респавны мобов и статического лута по сроку.
             respawn_step(&state).await;
+            // Снятие шкур: готовые разделки (сервер-джобы5 с).
+            harvest_step(&state).await;
             // M18/F58c: заряды рун (режим `time`; `item` — без тикера).
             recharge_acc += 1.0;
             let interval_s = state.config.gameplay.magic.rune_recharge_s;
@@ -1168,6 +1170,131 @@ async fn respawn_step(state: &SharedState) {
             }
         }
     }
+}
+
+/// Снятие шкур: готовые разделки → лут в труп (шкуры — в общий
+/// список с качеством по рангу и критом, мясо/потроха — в отдельный
+/// «Внутри»), XP только за снятие шкуры (формула/множители — M22,
+/// docs/professions.md §3), итог персонажу `evt/harvest/result` и
+/// обновление трупа (`evt/corpse/created` — апсерт у клиента).
+async fn harvest_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let due = {
+        let mut world = state.world.lock().expect("мир");
+        world.due_harvests(now)
+    };
+    for job in due {
+        // Профессия персонажа: уровень/ранг (качество, крит, гейт
+        // уровней) — нет строки (сбросили посреди действия) → без XP.
+        let learned = crate::db::professions::learned(&state.pool, &job.char_id)
+            .await
+            .ok()
+            .and_then(|rows| rows.into_iter().find(|(id, _, _, _)| id == "skinning"));
+        let (level, rank) = learned
+            .as_ref()
+            .map(|(_, _, r, l)| ((*r).max(1) as u32, (*l).max(0) as u32))
+            .unwrap_or((1, 0));
+        // Труп: требуемый уровень — из флагов контента.
+        let required = {
+            let world = state.world.lock().expect("мир");
+            world
+                .corpse(&job.corpse_id)
+                .and_then(|c| {
+                    c.harvest
+                        .as_ref()
+                        .and_then(|h| h.get("level"))
+                        .and_then(|v| v.as_i64())
+                })
+                .unwrap_or(1)
+                .max(1) as u32
+        };
+        let finished = {
+            let mut world = state.world.lock().expect("мир");
+            world.finish_harvest(&job.corpse_id, &job.action, level, rank)
+        };
+        // Итог персонажу — всегда (ok=false: труп исчез/уже разделано).
+        let ok = finished.is_some();
+        let result = ld2_protocol::evt::HarvestResult {
+            entity_id: job.corpse_id.clone(),
+            name: job.name.clone(),
+            action: job.action.clone(),
+            ok,
+        };
+        let text = crate::session::event_text("evt/harvest/result", None, {
+            serde_json::to_value(result).unwrap_or_default()
+        });
+        if !text.is_empty() {
+            let world = state.world.lock().expect("мир");
+            world.send_to_char(&job.char_id, text);
+        }
+        let Some((corpse, _skin, _inner)) = finished else {
+            continue;
+        };
+        // XP — только за снятие шкуры (освежевание не даёт).
+        if job.action == "skin" {
+            if let Some((_, xp_old, rank_row, _)) = learned {
+                let gain = crate::systems::harvest_xp_gain(required, level);
+                if gain > 0 {
+                    let cfg = &state.config.gameplay.professions;
+                    let (xp_new, level_new) =
+                        crate::systems::profession_level_up(cfg, xp_old, level, gain);
+                    match crate::db::professions::grant_progress(
+                        &state.pool,
+                        &job.char_id,
+                        "skinning",
+                        xp_new,
+                        rank_row,
+                        level_new as i32,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            let snapshot = crate::systems::profession_snapshot(
+                                cfg, "skinning", xp_new, rank_row, level_new,
+                            );
+                            let text = crate::session::event_text(
+                                "evt/craft/profession",
+                                None,
+                                serde_json::to_value(ld2_protocol::evt::CraftProfession {
+                                    profession: snapshot,
+                                })
+                                .unwrap_or_default(),
+                            );
+                            if !text.is_empty() {
+                                let world = state.world.lock().expect("мир");
+                                world.send_to_char(&job.char_id, text);
+                            }
+                        }
+                        Err(e) => warn!("снятие шкур (XP skinning): {e}"),
+                    }
+                }
+            }
+        }
+        // Обновление трупа всем в локации (лут/флаги «сделано»).
+        let loot_count = corpse.loot.iter().filter(|s| s.is_some()).count()
+            + corpse.inner_loot.iter().filter(|s| s.is_some()).count();
+        let updated = ld2_protocol::evt::CorpseCreated {
+            entity: corpse.entity(),
+            loot_count: loot_count as u32,
+        };
+        let text = crate::session::event_text("evt/corpse/created", None, {
+            serde_json::to_value(updated).unwrap_or_default()
+        });
+        if !text.is_empty() {
+            let world = state.world.lock().expect("мир");
+            for addr in world.chars_in_location(&job_corpse_location(&world, &job.corpse_id)) {
+                world.send_to_char(&addr, text.clone());
+            }
+        }
+    }
+}
+
+/// Локация трупа для рассылки (нет трупа — рассылать некуда).
+fn job_corpse_location(world: &crate::world::World, corpse_id: &str) -> String {
+    world
+        .corpse(corpse_id)
+        .map(|c| c.location_id.clone())
+        .unwrap_or_default()
 }
 
 /// M20: выброшенные предметы истекают по `drop_ttl_s` → «{name} исчез»

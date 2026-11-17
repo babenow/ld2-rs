@@ -45,6 +45,13 @@ pub fn hide_chance(level: u32) -> f64 {
     (0.01 + 0.02 * f64::from(level)).min(0.6)
 }
 
+/// Снятие шкур: шанс **крита** — по рангу профессии (р1 →5 % …
+/// р5 →25 %); при крите в лут сверх обычного результата падает
+/// **+2 шкуры** текущего качества.
+pub fn harvest_crit(rank: u32) -> f64 {
+    f64::from(rank.clamp(1, 5)) * 0.05
+}
+
 /// Снятие шкур: опыт за «Снятие шкуры» (освежевание не даёт опыта) —
 /// зависит от требуемого уровня животного: `база = треб ×20`, далее
 /// множитель по разнице (уровень персонажа − требуемый):
@@ -558,6 +565,38 @@ mod tests {
             rank_up_gold_base: 200,
             rank_up_gold_growth: 1.5,
         }
+    }
+
+    /// M22: шанс шкуры растёт с уровнем (на старте почти ноль),
+    /// потолок60 %; крит — по рангу5…25 %.
+    #[test]
+    fn hide_chance_and_crit_scale() {
+        assert!((hide_chance(0) - 0.01).abs() < f64::EPSILON, "ур0 —1%");
+        assert!((hide_chance(10) - 0.21).abs() < 1e-9, "ур10 —21%");
+        assert!((hide_chance(25) - 0.51).abs() < 1e-9, "ур25 —51%");
+        assert!((hide_chance(30) - 0.6).abs() < 1e-9, "потолок60%");
+        assert!((hide_chance(250) - 0.6).abs() < 1e-9, "выше потолка");
+        assert!((harvest_crit(1) - 0.05).abs() < 1e-9, "р1 —5%");
+        assert!((harvest_crit(5) - 0.25).abs() < 1e-9, "р5 —25%");
+        assert!((harvest_crit(9) - 0.25).abs() < 1e-9, "ранг зажат5");
+    }
+
+    /// M22: опыт за снятие шкуры — база «треб ×20» × множитель
+    /// по разнице уровней (таблица docs/professions.md §3).
+    #[test]
+    fn harvest_xp_gain_by_level_diff() {
+        // diff −5 (ниже требования) →×1.
+        assert_eq!(harvest_xp_gain(5, 0), 100);
+        // ровно на уровне →×1.
+        assert_eq!(harvest_xp_gain(5, 5), 100);
+        // diff −10 и ниже →×1.5.
+        assert_eq!(harvest_xp_gain(10, 0), 300);
+        // diff +10…+24 →×0.5.
+        assert_eq!(harvest_xp_gain(5, 15), 50);
+        assert_eq!(harvest_xp_gain(5, 29), 50);
+        // diff +25 и выше →×0.
+        assert_eq!(harvest_xp_gain(5, 30), 0);
+        assert_eq!(harvest_xp_gain(1, 26), 0);
     }
 
     /// M21: формула уровня `round(40 × 1.02^L)` — растёт монотонно.

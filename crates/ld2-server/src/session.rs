@@ -233,6 +233,8 @@ impl Session {
             "cmd/socket.extract" => self.socket_extract(env, seq).await,
             // добыча ресурсов (M20/F20b)
             "cmd/resource.gather" => self.resource_gather(env, seq).await,
+            // снятие шкур (сервер-джоб5 с)
+            "cmd/corpse.harvest" => self.corpse_harvest(env, seq).await,
             // игровые диалоги (M20 — заготовка)
             "cmd/dialog.choice" => self.dialog_choice(env, seq).await,
             "cmd/dialog.submit" => self.dialog_submit(env, seq).await,
@@ -1027,11 +1029,17 @@ impl Session {
         // Динамический труп (M12.5): живёт в мире, не в строке локации.
         let dyn_loot = {
             let world = self.state.world.lock().expect("мир");
-            world
-                .dynamic_corpse(&cmd.entity_id)
-                .map(|c| (c.id.clone(), c.name.clone(), c.loot.clone()))
+            world.dynamic_corpse(&cmd.entity_id).map(|c| {
+                (
+                    c.id.clone(),
+                    c.name.clone(),
+                    c.loot.clone(),
+                    c.inner_loot.clone(),
+                    c.entity().extra,
+                )
+            })
         };
-        if let Some((corpse_id, corpse_name, slots)) = dyn_loot {
+        if let Some((corpse_id, corpse_name, slots, inner_slots, extra)) = dyn_loot {
             let mut loot = Vec::new();
             let mut remaining = 0usize;
             for (i, def_id) in slots.iter().enumerate() {
@@ -1063,6 +1071,38 @@ impl Session {
                 };
                 loot.push(item_snapshot(&row, &def));
             }
+            // Снятие шкур: лут освежевания — отдельный блок «Внутри»
+            // (uid `inner:<corpse>:<idx>` — взятие тем же take_loot).
+            let mut inner = Vec::new();
+            let mut inner_remaining = 0usize;
+            for (i, def_id) in inner_slots.iter().enumerate() {
+                let Some(def_id) = def_id else {
+                    continue;
+                };
+                inner_remaining += 1;
+                let uid = format!("inner:{corpse_id}:{i}");
+                let def = match db::items::def(&self.state.pool, def_id).await {
+                    Ok(Some(def)) => def,
+                    Ok(None) => {
+                        warn!("лут трупа {corpse_id}: нет определения {def_id}");
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!("entity.info (определение {def_id}): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                };
+                let row = db::items::ItemRow {
+                    uid,
+                    def_id: def_id.clone(),
+                    qty: def.qty,
+                    upgrade: 0,
+                    equipped_slot: None,
+                    sockets: serde_json::json!([]),
+                    bonuses: def.bonuses.clone(),
+                };
+                inner.push(item_snapshot(&row, &def));
+            }
             let entity = Entity {
                 id: corpse_id,
                 kind: ld2_protocol::types::EntityKind::Corpse,
@@ -1071,15 +1111,18 @@ impl Session {
                 tags: None,
                 was_player: None,
                 aggro: None,
-                extra: Default::default(),
+                extra,
             };
+            let looted = (slots.is_empty() || remaining == 0)
+                && (inner_slots.is_empty() || inner_remaining == 0);
             return vec![Self::ack_payload(
                 seq,
                 &serde_json::json!({
                     "entity": entity,
                     "loot": loot,
+                    "inner": inner,
                     "was_player": false,
-                    "looted": !slots.is_empty() && remaining == 0,
+                    "looted": looted,
                 }),
             )];
         }
@@ -2155,7 +2198,7 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
-        if cmd.item_uid.starts_with("loot:") {
+        if cmd.item_uid.starts_with("loot:") || cmd.item_uid.starts_with("inner:") {
             return self.take_loot(seq, &char_id, &cmd.item_uid).await;
         }
         // M20/F20c: предмет на земле (id `gN`) — подбор любым игроком
@@ -2293,8 +2336,146 @@ impl Session {
 
     /// Взятие лута сущности: `loot:<сущность>:<idx>` — однократно
     /// (`loot_taken`, D27), лимит слотов — из конфига (D25).
+    /// Снятие шкур: старт разделки — сервер-джоб на5 с (тиктаймер
+    /// шлёт `evt/harvest/result`); все проверки — до старта:
+    /// труп в локации с флагом действия и не сделан, профессия
+    /// изучена, нож в инвентаре, гейт уровней (треб − уровень <25),
+    /// нет активного джоба.
+    async fn corpse_harvest(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<ld2_protocol::cmd::CorpseHarvest>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if cmd.action != "skin" && cmd.action != "gut" {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректное действие")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let current = self.current_location(&char_id).await;
+        // Труп, флаги, «уже сделано» — в мире.
+        let (name, required) = {
+            let world = self.state.world.lock().expect("мир");
+            if world.harvest_job(&char_id).is_some() {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::Cooldown,
+                    "вы уже разделываете труп",
+                )];
+            }
+            let Some(corpse) = world.corpse(&cmd.entity_id) else {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "трупа нет")];
+            };
+            if corpse.location_id != current {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "трупа нет")];
+            }
+            let Some(harv) = corpse.harvest.as_ref() else {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::TargetGone,
+                    "это животное разделывать нельзя",
+                )];
+            };
+            let allowed = harv
+                .get(&cmd.action)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !allowed {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::TargetGone,
+                    "это животное разделывать нельзя",
+                )];
+            }
+            let done = if cmd.action == "skin" {
+                corpse.skin_done
+            } else {
+                corpse.gut_done
+            };
+            if done {
+                return vec![Self::err(seq, ErrorCode::ItemGone, "уже разделано")];
+            }
+            let required = harv
+                .get("level")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1)
+                .clamp(1, 100) as u32;
+            let name = corpse
+                .name
+                .strip_prefix("Труп: ")
+                .unwrap_or(&corpse.name)
+                .to_string();
+            (name, required)
+        };
+        // Профессия изучена → уровень (гейт: треб − уровень <25).
+        let learned = match db::professions::learned(&self.state.pool, &char_id).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!("harvest (профессии): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let Some((_, _, _, level)) = learned.into_iter().find(|(id, _, _, _)| id == "skinning")
+        else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Profession,
+                "профессия не изучена",
+            )];
+        };
+        let level = level.max(0) as u32;
+        if required.saturating_sub(level) >= 25 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::LevelRequired,
+                format!(
+                    "не хватает {} уровней (требуется {required})",
+                    required.saturating_sub(level)
+                ),
+            )];
+        }
+        // Нож для снятия шкур (паритет инструмента крафта).
+        let has_knife =
+            match db::items::has_item_type(&self.state.pool, &char_id, "skinning_knife").await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("harvest (нож): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+        if !has_knife {
+            return vec![Self::err(
+                seq,
+                ErrorCode::ToolMissing,
+                "нужен нож для снятия шкур",
+            )];
+        }
+        // Старт джоба (5 с).
+        let at = crate::time::now_epoch() + 5;
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.start_harvest(crate::world::HarvestJob {
+                char_id: char_id.clone(),
+                corpse_id: cmd.entity_id.clone(),
+                action: cmd.action.clone(),
+                name: name.clone(),
+                at,
+            });
+        }
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "action": cmd.action, "name": name }),
+        )]
+    }
+
     async fn take_loot(&mut self, seq: u32, char_id: &str, loot_uid: &str) -> Vec<Out> {
-        let Some(rest) = loot_uid.strip_prefix("loot:") else {
+        // Снятие шкур: `inner:` — лут освежевания («Внутри»),
+        // `loot:` — общий список (дроп/шкуры).
+        let inner = loot_uid.starts_with("inner:");
+        let Some(rest) = loot_uid.strip_prefix(if inner { "inner:" } else { "loot:" }) else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "некорректный uid лута")];
         };
         let Some((entity_id, idx)) = rest.rsplit_once(':') else {
@@ -2308,9 +2489,10 @@ impl Session {
         // Динамический труп (M12.5): слот в памяти; лимит — до изъятия.
         let dynamic = {
             let world = self.state.world.lock().expect(" мир");
-            world
-                .dynamic_corpse(entity_id)
-                .and_then(|c| c.loot.get(idx).cloned())
+            world.dynamic_corpse(entity_id).and_then(|c| {
+                let slots = if inner { &c.inner_loot } else { &c.loot };
+                slots.get(idx).cloned()
+            })
         };
         if let Some(slot) = dynamic {
             let Some(def_id) = slot else {
@@ -2357,7 +2539,7 @@ impl Session {
             // обработка последовательна, но проверка честная).
             let took = {
                 let mut world = self.state.world.lock().expect("мир");
-                world.take_dynamic_loot(entity_id, idx)
+                world.take_dynamic_slot(entity_id, idx, inner)
             };
             if took.is_none() {
                 return vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")];

@@ -110,6 +110,9 @@ pub struct LiveMob {
     pub respawn: Option<(i64, i64)>,
     /// M20: стартовый HP из сида — восстанавливается при респавне.
     pub hp_start: i64,
+    /// Снятие шкур: флаги разделки из контента (`harvest`:
+    /// `{level, skin, gut}`) — переходят в труп при убийстве.
+    pub harvest: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl LiveMob {
@@ -144,6 +147,29 @@ pub struct LiveCorpse {
     pub loot: Vec<Option<String>>,
     /// M20: когда труп создан (epoch-с) — TTL-удаление (`corpse_ttl_s`).
     pub born_at: i64,
+    /// Снятие шкур: флаги разделки животного (из контента моба);
+    /// `None` — разделывать нельзя.
+    pub harvest: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Уже снята шкура / уже освежено (каждое — один раз).
+    pub skin_done: bool,
+    pub gut_done: bool,
+    /// Лут **освежевания** (мясо/потроха) — отдельный блок «Внутри»
+    /// в окне осмотра, не в общем списке.
+    pub inner_loot: Vec<Option<String>>,
+}
+
+/// Снятие шкур: активная разделка (сервер-джоб; ключ в мире —
+/// персонаж, одно действие за раз).
+#[derive(Debug, Clone)]
+pub struct HarvestJob {
+    pub char_id: String,
+    pub corpse_id: String,
+    /// `skin` | `gut`.
+    pub action: String,
+    /// Имя животного (без «Труп:») — для журнала клиента.
+    pub name: String,
+    /// Epoch-с окончания (старт +5 с).
+    pub at: i64,
 }
 
 /// M20/F20b: объект-ресурс в локации (жила/дерево/трава): `current`
@@ -207,7 +233,16 @@ pub struct GroundItem {
 
 impl LiveCorpse {
     /// Проводной вид §6 (счётчик лута — в `evt/corpse/created.loot_count`).
+    /// Снятие шкур: флаги `harvest` (+`skin_done`/`gut_done`) — клиент
+    /// по ним решает, показывать ли пункты меню.
     pub fn entity(&self) -> Entity {
+        let mut extra = serde_json::Map::new();
+        if let Some(h) = &self.harvest {
+            let mut h = h.clone();
+            h.insert("skin_done".into(), serde_json::json!(self.skin_done));
+            h.insert("gut_done".into(), serde_json::json!(self.gut_done));
+            extra.insert("harvest".into(), serde_json::Value::Object(h));
+        }
         Entity {
             id: self.id.clone(),
             kind: EntityKind::Corpse,
@@ -216,7 +251,7 @@ impl LiveCorpse {
             tags: None,
             was_player: None,
             aggro: None,
-            extra: Default::default(),
+            extra,
         }
     }
 }
@@ -319,6 +354,9 @@ pub struct World {
     entity_respawn: HashMap<String, (i64, i64)>,
     /// M20/F20b: объекты-ресурсы локаций (`current` — состояние мира).
     resources: HashMap<String, ResourceNode>,
+    /// Снятие шкур: активные разделки (ключ — персонаж, одна за раз;
+    /// сервер-джоб на5 с).
+    harvest_jobs: HashMap<String, HarvestJob>,
 }
 
 impl World {
@@ -582,6 +620,7 @@ impl World {
                     bleed_src: None,
                     respawn,
                     hp_start,
+                    harvest: extra.get("harvest").and_then(|v| v.as_object()).cloned(),
                 };
                 // M20: шаблон сида — источник данных при респавне.
                 self.mob_seed.insert(e.id.clone(), mob.clone());
@@ -873,6 +912,10 @@ impl World {
                 name: format!("Труп: {}", mob.name),
                 loot: loot.into_iter().map(Some).collect(),
                 born_at: crate::time::now_epoch(),
+                harvest: mob.harvest.clone(),
+                skin_done: false,
+                gut_done: false,
+                inner_loot: Vec::new(),
             },
         );
         // M20: респавн-диапазон моба → очередь возрождений.
@@ -960,6 +1003,99 @@ impl World {
         due.into_iter()
             .filter_map(|id| self.corpses.remove(&id))
             .collect()
+    }
+
+    // ─── Снятие шкур: сервер-джобы разделки (5 с) ─────────────────────────
+
+    pub fn harvest_job(&self, char_id: &str) -> Option<&HarvestJob> {
+        self.harvest_jobs.get(char_id)
+    }
+
+    /// Запустить разделку (вызывающий проверил все условия).
+    pub fn start_harvest(&mut self, job: HarvestJob) {
+        self.harvest_jobs.insert(job.char_id.clone(), job);
+    }
+
+    /// Джобы, срок которых наступил (извлекаются из очереди).
+    pub fn due_harvests(&mut self, now: i64) -> Vec<HarvestJob> {
+        let due: Vec<String> = self
+            .harvest_jobs
+            .iter()
+            .filter(|(_, j)| j.at <= now)
+            .map(|(c, _)| c.clone())
+            .collect();
+        due.into_iter()
+            .filter_map(|c| self.harvest_jobs.remove(&c))
+            .collect()
+    }
+
+    /// Завершить разделку: отметить «сделано» и добавить лут —
+    /// `skin`: шкура со шансом `hide_chance(level)` иначе обрезки,
+    /// **качество = ранг** (`hide_q{rank}`/`hide_scraps_q{rank}`),
+    /// крит по рангу → **+2 шкуры** сверх; `gut`: мясо (25 %) либо
+    /// потроха → в **отдельный** `inner_loot` («Внутри»).
+    /// → `(обновлённый труп, [шкуры], [внутри])`; `None` — труп
+    /// исчез или действие уже сделано.
+    pub fn finish_harvest(
+        &mut self,
+        corpse_id: &str,
+        action: &str,
+        level: u32,
+        rank: u32,
+    ) -> Option<(LiveCorpse, Vec<String>, Vec<String>)> {
+        let corpse = self.corpses.get_mut(corpse_id)?;
+        let rank = rank.clamp(1, 5);
+        match action {
+            "skin" => {
+                if corpse.skin_done {
+                    return None;
+                }
+                corpse.skin_done = true;
+                let def = if roll_chance(crate::systems::hide_chance(level)) {
+                    format!("hide_q{rank}")
+                } else {
+                    format!("hide_scraps_q{rank}")
+                };
+                let mut skin = vec![def.clone()];
+                corpse.loot.push(Some(def));
+                // Крит (шанс по рангу): +2 шкуры текущего качества.
+                if roll_chance(crate::systems::harvest_crit(rank)) {
+                    for _ in 0..2 {
+                        let d = format!("hide_q{rank}");
+                        corpse.loot.push(Some(d.clone()));
+                        skin.push(d);
+                    }
+                }
+                Some((corpse.clone(), skin, Vec::new()))
+            }
+            "gut" => {
+                if corpse.gut_done {
+                    return None;
+                }
+                corpse.gut_done = true;
+                let def = if roll_chance(0.25) { "meat" } else { "offal" };
+                corpse.inner_loot.push(Some(def.to_string()));
+                Some((corpse.clone(), Vec::new(), vec![def.to_string()]))
+            }
+            _ => None,
+        }
+    }
+
+    /// Взять слот лута трупа (`loot:` — общий список, `inner:` —
+    /// «Внутри»); `None` — уже взят/нет слота.
+    pub fn take_dynamic_slot(
+        &mut self,
+        corpse_id: &str,
+        index: usize,
+        inner: bool,
+    ) -> Option<String> {
+        let corpse = self.corpses.get_mut(corpse_id)?;
+        let slot = if inner {
+            corpse.inner_loot.get_mut(index)?
+        } else {
+            corpse.loot.get_mut(index)?
+        };
+        slot.take()
     }
 
     // ─── M20: очередь возрождений ──────────────────────────────────────────
