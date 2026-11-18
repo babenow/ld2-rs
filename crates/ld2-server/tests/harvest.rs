@@ -6,6 +6,7 @@
 mod common;
 
 use common::in_world;
+use ld2_test_kit::WsClient;
 use serde_json::json;
 
 /// Выдать предмет dev-сценарием → uid.
@@ -338,4 +339,157 @@ async fn harvest_blocks_character_actions() {
         .send("cmd/location.move", json!({ "exit_id": "e_south" }))
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "после разделки можно");
+}
+
+/// Сделать аккаунт админом: роль читается при выдаче сессии — значит
+/// до **повторного** входа (паттерн tests/admin.rs).
+async fn make_admin(db_url: &str, login: &str) {
+    let cfg = common::test_config(db_url, |_| {});
+    let pool = ld2_server::db::connect(&cfg.database).await.expect("БД");
+    let n = sqlx::query("UPDATE accounts SET role = 'admin' WHERE login = $1")
+        .bind(login)
+        .execute(&pool)
+        .await
+        .expect("UPDATE role")
+        .rows_affected();
+    assert_eq!(n, 1, "аккаунт найден");
+    pool.close().await;
+}
+
+/// Мир + админ: повторный вход перечитывает роль из БД.
+async fn in_world_admin(ws: &str, db_url: &str) -> (WsClient, String, String) {
+    let (mut c, login, char_id) = in_world(ws).await;
+    make_admin(db_url, &login).await;
+    let seq = c.send("cmd/auth.logout", json!({})).await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "logout");
+    let seq = c
+        .send(
+            "cmd/auth.login",
+            json!({ "login": login, "password": "longenough1" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "relogin");
+    c.wait_event("evt/session.start").await;
+    let seq = c
+        .send("cmd/char.select", json!({ "char_id": char_id }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "select");
+    c.wait_event("evt/state/snapshot").await;
+    (c, login, char_id)
+}
+
+/// Убить крысу на складе → id трупа.
+async fn kill_rat(c: &mut ld2_test_kit::WsClient, mob: &str) -> String {
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": mob }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "атака {mob}");
+    let corpse = c.wait_event("evt/corpse/created").await;
+    let id = corpse["payload"]["entity"]["id"]
+        .as_str()
+        .expect("id трупа")
+        .to_string();
+    c.wait_event("evt/combat/end").await;
+    id
+}
+
+/// M24: старт разделки на ДРУГОМ трупе разрешён и прерывает текущую
+/// действие — шкура брошенного трупа портится (повтор снятия невозможен,
+/// gut повторить можно); повтор на том же трупе — E_COOLDOWN.
+/// Склад: рядом агрессивная огромная крыса — идём в «режиме бога»,
+/// чтобы урон не прервал разделку раньше времени.
+#[tokio::test]
+async fn harvest_switch_to_another_corpse_interrupts_and_ruins() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world_admin(&ws, &db_url).await;
+
+    // Режим бога: агрессивная крыса склада не должна уроном
+    // прервать разделку (урон прерывает — M24).
+    let seq = c
+        .send("cmd/admin.god_mode", json!({ "enabled": true }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "god mode");
+
+    // Профессия и нож — в деревне (спавн здесь же).
+    give_gold(&mut c, 1000).await;
+    let seq = c
+        .send("cmd/craft.learn", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "learn skinning");
+    c.wait_event("evt/craft/profession").await;
+    give(&mut c, "skinning_knife").await;
+
+    // Склад: деревня → город → юг → склад (без кулдауна движения).
+    for exit in ["e_city", "e_south", "e_east"] {
+        let seq = c
+            .send("cmd/location.move", json!({ "exit_id": exit }))
+            .await;
+        assert_eq!(c.ack(seq).await["result"], "ok", "переход {exit}");
+    }
+
+    // Два трупа неагрессивных крыс (6 hp — умирают за 1–2 раунда).
+    let corpse_a = kill_rat(&mut c, "m_rat_1").await;
+    let corpse_b = kill_rat(&mut c, "m_rat_2").await;
+
+    // Освежевание A стартовало.
+    let ack = harvest(&mut c, &corpse_a, "gut").await;
+    assert_eq!(ack["result"], "ok", "старт gut A: {ack}");
+
+    // Переключение на снятие шкуры с B: сервер шлёт итог прерывания
+    // и обновление трупа A ДО ack — собираем все три сообщения.
+    let seq = c
+        .send(
+            "cmd/corpse.harvest",
+            json!({ "entity_id": corpse_b, "action": "skin" }),
+        )
+        .await;
+    let (ack, interrupted, updated) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut ack = None;
+            let mut interrupted = None;
+            let mut updated = None;
+            while ack.is_none() || interrupted.is_none() || updated.is_none() {
+                let v = c.recv_json().await;
+                match v["type"].as_str() {
+                    Some("ack") if v["seq"] == seq => ack = Some(v),
+                    Some("evt/harvest/result") => interrupted = Some(v),
+                    Some("evt/corpse/created") if v["payload"]["entity"]["id"] == corpse_a => {
+                        updated = Some(v);
+                    }
+                    _ => {}
+                }
+            }
+            (ack.unwrap(), interrupted.unwrap(), updated.unwrap())
+        })
+        .await
+        .expect("ответ на переключение");
+    assert_eq!(ack["result"], "ok", "переключение: {ack}");
+    assert_eq!(
+        interrupted["payload"]["entity_id"], corpse_a,
+        "итог прерывания — по A"
+    );
+    assert_eq!(interrupted["payload"]["ok"], false, "A прервано");
+    assert_eq!(interrupted["payload"]["ruined"], true, "шкура A испорчена");
+    assert_eq!(
+        updated["payload"]["entity"]["harvest"]["skin_done"], true,
+        "флаги трупа A обновлены в локации"
+    );
+
+    // Снятие шкуры с B завершается как обычно.
+    let result = harvest_result(&mut c).await;
+    assert_eq!(result["payload"]["ok"], true, "skin B готов: {result}");
+    assert_eq!(result["payload"]["entity_id"], corpse_b, "итог по B");
+
+    // A: снять шкуру нельзя (испорчена), gut повторить можно.
+    let ack = harvest(&mut c, &corpse_a, "skin").await;
+    assert_eq!(
+        ack["error"]["code"], "E_ITEM_GONE",
+        "шкура A испорчена: {ack}"
+    );
+    let ack = harvest(&mut c, &corpse_a, "gut").await;
+    assert_eq!(ack["result"], "ok", "gut A повторно: {ack}");
 }

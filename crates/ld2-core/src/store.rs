@@ -448,6 +448,10 @@ pub struct HarvestProgress {
     /// `skin` | `gut`.
     pub action: String,
     pub name: String,
+    /// Труп-источник (M24): `evt/harvest/result` гасит бар только при
+    /// совпадении — итог прерванного переключением действия чужого
+    /// трупа новый бар не трогает.
+    pub entity_id: String,
 }
 
 /// M18/F35/F37/F42: открытое окно диалога NPC — payload ack
@@ -1689,7 +1693,16 @@ impl AppStore {
                 else {
                     return vec![];
                 };
-                self.harvest = None;
+                // M24: бар гаснет только по итогу СВОЕГО трупа —
+                // при переключении итог прерванного действия чужого
+                // трупа новый бар не гасит.
+                if self
+                    .harvest
+                    .as_ref()
+                    .is_some_and(|h| h.entity_id == result.entity_id)
+                {
+                    self.harvest = None;
+                }
                 if result.ok {
                     // M23: в лут трупа добавились шкуры/мясо — окно
                     // подятия должно увидеть их без переоткрытия.
