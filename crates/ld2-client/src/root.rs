@@ -637,10 +637,11 @@ impl Root {
                 delta: (0.0, -30.0),
                 ..PopupState::new((880.0, 620.0))
             },
-            // M23: окно подятия — два столбца (лут | рюкзак).
+            // M23: окно подятия — два столбца (лут | рюкзак);
+            // правая колонка шире — под вкладки-фильтры рюкзака.
             pickup_popup: PopupState {
                 delta: (40.0, -30.0),
-                ..PopupState::new((880.0, 560.0))
+                ..PopupState::new((1040.0, 600.0))
             },
             pickup_sel: None,
             pickup_id: None,
@@ -1570,7 +1571,7 @@ impl Root {
             PopupKind::Quantity => (400.0, 280.0),
             PopupKind::Dialog => (560.0, 460.0),
             PopupKind::Professions => (880.0, 620.0),
-            PopupKind::LootPickup => (880.0, 560.0),
+            PopupKind::LootPickup => (1040.0, 600.0),
         }
     }
 
