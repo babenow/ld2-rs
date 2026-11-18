@@ -45,6 +45,9 @@ pub enum Act {
     Attack,
     /// `entity.info` → `entity_detail`.
     Examine,
+    /// M23: `entity.info` → `pickup` (окно подятия предмета — лут
+    /// трупа отдельно от модалки осмотра).
+    PickupInfo,
     /// `npc.talk` → `npc_dialog` (M18/F35).
     NpcTalk,
     /// `npc.reply` → новый узел в `npc_dialog` (M18/F37).
@@ -293,6 +296,9 @@ pub struct AppStore {
     pub visited: Vec<VisitedLocation>,
     /// Результат `entity.info` — модалка осмотра (включая лут трупа).
     pub entity_detail: Option<serde_json::Value>,
+    /// M23: данные окна подятия предмета (payload `entity.info`:
+    /// лут трупа + блок «Внутри»); гейт рендера — `Root::pickup_popup`.
+    pub pickup: Option<serde_json::Value>,
     /// M18/F35: открытое окно диалога NPC (реплики + квесты).
     pub npc_dialog: Option<NpcDialogView>,
     /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
@@ -684,6 +690,7 @@ impl AppStore {
             log: VecDeque::new(),
             visited: Vec::new(),
             entity_detail: None,
+            pickup: None,
             npc_dialog: None,
             pending_delete: None,
             deleting_char: None,
@@ -797,6 +804,7 @@ impl AppStore {
                 Act::Move
                 | Act::Attack
                 | Act::Examine
+                | Act::PickupInfo
                 | Act::NpcTalk
                 | Act::NpcReply
                 | Act::ShopList
@@ -887,6 +895,7 @@ impl AppStore {
             }
             Act::Attack
             | Act::Examine
+            | Act::PickupInfo
             | Act::NpcTalk
             | Act::NpcReply
             | Act::ShopList
@@ -1122,6 +1131,10 @@ impl AppStore {
         // Осмотр: payload ack'а — детали сущности (включая лут трупа, ФР-03/ФР-11).
         if act == Act::Examine {
             self.entity_detail = ack.payload;
+        } else if act == Act::PickupInfo {
+            // M23: окно подятия — тот же `entity.info`, но в отдельное
+            // поле (окно не перетирает модалку осмотра и наоборот).
+            self.pickup = ack.payload;
         }
         vec![]
     }
@@ -1223,6 +1236,7 @@ impl AppStore {
                 self.select_error = None;
                 self.world_error = None;
                 self.entity_detail = None;
+                self.pickup = None;
                 self.notice = None;
                 vec![]
             }
@@ -1257,6 +1271,7 @@ impl AppStore {
                     snap.location = changed.location;
                 }
                 self.entity_detail = None;
+                self.pickup = None;
                 self.world_error = None;
                 self.push_log(LogKind::Location, format!("Вы вошли в {name}"));
                 vec![]
@@ -2237,6 +2252,7 @@ impl AppStore {
         self.death = None;
         self.item_detail = None;
         self.entity_detail = None;
+        self.pickup = None;
         self.upgrade = None;
         self.socketing = None;
         self.dialog = None;
@@ -2308,6 +2324,7 @@ impl AppStore {
         self.select_error = None;
         self.world_error = None;
         self.entity_detail = None;
+        self.pickup = None;
         self.item_detail = None;
         self.death = None;
         self.upgrade = None;
@@ -3689,6 +3706,40 @@ mod tests {
         );
         assert!(detail["loot"].as_array().expect("лут").len() == 1);
         assert!(store.pending.is_none());
+    }
+
+    /// M23: ack `entity.info` для окна подятия кладётся в `pickup` и
+    /// НЕ перетирает модалку осмотра (`entity_detail`) — окна независимы.
+    #[test]
+    fn pickup_ack_sets_pickup_not_examine() {
+        let mut store = in_game();
+        store.entity_detail = Some(serde_json::json!({"entity": {"name": "осмотр"}}));
+        store.on_world_sent(Act::PickupInfo);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            9,
+            None,
+            &serde_json::json!({
+                "entity": {"id": "cor_1", "name": "Волк", "kind": "corpse"},
+                "loot": [ { "uid": "loot:cor_1:0", "type": "hide", "name": "Шкура" } ],
+                "inner": [],
+                "was_player": false,
+                "looted": false
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let pickup = store.pickup.as_ref().expect("окно подятия");
+        assert_eq!(pickup["entity"]["id"], "cor_1", "лут трупа");
+        assert_eq!(
+            store.entity_detail.as_ref().expect("осмотр")["entity"]["name"],
+            "осмотр",
+            "модалка осмотра не тронута"
+        );
+        assert!(store.pending.is_none());
+        // Ошибка (`E_TARGET_GONE`) — в мир, данные очищаются при
+        // смене локации/выходе (как у entity_detail).
+        store.pickup = None;
+        assert!(store.pickup.is_none());
     }
 
     /// M18/F35: ack `npc.talk` открывает окно диалога (реплики + квесты);

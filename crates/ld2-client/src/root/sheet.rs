@@ -677,6 +677,11 @@ impl Root {
                             tracing::debug!("закрытие окна количества: крестик");
                             root.quantity_pick = None;
                         }
+                        // M23: данные окна подятия не переживают закрытие.
+                        if kind == PopupKind::LootPickup {
+                            tracing::debug!("закрытие окна подятия: крестик");
+                            root.close_pickup();
+                        }
                         if kind == PopupKind::Dialog {
                             tracing::debug!("закрытие игрового диалога: крестик");
                             root.close_game_dialog();

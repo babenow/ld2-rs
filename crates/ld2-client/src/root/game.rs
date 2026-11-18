@@ -1017,6 +1017,11 @@ impl Root {
                             Some(EntityKind::Container) => {
                                 this.on_click(Click::Examine(id.clone()), cx);
                             }
+                            // M23: ЛКМ по трупу — окно подятия предмета
+                            // (лут слева, рюкзак справа); ПКМ — меню.
+                            Some(EntityKind::Corpse) => {
+                                this.on_click(Click::LootOpen(id.clone()), cx);
+                            }
                             _ => {}
                         }
                         cx.notify();
