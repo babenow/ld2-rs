@@ -1216,7 +1216,10 @@ async fn harvest_step(state: &SharedState) {
             .await
             .ok()
             .and_then(|rows| rows.into_iter().find(|(id, _, _, _)| id == "skinning"));
-        let (level, rank) = learned
+        // LearnedRow = (id, xp, rank, level) — порядок важен: ранг
+        // идёт первым, уровень вторым (фикс: качество шкуры бралось
+        // с уровня → «Великолепная» вместо обычной).
+        let (rank, level) = learned
             .as_ref()
             .map(|(_, _, r, l)| ((*r).max(1) as u32, (*l).max(0) as u32))
             .unwrap_or((1, 0));

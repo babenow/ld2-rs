@@ -184,10 +184,12 @@ async fn harvest_gates_gut_and_skin_flow() {
         .skip(2)
         .map(|i| i["def_id"].as_str().unwrap_or_default().to_string())
         .collect::<Vec<_>>();
+    // Ранг персонажа1 → только обычное качество q1 (фикс: из-за
+    // перепутанных level/rank в тике падала «Великолепная»).
     assert!(
         tier.iter()
-            .any(|d| d.starts_with("hide_q") || d.starts_with("hide_scraps_q")),
-        "качество по рангу (q1): {tier:?}"
+            .all(|d| d.ends_with("_q1") || d == "meat" || d == "offal"),
+        "только качество ранга1: {tier:?}"
     );
     assert_eq!(
         info["payload"]["inner"].as_array().expect("inner").len(),
