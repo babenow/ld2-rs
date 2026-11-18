@@ -1311,3 +1311,86 @@ async fn gem_extract_stacks_into_existing() {
     assert_eq!(rune["uid"], gem2, "слито в существующий стак: {ack}");
     assert_eq!(rune["qty"], 2, "qty стака выросло: {ack}");
 }
+
+/// M24 фикс (указание заказчика): инкрустация — в ОДИН предмет.
+/// Стак (qty>1) не заполняется целиком: целевая штука становится
+/// отдельной строкой, старый стак убывает на 1 и остаётся без сокетов;
+/// окно инкрустации (клиент) следует за новым uid из ack.
+#[tokio::test]
+async fn socket_insert_stack_inscribes_single_item() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+
+    let staff_uid = give(&mut c, "sword_knight").await; // sockets: 1, qty 1
+    let rune_uid = give(&mut c, "rune_fire").await;
+
+    // Стопка ×5 (путь заказчика: админ-выдача количеством).
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("пул");
+    sqlx::query("UPDATE items SET qty = 5 WHERE uid = $1 AND character_id = $2")
+        .bind(&staff_uid)
+        .bind(&char_id)
+        .execute(&pool)
+        .await
+        .expect("qty=5");
+    pool.close().await;
+
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff_uid, "socket_index": 0, "rune_uid": rune_uid }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "инкрустация стака: {ack}");
+    let new_uid = ack["payload"]["staff"]["uid"]
+        .as_str()
+        .expect("uid новой строки")
+        .to_string();
+    assert_ne!(new_uid, staff_uid, "цель — новая строка, а не стак");
+    assert_eq!(ack["payload"]["staff"]["qty"], 1, "одна штука");
+    assert_eq!(
+        ack["payload"]["staff"]["sockets"][0]["rune"]["name"], "Руна огня",
+        "сокет заполнен"
+    );
+
+    // Порядок событий сервера: руна израсходована → новая строка →
+    // убыль стака (wait съедает несовпадающие — выдерживаем порядок).
+    let removed = c.wait_event("evt/item/removed").await;
+    assert_eq!(removed["payload"]["uid"], rune_uid, "руна потреблена");
+    let added = c.wait_event("evt/item/added").await;
+    assert_eq!(
+        added["payload"]["item"]["uid"], new_uid,
+        "новая строка в инвентаре"
+    );
+    let state = c.wait_event("evt/item/state").await;
+    assert_eq!(state["payload"]["uid"], staff_uid, "патч — старый стак");
+    assert_eq!(state["payload"]["patch"]["qty"], 4, "стак5 → 4");
+
+    // Снапшот: стак4 без руны, отдельная штука — с руной.
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let inv = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь");
+    let old = inv.iter().find(|i| i["uid"] == staff_uid).expect("стак");
+    assert_eq!(old["qty"], 4, "стак убыл на1");
+    let old_rune = old["sockets"].as_array().and_then(|s| s.first());
+    assert!(
+        old_rune.is_none_or(|s| s["rune"].is_null()),
+        "стак без руны: {old_rune:?}"
+    );
+    let new = inv.iter().find(|i| i["uid"] == new_uid).expect("штука");
+    assert_eq!(new["qty"], 1, "одна штука");
+    assert_eq!(
+        new["sockets"].as_array().expect("сокеты")[0]["rune"]["name"],
+        "Руна огня",
+        "руна в новой строке"
+    );
+}

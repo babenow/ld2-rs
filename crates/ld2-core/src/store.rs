@@ -248,6 +248,10 @@ pub struct AppStore {
     pub inscribe: Option<String>,
     /// Смещение часов сервера (evt/time.sync): server = local + offset.
     pub time_offset: i64,
+    /// M24: фаза тикера зарядов рун (шкала `now_ms`) — прогрессбар
+    /// заполнения рун; ставится по снапшоту и по приросту зарядов
+    /// в `evt/item/state` (тикер шлёт патч сокетов — такт виден).
+    pub rune_recharge_phase_ms: Option<i64>,
     /// Выбранная цель (ФР-05): клик по строке / Tab.
     pub target: Option<String>,
     /// Кулдауны активных навыков: skill_id → until epoch (ФР-05).
@@ -689,6 +693,7 @@ impl AppStore {
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
             time_offset: 0,
+            rune_recharge_phase_ms: None,
             target: None,
             combat_cooldowns: BTreeMap::new(),
             global_cooldown_until: 0,
@@ -1096,6 +1101,19 @@ impl AppStore {
                         apply_item_patch(&mut snap.char, payload);
                     }
                 }
+                // M24 фикс: инкрустация стака — сервер разбил стак и
+                // прислал НОВЫЙ uid целевой штуки; окно следует за
+                // целью (иначе следующая вставка снова шла бы в стак
+                // и каждый сокет попадал бы на свою штуку).
+                if self.socketing.is_some() {
+                    if let Some(staff_uid) = ack
+                        .payload
+                        .as_ref()
+                        .and_then(|p| p["staff"]["uid"].as_str())
+                    {
+                        self.socketing = Some(staff_uid.to_string());
+                    }
+                }
             }
             Act::Create => {
                 // Аддитивное подтверждение: дополняем список персонажей (§7).
@@ -1276,6 +1294,9 @@ impl AppStore {
                 ]
             }
             "evt/state/snapshot" => {
+                // M24: снапшот — новая фаза такта зарядов (серверную
+                // фазу клиент не знает; по патчу тикера самокоррекция).
+                self.rune_recharge_phase_ms = Some(local_epoch_ms() + self.time_offset * 1000);
                 let Ok(snap) = serde_json::from_value::<StateSnapshot>(payload) else {
                     tracing::warn!("некорректный evt/state/snapshot — игнор");
                     return vec![];
@@ -1758,7 +1779,27 @@ impl AppStore {
                                 Vec<ld2_protocol::types::Socket>,
                             >(sockets.clone())
                             {
+                                // M24: прирост зарядов — такт тикера
+                                // (или новая вставка) — фаза
+                                // прогрессбара рун обновляется.
+                                let old_charges: i32 = item
+                                    .sockets
+                                    .as_ref()
+                                    .map(|old| {
+                                        old.iter()
+                                            .filter_map(|s| s.rune.as_ref().map(|r| r.charges))
+                                            .sum()
+                                    })
+                                    .unwrap_or(0);
+                                let new_charges: i32 = sockets
+                                    .iter()
+                                    .filter_map(|s| s.rune.as_ref().map(|r| r.charges))
+                                    .sum();
                                 item.sockets = Some(sockets);
+                                if new_charges > old_charges {
+                                    self.rune_recharge_phase_ms =
+                                        Some(local_epoch_ms() + self.time_offset * 1000);
+                                }
                             }
                         } else if let Some(qty) = update.patch.get("qty").and_then(|v| v.as_i64()) {
                             item.qty = Some(qty);
@@ -2210,10 +2251,12 @@ impl AppStore {
 
     /// Открыть инкрустацию посоха (ФР-09).
     pub fn open_socketing(&mut self, staff_uid: String) {
+        tracing::info!("socketing: открытие окна, staff={staff_uid}");
         self.socketing = Some(staff_uid);
     }
 
     pub fn close_socketing(&mut self) {
+        tracing::info!("socketing: закрытие окна (close_socketing)");
         self.socketing = None;
     }
 

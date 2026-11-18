@@ -211,6 +211,7 @@ pub fn session_config(
         },
         magic: MagicConfig {
             rune_recharge: g.magic.rune_recharge.clone(),
+            rune_recharge_s: g.magic.rune_recharge_s,
             scroll_requires_target: g.magic.scroll_requires_target,
             mana: ManaConfig {
                 regen_out_s: g.magic.mana.regen_out_s,

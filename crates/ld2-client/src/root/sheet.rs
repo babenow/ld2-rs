@@ -706,7 +706,7 @@ impl Root {
                                     root.store.item_detail = None;
                                 }
                                 if kind == PopupKind::Socketing {
-                                    tracing::debug!("закрытие окна сокетов: крестик");
+                                    tracing::info!("закрытие окна сокетов: крестик");
                                     root.store.close_socketing();
                                     root.socket_pick = None;
                                 }
@@ -2833,6 +2833,7 @@ impl Root {
             .find(|i| i.uid == staff_uid)
             .cloned()
         else {
+            tracing::info!("закрытие окна сокетов: staff не найден в инвентаре ({staff_uid})");
             self.store.close_socketing();
             return div().size_full();
         };
@@ -2990,6 +2991,7 @@ impl Root {
             pal.panel,
             pal.text,
             |this, cx| {
+                tracing::info!("закрытие окна сокетов: кнопка «Выход»");
                 this.store.close_socketing();
                 let _ = cx;
             },
