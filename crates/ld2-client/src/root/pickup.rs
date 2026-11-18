@@ -15,13 +15,14 @@ use ely::forms::Choice;
 use ely::navigation::Tabs;
 use ely::primitives::DragGhost;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, Stateful, Window};
-use ld2_core::l10n::{t, Key};
+use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::{Act, Screen};
 
 use crate::palette::Palette;
 
 use super::{
-    act_btn, backpack::BackpackTab, scrollable_tab, sheet::quality_color, Click, PopupKind, Root,
+    act_btn, backpack::BackpackTab, btn, scrollable_tab, sheet::quality_color, Click, PopupKind,
+    Root,
 };
 
 /// M23: payload перетаскивания вещи из лута в рюкзак — отдельный
@@ -187,25 +188,54 @@ impl Root {
             .child(col_title(t(lang, Key::BackpackTitle).to_string(), pal))
             .child(tabs)
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
-            .child(drop_target)
+            .child(drop_target);
+
+        // ── статус-бар окна (указание заказчика): счётчик предметов,
+        // выбранная вещь, кнопки «Забрать» (выбранное) и «Взять всё»
+        // (партия в очередь — см. `Root::pump_take_queue`).
+        let items_count = loot.len() + inner.len();
+        let taking_all = !self.pickup_queue.is_empty();
+        let take_all = if items_count == 0 || taking_all {
+            disabled_btn(t(lang, Key::TakeAllBtn), pal)
+        } else {
+            btn(
+                cx,
+                t(lang, Key::TakeAllBtn),
+                pal.accent,
+                0xffffff,
+                Click::LootTakeAll,
+            )
+        };
+        let footer = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .bg(rgb(pal.selection))
+            .border_t_1()
+            .border_color(rgb(pal.border))
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .items_center()
-                    .px_1()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex_grow_1()
-                            .min_w_0()
-                            .text_size(px(12.0))
-                            .text_color(rgb(pal.muted))
-                            .child(sel_name),
-                    )
-                    .child(take),
-            );
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(tf(
+                        lang,
+                        Key::PickupCount,
+                        &[("{n}", &items_count.to_string())],
+                    )),
+            )
+            .child(
+                div()
+                    .flex_grow_1()
+                    .min_w_0()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(sel_name),
+            )
+            .child(take)
+            .child(take_all);
 
         let body = div()
             .flex()
@@ -233,7 +263,7 @@ impl Root {
             t(lang, Key::PickupTitle),
             None,
             body,
-            None,
+            Some(footer),
         ))
     }
 
@@ -318,6 +348,31 @@ impl Root {
     }
 }
 
+/// M23: uid-ы всех вещей трупа (общий лут + блок «Внутри») в порядке
+/// выдачи — очередь кнопки «Взять всё».
+pub(super) fn pickup_uids(detail: &serde_json::Value) -> Vec<String> {
+    detail["loot"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(detail["inner"].as_array().into_iter().flatten())
+        .filter_map(|i| i["uid"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Неактивная кнопка статус-бара (нет выбора/уже берём партию).
+fn disabled_btn(text: &'static str, pal: &Palette) -> Div {
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .bg(rgb(pal.panel))
+        .border_1()
+        .border_color(rgb(pal.border))
+        .text_color(rgb(pal.muted))
+        .child(text)
+}
+
 /// Заголовок колонки окна подятия.
 fn col_title(text: String, pal: &Palette) -> Div {
     div()
@@ -325,4 +380,33 @@ fn col_title(text: String, pal: &Palette) -> Div {
         .text_size(px(13.0))
         .text_color(rgb(pal.accent))
         .child(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M23: «Взять всё» собирает uid-ы общего лута и блока «Внутри»
+    /// в порядке выдачи.
+    #[test]
+    fn pickup_uids_collects_loot_and_inner() {
+        let detail = serde_json::json!({
+            "loot": [
+                {"uid": "loot:c:0", "name": "Шкура"},
+                {"uid": "loot:c:1", "name": "Коготь"}
+            ],
+            "inner": [{"uid": "inner:c:0", "name": "Мясо"}]
+        });
+        assert_eq!(
+            pickup_uids(&detail),
+            vec!["loot:c:0", "loot:c:1", "inner:c:0"],
+            "общий лут, затем «Внутри»"
+        );
+        let empty = serde_json::json!({"loot": [], "inner": []});
+        assert!(pickup_uids(&empty).is_empty(), "пусто — пустая очередь");
+        assert!(
+            pickup_uids(&serde_json::json!({})).is_empty(),
+            "без полей — пустая очередь"
+        );
+    }
 }

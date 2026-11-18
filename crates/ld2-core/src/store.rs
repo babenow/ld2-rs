@@ -299,6 +299,9 @@ pub struct AppStore {
     /// M23: данные окна подятия предмета (payload `entity.info`:
     /// лут трупа + блок «Внутри»); гейт рендера — `Root::pickup_popup`.
     pub pickup: Option<serde_json::Value>,
+    /// M23: лут трупа обновился на сервере (разделка/новый труп) —
+    /// клиент перечитает `pickup`, пока открыто окно подятия.
+    pub pickup_dirty: bool,
     /// M18/F35: открытое окно диалога NPC (реплики + квесты).
     pub npc_dialog: Option<NpcDialogView>,
     /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
@@ -691,6 +694,7 @@ impl AppStore {
             visited: Vec::new(),
             entity_detail: None,
             pickup: None,
+            pickup_dirty: false,
             npc_dialog: None,
             pending_delete: None,
             deleting_char: None,
@@ -1380,6 +1384,9 @@ impl AppStore {
                 let Ok(corpse) = serde_json::from_value::<CorpseCreated>(payload) else {
                     return vec![];
                 };
+                // M23: лут/флаги трупа обновились — освежить окно
+                // подятия, если оно открыто.
+                self.pickup_dirty = true;
                 let mut added = false;
                 if let Some(snap) = self.snapshot.as_mut() {
                     match snap
@@ -1631,6 +1638,9 @@ impl AppStore {
                 };
                 self.harvest = None;
                 if result.ok {
+                    // M23: в лут трупа добавились шкуры/мясо — окно
+                    // подятия должно увидеть их без переоткрытия.
+                    self.pickup_dirty = true;
                     let text = if result.action == "skin" {
                         format!("Вы сняли шкуру с трупа {}", result.name)
                     } else {

@@ -567,6 +567,10 @@ pub enum Key {
     // M23: окно подятия предмета (лут трупа + рюкзак)
     PickupTitle,
     PickupEmpty,
+    /// Кнопка «Взять всё» в статус-баре окна подятия.
+    TakeAllBtn,
+    /// Счётчик предметов в статус-баре окна подятия (`{n}`).
+    PickupCount,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -1116,6 +1120,8 @@ mod tests {
         Key::TrainingGold,
         Key::PickupTitle,
         Key::PickupEmpty,
+        Key::TakeAllBtn,
+        Key::PickupCount,
     ];
 
     #[test]

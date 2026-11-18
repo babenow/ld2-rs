@@ -236,6 +236,8 @@ pub(crate) enum Click {
     PowerStrike,
     ConfirmDeath,
     LootTake,
+    /// M23: «Взять всё» — партия из лута окна подятия в очередь.
+    LootTakeAll,
     /// M23: открыть окно подятия предмета по трупу (ЛКМ в списке
     /// сущностей) — запрос `entity.info` c `Act::PickupInfo`.
     LootOpen(String),
@@ -364,6 +366,13 @@ pub struct Root {
     /// M23: прокрутка рюкзак-виджета в правой колонке (своя — ручка
     /// не должна делиться с окном рюкзака при одновременном открытии).
     pickup_bp_scroll: ScrollHandle,
+    /// M23: очередь «Взять всё» — uid-ы, которые ещё предстоит взять;
+    /// отправляется по одному за свободный ack-слот (`pending`
+    /// одиночный, см. `pump_take_queue`).
+    pickup_queue: Vec<String>,
+    /// M23: «Взять всё» на трупе игрока ждёт подтверждения статуса
+    /// (ФР-11) в модалке loot_confirm.
+    pickup_confirm_all: bool,
     /// M21: вооружённая кнопка «Сбросить» (второй клик — cmd/craft.reset).
     prof_reset_armed: Option<String>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
@@ -648,6 +657,8 @@ impl Root {
             pickup_request: false,
             pickup_scroll: ScrollHandle::new(),
             pickup_bp_scroll: ScrollHandle::new(),
+            pickup_queue: Vec::new(),
+            pickup_confirm_all: false,
             prof_reset_armed: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
@@ -723,9 +734,22 @@ impl Root {
             }
         }
 
-        // M23: окно подятия — догрузка/обновление лута, когда
+        // M23: лут трупа обновился (разделка/создание трупа) —
+        // перечитываем, пока окно подятия открыто.
+        if self.store.pickup_dirty {
+            self.store.pickup_dirty = false;
+            if self.pickup_popup.open {
+                self.pickup_request = true;
+            }
+        }
+        // M23: очередь «Взять всё» — по одному взятию за свободный
+        // ack-слот; лут окна перечитывается после неё.
+        if !self.pickup_queue.is_empty() {
+            self.pump_take_queue(cx);
+        }
+        // M23: окно подятия — догрузка/обновления лута, когда
         // транспорт свободен (см. `pickup_request`).
-        if self.pickup_request {
+        if self.pickup_request && self.pickup_queue.is_empty() {
             self.pump_pickup(cx);
         }
 
@@ -1583,6 +1607,9 @@ impl Root {
         self.pickup_sel = None;
         self.pickup_id = None;
         self.pickup_request = false;
+        // Партия «Взять всё» и её подтверждение не переживают окно.
+        self.pickup_queue.clear();
+        self.pickup_confirm_all = false;
     }
 
     /// M23: запрос данных окна подятия (`cmd/entity.info` →
@@ -1608,6 +1635,35 @@ impl Root {
             }
             Err(e) => {
                 self.pickup_request = false;
+                self.store.world_error = Some(format!("нет связи: {e}"));
+            }
+        }
+    }
+
+    /// M23: очередь «Взять всё» — следующий `item.use`, когда
+    /// транспорт свободен (корреляция ack-ов одиночная); после
+    /// отправки ставится `pickup_request` — когда очередь опустеет,
+    /// лут окна освежится обычным перезапросом.
+    fn pump_take_queue(&mut self, cx: &mut Context<'_, Self>) {
+        if self.pickup_queue.is_empty() || !self.pickup_popup.open {
+            return;
+        }
+        if self.store.pending.is_some() {
+            return; // ack-слот занят — ждём
+        }
+        let uid = self.pickup_queue.remove(0);
+        let cmd = ld2_protocol::cmd::ItemUse {
+            item_uid: uid,
+            target_id: None,
+        };
+        match self.transport.send(&cmd) {
+            Ok(_) => {
+                self.store.on_world_sent(Act::Drop);
+                self.pickup_request = true;
+                cx.notify();
+            }
+            Err(e) => {
+                self.pickup_queue.clear();
                 self.store.world_error = Some(format!("нет связи: {e}"));
             }
         }
@@ -2120,12 +2176,50 @@ impl Root {
             }
             Click::ConfirmDeath => self.store.confirm_death(),
             Click::LootTakeMarker(uid, name) => self.store.set_loot_confirm(uid, name),
-            Click::LootTake => {
-                if let Some((uid, _)) = self.store.loot_confirm.clone() {
-                    self.on_click(Click::UseItem(uid), cx);
+            // M23: «Взять всё» — партия в очередь; труп игрока —
+            // одно подтверждение статуса на всю партию (ФР-11).
+            Click::LootTakeAll => {
+                let Some(detail) = self.store.pickup.clone() else {
+                    return;
+                };
+                let uids = pickup::pickup_uids(&detail);
+                if uids.is_empty() {
+                    return;
+                }
+                if detail["was_player"] == true {
+                    self.pickup_confirm_all = true;
+                    let name = detail["entity"]["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    self.store.set_loot_confirm(String::new(), name);
+                } else {
+                    self.pickup_queue = uids;
+                    self.pump_take_queue(cx);
                 }
             }
-            Click::LootCancel => self.store.clear_loot_confirm(),
+            Click::LootTake => {
+                if self.pickup_confirm_all {
+                    // Подтверждение партии на трупе игрока (ФР-11).
+                    self.pickup_confirm_all = false;
+                    self.store.clear_loot_confirm();
+                    self.pickup_queue = self
+                        .store
+                        .pickup
+                        .as_ref()
+                        .map(pickup::pickup_uids)
+                        .unwrap_or_default();
+                    self.pump_take_queue(cx);
+                } else if let Some((uid, _)) = self.store.loot_confirm.clone() {
+                    if !uid.is_empty() {
+                        self.on_click(Click::UseItem(uid), cx);
+                    }
+                }
+            }
+            Click::LootCancel => {
+                self.pickup_confirm_all = false;
+                self.store.clear_loot_confirm();
+            }
             Click::Gather(id) => {
                 let cmd = ld2_protocol::cmd::ResourceGather { entity_id: id };
                 match self.transport.send(&cmd) {
