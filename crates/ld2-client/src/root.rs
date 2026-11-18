@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use gpui::{
     div, prelude::*, px, rgb, rgba, AnyElement, App, Context, Div, EmptyView, Entity, Focusable,
-    Hsla, MouseButton, Render, ScrollHandle, SharedString, Window, WindowControlArea,
+    Hsla, MouseButton, Render, ScrollHandle, SharedString, UniformListScrollHandle, Window,
+    WindowControlArea,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
@@ -15,6 +16,7 @@ use ld2_core::store::{local_epoch, local_epoch_ms, Act, AppStore, Effect, Screen
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
 use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove};
 
+mod admin;
 mod backpack;
 mod chars;
 mod chat;
@@ -91,6 +93,8 @@ enum PopupKind {
     Professions,
     /// M23: окно подятия предмета — лут трупа слева, рюкзак справа.
     LootPickup,
+    /// M24: админ-панель — листы по кнопкам шапки («Предметы»).
+    AdminPanel,
 }
 
 impl PopupKind {
@@ -108,6 +112,7 @@ impl PopupKind {
             PopupKind::Dialog => "ld2-dialog",
             PopupKind::Professions => "ld2-professions",
             PopupKind::LootPickup => "ld2-pickup",
+            PopupKind::AdminPanel => "ld2-admin",
         }
     }
 }
@@ -140,6 +145,8 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
         PopupKind::Professions => {}
         // M23: окно подятия — выбор строки, не контекстное меню.
         PopupKind::LootPickup => {}
+        // M24: админ-панель меню не использует (действия — drag/dblclick).
+        PopupKind::AdminPanel => {}
     }
 }
 
@@ -248,6 +255,14 @@ pub(crate) enum Click {
     Gather(String),
     /// M22: разделить труп (`action`: skin|gut) — сервер-джоб5 с.
     Harvest(String, String),
+    /// M24: открыть админ-панель (кнопка в шапке, только admin).
+    AdminOpen,
+    /// M24: выдать предмет из каталога → execute-диалог количества.
+    AdminGive(String),
+    /// M24: удалить предмет из цели → execute-диалог количества.
+    AdminRemove(String),
+    /// M24: тумблер «режим бога» в шапке админ-окна.
+    AdminGod(bool),
     CloseDetail,
     SwitchChar,
 }
@@ -373,6 +388,19 @@ pub struct Root {
     /// M23: «Взять всё» на трупе игрока ждёт подтверждения статуса
     /// (ФР-11) в модалке loot_confirm.
     pickup_confirm_all: bool,
+    /// M24: окно админ-панели — popup (листы по кнопкам шапки).
+    admin_popup: PopupState,
+    /// M24: прокрутка каталога (uniform_list — виртуализация).
+    admin_scroll: UniformListScrollHandle,
+    /// M24: прокрутка содержимого цели (правая колонка).
+    admin_inv_scroll: ScrollHandle,
+    /// M24: поле поиска предмета в админ-окне.
+    admin_search: Option<Entity<TextInput>>,
+    /// M24: нужен (re)запрос каталога — как `pickup_request` (pending
+    /// одиночный); каталог кэшируется на сессию (вариант A).
+    admin_catalog_request: bool,
+    /// M24: цель выдачи (F24b — всегда self; F24c — селект целей).
+    admin_target: String,
     /// M21: вооружённая кнопка «Сбросить» (второй клик — cmd/craft.reset).
     prof_reset_armed: Option<String>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
@@ -659,6 +687,15 @@ impl Root {
             pickup_bp_scroll: ScrollHandle::new(),
             pickup_queue: Vec::new(),
             pickup_confirm_all: false,
+            admin_popup: PopupState {
+                delta: (0.0, -20.0),
+                ..PopupState::new((1040.0, 640.0))
+            },
+            admin_scroll: UniformListScrollHandle::new(),
+            admin_inv_scroll: ScrollHandle::new(),
+            admin_search: None,
+            admin_catalog_request: false,
+            admin_target: "self".into(),
             prof_reset_armed: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
@@ -751,6 +788,10 @@ impl Root {
         // транспорт свободен (см. `pickup_request`).
         if self.pickup_request && self.pickup_queue.is_empty() {
             self.pump_pickup(cx);
+        }
+        // M24: админ-панель — догрузка каталога при свободном ack-слоте.
+        if self.admin_catalog_request {
+            self.pump_admin_catalog(cx);
         }
 
         // Результат фоновой проверки обновлений (§12).
@@ -1160,6 +1201,13 @@ impl Root {
             false,
             None,
         ));
+        self.admin_search = Some(mk(
+            window,
+            cx,
+            t(lang, Key::AdminSearch).to_string(),
+            false,
+            None,
+        ));
 
         self.delete_name = Some(mk(
             window,
@@ -1339,6 +1387,13 @@ impl Root {
                 tracing::debug!("закрытие окна профессий: Esc");
                 self.professions_popup.open = false;
                 self.prof_reset_armed = None;
+                cx.notify();
+                return;
+            }
+            // M24: админ-панель — ниже диалога/профессий в стеке слоёв.
+            if self.admin_popup.open {
+                tracing::debug!("закрытие админ-панели: Esc");
+                self.close_admin();
                 cx.notify();
                 return;
             }
@@ -1552,6 +1607,7 @@ impl Root {
             PopupKind::Dialog => &mut self.dialog_popup,
             PopupKind::Professions => &mut self.professions_popup,
             PopupKind::LootPickup => &mut self.pickup_popup,
+            PopupKind::AdminPanel => &mut self.admin_popup,
         }
     }
 
@@ -1569,6 +1625,7 @@ impl Root {
             PopupKind::Dialog => &self.dialog_popup,
             PopupKind::Professions => &self.professions_popup,
             PopupKind::LootPickup => &self.pickup_popup,
+            PopupKind::AdminPanel => &self.admin_popup,
         }
     }
 
@@ -1596,7 +1653,15 @@ impl Root {
             PopupKind::Dialog => (560.0, 460.0),
             PopupKind::Professions => (880.0, 620.0),
             PopupKind::LootPickup => (1040.0, 600.0),
+            PopupKind::AdminPanel => (1040.0, 640.0),
         }
+    }
+
+    /// M24: закрытие админ-панели; каталог остаётся в сторе — кэш
+    /// на сессию (вариант A), чистится при выходе/смене персонажа.
+    fn close_admin(&mut self) {
+        self.admin_popup.open = false;
+        self.admin_catalog_request = false;
     }
 
     /// M23: закрытие окна подятия — данные/выбор/запрос чистятся
@@ -1669,6 +1734,30 @@ impl Root {
         }
     }
 
+    /// M24: каталог админ-окна — `cmd/admin.items` при свободном
+    /// `pending` (корреляция ack-ов стора одиночная), как у окна
+    /// подятия; после отправки флаг гаснет.
+    fn pump_admin_catalog(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.admin_catalog_request || !self.admin_popup.open {
+            return;
+        }
+        if self.store.pending.is_some() {
+            return; // ack-слот занят — ждём
+        }
+        let cmd = ld2_protocol::cmd::AdminItems {};
+        match self.transport.send(&cmd) {
+            Ok(_) => {
+                self.store.on_world_sent(Act::AdminCatalog);
+                self.admin_catalog_request = false;
+                cx.notify();
+            }
+            Err(e) => {
+                self.admin_catalog_request = false;
+                self.store.notice = Some(format!("нет связи: {e}"));
+            }
+        }
+    }
+
     fn open_popup(&mut self, kind: PopupKind) {
         // M18/F33: чистое контекстное меню при каждом открытии (см.
         // clear_popup_menu).
@@ -1692,6 +1781,7 @@ impl Root {
             PopupKind::Dialog => (0.0, -40.0),
             PopupKind::Professions => (0.0, -30.0),
             PopupKind::LootPickup => (40.0, -30.0),
+            PopupKind::AdminPanel => (0.0, -20.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1722,6 +1812,9 @@ impl Root {
             PopupKind::Professions => {}
             // M23: окно подятия — выбор сбрасывает вызывающий.
             PopupKind::LootPickup => {}
+            // M24: админ-панель — состояние (поиск/каталог) переживает
+            // переоткрытия на сессию.
+            PopupKind::AdminPanel => {}
         }
     }
 
@@ -1793,6 +1886,7 @@ impl Root {
         let npc_open = self.store.npc_dialog.is_some();
         let dialog_open = self.store.dialog.is_some();
         let professions_open = self.professions_popup.open;
+        let admin_open = self.admin_popup.open;
         let pickup_open = self.pickup_popup.open;
         if !self.char_popup.open
             && !self.backpack_popup.open
@@ -1800,6 +1894,7 @@ impl Root {
             && !npc_open
             && !dialog_open
             && !professions_open
+            && !admin_open
             && !pickup_open
         {
             return None;
@@ -1862,6 +1957,9 @@ impl Root {
                                         tracing::debug!("закрытие окна профессий: скрим");
                                         root.professions_popup.open = false;
                                         root.prof_reset_armed = None;
+                                    } else if root.admin_popup.open {
+                                        tracing::debug!("закрытие админ-панели: скрим");
+                                        root.close_admin();
                                     } else if root.store.npc_dialog.is_some() {
                                         tracing::debug!("закрытие диалога NPC: скрим");
                                         root.store.npc_dialog = None;
@@ -2254,6 +2352,40 @@ impl Root {
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
+            // M24: админ-панель — роль гейтит сервер; кнопка в шапке
+            // рисуется только для admin.
+            Click::AdminOpen => {
+                self.open_popup(PopupKind::AdminPanel);
+                self.admin_catalog_request = true;
+                self.pump_admin_catalog(cx);
+            }
+            Click::AdminGive(def_id) => {
+                let cmd = ld2_protocol::cmd::AdminGiveAsk {
+                    target: self.admin_target.clone(),
+                    def_id,
+                };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::AdminAsk),
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::AdminRemove(item_ref) => {
+                let cmd = ld2_protocol::cmd::AdminRemoveAsk {
+                    target: self.admin_target.clone(),
+                    item_ref,
+                };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::AdminAsk),
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::AdminGod(enabled) => {
+                let cmd = ld2_protocol::cmd::AdminGodMode { enabled };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::AdminGod),
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+            }
             Click::CloseDetail => self.store.entity_detail = None,
             Click::SwitchChar => self.open_exit(ExitKind::SwitchChar, cx),
         }
@@ -2307,6 +2439,26 @@ impl Root {
                         window.start_window_move();
                         acx.new(|_| EmptyView)
                     }),
+            )
+            // M24: админ-панель — только role=admin и в мире
+            // (сервер гейтит повторно).
+            .when(
+                in_world
+                    && self
+                        .store
+                        .session
+                        .as_ref()
+                        .is_some_and(|s| s.role == "admin"),
+                |d| {
+                    d.child(
+                        IconButton::new("ld2-titlebar-admin", IconName::Shield)
+                            .tooltip(t(lang, Key::AdminPanelTitle))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.on_click(Click::AdminOpen, cx);
+                                cx.notify();
+                            })),
+                    )
+                },
             )
             // Настройки (перенесены из шапки).
             .child(
@@ -3977,6 +4129,11 @@ impl Render for Root {
             })
             // M20: окно выбора количества — поверх окна сокетов.
             .when_some(self.quantity_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M24: админ-панель — под окном диалога (execute-диалог
+            // количества должен открываться поверх).
+            .when_some(self.admin_window(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
             // M20: окно игрового диалога (заготовка) — поверх окна

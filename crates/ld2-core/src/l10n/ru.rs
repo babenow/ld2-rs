@@ -484,5 +484,10 @@ pub(super) fn t(key: Key) -> &'static str {
         PickupEmpty => "Нечего забирать",
         TakeAllBtn => "Взять всё",
         PickupCount => "Предметов: {n}",
+        AdminPanelTitle => "Админ-панель",
+        AdminItemsSheet => "Предметы",
+        AdminGodMode => "Режим бога (неуязвимость)",
+        AdminSearch => "Поиск предмета…",
+        AdminNothing => "Ничего не найдено",
     }
 }
