@@ -342,7 +342,11 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `corpse.harvest` | `{ entity_id, action: "skin"\|"gut" }` | `{ action, name }` | − | снятие шкур: разделка трупа животного — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result`); ошибки: `E_PROFESSION` (не изучена), `E_TOOL_MISSING` (нет ножа), `E_LEVEL_REQUIRED` (требуемый уровень выше на25+), `E_TARGET_GONE` (нет флагов/уже разделано/нет трупа), `E_COOLDOWN` (уже разделываете) |
 | `resource.gather` | `{ entity_id }` | `{}` | − | M20/F20b: добыча 1 единицы ресурса (инструмент + ранг профессии на сервере; отказы: `E_TOOL_MISSING`/`E_PROFESSION`/`E_TARGET_GONE`) |
 | `dialog.choice` | `{ dialog_id, page_id, action_id }` | `{}` | − | M20: выбор действия в игровом многостраничном диалоге (**заготовка**) |
-| `dialog.submit` | `{ dialog_id, values {id → значение} }` | `{ values }` | − | M20: ввод execute-диалога — сервер возвращает набор вводов обработчику (**заготовка**) |
+| `dialog.submit` | `{ dialog_id, values {id → значение} }` | `{ values }` | − | M20: ввод execute-диалога; **M24**: ветка `admin.*` в `dialog_id` — выдача/удаление предмета (роль проверяется повторно, qty 1..=999 → `E_BAD_QTY`) |
+| `admin.items` | `{}` | `{ items: [{id, name, type, rarity, qty, upgrade, gold_value}] }` | + | M24: каталог всех предметов для админ-окна (одним запросом); только `role=admin` → `E_PERMISSION` |
+| `admin.give.ask` | `{ target, def_id }` | `{}` + `evt/dialog/open` | − | M24: открыть execute-диалог количества выдачи; id `admin.give:<target>#<def_id>` (разделитель `#`); `E_ITEM_GONE` (нет def), `E_TARGET_GONE` (цель не поддерживается) |
+| `admin.remove.ask` | `{ target, ref }` | `{}` + `evt/dialog/open` | − | M24: execute-диалог количества удаления; id `admin.remove:<target>#<ref>`; F24a — `self` (ref = uid) |
+| `admin.god_mode` | `{ enabled }` | `{ enabled }` | − | M24: toggle «режим бога» (неуязвимость: урон не применяется вовсе); только `role=admin`, состояние сессионное (в мире) |
 
 **Ограничения текста чата:** `chat.max_len`, `chat.cooldown_s` из §5; превышение → `E_RATE_LIMITED` c `retry_after_s`.
 
@@ -453,6 +457,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_REQUIREMENT_ATTR` | не хватает атрибута/уровня |
 | `E_PROFESSION` | нет требуемой профессии |
 | `E_INVENTORY_FULL` | инвентарь заполнен |
+| `E_BAD_QTY` | M24: количество в админ-диалоге вне 1..=999 |
 | `E_ITEM_GONE` | предмета уже нет (двойное действие/обмен) |
 | `E_UPGRADE_PREVIEW_STALE` | `preview_id` устарел (пересоздать превью) |
 | `E_UPGRADE_MAX` | достигнут максимум улучшения |

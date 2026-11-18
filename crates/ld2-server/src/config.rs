@@ -57,6 +57,11 @@ pub struct ServerSection {
     pub min_client: Option<String>,
     /// Уровень логирования: EnvFilter-директива (`"info"`, `"info,sqlx=warn"`).
     pub log_level: String,
+    /// M24: разрешить `/scenario …` всем авторизованным (dev/тесты;
+    /// дыра из бэклога — раньше префикс не проверялся вовсе). В
+    /// прод-конфиге ключ отсутствует → false; админ проходит всегда.
+    #[serde(default)]
+    pub allow_scenario: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

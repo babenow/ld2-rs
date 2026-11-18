@@ -5,7 +5,7 @@
 //! сида (D26) — их hp не переживает перезапуск (отклонение M12.5).
 //! Персонажи, инвентарь и лут статических трупов — в БД (D27).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::UnboundedSender as SyncSender;
 
 use ld2_protocol::types::{Entity, EntityKind, Hp};
@@ -326,6 +326,9 @@ pub struct World {
     conns: HashMap<String, SyncSender<String>>,
     /// char_id → имя (для боевых строк §8).
     char_names: HashMap<String, String>,
+    /// M24: «режим бога» — персонажи с неуязвимостью (админ-toggle;
+    /// tick::apply_mob_hit не применяет по ним урон вовсе).
+    god_chars: HashSet<String>,
     /// char_id → текущая локация (мишени агрессивных мобов).
     char_loc: HashMap<String, String>,
     /// (char_id, skill_id) → до какого момента кулдаун (epoch-с, §4/M14).
@@ -360,6 +363,20 @@ pub struct World {
 }
 
 impl World {
+    /// M24: включить/выключить неуязвимость персонажа («режим бога»).
+    pub fn set_god(&mut self, char_id: &str, enabled: bool) {
+        if enabled {
+            self.god_chars.insert(char_id.to_string());
+        } else {
+            self.god_chars.remove(char_id);
+        }
+    }
+
+    /// M24: есть ли у персонажа неуязвимость (тик, боевые расчёты).
+    pub fn is_god(&self, char_id: &str) -> bool {
+        self.god_chars.contains(char_id)
+    }
+
     /// M17/F30f: чем бьёт персонаж — творительный из экипированного
     /// оружия; без данных (до входа) — кулаки.
     pub fn char_hits_as(&self, char_id: &str) -> &'static str {
@@ -1242,6 +1259,19 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M24: «режим бога» — по-персонажный toggle неуязвимости
+    /// (tick::apply_mob_hit смотрит `is_god` до применения урона).
+    #[test]
+    fn god_mode_toggles_per_char() {
+        let mut world = World::default();
+        assert!(!world.is_god("c1"), "по умолчанию — смертный");
+        world.set_god("c1", true);
+        assert!(world.is_god("c1"), "включён");
+        assert!(!world.is_god("c2"), "не глобально");
+        world.set_god("c1", false);
+        assert!(!world.is_god("c1"), "выключен");
+    }
 
     /// M20/F20a: `rand_range` — всегда в диапазоне [min, max]
     /// (респавн-таймеры задаются двумя числами).

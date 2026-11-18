@@ -127,6 +127,18 @@ pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx
     .await
 }
 
+/// M24: каталог всех определений (админ-панель, вариант A — одним
+/// запросом); порядок — по типу и имени.
+pub async fn defs_all(pool: &PgPool) -> Result<Vec<ItemDefRow>, sqlx::Error> {
+    sqlx::query_as::<_, ItemDefRow>(
+        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
+                rune_sockets, slot, hands, skill, cooldown_s, bonuses \
+         FROM item_defs ORDER BY item_type, name",
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// Инстанс в инвентаре конкретного персонажа; `None` — чужой/несуществующий.
 pub async fn find(pool: &PgPool, uid: &str, char_id: &str) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
