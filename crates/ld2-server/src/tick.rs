@@ -1248,6 +1248,7 @@ async fn harvest_step(state: &SharedState) {
             name: job.name.clone(),
             action: job.action.clone(),
             ok,
+            ruined: false,
         };
         let text = crate::session::event_text("evt/harvest/result", None, {
             serde_json::to_value(result).unwrap_or_default()

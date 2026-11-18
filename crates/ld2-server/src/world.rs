@@ -1016,6 +1016,21 @@ impl World {
         self.harvest_jobs.insert(job.char_id.clone(), job);
     }
 
+    /// M22: прервать активную разделку (взаимодействие с предметом)
+    /// → джоб изымается; для skin вызывающий помечает труп
+    /// «шкура испорчена» ([`Self::ruin_skin`]).
+    pub fn cancel_harvest(&mut self, char_id: &str) -> Option<HarvestJob> {
+        self.harvest_jobs.remove(char_id)
+    }
+
+    /// M22: шкура испорчена — повторное снятие с трупа невозможно
+    /// (труп мог уже истечь — тогда просто no-op).
+    pub fn ruin_skin(&mut self, corpse_id: &str) {
+        if let Some(corpse) = self.corpses.get_mut(corpse_id) {
+            corpse.skin_done = true;
+        }
+    }
+
     /// Джобы, срок которых наступил (извлекаются из очереди).
     pub fn due_harvests(&mut self, now: i64) -> Vec<HarvestJob> {
         let due: Vec<String> = self

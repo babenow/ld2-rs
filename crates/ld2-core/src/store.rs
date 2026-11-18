@@ -1622,6 +1622,9 @@ impl AppStore {
                         format!("Вы освежевали труп {}", result.name)
                     };
                     self.push_log(LogKind::Loot, text);
+                } else if result.ruined {
+                    // M22: разделка прервана взаимодействием с предметом.
+                    self.push_log(LogKind::Loot, "Шкура испорчена".to_string());
                 }
                 vec![]
             }

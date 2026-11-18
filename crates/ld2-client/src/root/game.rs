@@ -1093,10 +1093,9 @@ impl Root {
         // Снятие шкур (M22): пункты — при изученной профессии, ноже
         // и флагах трупа; сделанные действия скрываются (флаги
         // skin_done/gut_done приходят в extra трупа). Иконка пункта
-        // «Снять шкуру» показывает множитель опыта: недостаточный
-        // уровень (гейт25+) → Lock + отключение (по указанию
-        // заказчика — вместо цвета), ×1.5 → Sparkles, ×1 → Check,
-        // ×0.5 → Minus, ×0 → EyeOff.
+        // «Снять шкуру» — ожидаемый опыт (согласовано заказчиком):
+        // недостаточный уровень (гейт25+) → Lock + отключение;
+        // 0 XP → EyeOff, <15 → Star, <30 → Sparkles, ≥30 → Zap.
         if entity.kind == EntityKind::Corpse {
             if let Some(harv) = entity.extra.get("harvest") {
                 let snap = self.store.snapshot.as_ref();
@@ -1119,16 +1118,30 @@ impl Root {
                     if harv.get("skin").and_then(|v| v.as_bool()) == Some(true)
                         && harv.get("skin_done").and_then(|v| v.as_bool()) != Some(true)
                     {
+                        // Ожидаемый опыт — формула сервера (дубль на
+                        // клиенте): min(40, round((10 + треб×1.5) ×
+                        // множитель по разнице уровней)).
+                        let base = 10.0 + f64::from(required as u32) * 1.5;
+                        let mult = if diff <= -10 {
+                            1.5
+                        } else if diff <= 9 {
+                            1.0
+                        } else if diff <= 24 {
+                            0.5
+                        } else {
+                            0.0
+                        };
+                        let xp = ((base * mult).round() as i64).min(40);
                         let icon = if blocked {
                             IconName::Lock
-                        } else if diff <= -10 {
-                            IconName::Sparkles // ×1.5 — как раритетный
-                        } else if diff <= 9 {
-                            IconName::Check // ×1 — зелёный
-                        } else if diff <= 24 {
-                            IconName::Minus // ×0.5 — серый
+                        } else if xp <= 0 {
+                            IconName::EyeOff // опыта нет
+                        } else if xp < 15 {
+                            IconName::Star // мало
+                        } else if xp < 30 {
+                            IconName::Sparkles // средне
                         } else {
-                            IconName::EyeOff // ×0 — опыта нет
+                            IconName::Zap // много (у потолка40)
                         };
                         let item = MenuItem::new(t(lang, Key::SkinBtn)).icon(icon);
                         menu = menu.item(if blocked {
