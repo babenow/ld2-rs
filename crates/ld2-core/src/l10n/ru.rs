@@ -482,5 +482,7 @@ pub(super) fn t(key: Key) -> &'static str {
         // M23: окно подятия предмета
         PickupTitle => "Поднять предмет",
         PickupEmpty => "Нечего забирать",
+        TakeAllBtn => "Взять всё",
+        PickupCount => "Предметов: {n}",
     }
 }
