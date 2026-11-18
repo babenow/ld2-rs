@@ -717,6 +717,38 @@ impl World {
     }
 
     /// Персонажи в локации (жертвы агрессии).
+    /// M24: очистить все слоты трупа (общий лут и «Внутри») →
+    /// обновлённый труп для broadcast.
+    pub fn corpse_clear(&mut self, corpse_id: &str) -> Option<LiveCorpse> {
+        let corpse = self.corpses.get_mut(corpse_id)?;
+        for slot in corpse.loot.iter_mut().chain(corpse.inner_loot.iter_mut()) {
+            *slot = None;
+        }
+        Some(corpse.clone())
+    }
+
+    /// M24: выбросить всю надстройку сундука (база — tombstone'ами).
+    pub fn container_clear(&mut self, entity_id: &str) {
+        self.container_extra.remove(entity_id);
+    }
+
+    /// M24: выбросить всю надстройку магазина (контент — tombstone'ами).
+    pub fn shop_clear(&mut self, npc_id: &str) {
+        self.shop_extra.remove(npc_id);
+    }
+
+    /// M24: очистить весь лут живого монстра (восстановится при
+    /// респавне из шаблона).
+    pub fn mob_drops_clear(&mut self, mob_id: &str) -> bool {
+        match self.mobs.get_mut(mob_id) {
+            Some(mob) => {
+                mob.drops.clear();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// M24: админ-лут монстра (одноразовый, в труп при смерти).
     pub fn mob_bonus_add(&mut self, mob_id: &str, def_id: &str) -> bool {
         match self.mobs.get_mut(mob_id) {

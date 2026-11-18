@@ -582,6 +582,8 @@ pub enum Key {
     RarityAll,
     AdminPlayerName,
     AdminTargetGo,
+    /// Кнопка «Удалить все» (очистка цели) в админ-окне.
+    AdminClearAll,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -1142,6 +1144,7 @@ mod tests {
         Key::RarityAll,
         Key::AdminPlayerName,
         Key::AdminTargetGo,
+        Key::AdminClearAll,
     ];
 
     #[test]

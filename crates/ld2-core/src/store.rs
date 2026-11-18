@@ -115,6 +115,8 @@ pub enum Act {
     AdminGod,
     /// M24: `cmd/admin.target.info` → `admin_target_items`.
     AdminTarget,
+    /// M24: `cmd/admin.clear` — очистка цели (ack только ошибки).
+    AdminClear,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -860,7 +862,11 @@ impl AppStore {
                 // Профессии (M21): ранг/сброс — тосты (у тренера/граница).
                 Act::CraftRankUp | Act::ProfessionReset => self.notice = Some(msg),
                 // Админ-панель (M24): отказы — тост (каталог/ask/god/цель).
-                Act::AdminCatalog | Act::AdminAsk | Act::AdminGod | Act::AdminTarget => {
+                Act::AdminCatalog
+                | Act::AdminAsk
+                | Act::AdminGod
+                | Act::AdminTarget
+                | Act::AdminClear => {
                     self.notice = Some(msg);
                 }
                 // Снятие шкур (M22): отказ до старта — чистим бар.
@@ -942,7 +948,8 @@ impl AppStore {
             | Act::AdminAsk
             | Act::AdminGod
             | Act::AdminCatalog
-            | Act::AdminTarget => {
+            | Act::AdminTarget
+            | Act::AdminClear => {
                 // результат событиями (§8); npc.talk/npc.reply
                 // обрабатываются ниже отдельными блоками (M18/F35/F37);
                 // диалоги (M20) — ack только подтверждает выбор/ввод.

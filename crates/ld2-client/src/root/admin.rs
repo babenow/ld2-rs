@@ -419,7 +419,19 @@ impl Root {
             .child(inv_tabs)
             .child(inv_rarity_row)
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
-            .child(drop_target);
+            .child(drop_target)
+            // M24: «Удалить все» — очистка содержимого выбранной цели
+            // (инвентарь/труп/сундук/магазин/монстр — на сервере).
+            .child(div().flex().flex_row().justify_end().px_1().child(act_btn(
+                cx,
+                t(lang, Key::AdminClearAll),
+                pal.danger,
+                0xffffff,
+                |root, cx| {
+                    let target = root.admin_target.clone();
+                    root.on_click(Click::AdminClear(target), cx);
+                },
+            )));
 
         let body = div()
             .flex()
