@@ -29,7 +29,6 @@ use super::sheet::rarity_label;
 use super::social::show_party;
 use super::{
     act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, Click, LogTab, PopupKind, Root,
-    INSCRIBE_MS,
 };
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
@@ -621,8 +620,6 @@ impl Root {
                     .child(self.target_block(cx, pal, &snap))
                     .children(self.notice_line(pal))
                     .child(self.entities_block(cx, pal, &snap.location))
-                    // M17/F30a: каст-бар инкрустации — внизу, над панелью.
-                    .children(self.inscribe_bar(pal, &snap))
                     .child(self.hotbar(cx, pal, &snap))
                     .child(self.exits_row(cx, pal, &snap.location))
                     .children((self.store.target.is_some()).then(|| {
@@ -706,9 +703,9 @@ impl Root {
                     snap.char.xp_pool
                 )),
         );
-        // M22: прогресс-бар разделки — под панелью персонажа
-        // (ХП/ресурс; плавность — быстрый тик в tick(), пока активен).
-        col = col.when_some(self.harvest_bar(pal), |d, b| d.child(b));
+        // M24: единый прогресс-бар (разделка/инкрустация/заточка) —
+        // под панелью персонажа (ХП/ресурс; плавность — быстрый тик).
+        col = col.when_some(self.progress_bar(pal), |d, b| d.child(b));
 
         // M14/F1: «Сменить персонажа»/«Выйти» переехали в меню шапки.
 
@@ -1207,18 +1204,14 @@ impl Root {
     /// побег → руны → свитки/зелья. Каждая кнопка учитывает собственный
     /// кулдаун и глобальный (приоритет — max) и показывает причину
     /// недоступности в тултипе.
-    /// M22: прогресс-бар разделки трупа (сервер-джоб5 с) — под
-    /// панелью персонажа (ХП/ресурс); чистится по
-    /// `evt/harvest/result` или ошибке.
-    fn harvest_bar(&self, pal: &Palette) -> Option<Div> {
-        let h = self.store.harvest.as_ref()?;
-        let elapsed = (self.now_ms() - h.started_ms).max(0);
-        let frac = (elapsed as f32 / 5_000.0).clamp(0.0, 1.0);
-        let label = if h.action == "skin" {
-            t(self.lang, Key::SkinBtn)
-        } else {
-            t(self.lang, Key::GutBtn)
-        };
+    /// M24: единый прогресс-бар левой колонки — одна сущность на
+    /// снятие шкур/освежевание, инкрустацию и заточку (подпись
+    /// «Действие · имя», запуск — `Root::start_progress`); гаснет в
+    /// tick по исчезновению источника, плавность — быстрый тик.
+    fn progress_bar(&self, pal: &Palette) -> Option<Div> {
+        let p = self.cast_progress.as_ref()?;
+        let elapsed = (self.now_ms() - p.started_ms).max(0);
+        let frac = elapsed as f32 / p.duration_ms as f32;
         Some(
             div()
                 .flex()
@@ -1244,7 +1237,7 @@ impl Root {
                     div()
                         .text_size(px(11.0))
                         .text_color(rgb(pal.muted))
-                        .child(format!("{label} · {}", h.name)),
+                        .child(p.label.clone()),
                 ),
         )
     }
@@ -1456,65 +1449,6 @@ impl Root {
     /// Лог прокручивается свободно: приклеивание вниз только когда
     /// пользователь и так внизу ([`scroll_at_bottom`]); иначе новые
     /// строки копятся и показываются кнопкой «▼ N новых» в шапке.
-    /// M17/F30a: каст-бар инкрустации (3 с без отмены) — полоса над
-    /// панелью действий; анимация идёт по тику root (50 мс), исчезает
-    /// по завершении (отправка socket.insert — root::finish_inscribe).
-    fn inscribe_bar(&self, pal: &Palette, snap: &StateSnapshot) -> Option<Div> {
-        let (_, target_uid, ends) = self.cast_inscribe.as_ref()?;
-        let left = (ends - self.now_ms()).max(0);
-        let frac = 1.0 - left as f32 / INSCRIBE_MS as f32;
-        let target = snap
-            .char
-            .inventory
-            .iter()
-            .find(|i| i.uid == *target_uid)
-            .map(|i| i.name.clone())
-            .unwrap_or_default();
-        Some(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .items_center()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.accent))
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(format!(
-                            "{} — {}",
-                            t(self.lang, Key::InscribeCasting),
-                            target
-                        )),
-                )
-                .child(
-                    div()
-                        .flex_grow_1()
-                        .h(px(10.0))
-                        .rounded_md()
-                        .bg(rgb(pal.border))
-                        .child(
-                            div()
-                                .h_full()
-                                .w(gpui::relative(frac.clamp(0.0, 1.0)))
-                                .rounded_md()
-                                .bg(rgb(pal.accent)),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(format!("{:.1} с", left as f32 / 1000.0)),
-                ),
-        )
-    }
-
     fn journal_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let dark = pal.bg == crate::palette::palette("dark").bg;
