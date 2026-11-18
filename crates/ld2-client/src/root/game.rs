@@ -1075,9 +1075,16 @@ impl Root {
                 Click::NpcTalk(id.clone()),
             ));
         }
+        // M23: на трупе «Осмотреть» открывает то же окно подятия,
+        // что и ЛКМ по строке (лут + рюкзак); у прочих сущностей —
+        // прежняя модалка осмотра.
         menu = menu.item(mk(
             t(lang, Key::Examine).to_string(),
-            Click::Examine(id.clone()),
+            if entity.kind == EntityKind::Corpse {
+                Click::LootOpen(id.clone())
+            } else {
+                Click::Examine(id.clone())
+            },
         ));
         // M20/F20b: добыча ресурса (инструмент/ранг — на сервере).
         if entity.kind == EntityKind::Resource {
