@@ -1259,7 +1259,13 @@ impl World {
         self.harvest_jobs.insert(job.char_id.clone(), job);
     }
 
-    /// M22: прервать активную разделку (взаимодействие с предметом)
+    /// M24: идёт ли у персонажа активная разделка (блок действий,
+    /// `E_BUSY`; item-команды — исключение, прерывают по M23).
+    pub fn is_harvesting(&self, char_id: &str) -> bool {
+        self.harvest_jobs.contains_key(char_id)
+    }
+
+    /// M24: прервать активную разделку (взаимодействие с предметом)
     /// → джоб изымается; для skin вызывающий помечает труп
     /// «шкура испорчена» ([`Self::ruin_skin`]).
     pub fn cancel_harvest(&mut self, char_id: &str) -> Option<HarvestJob> {

@@ -798,6 +798,30 @@ async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String
             return Vec::new();
         }
     }
+    // M24: урон прерывает активную разделку — семантика M23:
+    // skin → кожа испорчена (повтор невозможен, «Шкура испорчена»
+    // в журнале), gut → просто отмена (повтор разрешён); шкура в
+    // лут не попадает, опыта нет (finish_harvest не выполняется).
+    let harvest_evt = {
+        let mut world = state.world.lock().expect("мир");
+        world.cancel_harvest(&hit.char_id).map(|job| {
+            let ruined = job.action == "skin";
+            if ruined {
+                world.ruin_skin(&job.corpse_id);
+            }
+            event_text(
+                "evt/harvest/result",
+                &serde_json::to_value(ld2_protocol::evt::HarvestResult {
+                    entity_id: job.corpse_id,
+                    name: job.name,
+                    action: job.action,
+                    ok: false,
+                    ruined,
+                })
+                .unwrap_or_default(),
+            )
+        })
+    };
     let pool = &state.pool;
     let row = match crate::db::characters::get(pool, &hit.char_id).await {
         Ok(Some(row)) => row,
@@ -810,11 +834,15 @@ async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String
     let new_hp = (i64::from(row.hp_cur) - hit.amount).max(0);
     if new_hp == 0 {
         // Смерть: позиция после респауна — источник истины для мира.
-        let events = crate::death::kill_character(state, &hit.char_id).await;
+        let mut events = crate::death::kill_character(state, &hit.char_id).await;
         if let Ok(Some(row)) = crate::db::characters::get(pool, &hit.char_id).await {
             let mut world = state.world.lock().expect("мир");
             world.set_char_location(&hit.char_id, &row.location_id);
             world.end_combat(&hit.char_id);
+        }
+        // M24: прерванная уроном разделка — итог клиенту и при смерти.
+        if let Some(text) = harvest_evt {
+            events.push((hit.char_id.clone(), text));
         }
         return events;
     }
@@ -844,7 +872,12 @@ async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String
         None,
         serde_json::to_value(CharStats { patch }).unwrap_or_default(),
     );
-    vec![(hit.char_id.clone(), text)]
+    let mut out = vec![(hit.char_id.clone(), text)];
+    // M24: итог прерванной разделки — следом за патчем характеристик.
+    if let Some(text) = harvest_evt {
+        out.push((hit.char_id.clone(), text));
+    }
+    out
 }
 
 /// Применить XP убийства: навык оружия персонажа (экипировка → `item_defs.skill`,

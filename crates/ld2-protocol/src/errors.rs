@@ -84,8 +84,10 @@ pub enum ErrorCode {
     RateLimited,
     PvpForbidden,
     TooLarge,
-    /// M24: количество в админ-диалоге вне 1..=999 (`cmd/admin.*`).
+    /// M24: количество в админ-диалоге вне 1..=999 (`E_BAD_QTY`).
     BadQuantity,
+    /// M24: персонаж занят разделкой — действия блокированы (`E_BUSY`).
+    Busy,
     Internal,
     /// Код, неизвестный этой версии клиента (новее контракта / расширение сервера).
     Unknown(String),
@@ -143,6 +145,8 @@ impl ErrorCode {
             Self::PvpForbidden => "E_PVP_FORBIDDEN",
             Self::TooLarge => "E_TOO_LARGE",
             Self::BadQuantity => "E_BAD_QTY",
+            Self::Busy => "E_BUSY",
+
             Self::Internal => "E_INTERNAL",
             Self::Unknown(raw) => raw,
         }
@@ -201,6 +205,8 @@ impl FromStr for ErrorCode {
             "E_PVP_FORBIDDEN" => Self::PvpForbidden,
             "E_TOO_LARGE" => Self::TooLarge,
             "E_BAD_QTY" => Self::BadQuantity,
+            "E_BUSY" => Self::Busy,
+
             "E_INTERNAL" => Self::Internal,
             other => Self::Unknown(other.to_string()),
         })
