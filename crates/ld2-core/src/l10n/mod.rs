@@ -226,6 +226,9 @@ pub enum Key {
     // M22: снятие шкур
     SkinBtn,
     GutBtn,
+    /// M24: руна чужого класса — кнопка каста недоступна.
+    RuneWrongClass,
+    /// M24: руна чужого класса — кнопка каста недоступна.
     InnerLabel,
     DialogHistory,
     ProfRank1,
@@ -835,6 +838,7 @@ mod tests {
         Key::ProfRankUpHint,
         Key::SkinBtn,
         Key::GutBtn,
+        Key::RuneWrongClass,
         Key::InnerLabel,
         Key::DialogHistory,
         Key::ProfRank1,

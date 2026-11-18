@@ -361,6 +361,7 @@ mod tests {
             Some(vec![Socket {
                 index: 0,
                 rune: Some(RuneInfo {
+                    class: None,
                     name: "Руна огня".into(),
                     spell: "fire_dart".into(),
                     charges: 7,

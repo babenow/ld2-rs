@@ -3447,6 +3447,7 @@ mod tests {
             index,
             accepts: accepts.map(str::to_string),
             rune: filled.then(|| RuneInfo {
+                class: None,
                 name: "x".into(),
                 spell: String::new(),
                 charges: 1,
@@ -3491,6 +3492,7 @@ mod tests {
             index: 0,
             accepts: Some("rune".into()),
             rune: Some(RuneInfo {
+                class: None,
                 name: rune_name.into(),
                 spell: "fire_dart".into(),
                 charges: 7,
@@ -3536,6 +3538,7 @@ mod tests {
             index: 0,
             accepts: accepts.map(str::to_string),
             rune: filled.then(|| RuneInfo {
+                class: None,
                 name: "Руна огня".into(),
                 spell: "fire_dart".into(),
                 charges: 7,
@@ -3572,6 +3575,7 @@ mod tests {
             index: 0,
             accepts: Some("gem".into()),
             rune: Some(RuneInfo {
+                class: None,
                 name: "Самоцвет силы".into(),
                 spell: String::new(),
                 charges: 0,
@@ -3679,6 +3683,7 @@ mod tests {
         let filled = |index: u32| Socket {
             index,
             rune: Some(ld2_protocol::types::RuneInfo {
+                class: None,
                 name: "Руна".into(),
                 spell: "fire_dart".into(),
                 charges: 1,

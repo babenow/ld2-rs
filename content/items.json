@@ -220,7 +220,8 @@
         "school": "frost",
         "charges": 6,
         "max": 8,
-        "glyph": "n"
+        "glyph": "n",
+        "class": "mage"
       },
       "gold_value": 60
     },
@@ -238,7 +239,8 @@
         "charges": 5,
         "max": 8,
         "cost": 2,
-        "glyph": "m"
+        "glyph": "m",
+        "class": "mage"
       },
       "gold_value": 75
     },
@@ -296,13 +298,32 @@
       "cooldown_s": 3.0,
       "stats": {
         "dmg": "13..26",
-        "param": { "crit_chance": 3 }
+        "param": {
+          "crit_chance": 3
+        }
       },
       "bonuses": [
-        { "kind": "attr", "id": "str", "value": 3 },
-        { "kind": "param", "id": "damage", "value": 2 },
-        { "kind": "param", "id": "accuracy", "value": 4, "pct": true },
-        { "kind": "skill", "id": "sword", "value": 1 }
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 4,
+          "pct": true
+        },
+        {
+          "kind": "skill",
+          "id": "sword",
+          "value": 1
+        }
       ],
       "gold_value": 320,
       "skill": "twohand",
@@ -322,12 +343,38 @@
         "dmg": "19..31"
       },
       "bonuses": [
-        { "kind": "attr", "id": "str", "value": 5 },
-        { "kind": "attr", "id": "dex", "value": 5 },
-        { "kind": "param", "id": "damage", "value": 6 },
-        { "kind": "param", "id": "accuracy", "value": 4, "pct": true },
-        { "kind": "param", "id": "crit_chance", "value": 12, "pct": true },
-        { "kind": "skill", "id": "sword", "value": 1 }
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 5
+        },
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 5
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 6
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 4,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 12,
+          "pct": true
+        },
+        {
+          "kind": "skill",
+          "id": "sword",
+          "value": 1
+        }
       ],
       "gold_value": 3200,
       "skill": "twohand",
@@ -842,7 +889,8 @@
         "school": "fire",
         "charges": 7,
         "max": 10,
-        "glyph": "f"
+        "glyph": "f",
+        "class": "mage"
       },
       "gold_value": 40
     },
@@ -860,7 +908,13 @@
         "charges": 6,
         "max": 8,
         "glyph": "p",
-        "buff": { "param": "accuracy", "value": 6, "duration_s": 12, "max_stacks": 3 }
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "class": "archer"
       },
       "gold_value": 55
     },
@@ -878,7 +932,13 @@
         "charges": 6,
         "max": 8,
         "glyph": "r",
-        "buff": { "param": "crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2 }
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "warrior"
       },
       "gold_value": 60
     },
@@ -896,7 +956,13 @@
         "charges": 6,
         "max": 8,
         "glyph": "g",
-        "buff": { "param": "armor", "value": 10, "duration_s": 15, "max_stacks": 3 }
+        "buff": {
+          "param": "armor",
+          "value": 10,
+          "duration_s": 15,
+          "max_stacks": 3
+        },
+        "class": "warrior"
       },
       "gold_value": 55
     },
@@ -914,7 +980,12 @@
         "charges": 5,
         "max": 8,
         "glyph": "b",
-        "effect": { "kind": "bleed", "value": 3, "duration_s": 6 }
+        "effect": {
+          "kind": "bleed",
+          "value": 3,
+          "duration_s": 6
+        },
+        "class": "warrior"
       },
       "gold_value": 80
     },
@@ -932,7 +1003,11 @@
         "charges": 5,
         "max": 8,
         "glyph": "s",
-        "effect": { "kind": "stun", "duration_s": 3 }
+        "effect": {
+          "kind": "stun",
+          "duration_s": 3
+        },
+        "class": "warrior"
       },
       "gold_value": 85
     },
@@ -950,7 +1025,11 @@
         "charges": 5,
         "max": 8,
         "glyph": "v",
-        "effect": { "kind": "root", "duration_s": 5 }
+        "effect": {
+          "kind": "root",
+          "duration_s": 5
+        },
+        "class": "archer"
       },
       "gold_value": 80
     },
@@ -1225,7 +1304,9 @@
       "name": "Малый камень усиления",
       "rarity": "common",
       "upgrade": 0,
-      "stats": { "quality": -5 },
+      "stats": {
+        "quality": -5
+      },
       "gold_value": 10,
       "qty": 1
     },
@@ -1235,7 +1316,9 @@
       "name": "Средний камень усиления",
       "rarity": "common",
       "upgrade": 0,
-      "stats": { "quality": 0 },
+      "stats": {
+        "quality": 0
+      },
       "gold_value": 30,
       "qty": 1
     },
@@ -1245,7 +1328,9 @@
       "name": "Большой камень усиления",
       "rarity": "common",
       "upgrade": 0,
-      "stats": { "quality": 5 },
+      "stats": {
+        "quality": 5
+      },
       "gold_value": 60,
       "qty": 1
     }

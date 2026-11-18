@@ -328,6 +328,7 @@ pub fn staff_item() -> ItemSnapshot {
             Socket {
                 index: 0,
                 rune: Some(ld2_protocol::types::RuneInfo {
+                    class: None,
                     name: "Руна огня".into(),
                     spell: "fire_dart".into(),
                     charges: 7,

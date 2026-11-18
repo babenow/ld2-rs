@@ -60,7 +60,14 @@ fn equipped_rune_items(snap: &StateSnapshot) -> Vec<&ItemSnapshot> {
         .inventory
         .iter()
         .filter(|i| equipped.contains(i.uid.as_str()))
-        .filter(|i| i.sockets.iter().flatten().any(|s| s.rune.is_some()))
+        .filter(|i| {
+            i.sockets
+                .iter()
+                .flatten()
+                // M24: самоцветы живут в том же поле `rune`, но
+                // заклинания не имеют — на панель каста не идут.
+                .any(|s| s.rune.as_ref().is_some_and(|r| !r.spell.is_empty()))
+        })
         .collect()
 }
 
@@ -77,8 +84,16 @@ impl Root {
             .unwrap_or(0);
         for staff in equipped_rune_items(snap) {
             if let Some(socket) = staff.sockets.iter().flatten().find(|socket| {
-                socket.rune.as_ref().is_some_and(|r| r.charges > 0)
-                    && (rune_cost <= 0 || snap.char.mp.cur >= rune_cost)
+                socket.rune.as_ref().is_some_and(|r| {
+                    r.charges > 0
+                        // M24: самоцвет — не руна, каст не из него.
+                        && !r.spell.is_empty()
+                        && (rune_cost <= 0 || snap.char.mp.cur >= rune_cost)
+                        // M24: класс руны — каст только своему классу.
+                        && r.class
+                            .as_deref()
+                            .is_none_or(|c| snap.char.profile.as_deref() == Some(c))
+                })
             }) {
                 return Some(Click::RuneCast {
                     staff_uid: staff.uid.clone(),
@@ -602,6 +617,11 @@ impl Root {
                     .flex()
                     .flex_col()
                     .min_w_0()
+                    // M24: левая колонка — 30 % ширины экрана
+                    // (резиновая; пол 240 — не схлопывается на узких
+                    // окнах), правая — остальные 70 % (flex_grow).
+                    .w(gpui::relative(0.3))
+                    .min_w(px(240.0))
                     .child(self.left_column(cx, pal, &snap)),
             )
             .child(
@@ -645,7 +665,9 @@ impl Root {
         snap: &StateSnapshot,
     ) -> Div {
         let lang = self.lang;
-        let mut col = div().flex().flex_col().gap_2().w(px(210.0));
+        // M24: ширина задаётся контейнером в game_screen (30 %,
+        // резиновая); колонка тянется на всю его ширину.
+        let mut col = div().flex().flex_col().gap_2().w_full();
 
         // Имя + бейджи статусов (ФР-11): серверные сроки, now = лок + offset.
         let mut name_row = div().flex().flex_row().items_center().gap_2().child(
@@ -1539,13 +1561,24 @@ impl Root {
             let staff_uid = staff.uid.clone();
             for socket in staff.sockets.iter().flatten() {
                 let Some(rune) = &socket.rune else { continue };
+                // M24: самоцвет в сокете — не руна, на панель не идёт.
+                if rune.spell.is_empty() {
+                    continue;
+                }
                 let charges_ok = rune.charges > 0;
                 let mp_ok = rune_cost <= 0 || snap.char.mp.cur >= rune_cost;
+                // M24: класс руны — каст только своему классу.
+                let wrong_class = rune
+                    .class
+                    .as_deref()
+                    .is_some_and(|c| snap.char.profile.as_deref() != Some(c));
                 let label = format!("{} ×{}", rune.name, rune.charges);
                 // Причина недоступности: сначала требования
                 // (заряды/мана), потом кулдаун (у кулдауна — таймер
                 // и в label, как у остальных кнопок панели).
-                let off: Option<OffReason> = if !charges_ok {
+                let off: Option<OffReason> = if wrong_class {
+                    Some(OffReason::Req(t(lang, Key::RuneWrongClass).to_string()))
+                } else if !charges_ok {
                     Some(OffReason::Req(t(lang, Key::NoCharge).to_string()))
                 } else if !mp_ok {
                     Some(OffReason::Req(t(lang, Key::NotEnoughMp).to_string()))

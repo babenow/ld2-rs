@@ -4526,6 +4526,7 @@ mod tests {
         // Патч целым предметом (сокеты после инкрустации).
         let mut full = fixtures::staff_item();
         full.sockets.as_mut().unwrap()[1].rune = Some(ld2_protocol::types::RuneInfo {
+            class: None,
             damage: None,
             def_id: None,
             name: "Руна льда".into(),

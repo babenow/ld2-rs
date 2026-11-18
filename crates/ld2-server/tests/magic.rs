@@ -1394,3 +1394,45 @@ async fn socket_insert_stack_inscribes_single_item() {
         "руна в новой строке"
     );
 }
+
+/// M24: класс руны (`stats.class`) — каст только своим классом.
+/// Воин кастует руну мага → `E_REQUIREMENT_ATTR`; инкрустация при
+/// этом разрешена (гейт — на использовании, не на вставке).
+#[tokio::test]
+async fn rune_cast_requires_matching_class() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await; // warrior
+
+    let staff = give(&mut c, "staff_apprentice").await;
+    let rune = give(&mut c, "rune_fire").await; // class: mage
+    let seq = c
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff, "socket_index": 0, "rune_uid": rune }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "инкрустация разрешена");
+
+    let seq = c
+        .send(
+            "cmd/magic.rune_cast",
+            json!({ "staff_uid": staff, "socket_index": 0 }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_REQUIREMENT_ATTR",
+        "каст чужого класса: {ack}"
+    );
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("класс"),
+        "причина в сообщении: {ack}"
+    );
+}

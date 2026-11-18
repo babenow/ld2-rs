@@ -5903,6 +5903,11 @@ impl Session {
         if let Some(g) = glyph {
             rune_obj["glyph"] = serde_json::json!(g);
         }
+        // M24: класс руны (stats.class) — в сокет, чтобы клиент гасил
+        // кнопку каста не своему классу; нет поля — любой (§11).
+        if let Some(class) = rune_def.stats.get("class").and_then(|v| v.as_str()) {
+            rune_obj["class"] = serde_json::json!(class);
+        }
         // M18/F58f: раритет вставленного — символ самоцвета в UI
         // зависит от него (предмет и слот; §8 — сервер-истина).
         rune_obj["rarity"] = serde_json::json!(rune_def.rarity);
@@ -6271,6 +6276,29 @@ impl Session {
                 ErrorCode::NoRuneSlot,
                 "у предмета нет сокетов",
             )];
+        }
+        // M24: класс руны (stats.class) — каст только своим классом
+        // (нет поля — любой, §11). После типа посоха: E_NO_RUNE_SLOT
+        // важнее (каст с меча — про тип, не про класс).
+        if let Some(class) = rune_def.stats.get("class").and_then(|v| v.as_str()) {
+            let profile = db::characters::get(&pool, &char_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|r| r.profile);
+            if profile.as_deref() != Some(class) {
+                let need = match class {
+                    "mage" => "маг",
+                    "warrior" => "воин",
+                    "archer" => "лучник",
+                    other => other,
+                };
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::RequirementAttr,
+                    format!("руна требует класс: {need}"),
+                )];
+            }
         }
         // M17/F30g: кулдаун каста руны (cooldown_s, дефолт 1 с).
         if let Some(err) = self.item_cd_gate(seq, &char_id, &rune_def).await {
@@ -10488,6 +10516,13 @@ fn attr_genitive(id: &str) -> &str {
 pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_id: &str) {
     use crate::world::{RuneBuff, SocketedRune};
 
+    // M24: класс руны (stats.class) — авто-приём только своего класса
+    // (нет поля — любой, §11); профиль запрашиваем один раз.
+    let profile = db::characters::get(&state.pool, char_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| r.profile);
     let Some(main) = db::items::find_equipped_in_slot(&state.pool, char_id, "main_hand")
         .await
         .ok()
@@ -10509,6 +10544,18 @@ pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_i
         let Ok(Some(rune_def)) = db::items::def(&state.pool, rune_def_id).await else {
             continue;
         };
+        // M24: класс руны — авто-приём только своего класса.
+        if let Some(class) = rune_def.stats.get("class").and_then(|v| v.as_str()) {
+            if profile.as_deref() != Some(class) {
+                continue;
+            }
+        }
+        // M24: класс руны — авто-приём только своего класса.
+        if let Some(class) = rune_def.stats.get("class").and_then(|v| v.as_str()) {
+            if profile.as_deref() != Some(class) {
+                continue;
+            }
+        }
         // Шанс — контент-параметр: без него руна не участвует в
         // авто-приёме (прежние руны продолжают работать кастом).
         let Some(chance) = rune_def.stats.get("chance").and_then(|v| v.as_f64()) else {
