@@ -19,14 +19,14 @@ use gpui::{
 };
 use ld2_core::l10n::{t, Key, Lang};
 use ld2_core::store::Screen;
-use ld2_protocol::types::ItemSnapshot;
+use ld2_protocol::types::EntityKind;
 
 use crate::fa::fa_icon;
 use crate::palette::Palette;
 
 use super::backpack::{tab_for_type, BackpackTab};
-use super::sheet::{item_color, rarity_color, rarity_label};
-use super::{scrollable_tab, Click, PopupKind, Root};
+use super::sheet::{quality_color, rarity_color, rarity_label};
+use super::{act_btn, scrollable_tab, Click, PopupKind, Root};
 
 /// M24: payload перетаскивания предмета из каталога в цель — свой
 /// newtype (не конфликтует с `LootDrag` окна подятия и Reorder
@@ -217,38 +217,138 @@ impl Root {
             .to_lowercase();
         let inv_tab = self.admin_inv_tab;
         let inv_rarity = self.admin_inv_rarity.clone();
-        let inv: Vec<ItemSnapshot> = self
-            .store
-            .snapshot
-            .as_ref()
-            .map(|s| {
-                s.char
-                    .inventory
-                    .iter()
-                    .filter(|item| {
-                        let in_tab =
-                            inv_tab == BackpackTab::All || tab_for_type(&item.item_type) == inv_tab;
-                        let matches_query =
-                            inv_query.is_empty() || item.name.to_lowercase().contains(&inv_query);
-                        let matches_rarity = inv_rarity == "all" || item.rarity == inv_rarity;
-                        in_tab && matches_query && matches_rarity
-                    })
-                    .cloned()
-                    .collect()
+        // ── цель правой колонки (F24c): чипы (свой рюкзак + монстры
+        // и трупы локации) + ввод имени игрока (в т.ч. оффлайн) ────
+        let mut targets: Vec<(String, String)> =
+            vec![("self".to_string(), t(lang, Key::BackpackTitle).to_string())];
+        if let Some(snap) = self.store.snapshot.as_ref() {
+            for e in &snap.location.entities {
+                match e.kind {
+                    EntityKind::Monster => {
+                        targets.push((format!("monster:{}", e.id), e.name.clone()));
+                    }
+                    EntityKind::Corpse => {
+                        targets.push((format!("corpse:{}", e.id), e.name.clone()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let target_label = if self.admin_target == "self" {
+            t(lang, Key::BackpackTitle).to_string()
+        } else if let Some(name) = self.admin_target.strip_prefix("char:") {
+            name.to_string()
+        } else {
+            targets
+                .iter()
+                .find(|(v, _)| *v == self.admin_target)
+                .map(|(_, n)| n.clone())
+                .unwrap_or_else(|| self.admin_target.clone())
+        };
+        let target_chips = target_chip_row(cx, *pal, &targets, &self.admin_target);
+        let player_row = div()
+            .flex()
+            .flex_row()
+            .gap_1()
+            .child(SearchInput::new(
+                "ld2-admin-player",
+                self.ti(&self.admin_player),
+            ))
+            .child(act_btn(
+                cx,
+                t(lang, Key::AdminTargetGo),
+                pal.accent,
+                0xffffff,
+                |root, cx| {
+                    let name = root
+                        .ti(&root.admin_player)
+                        .read(cx)
+                        .text()
+                        .trim()
+                        .to_string();
+                    if !name.is_empty() {
+                        root.on_click(Click::AdminTarget(format!("char:{name}")), cx);
+                    }
+                },
+            ));
+
+        // Содержимое: self — снапшот (события инвентаря), прочие
+        // цели — `cmd/admin.target.info` (кэш в сторе).
+        let target_loading = self.admin_target != "self" && self.store.admin_target_items.is_none();
+        let target_items: Vec<TargetItem> = if self.admin_target == "self" {
+            self.store
+                .snapshot
+                .as_ref()
+                .map(|s| {
+                    s.char
+                        .inventory
+                        .iter()
+                        .map(|i| TargetItem {
+                            r#ref: i.uid.clone(),
+                            def_id: i.def_id.clone(),
+                            name: i.name.clone(),
+                            item_type: i.item_type.clone(),
+                            rarity: i.rarity.clone(),
+                            qty: i.qty.unwrap_or(1),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            self.store
+                .admin_target_items
+                .as_ref()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|i| {
+                            Some(TargetItem {
+                                r#ref: i["ref"].as_str()?.to_string(),
+                                def_id: i["id"].as_str().map(str::to_string),
+                                name: i["name"].as_str()?.to_string(),
+                                item_type: i["type"].as_str().unwrap_or("").to_string(),
+                                rarity: i["rarity"].as_str().unwrap_or("").to_string(),
+                                qty: i["qty"].as_i64().unwrap_or(1),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        // Свои фильтры (вкладки/поиск/раритет) действуют и на цель.
+        let filtered: Vec<&TargetItem> = target_items
+            .iter()
+            .filter(|it| {
+                let in_tab = inv_tab == BackpackTab::All || tab_for_type(&it.item_type) == inv_tab;
+                let matches_query =
+                    inv_query.is_empty() || it.name.to_lowercase().contains(&inv_query);
+                let matches_rarity = inv_rarity == "all" || it.rarity == inv_rarity;
+                in_tab && matches_query && matches_rarity
             })
-            .unwrap_or_default();
-        let mut inv_col = div().flex().flex_col().gap_1();
-        let inv_body = if inv.is_empty() {
+            .collect();
+        let empty_key = if self.admin_target == "self" {
+            Key::InventoryEmpty
+        } else {
+            Key::AdminNothing
+        };
+        let inv_body = if target_loading {
             div()
                 .px_2()
                 .py_1()
                 .text_color(rgb(pal.muted))
-                .child(t(lang, Key::InventoryEmpty))
+                .child(t(lang, Key::Loading))
+        } else if filtered.is_empty() {
+            div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, empty_key))
         } else {
-            for item in &inv {
-                inv_col = inv_col.child(target_row(this.clone(), *pal, lang, item));
+            let mut col = div().flex().flex_col().gap_1();
+            for item in &filtered {
+                col = col.child(target_row(this.clone(), *pal, lang, item));
             }
-            inv_col
+            col
         };
         let accent = pal.accent;
         let drop_this = cx.entity();
@@ -298,8 +398,10 @@ impl Root {
                     .font_weight(gpui::FontWeight::BOLD)
                     .text_size(px(13.0))
                     .text_color(rgb(pal.accent))
-                    .child(t(lang, Key::BackpackTitle)),
+                    .child(target_label),
             )
+            .child(target_chips)
+            .child(player_row)
             .child(SearchInput::new(
                 "ld2-admin-inv-search",
                 self.ti(&self.admin_inv_search),
@@ -406,13 +508,26 @@ fn catalog_row(
         })
 }
 
+/// M24: единая строка содержимого цели (self — из снапшота, прочие
+/// цели — из `admin.target.info`): ref = uid / `loot:`/`bonus:`.
+#[derive(Debug, Clone)]
+struct TargetItem {
+    r#ref: String,
+    def_id: Option<String>,
+    name: String,
+    item_type: String,
+    rarity: String,
+    qty: i64,
+}
+
 /// Строка содержимого цели: двойной клик — удаление (execute-диалог
 /// количества); контейнер — зона приёма drag из каталога.
-fn target_row(this: Entity<Root>, pal: Palette, lang: Lang, item: &ItemSnapshot) -> Stateful<Div> {
-    let uid = item.uid.clone();
+fn target_row(this: Entity<Root>, pal: Palette, lang: Lang, item: &TargetItem) -> Stateful<Div> {
+    let uid = item.r#ref.clone();
     let name = item.name.clone();
-    let qty = item.qty.unwrap_or(1);
-    let color = item_color(item, &pal);
+    let qty = item.qty;
+    let color =
+        quality_color(item.def_id.as_deref()).unwrap_or_else(|| rarity_color(&item.rarity, &pal));
     let _ = lang;
     div()
         .id(format!("ld2-admin-inv-{uid}"))
@@ -509,6 +624,47 @@ fn rarity_filter_row(
                     let value = value_owned.clone();
                     this.update(acx, |root, cx| {
                         set(root, value);
+                        cx.notify();
+                    });
+                }),
+        );
+    }
+    row
+}
+
+/// M24: чипы выбора цели правой колонки — свой рюкзак + сущности
+/// локации (монстры/трупы); активная цель подсвечена.
+fn target_chip_row(
+    cx: &mut Context<'_, Root>,
+    pal: Palette,
+    targets: &[(String, String)],
+    active: &str,
+) -> Div {
+    let mut row = div().flex().flex_row().flex_wrap().gap_1().items_center();
+    for (value, label) in targets {
+        let is_active = active == value;
+        let this = cx.entity();
+        let selected_bg = pal.selection;
+        let border = if is_active { pal.accent } else { pal.border };
+        let bg = if is_active { pal.selection } else { pal.panel };
+        let value_owned = value.clone();
+        row = row.child(
+            div()
+                .id(format!("ld2-admin-target-{value}"))
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(border))
+                .bg(rgb(bg))
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(selected_bg)))
+                .text_size(px(11.0))
+                .child(label.clone())
+                .on_click(move |_, _window, acx| {
+                    let value = value_owned.clone();
+                    this.update(acx, |root, cx| {
+                        root.on_click(Click::AdminTarget(value), cx);
                         cx.notify();
                     });
                 }),

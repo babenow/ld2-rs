@@ -491,5 +491,7 @@ pub(super) fn t(key: Key) -> &'static str {
         AdminInvSearch => "Поиск в рюкзаке…",
         AdminNothing => "Ничего не найдено",
         RarityAll => "Все",
+        AdminPlayerName => "Имя игрока…",
+        AdminTargetGo => "Перейти",
     }
 }

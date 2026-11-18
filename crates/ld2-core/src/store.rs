@@ -113,6 +113,8 @@ pub enum Act {
     AdminAsk,
     /// M24: `cmd/admin.god_mode` → ack `{enabled}` → `admin_god`.
     AdminGod,
+    /// M24: `cmd/admin.target.info` → `admin_target_items`.
+    AdminTarget,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -314,6 +316,9 @@ pub struct AppStore {
     pub admin_catalog: Option<Vec<serde_json::Value>>,
     /// M24: состояние «режим бога» (эхо `cmd/admin.god_mode`).
     pub admin_god: bool,
+    /// M24: содержимое выбранной цели правой колонки (кроме self —
+    /// тот приходит снапшотом).
+    pub admin_target_items: Option<Vec<serde_json::Value>>,
     /// M18/F35: открытое окно диалога NPC (реплики + квесты).
     pub npc_dialog: Option<NpcDialogView>,
     /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
@@ -709,6 +714,7 @@ impl AppStore {
             pickup_dirty: false,
             admin_catalog: None,
             admin_god: false,
+            admin_target_items: None,
             npc_dialog: None,
             pending_delete: None,
             deleting_char: None,
@@ -853,8 +859,8 @@ impl AppStore {
                 Act::Gather => self.world_error = Some(msg),
                 // Профессии (M21): ранг/сброс — тосты (у тренера/граница).
                 Act::CraftRankUp | Act::ProfessionReset => self.notice = Some(msg),
-                // Админ-панель (M24): отказы — тост (каталог/ask/god).
-                Act::AdminCatalog | Act::AdminAsk | Act::AdminGod => {
+                // Админ-панель (M24): отказы — тост (каталог/ask/god/цель).
+                Act::AdminCatalog | Act::AdminAsk | Act::AdminGod | Act::AdminTarget => {
                     self.notice = Some(msg);
                 }
                 // Снятие шкур (M22): отказ до старта — чистим бар.
@@ -935,7 +941,8 @@ impl AppStore {
             | Act::Harvest
             | Act::AdminAsk
             | Act::AdminGod
-            | Act::AdminCatalog => {
+            | Act::AdminCatalog
+            | Act::AdminTarget => {
                 // результат событиями (§8); npc.talk/npc.reply
                 // обрабатываются ниже отдельными блоками (M18/F35/F37);
                 // диалоги (M20) — ack только подтверждает выбор/ввод.
@@ -1172,6 +1179,12 @@ impl AppStore {
             if let Some(enabled) = ack.payload.as_ref().and_then(|p| p["enabled"].as_bool()) {
                 self.admin_god = enabled;
             }
+        } else if act == Act::AdminTarget {
+            // M24: содержимое цели правой колонки — `{items:[…]}`.
+            self.admin_target_items = ack
+                .payload
+                .and_then(|p| p.get("items").cloned())
+                .and_then(|v| v.as_array().cloned());
         }
         vec![]
     }
@@ -2298,6 +2311,7 @@ impl AppStore {
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
+        self.admin_target_items = None;
         self.upgrade = None;
         self.socketing = None;
         self.dialog = None;
@@ -2372,6 +2386,7 @@ impl AppStore {
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
+        self.admin_target_items = None;
         self.item_detail = None;
         self.death = None;
         self.upgrade = None;

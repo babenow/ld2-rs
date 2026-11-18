@@ -263,6 +263,9 @@ pub(crate) enum Click {
     AdminRemove(String),
     /// M24: тумблер «режим бога» в шапке админ-окна.
     AdminGod(bool),
+    /// M24: выбрать цель правой колонки (`self`/`char:`/`monster:`/
+    /// `corpse:`) → `cmd/admin.target.info`.
+    AdminTarget(String),
     CloseDetail,
     SwitchChar,
 }
@@ -410,6 +413,11 @@ pub struct Root {
     admin_rarity: String,
     /// M24: фильтр раритета правой колонки (независимый).
     admin_inv_rarity: String,
+    /// M24: нужен (re)запрос содержимого цели (`admin.target.info`) —
+    /// как `admin_catalog_request` (pending одиночный).
+    admin_target_request: bool,
+    /// M24: поле «имя игрока» — цель `char:<имя>` (в т.ч. оффлайн).
+    admin_player: Option<Entity<TextInput>>,
     /// M21: вооружённая кнопка «Сбросить» (второй клик — cmd/craft.reset).
     prof_reset_armed: Option<String>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
@@ -709,6 +717,8 @@ impl Root {
             admin_inv_search: None,
             admin_rarity: "all".into(),
             admin_inv_rarity: "all".into(),
+            admin_target_request: false,
+            admin_player: None,
             prof_reset_armed: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
@@ -802,9 +812,13 @@ impl Root {
         if self.pickup_request && self.pickup_queue.is_empty() {
             self.pump_pickup(cx);
         }
-        // M24: админ-панель — догрузка каталога при свободном ack-слоте.
+        // M24: админ-панель — догрузка каталога и содержимого цели
+        // при свободном ack-слоте.
         if self.admin_catalog_request {
             self.pump_admin_catalog(cx);
+        }
+        if self.admin_target_request {
+            self.pump_admin_target(cx);
         }
 
         // Результат фоновой проверки обновлений (§12).
@@ -1225,6 +1239,13 @@ impl Root {
             window,
             cx,
             t(lang, Key::AdminInvSearch).to_string(),
+            false,
+            None,
+        ));
+        self.admin_player = Some(mk(
+            window,
+            cx,
+            t(lang, Key::AdminPlayerName).to_string(),
             false,
             None,
         ));
@@ -1682,6 +1703,11 @@ impl Root {
     fn close_admin(&mut self) {
         self.admin_popup.open = false;
         self.admin_catalog_request = false;
+        self.admin_target_request = false;
+        // Цель и её содержимое не переживают закрытие (сущность могла
+        // исчезнуть); каталог остаётся — кэш на сессию.
+        self.admin_target = "self".into();
+        self.store.admin_target_items = None;
     }
 
     /// M23: закрытие окна подятия — данные/выбор/запрос чистятся
@@ -1773,6 +1799,31 @@ impl Root {
             }
             Err(e) => {
                 self.admin_catalog_request = false;
+                self.store.notice = Some(format!("нет связи: {e}"));
+            }
+        }
+    }
+
+    /// M24: содержимое цели правой колонки — `cmd/admin.target.info`
+    /// при свободном `pending` (как каталог); после отправки флаг гаснет.
+    fn pump_admin_target(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.admin_target_request || !self.admin_popup.open {
+            return;
+        }
+        if self.store.pending.is_some() {
+            return; // ack-слот занят — ждём
+        }
+        let cmd = ld2_protocol::cmd::AdminTargetInfo {
+            target: self.admin_target.clone(),
+        };
+        match self.transport.send(&cmd) {
+            Ok(_) => {
+                self.store.on_world_sent(Act::AdminTarget);
+                self.admin_target_request = false;
+                cx.notify();
+            }
+            Err(e) => {
+                self.admin_target_request = false;
                 self.store.notice = Some(format!("нет связи: {e}"));
             }
         }
@@ -2398,6 +2449,12 @@ impl Root {
                     Ok(_) => self.store.on_world_sent(Act::AdminAsk),
                     Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
                 }
+            }
+            Click::AdminTarget(target) => {
+                self.admin_target = target;
+                self.store.admin_target_items = None;
+                self.admin_target_request = true;
+                self.pump_admin_target(cx);
             }
             Click::AdminGod(enabled) => {
                 let cmd = ld2_protocol::cmd::AdminGodMode { enabled };
