@@ -179,6 +179,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ProfRank1 => "Novice",
         SkinBtn => "Skin",
         GutBtn => "Gut",
+        RuneWrongClass => "Wrong class rune",
         InnerLabel => "Inside",
         DialogHistory => "History",
         ProfRank2 => "Apprentice",

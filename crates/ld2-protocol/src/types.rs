@@ -119,6 +119,11 @@ pub struct RuneInfo {
     /// или руны → клиент фолбэчит стабильным хешем имени руны.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glyph: Option<String>,
+    /// M24: класс руны (`stats.class`: warrior|archer|mage) — каст
+    /// и авто-приём только своему классу; аддитивно §11: поля нет у
+    /// сервера/старой записи → любому классу.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
     /// M18/F58f: раритет вставленного предмета — у самоцвета символ
     /// в отображении зависит от него (предмет и слот). Сервер кладёт
     /// при инкрустации (§8); аддитивно §11: поля нет → клиент
