@@ -206,3 +206,75 @@ async fn harvest_gates_gut_and_skin_flow() {
     let ack = harvest(&mut c, "cor_9", "skin").await;
     assert_eq!(ack["error"]["code"], "E_TARGET_GONE", "нет флагов: {ack}");
 }
+
+/// M22: взаимодействие с предметом во время разделки прерывает её —
+/// кожа испорчена («Шкура испорчена», повтор невозможен), освежевание
+/// прерывается, но можно повторить.
+#[tokio::test]
+async fn item_interaction_interrupts_harvest() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    give_gold(&mut c, 1000).await;
+    let seq = c
+        .send("cmd/craft.learn", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "learn skinning");
+    c.wait_event("evt/craft/profession").await;
+    give(&mut c, "skinning_knife").await;
+    let potion = give(&mut c, "potion_heal").await;
+    let potion2 = give(&mut c, "potion_heal").await;
+
+    let corpse = kill_wolf(&mut c).await;
+
+    // Старт снятия шкуры → взаимодействие с предметом прерывает.
+    let ack = harvest(&mut c, &corpse, "skin").await;
+    assert_eq!(ack["result"], "ok", "старт skin: {ack}");
+    let seq = c.send("cmd/item.use", json!({ "item_uid": potion })).await;
+    // Событие прерывания идёт ПЕРЕД ack'ом команды — ждём его первым
+    // (иначе wait(ack) поглотит событие).
+    let result = harvest_result(&mut c).await;
+    assert_eq!(result["payload"]["ok"], false, "прервано: {result}");
+    assert_eq!(c.ack(seq).await["result"], "ok", "использование зелья");
+    assert_eq!(
+        result["payload"]["ruined"], true,
+        "кожа испорчена: {result}"
+    );
+
+    // Повторно снять шкуру нельзя.
+    let ack = harvest(&mut c, &corpse, "skin").await;
+    assert_eq!(ack["error"]["code"], "E_ITEM_GONE", "кожа испорчена: {ack}");
+
+    // Освежевание: прерывание → отмена, повтор разрешён.
+    let ack = harvest(&mut c, &corpse, "gut").await;
+    assert_eq!(ack["result"], "ok", "старт gut: {ack}");
+    // Кулдаун расходников (1 с) — даём зелью отдохнуть.
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+    let seq = c.send("cmd/item.use", json!({ "item_uid": potion2 })).await;
+    let result = harvest_result(&mut c).await;
+    assert_eq!(result["payload"]["ok"], false, "gut прерван: {result}");
+    assert_eq!(c.ack(seq).await["result"], "ok", "второе зелье");
+    assert_eq!(
+        result["payload"]["ruined"], false,
+        "gut без порчи: {result}"
+    );
+    let ack = harvest(&mut c, &corpse, "gut").await;
+    assert_eq!(ack["result"], "ok", "повтор gut разрешён: {ack}");
+    let result = harvest_result(&mut c).await;
+    assert_eq!(result["payload"]["ok"], true, "повтор завершён: {result}");
+    let info = {
+        let seq = c
+            .send("cmd/entity.info", json!({ "entity_id": corpse }))
+            .await;
+        c.ack(seq).await
+    };
+    assert_eq!(
+        info["payload"]["inner"].as_array().expect("inner").len(),
+        1,
+        "лут освежевания после повтора: {info}"
+    );
+}

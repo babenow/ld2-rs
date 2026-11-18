@@ -240,11 +240,31 @@ impl Session {
             "cmd/dialog.submit" => self.dialog_submit(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
             "cmd/skill.train" => self.skill_train(env, seq).await,
-            "cmd/item.use" => self.item_use(env, seq).await,
-            "cmd/item.equip" => self.item_equip(env, seq).await,
-            "cmd/item.unequip" => self.item_unequip(env, seq).await,
-            "cmd/item.drop" => self.item_drop(env, seq).await,
-            "cmd/item.move" => self.item_move(env, seq).await,
+            "cmd/item.use" => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_use(env, seq).await);
+                outs
+            }
+            "cmd/item.equip" => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_equip(env, seq).await);
+                outs
+            }
+            "cmd/item.unequip" => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_unequip(env, seq).await);
+                outs
+            }
+            "cmd/item.drop" => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_drop(env, seq).await);
+                outs
+            }
+            "cmd/item.move" => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_move(env, seq).await);
+                outs
+            }
             // dev-сценарии (`/scenario …`); чат — ФР-13 в фазе M12.7
             "cmd/chat.send" => self.chat_send(env, seq).await,
             "cmd/chat.delete" => self.chat_delete(env, seq).await,
@@ -2336,6 +2356,44 @@ impl Session {
 
     /// Взятие лута сущности: `loot:<сущность>:<idx>` — однократно
     /// (`loot_taken`, D27), лимит слотов — из конфига (D25).
+    /// Снятие шкур (M22): взаимодействие с предметом во время
+    /// активной разделки **прерывает** её — кожа испорчена
+    /// (`ruined`, повтор невозможен, «Шкура испорчена» в журнале),
+    /// освежевание просто отменяется (можно повторить). Событие
+    /// чистит прогресс-бар клиента; сама команда предмета при этом
+    /// выполняется как обычно.
+    async fn maybe_interrupt_harvest(&mut self, seq: u32) -> Vec<Out> {
+        if self.require_auth(seq).is_some() {
+            return Vec::new();
+        }
+        let Ok(char_id) = self.require_char_id(seq) else {
+            return Vec::new(); // ошибку даст сам обработчик команды
+        };
+        let job = {
+            let mut world = self.state.world.lock().expect("мир");
+            world.cancel_harvest(&char_id)
+        };
+        let Some(job) = job else {
+            return Vec::new(); // разделки не было
+        };
+        if job.action == "skin" {
+            let mut world = self.state.world.lock().expect("мир");
+            world.ruin_skin(&job.corpse_id);
+        }
+        // «Шкура испорчена» — только для снятия шкур; освежевание
+        // просто отменяется (повтор разрешён).
+        let ruined = job.action == "skin";
+        let result = ld2_protocol::evt::HarvestResult {
+            entity_id: job.corpse_id,
+            name: job.name,
+            action: job.action,
+            ok: false,
+            ruined,
+        };
+        let text = event_payload_text("evt/harvest/result", &result);
+        text.map(|t| vec![Out::Text(t)]).unwrap_or_default()
+    }
+
     /// Снятие шкур: старт разделки — сервер-джоб на5 с (тиктаймер
     /// шлёт `evt/harvest/result`); все проверки — до старта:
     /// труп в локации с флагом действия и не сделан, профессия
