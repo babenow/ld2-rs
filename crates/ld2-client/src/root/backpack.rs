@@ -126,7 +126,7 @@ impl BackpackTab {
 /// M16/F29b: тип предмета → группа-вкладка — маппинг в одном месте;
 /// новые типы контента попадают в «Прочее» (тест покрывает
 /// `content/items.json`).
-fn tab_for_type(item_type: &str) -> BackpackTab {
+pub(crate) fn tab_for_type(item_type: &str) -> BackpackTab {
     match item_type {
         "weapon" | "staff" => BackpackTab::Weapon,
         "potion" => BackpackTab::Potion,

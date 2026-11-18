@@ -17,8 +17,7 @@ use gpui::{prelude::*, svg, Hsla, Pixels, Svg};
 
 /// Иконка Font Awesome в боксе `size` цветом `color`. Неизвестный
 /// путь — пустой бокс и ошибка в лог (паритет с broken-иконкой Ely).
-// API подключён для M24 (админ-панель) — до первого применения.
-#[allow(dead_code)]
+/// Первое применение — тумблер «режим бога» в админ-панели (M24).
 pub(crate) fn fa_icon(path: &str, size: Pixels, color: impl Into<Hsla>) -> Svg {
     match get(path) {
         Some(bytes) => svg().data(bytes).size(size).flex_none().text_color(color),

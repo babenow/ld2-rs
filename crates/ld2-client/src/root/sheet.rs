@@ -588,6 +588,7 @@ impl Root {
     /// флаги жестов — `PopupState` вида `kind`.
     // Оболочка окна: контекст (окно/cx/палитра) + вид + заголовок +
     // тело + подвал — набор неизменен, кроме растущих частей.
+    /// Оболочка без правой группы в шапке (большинство окон → None).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn popup_window(
         &mut self,
@@ -596,12 +597,41 @@ impl Root {
         pal: &Palette,
         kind: PopupKind,
         title: impl Into<SharedString>,
+        leading: Option<Div>,
+        body: Div,
+        footer: Option<Div>,
+    ) -> AnyElement {
+        self.popup_window_full(
+            window,
+            cx,
+            pal,
+            kind,
+            title,
+            leading.map(|d| d.into_any_element()),
+            body,
+            footer,
+            None,
+        )
+    }
+
+    /// То же + `trailing` — группа справа, слева от крестика закрытия
+    /// (M24: тумблер «режим бога» в админ-панели).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn popup_window_full(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        kind: PopupKind,
+        title: impl Into<SharedString>,
         // M18/F41: кнопки действий слева в шапке (окно диалога NPC —
         // магазин/«К диалогу»); у остальных окон — None.
-        leading: Option<Div>,
+        leading: Option<AnyElement>,
         body: Div,
         // M16/F29g: нижняя панель под телом (по аналогии с шапкой).
         footer: Option<Div>,
+        // M24: правая группа в шапке (слева от крестика).
+        trailing: Option<AnyElement>,
     ) -> AnyElement {
         let lang = self.lang;
         let title = title.into();
@@ -645,49 +675,57 @@ impl Root {
                     .child(div().font_weight(gpui::FontWeight::BOLD).child(title)),
             )
             .child(
-                IconButton::new(format!("{id}-close"), IconName::X)
-                    .tooltip(t(lang, Key::BtnClose))
-                    .on_click(cx.listener(move |root, _, _, cx| {
-                        root.popup_mut(kind).open = false;
-                        // M18/F38: окно диалога закрывается вместе со своим
-                        // состоянием (гейт рендера — наличие npc_dialog).
-                        if kind == PopupKind::Npc {
-                            tracing::debug!("закрытие диалога NPC: крестик");
-                            root.store.npc_dialog = None;
-                        }
-                        // M18/F53: окно заточки и описание предмета —
-                        // гейт рендера — наличие состояния в store.
-                        if kind == PopupKind::Upgrade {
-                            tracing::debug!("закрытие окна заточки: крестик");
-                            root.store.close_upgrade();
-                            root.store.sharpen_stone = None;
-                            root.store.sharpen_list = false;
-                            root.upgrade_progress = None;
-                        }
-                        if kind == PopupKind::Item {
-                            tracing::debug!("закрытие описания предмета: крестик");
-                            root.store.item_detail = None;
-                        }
-                        if kind == PopupKind::Socketing {
-                            tracing::debug!("закрытие окна сокетов: крестик");
-                            root.store.close_socketing();
-                            root.socket_pick = None;
-                        }
-                        if kind == PopupKind::Quantity {
-                            tracing::debug!("закрытие окна количества: крестик");
-                            root.quantity_pick = None;
-                        }
-                        // M23: данные окна подятия не переживают закрытие.
-                        if kind == PopupKind::LootPickup {
-                            tracing::debug!("закрытие окна подятия: крестик");
-                            root.close_pickup();
-                        }
-                        if kind == PopupKind::Dialog {
-                            tracing::debug!("закрытие игрового диалога: крестик");
-                            root.close_game_dialog();
-                        }
-                        cx.notify();
-                    })),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .children(trailing)
+                    .child(
+                        IconButton::new(format!("{id}-close"), IconName::X)
+                            .tooltip(t(lang, Key::BtnClose))
+                            .on_click(cx.listener(move |root, _, _, cx| {
+                                root.popup_mut(kind).open = false;
+                                // M18/F38: окно диалога закрывается вместе со своим
+                                // состоянием (гейт рендера — наличие npc_dialog).
+                                if kind == PopupKind::Npc {
+                                    tracing::debug!("закрытие диалога NPC: крестик");
+                                    root.store.npc_dialog = None;
+                                }
+                                // M18/F53: окно заточки и описание предмета —
+                                // гейт рендера — наличие состояния в store.
+                                if kind == PopupKind::Upgrade {
+                                    tracing::debug!("закрытие окна заточки: крестик");
+                                    root.store.close_upgrade();
+                                    root.store.sharpen_stone = None;
+                                    root.store.sharpen_list = false;
+                                    root.upgrade_progress = None;
+                                }
+                                if kind == PopupKind::Item {
+                                    tracing::debug!("закрытие описания предмета: крестик");
+                                    root.store.item_detail = None;
+                                }
+                                if kind == PopupKind::Socketing {
+                                    tracing::debug!("закрытие окна сокетов: крестик");
+                                    root.store.close_socketing();
+                                    root.socket_pick = None;
+                                }
+                                if kind == PopupKind::Quantity {
+                                    tracing::debug!("закрытие окна количества: крестик");
+                                    root.quantity_pick = None;
+                                }
+                                // M23: данные окна подятия не переживают закрытие.
+                                if kind == PopupKind::LootPickup {
+                                    tracing::debug!("закрытие окна подятия: крестик");
+                                    root.close_pickup();
+                                }
+                                if kind == PopupKind::Dialog {
+                                    tracing::debug!("закрытие игрового диалога: крестик");
+                                    root.close_game_dialog();
+                                }
+                                cx.notify();
+                            })),
+                    ),
             )
             // Захват: запоминаем смещение указателя внутри шапки
             // (конструктор on_drag получает offset от gpui).

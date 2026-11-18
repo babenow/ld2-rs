@@ -571,6 +571,12 @@ pub enum Key {
     TakeAllBtn,
     /// Счётчик предметов в статус-баре окна подятия (`{n}`).
     PickupCount,
+    // M24: админ-панель предметов
+    AdminPanelTitle,
+    AdminItemsSheet,
+    AdminGodMode,
+    AdminSearch,
+    AdminNothing,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -1122,6 +1128,11 @@ mod tests {
         Key::PickupEmpty,
         Key::TakeAllBtn,
         Key::PickupCount,
+        Key::AdminPanelTitle,
+        Key::AdminItemsSheet,
+        Key::AdminGodMode,
+        Key::AdminSearch,
+        Key::AdminNothing,
     ];
 
     #[test]
