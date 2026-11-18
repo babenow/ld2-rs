@@ -4,6 +4,7 @@
 //! Логика игры — в `ld2-core` (D12): здесь только gpui-рендер, опрос
 //! ingress-канала транспорта и исполнение эффектов (см. [`crate::root`]).
 
+mod fa;
 mod gem_glyph;
 mod palette;
 mod root;
