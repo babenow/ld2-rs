@@ -6956,15 +6956,86 @@ impl Session {
         outs.extend(stone_events);
         if success {
             let new_level = level + 1;
-            if let Err(e) = db::items::set_upgrade(&pool, &item.uid, item.upgrade + 1).await {
-                warn!("upgrade.start (запись): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
+            // ФИКС (указание заказчика): улучшение — НОВЫЙ предмет.
+            // Стак (qty>1) не улучшается целиком: старый −1 шт.,
+            // улучшенная штука — отдельная строка (uid новый).
+            // Порядок событий как в оригинале: итог первым, затем
+            // патчи (иначе wait(evt/upgrade/result) съедает патчи).
+            let (result_uid, tail) = if item.qty > 1 {
+                let mut new_row = match db::items::insert(&pool, &char_id, &item.def_id, 1).await {
+                    Ok(row) => row,
+                    Err(e) => {
+                        warn!("upgrade.start (новая строка): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                };
+                if item.sockets.as_array().is_some_and(|a| !a.is_empty()) {
+                    if let Err(e) =
+                        db::items::set_sockets(&pool, &new_row.uid, item.sockets.clone()).await
+                    {
+                        warn!("upgrade.start (сокеты новой строки): {e}");
+                    }
+                }
+                if let Some(bonuses) = item.bonuses.clone() {
+                    if let Err(e) = db::items::set_bonuses(&pool, &new_row.uid, bonuses).await {
+                        warn!("upgrade.start (бонусы новой строки): {e}");
+                    }
+                }
+                if let Err(e) = db::items::set_upgrade(&pool, &new_row.uid, item.upgrade + 1).await
+                {
+                    warn!("upgrade.start (запись): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+                new_row.upgrade = item.upgrade + 1;
+                let new_qty = i64::from(item.qty) - 1;
+                if let Err(e) = db::items::set_qty(&pool, &item.uid, new_qty).await {
+                    warn!("upgrade.start (убыль стака): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+                // События (после итога): новый предмет + убыль стака.
+                let mut events = vec![out_event(
+                    "evt/item/added",
+                    None,
+                    serde_json::to_value(ItemAdded {
+                        item: item_snapshot(&new_row, &def),
+                    })
+                    .unwrap_or_default(),
+                )];
+                let mut patch = serde_json::Map::new();
+                patch.insert("qty".into(), serde_json::json!(new_qty));
+                events.push(out_event(
+                    "evt/item/state",
+                    None,
+                    serde_json::to_value(ItemState {
+                        uid: item.uid.clone(),
+                        patch,
+                    })
+                    .unwrap_or_default(),
+                ));
+                (new_row.uid, events)
+            } else {
+                if let Err(e) = db::items::set_upgrade(&pool, &item.uid, item.upgrade + 1).await {
+                    warn!("upgrade.start (запись): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+                let mut patch = serde_json::Map::new();
+                patch.insert("upgrade".into(), serde_json::json!(new_level));
+                let event = out_event(
+                    "evt/item/state",
+                    None,
+                    serde_json::to_value(ItemState {
+                        uid: item.uid.clone(),
+                        patch,
+                    })
+                    .unwrap_or_default(),
+                );
+                (item.uid.clone(), vec![event])
+            };
             outs.push(out_event(
                 "evt/upgrade/result",
                 None,
                 serde_json::to_value(UpgradeResult {
-                    uid: item.uid.clone(),
+                    uid: result_uid,
                     ok: true,
                     new_upgrade: Some(new_level as u32),
                     item_destroyed: Some(false),
@@ -6973,17 +7044,7 @@ impl Session {
                 })
                 .unwrap_or_default(),
             ));
-            let mut patch = serde_json::Map::new();
-            patch.insert("upgrade".into(), serde_json::json!(new_level));
-            outs.push(out_event(
-                "evt/item/state",
-                None,
-                serde_json::to_value(ItemState {
-                    uid: item.uid.clone(),
-                    patch,
-                })
-                .unwrap_or_default(),
-            ));
+            outs.extend(tail);
         } else {
             let (new_upgrade, destroyed) = match rule {
                 crate::systems::UpgradeFailRule::Keep => (level, false),
@@ -6991,20 +7052,40 @@ impl Session {
                 crate::systems::UpgradeFailRule::Break => (level, true),
             };
             if destroyed {
-                if let Err(e) = db::items::delete(&pool, &item.uid).await {
-                    warn!("upgrade.start (разрушение): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                if item.qty > 1 {
+                    // ФИКС: стак не удаляется целиком — гибнет одна штука.
+                    let new_qty = i64::from(item.qty) - 1;
+                    if let Err(e) = db::items::set_qty(&pool, &item.uid, new_qty).await {
+                        warn!("upgrade.start (разрушение штуки): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                    let mut patch = serde_json::Map::new();
+                    patch.insert("qty".into(), serde_json::json!(new_qty));
+                    outs.push(out_event(
+                        "evt/item/state",
+                        None,
+                        serde_json::to_value(ItemState {
+                            uid: item.uid.clone(),
+                            patch,
+                        })
+                        .unwrap_or_default(),
+                    ));
+                } else {
+                    if let Err(e) = db::items::delete(&pool, &item.uid).await {
+                        warn!("upgrade.start (разрушение): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                    outs.push(out_event(
+                        "evt/item/removed",
+                        None,
+                        serde_json::to_value(ItemRemoved {
+                            uid: item.uid.clone(),
+                            reason: ItemRemovalReason::Consumed,
+                        })
+                        .unwrap_or_default(),
+                    ));
                 }
-                outs.push(out_event(
-                    "evt/item/removed",
-                    None,
-                    serde_json::to_value(ItemRemoved {
-                        uid: item.uid.clone(),
-                        reason: ItemRemovalReason::Consumed,
-                    })
-                    .unwrap_or_default(),
-                ));
-            } else if new_upgrade != level {
+            } else if new_upgrade != level && item.qty == 1 {
                 if let Err(e) =
                     db::items::set_upgrade(&pool, &item.uid, (new_upgrade - def.upgrade).max(0))
                         .await
@@ -7027,12 +7108,16 @@ impl Session {
             let result = UpgradeResult {
                 uid: item.uid.clone(),
                 ok: false,
-                new_upgrade: if destroyed {
+                // ФИКС: стак (qty>1) не разрушается целиком и не
+                // меняет уровень — итог без понижения/уничтожения.
+                new_upgrade: if item.qty > 1 {
+                    Some(level as u32)
+                } else if destroyed {
                     None
                 } else {
                     Some(new_upgrade as u32)
                 },
-                item_destroyed: Some(destroyed),
+                item_destroyed: Some(destroyed && item.qty <= 1),
                 cost: serde_json::from_value(cost_json).unwrap_or_default(),
                 duration_ms: Some((cfg.duration_s * 1000.0).round() as i64),
             };

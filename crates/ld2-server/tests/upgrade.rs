@@ -587,3 +587,106 @@ async fn start_rejects_swapped_stone() {
         "смена камня после превью: {ack}"
     );
 }
+
+/// M24 фикс: улучшение затрагивает ОДНУ штуку стака — старый стак
+/// убывает на1, улучшенный предмет добавляется отдельной строкой
+/// (раньше `set_upgrade` применялся ко всей строке-стаку).
+#[tokio::test]
+async fn upgrade_affects_single_item_from_stack() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    // Шанс 1.0 → бросок всегда успешен.
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.gameplay.upgrade.chance_base = 1.0;
+            cfg.gameplay.upgrade.chance_per_level = 0.0;
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    // Стак ×10 (def.qty золота) — сценарий даёт одной строкой.
+    let uid = give(&mut c, "gold_coin").await;
+    give_gold(&mut c, 1000).await;
+    use_stone(&mut c, "stone_upgrade_medium").await;
+    use_stone(&mut c, "stone_upgrade_medium").await;
+
+    let seq = c
+        .send("cmd/upgrade.preview", json!({ "item_uid": uid }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "превью: {ack}");
+    let preview_id = ack["payload"]["preview_id"]
+        .as_str()
+        .expect("preview_id")
+        .to_string();
+
+    // Фиксируем количество стака ДО улучшения (give_gold мог
+    // слиться в тот же стак — убыль считаем относительно).
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let inv = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь");
+    let before_qty = inv.iter().find(|i| i["uid"] == uid).expect("стак на месте")["qty"]
+        .as_i64()
+        .expect("qty");
+    assert!(before_qty > 1, "нужен стак: {before_qty}");
+
+    let seq = c
+        .send(
+            "cmd/upgrade.start",
+            json!({ "item_uid": uid, "preview_id": preview_id }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "старт: {ack}");
+
+    // Порядок событий сервера: итог → новый предмет → убыль стака.
+    let result = c.wait_event("evt/upgrade/result").await;
+    assert_eq!(result["payload"]["ok"], true, "успех: {result}");
+    let added = c.wait_event("evt/item/added").await;
+    let new_uid = added["payload"]["item"]["uid"]
+        .as_str()
+        .expect("uid нового")
+        .to_string();
+    assert_ne!(new_uid, uid, "улучшенный предмет — НОВЫЙ uid");
+    assert_eq!(added["payload"]["item"]["qty"], 1, "новая строка: 1 шт");
+    assert_eq!(added["payload"]["item"]["upgrade"], 1, "новая строка +1");
+    assert_eq!(
+        result["payload"]["uid"], new_uid,
+        "итог — по новому предмету"
+    );
+    let state = c.wait_event("evt/item/state").await;
+    assert_eq!(state["payload"]["uid"], uid, "патч — старый стак");
+    assert_eq!(
+        state["payload"]["patch"]["qty"],
+        before_qty - 1,
+        "стак убыл ровно на1"
+    );
+
+    // Снапшот: старый стак убыл на1 без уровня, новый — отдельный +1.
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let inv = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь");
+    let old = inv.iter().find(|i| i["uid"] == uid).expect("стак на месте");
+    assert_eq!(old["qty"], before_qty - 1, "стак убыл на1");
+    assert_eq!(old["upgrade"], 0, "стак не улучшен");
+    let new = inv
+        .iter()
+        .find(|i| i["uid"] == new_uid)
+        .expect("новый предмет");
+    assert_eq!(new["qty"], 1, "новый — одна штука");
+    assert_eq!(new["upgrade"], 1, "новый +1");
+}
