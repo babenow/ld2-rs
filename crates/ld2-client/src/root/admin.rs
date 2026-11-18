@@ -230,6 +230,16 @@ impl Root {
                     EntityKind::Corpse => {
                         targets.push((format!("corpse:{}", e.id), e.name.clone()));
                     }
+                    // F24d: сундуки и NPC с магазином (маркер
+                    // extra.shop ставит сервер в снапшоте локации).
+                    EntityKind::Container => {
+                        targets.push((format!("container:{}", e.id), e.name.clone()));
+                    }
+                    EntityKind::Npc
+                        if e.extra.get("shop").and_then(|v| v.as_bool()) == Some(true) =>
+                    {
+                        targets.push((format!("shop:{}", e.id), e.name.clone()));
+                    }
                     _ => {}
                 }
             }

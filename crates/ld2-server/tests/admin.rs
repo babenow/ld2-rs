@@ -503,3 +503,239 @@ async fn admin_gives_to_corpse_monster_and_char() {
         "неизвестная цель"
     );
 }
+
+/// M24: ask→диалог→submit выдачи (хелпер новых тестов).
+async fn give_flow(c: &mut ld2_test_kit::WsClient, target: &str, def_id: &str, count: i64) {
+    let seq = c
+        .send(
+            "cmd/admin.give.ask",
+            json!({ "target": target, "def_id": def_id }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "give.ask {target}");
+    let open = c.wait_event("evt/dialog/open").await;
+    let id = open["payload"]["id"].as_str().expect("id").to_string();
+    let seq = c
+        .send(
+            "cmd/dialog.submit",
+            json!({ "dialog_id": id, "values": { "count": count } }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "submit {target} ×{count}");
+}
+
+/// M24: ask→диалог→submit удаления (хелпер новых тестов).
+async fn remove_flow(c: &mut ld2_test_kit::WsClient, target: &str, item_ref: &str, count: i64) {
+    let seq = c
+        .send(
+            "cmd/admin.remove.ask",
+            json!({ "target": target, "ref": item_ref }),
+        )
+        .await;
+    assert_eq!(
+        c.ack(seq).await["result"],
+        "ok",
+        "remove.ask {target} {item_ref}"
+    );
+    let open = c.wait_event("evt/dialog/open").await;
+    let id = open["payload"]["id"].as_str().expect("id").to_string();
+    let seq = c
+        .send(
+            "cmd/dialog.submit",
+            json!({ "dialog_id": id, "values": { "count": count } }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "submit remove ×{count}");
+}
+
+/// M24: содержимое цели (хелпер новых тестов).
+async fn target_info(c: &mut ld2_test_kit::WsClient, target: &str) -> serde_json::Value {
+    let seq = c
+        .send("cmd/admin.target.info", json!({ "target": target }))
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "target.info {target}: {ack}");
+    ack["payload"]["items"].clone()
+}
+
+/// M24 F24d: сундук (надстройка in-memory + tombstone базы + взятие
+/// инъекции игроком) и магазин NPC (надстройка/контент-товары +
+/// shop.list).
+#[tokio::test]
+async fn admin_gives_to_container_and_shop() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world_admin(&ws, &db_url).await;
+
+    // ── магазин (деревня — стартовая локация) ──
+    let shop = "shop:npc_elder".to_string();
+    let before = target_info(&mut c, &shop).await;
+    let before_len = before.as_array().expect("items").len();
+    assert!(before_len > 0, "контент магазина есть: {before}");
+
+    // Выдача → позиция надстройки (xshop-реф) в конце списка.
+    give_flow(&mut c, &shop, "gold_coin", 1).await;
+    let info = target_info(&mut c, &shop).await;
+    let items = info.as_array().expect("items");
+    assert_eq!(items.len(), before_len + 1, "надстройка: {info}");
+    let x_ref = items[items.len() - 1]["ref"]
+        .as_str()
+        .expect("ref")
+        .to_string();
+    assert!(x_ref.starts_with("xshop:"), "ref: {x_ref}");
+
+    // Удаление надстройки.
+    remove_flow(&mut c, &shop, &x_ref, 1).await;
+    let info = target_info(&mut c, &shop).await;
+    assert_eq!(
+        info.as_array().expect("items").len(),
+        before_len,
+        "надстройка удалена: {info}"
+    );
+
+    // Удаление контентного товара (tombstone) + покупатели видят в
+    // shop.list (следующий pull).
+    let total_items = |ack: &serde_json::Value| -> usize {
+        ack["payload"]["shop"]["tabs"]
+            .as_array()
+            .map(|tabs| {
+                tabs.iter()
+                    .map(|t| t["items"].as_array().map(|i| i.len()).unwrap_or(0))
+                    .sum()
+            })
+            .unwrap_or(0)
+    };
+    let seq = c
+        .send("cmd/shop.list", json!({ "entity_id": "npc_elder" }))
+        .await;
+    let shop_ack = c.ack(seq).await;
+    assert_eq!(shop_ack["result"], "ok", "shop.list: {shop_ack}");
+    let shop_before = total_items(&shop_ack);
+    let content_ref = before
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|i| i["ref"].as_str().is_some_and(|r| r.starts_with("shop:")))
+        .expect("контентный реф")["ref"]
+        .as_str()
+        .expect("ref")
+        .to_string();
+    remove_flow(&mut c, &shop, &content_ref, 1).await;
+    let info = target_info(&mut c, &shop).await;
+    assert_eq!(
+        info.as_array().expect("items").len(),
+        before_len - 1,
+        "контент удалён: {info}"
+    );
+    let seq = c
+        .send("cmd/shop.list", json!({ "entity_id": "npc_elder" }))
+        .await;
+    let shop_ack = c.ack(seq).await;
+    assert_eq!(total_items(&shop_ack), shop_before - 1, "shop.list");
+
+    // Неизвестный магазин → E_TARGET_GONE.
+    let seq = c
+        .send(
+            "cmd/admin.give.ask",
+            json!({ "target": "shop:npc_нет_такого", "def_id": "gold_coin" }),
+        )
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_TARGET_GONE",
+        "нет магазина"
+    );
+
+    // ── сундук (лес) ──
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    let cont = "container:cont_forest_chest".to_string();
+    let before = target_info(&mut c, &cont).await;
+    let base_len = before.as_array().expect("items").len();
+    assert_eq!(base_len, 3, "база сундука: {before}");
+
+    // Выдача2 → надстройка (слоты после базовых defs).
+    give_flow(&mut c, &cont, "gold_coin", 2).await;
+    let info = target_info(&mut c, &cont).await;
+    let items = info.as_array().expect("items");
+    assert_eq!(items.len(), base_len + 2, "надстройка сундука: {info}");
+
+    // Взятие инъекции ИГРОКОМ — uid продолжает индексацию после базы
+    // (путь cmd/item.use → take_loot: ветка idx >= base_len).
+    let take_uid = format!("loot:cont_forest_chest:{base_len}");
+    let seq = c
+        .send("cmd/item.use", json!({ "item_uid": take_uid }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "взять надстройку");
+    c.wait_event("evt/item/added").await;
+    let info = target_info(&mut c, &cont).await;
+    assert_eq!(
+        info.as_array().expect("items").len(),
+        base_len + 1,
+        "слот занят: {info}"
+    );
+
+    // Удаление остатка надстройки.
+    let info = target_info(&mut c, &cont).await;
+    let x_ref = info
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|i| i["ref"].as_str().is_some_and(|r| r.starts_with("contx:")))
+        .expect("contx-реф")["ref"]
+        .as_str()
+        .expect("ref")
+        .to_string();
+    remove_flow(&mut c, &cont, &x_ref, 1).await;
+    let info = target_info(&mut c, &cont).await;
+    assert_eq!(
+        info.as_array().expect("items").len(),
+        base_len,
+        "надстройка удалена: {info}"
+    );
+
+    // Tombstone базового слота — исчезает из списка.
+    let base_ref = info
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|i| i["ref"].as_str().is_some_and(|r| r.starts_with("cont:")))
+        .expect("cont-реф")["ref"]
+        .as_str()
+        .expect("ref")
+        .to_string();
+    remove_flow(&mut c, &cont, &base_ref, 1).await;
+    let info = target_info(&mut c, &cont).await;
+    assert_eq!(
+        info.as_array().expect("items").len(),
+        base_len - 1,
+        "базовый слот удалён: {info}"
+    );
+    // Повторное удаление того же слота → E_ITEM_GONE.
+    let seq = c
+        .send(
+            "cmd/admin.remove.ask",
+            json!({ "target": cont, "ref": base_ref }),
+        )
+        .await;
+    let ask_ack = c.ack(seq).await;
+    assert_eq!(ask_ack["result"], "ok", "повторный remove.ask");
+    let open = c.wait_event("evt/dialog/open").await;
+    let id = open["payload"]["id"].as_str().expect("id").to_string();
+    let seq = c
+        .send(
+            "cmd/dialog.submit",
+            json!({ "dialog_id": id, "values": { "count": 1 } }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_ITEM_GONE",
+        "повторное удаление: {ack}"
+    );
+}
