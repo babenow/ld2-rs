@@ -158,6 +158,51 @@ impl Session {
 
     async fn dispatch(&mut self, env: &Envelope) -> Vec<Out> {
         let seq = env.seq.unwrap_or(0);
+        // M24: разделка занята — блок действий персонажа (§9 E_BUSY).
+        // Исключения: item-* (прерывают — M23), информационные
+        // (осмотр/снапшот/чат/диалоги), admin-панель, corpse.harvest
+        // (свой E_COOLDOWN).
+        const HARVEST_BLOCKED: &[&str] = &[
+            "cmd/location.move",
+            "cmd/combat.attack",
+            "cmd/combat.stop",
+            "cmd/combat.flee",
+            "cmd/skill.use",
+            "cmd/magic.rune_cast",
+            "cmd/magic.scroll_cast",
+            "cmd/resource.gather",
+            "cmd/craft.start",
+            "cmd/quest.accept",
+            "cmd/quest.turn_in",
+            "cmd/quest.abandon",
+            "cmd/trade.open",
+            "cmd/trade.add_item",
+            "cmd/trade.set_gold",
+            "cmd/trade.propose",
+            "cmd/trade.accept",
+            "cmd/trade.cancel",
+            "cmd/party.create",
+            "cmd/party.invite",
+            "cmd/party.accept",
+            "cmd/party.decline",
+            "cmd/party.leave",
+            "cmd/party.kick",
+            "cmd/guild.create",
+            "cmd/guild.join",
+            "cmd/guild.leave",
+            "cmd/guild.invite",
+            "cmd/guild.kick",
+            "cmd/guild.rank_set",
+            "cmd/shop.buy",
+            "cmd/upgrade.preview",
+            "cmd/upgrade.start",
+            "cmd/socket.insert",
+            "cmd/socket.extract",
+        ];
+        if HARVEST_BLOCKED.contains(&env.msg_type.as_str()) && self.char_is_harvesting() {
+            return vec![Self::err(seq, ErrorCode::Busy, "персонаж занят разделкой")];
+        }
+
         match env.msg_type.as_str() {
             // auth / session (ADR-006, §4.5)
             "cmd/auth.register" => self.auth_register(env, seq).await,
@@ -3459,6 +3504,15 @@ impl Session {
     }
 
     // ── M24: админ-панель предметов ──────────────────────────────────────────
+
+    /// M24: активная разделка персонажа — блок действий (`E_BUSY`).
+    fn char_is_harvesting(&self) -> bool {
+        let Some(char_id) = self.selected_char_id.as_ref() else {
+            return false;
+        };
+        let world = self.state.world.lock().expect("мир");
+        world.is_harvesting(char_id)
+    }
 
     /// M24: гейт админ-команд — только роль `admin` (§9 E_PERMISSION;
     /// moderator проходит лишь модерацию чата, M14/F19).

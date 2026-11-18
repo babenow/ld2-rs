@@ -278,3 +278,64 @@ async fn item_interaction_interrupts_harvest() {
         "лут освежевания после повтора: {info}"
     );
 }
+
+/// M24: пока идёт разделка, действия персонажа блокируются (E_BUSY);
+/// после завершения — снова разрешены. Прерывание уроном и
+/// item-командами покрыто отдельно (тик / M23).
+#[tokio::test]
+async fn harvest_blocks_character_actions() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    let corpse = kill_wolf(&mut c).await;
+
+    // Обучение + нож (гейты освежевания — как в прочих тестах).
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_south" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в деревню");
+    give_gold(&mut c, 1000).await;
+    let seq = c
+        .send("cmd/craft.learn", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "learn skinning");
+    c.wait_event("evt/craft/profession").await;
+    give(&mut c, "skinning_knife").await;
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "назад в лес");
+
+    // Старт освежевания → действия блокируются.
+    let ack = harvest(&mut c, &corpse, "gut").await;
+    assert_eq!(ack["result"], "ok", "старт gut: {ack}");
+
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_south" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_BUSY",
+        "движение заблокировано"
+    );
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_BUSY",
+        "бой заблокирован"
+    );
+
+    // Завершение → действия снова разрешены.
+    let result = harvest_result(&mut c).await;
+    assert_eq!(result["payload"]["ok"], true, "завершён: {result}");
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_south" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "после разделки можно");
+}
