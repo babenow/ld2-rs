@@ -25,7 +25,7 @@ use crate::fa::fa_icon;
 use crate::palette::Palette;
 
 use super::backpack::{tab_for_type, BackpackTab};
-use super::sheet::{quality_color, rarity_color, rarity_label};
+use super::sheet::{quality_color, rarity_color};
 use super::{act_btn, scrollable_tab, Click, PopupKind, Root};
 
 /// M24: payload перетаскивания предмета из каталога в цель — свой
@@ -183,7 +183,7 @@ impl Root {
             let row_pal = *pal;
             let list = uniform_list("ld2-admin-list", count, move |range, _window, _acx| {
                 range
-                    .map(|ix| catalog_row(row_this.clone(), row_pal, lang, &catalog[ix]))
+                    .map(|ix| catalog_row(row_this.clone(), row_pal, &catalog[ix]))
                     .collect::<Vec<Stateful<Div>>>()
             })
             .track_scroll(&self.admin_scroll)
@@ -437,19 +437,16 @@ impl Root {
 
 /// Строка каталога: двойной клик — выдача, drag — в правую колонку
 /// (оба → execute-диалог количества).
-fn catalog_row(
-    this: Entity<Root>,
-    pal: Palette,
-    lang: Lang,
-    item: &serde_json::Value,
-) -> Stateful<Div> {
+fn catalog_row(this: Entity<Root>, pal: Palette, item: &serde_json::Value) -> Stateful<Div> {
     let def_id = item["id"].as_str().unwrap_or_default().to_string();
     let name = item["name"].as_str().unwrap_or("?").to_string();
-    let itype = item["type"].as_str().unwrap_or("?");
     let rarity = item["rarity"].as_str().unwrap_or("common");
     let qty = item["qty"].as_i64().unwrap_or(1);
-    // Имя — цветом ранга (указание заказчика), ранг — справа.
-    let name_color = rarity_color(rarity, &pal);
+    // Отображение — как в правой колонке (указание заказчика): имя
+    // цветом качества/ранга, количество справа; без суффикса типа
+    // и без отдельного текста ранга.
+    let name_color =
+        quality_color(Some(def_id.as_str())).unwrap_or_else(|| rarity_color(rarity, &pal));
     let ghost_title: gpui::SharedString = name.clone().into();
     let drag_id = def_id.clone();
     div()
@@ -466,25 +463,16 @@ fn catalog_row(
         .border_color(rgb(pal.border))
         .cursor_pointer()
         .hover(move |s| s.bg(rgb(pal.selection)))
-        // Имя занимает весь столбец (ellipses), ранг — по правому
-        // краю, тот же цвет — у самого имени.
         .child(
             div()
-                .flex_grow_1()
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_color(rgb(name_color))
-                .child(format!("{name} ({itype})")),
+                .child(name),
         )
-        .child(
-            div()
-                .text_size(px(11.0))
-                .text_right()
-                .text_color(rgb(pal.muted))
-                .child(rarity_label(lang, rarity)),
-        )
+        .child(div().flex_grow_1())
         .child(
             div()
                 .text_size(px(11.0))
