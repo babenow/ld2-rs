@@ -1013,9 +1013,10 @@ impl Root {
                             Some(EntityKind::Object) if ground => {
                                 this.on_click(Click::UseItem(id.clone()), cx);
                             }
-                            // M20/F20c: сундук — осмотр (лут-список).
+                            // M23: сундук — то же окно подятия, что и
+                            // труп (лут + рюкзак); ПКМ — меню.
                             Some(EntityKind::Container) => {
-                                this.on_click(Click::Examine(id.clone()), cx);
+                                this.on_click(Click::LootOpen(id.clone()), cx);
                             }
                             // M23: ЛКМ по трупу — окно подятия предмета
                             // (лут слева, рюкзак справа); ПКМ — меню.
@@ -1075,12 +1076,12 @@ impl Root {
                 Click::NpcTalk(id.clone()),
             ));
         }
-        // M23: на трупе «Осмотреть» открывает то же окно подятия,
-        // что и ЛКМ по строке (лут + рюкзак); у прочих сущностей —
-        // прежняя модалка осмотра.
+        // M23: на трупе и сундуке «Осмотреть» открывает то же окно
+        // подятия, что и ЛКМ по строке (лут + рюкзак); у прочих
+        // сущностей — прежняя модалка осмотра.
         menu = menu.item(mk(
             t(lang, Key::Examine).to_string(),
-            if entity.kind == EntityKind::Corpse {
+            if matches!(entity.kind, EntityKind::Corpse | EntityKind::Container) {
                 Click::LootOpen(id.clone())
             } else {
                 Click::Examine(id.clone())
