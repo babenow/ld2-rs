@@ -117,37 +117,19 @@ impl PopupKind {
     }
 }
 
-/// M18/F33: открытие окна сбрасывает контекстное меню **своей**
-/// стороны. Иначе закрытие окна с открытым меню оставляло
-/// `bp_menu`/`equip_menu = Some(...)`: keyed state меню и `asked`-
-/// счётчик гаснут вместе с элементом (кадр без рендера), поэтому при
-/// следующем открытии stale-запрос `.manual(Some((n, at)))` открывал
-/// меню само. `open_popup` — единственная точка, где окно становится
-/// открытым, — инвариант: любое открытое окно стартует с пустым меню.
-fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mut Option<T>) {
-    match kind {
-        PopupKind::Character => *equip_menu = None,
-        PopupKind::Backpack => *bp_menu = None,
-        // M18/F36: окно квестов контекстных меню не использует.
-        PopupKind::Quests => {}
-        // M18/F38: окно диалога NPC тоже.
-        PopupKind::Npc => {}
-        PopupKind::Item => {}
-        // M18/F53: окно заточки — попап.
-        PopupKind::Upgrade => {}
-        // M18: окно сокетов контекстных меню не использует.
-        PopupKind::Socketing => {}
-        // M20: окно количества открывается из меню предмета.
-        PopupKind::Quantity => {}
-        // M20: игровой диалог открывает `evt/dialog/open`.
-        PopupKind::Dialog => {}
-        // M21: окно профессий контекстных меню не использует.
-        PopupKind::Professions => {}
-        // M23: окно подятия — выбор строки, не контекстное меню.
-        PopupKind::LootPickup => {}
-        // M24: админ-панель меню не использует (действия — drag/dblclick).
-        PopupKind::AdminPanel => {}
-    }
+/// M18/F33/M24: открытие окна сбрасывает контекстные меню **обеих**
+/// сторон (`bp_menu` + `equip_menu`). Иначе закрытие окна с открытым
+/// меню оставляло `Some(...)`: keyed state меню и `asked`-счётчик
+/// гаснут вместе с элементом (кадр без рендера), и stale-запрос
+/// `.manual(Some((n, at)))` автооткрывал меню при следующем рендере.
+/// M24 (заказчик): окно подятия/админки рисует общий `backpack_grid`
+/// — чистить «своё» меню по kind было мало: в луте самооткрывалось
+/// меню рюкзака. `open_popup` — единственная точка, где окно становится
+/// открытым, — инвариант: любое открытое окно стартует с пустыми
+/// ОБОИМИ меню.
+fn clear_popup_menu<T>(bp_menu: &mut Option<T>, equip_menu: &mut Option<T>) {
+    *bp_menu = None;
+    *equip_menu = None;
 }
 
 /// M20: text-поля execute-диалога — (id поля, поле ввода).
@@ -285,6 +267,31 @@ enum ExitKind {
 const EXIT_DELAY_MS: i64 = 20_000;
 /// M17/F30a: длительность каст-бара инкрустации, мс (спека: 3 с,
 /// без отмены — движение/урон не прерывают).
+/// M24: единый прогресс-бар левой колонки (указание заказчика) —
+/// одна сущность на снятие шкур/освежевание, инкрустацию и заточку.
+/// Подпись «Действие · имя»; запуск — [`Root::start_progress`];
+/// гаснет в `tick` по исчезновению [`ProgressSource`]-источника.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CastProgress {
+    /// Источник — по нему бар и гаснет.
+    pub(crate) source: ProgressSource,
+    /// Подпись: «Действие · имя».
+    pub(crate) label: String,
+    pub(crate) started_ms: i64,
+    pub(crate) duration_ms: i64,
+}
+
+/// Источник единого прогресс-бара.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProgressSource {
+    /// Разделка трупа — `store.harvest` (сервер-джоб5 с).
+    Harvest,
+    /// Каст инкрустации — `cast_inscribe` ([`INSCRIBE_MS`]).
+    Inscribe,
+    /// Прогресс заточки — `upgrade_progress` (`duration_s`).
+    Sharpen,
+}
+
 pub(crate) const INSCRIBE_MS: i64 = 3_000;
 
 /// Инициализация корневого view (всё, что создаётся вне gpui-контекста).
@@ -446,6 +453,8 @@ pub struct Root {
     /// M18/F53: прогресс улучшения в диалоге — (uid, preview_id, старт мс,
     /// длительность мс). Команда `upgrade.start` отправляется по истечении.
     upgrade_progress: Option<(String, String, i64, i64)>,
+    /// M24: единый прогресс-бар левой колонки (см. [`CastProgress`]).
+    cast_progress: Option<CastProgress>,
     /// M14/F17: открытая карточка навыка — id из снапшота.
     skill_info: Option<String>,
     first_frame: bool,
@@ -753,6 +762,7 @@ impl Root {
             viewport: (0.0, 0.0),
             exit_timer: None,
             upgrade_progress: None,
+            cast_progress: None,
             skill_info: None,
             first_frame: true,
             guild_input: None,
@@ -892,13 +902,16 @@ impl Root {
         // M22: прогресс-бар разделки (5 с) должен идти плавно —
         // держим быстрый тик (50 мс) с notify, пока он активен.
         let harvest_active = self.store.harvest.is_some();
-        if let Some((uid, preview_id, _started, ends)) = self.upgrade_progress.clone() {
+        // M24 фикс: 4-й элемент — **длительность** (док поля), но
+        // сравнивался с epoch-мс как дедлайн → старт уходил мгновенно
+        // и прогресс-бар заточки не был виден. Теперь: старт + длительность.
+        if let Some((uid, preview_id, started, duration)) = self.upgrade_progress.clone() {
             // M18/F54: камень мог выбыть за 3 с прогресса — старт без
             // него сервер отверг бы; сбрасываем, ничего не отправляя.
             if self.store.sharpen_stone.is_none() {
                 tracing::debug!("прогресс заточки сброшен: камень выбыл");
                 self.upgrade_progress = None;
-            } else if self.now_ms() >= ends {
+            } else if self.now_ms() >= started + duration {
                 self.upgrade_progress = None;
                 let cmd = ld2_protocol::cmd::UpgradeStart {
                     item_uid: uid,
@@ -910,6 +923,19 @@ impl Root {
         // Если модалка закрыта (Esc/✕) — сбрасываем прогресс.
         if self.store.upgrade.is_none() && self.store.sharpen_stone.is_none() {
             self.upgrade_progress = None;
+        }
+
+        // M24: единый прогресс-бар левой колонки — гаснет по
+        // исчезновению своего источника (результат/отказ/закрытие).
+        if let Some(p) = self.cast_progress.as_ref() {
+            let gone = match p.source {
+                ProgressSource::Harvest => self.store.harvest.is_none(),
+                ProgressSource::Inscribe => self.cast_inscribe.is_none(),
+                ProgressSource::Sharpen => self.upgrade_progress.is_none(),
+            };
+            if gone {
+                self.cast_progress = None;
+            }
         }
 
         // M18/F53: после результата модалка остаётся открытой —
@@ -1091,7 +1117,37 @@ impl Root {
             return;
         }
         self.store.close_inscribe();
+        // M24: единый прогресс-бар — подпись «Действие · имя».
+        let target = self
+            .store
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.char.inventory.iter().find(|i| i.uid == target_uid))
+            .map(|i| i.name.clone())
+            .unwrap_or_default();
         self.cast_inscribe = Some((rune_uid, target_uid, self.now_ms() + INSCRIBE_MS));
+        self.start_progress(
+            ProgressSource::Inscribe,
+            format!("{} · {}", t(self.lang, Key::InscribeCasting), target),
+            INSCRIBE_MS,
+        );
+    }
+
+    /// M24: запуск единого прогресс-бара левой колонки — подпись
+    /// «Действие · имя» и длительность действия; гаснет в `tick` по
+    /// исчезновению [`ProgressSource`]-источника.
+    pub(crate) fn start_progress(
+        &mut self,
+        source: ProgressSource,
+        label: String,
+        duration_ms: i64,
+    ) {
+        self.cast_progress = Some(CastProgress {
+            source,
+            label,
+            started_ms: self.now_ms(),
+            duration_ms: duration_ms.max(1),
+        });
     }
 
     /// M17/F30a: каст завершён — cmd/socket.insert в первый свободный
@@ -1857,9 +1913,9 @@ impl Root {
     }
 
     fn open_popup(&mut self, kind: PopupKind) {
-        // M18/F33: чистое контекстное меню при каждом открытии (см.
-        // clear_popup_menu).
-        clear_popup_menu(kind, &mut self.bp_menu, &mut self.equip_menu);
+        // M18/F33/M24: чистое контекстное меню при каждом открытии —
+        // оба меню (см. clear_popup_menu).
+        clear_popup_menu(&mut self.bp_menu, &mut self.equip_menu);
         let (vw, vh) = self.viewport;
         let (tw, th) = Self::popup_base_size(kind, self.viewport);
         let (w, h) = if vw > 0.0 && vh > 0.0 {
@@ -2442,12 +2498,23 @@ impl Root {
                         // Прогресс-бар — с момента отправки (5 с);
                         // отказ сервера чистит Act::Harvest (ошибка).
                         // entity_id (M24): итог другого трупа бар не гасит.
+                        let label = format!(
+                            "{} · {}",
+                            if action == "skin" {
+                                t(self.lang, Key::SkinBtn)
+                            } else {
+                                t(self.lang, Key::GutBtn)
+                            },
+                            name
+                        );
                         self.store.harvest = Some(ld2_core::store::HarvestProgress {
                             started_ms: self.now_ms(),
                             action,
                             name,
                             entity_id: id,
                         });
+                        // M24: единый прогресс-бар (сервер-джоб5 с).
+                        self.start_progress(ProgressSource::Harvest, label, 5_000);
                     }
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
@@ -4322,19 +4389,20 @@ mod tests {
 
     /// иначе меню, открытое в момент закрытия, появлялось бы само
     /// при следующем открытии (stale-запрос `.manual` + гаснущий
-    /// keyed state). Каждое окно сбрасывает только своё меню.
+    /// keyed state). M24 (заказчик): окно подятия рисует общий
+    /// `backpack_grid` — при открытии ЛЮБОГО окна сбрасываются ОБА
+    /// меню, иначе в луте самооткрывалось меню рюкзака.
     #[test]
-    fn opening_popup_clears_its_context_menu() {
+    fn opening_popup_clears_both_context_menus() {
         let mut bp = Some("bp".to_string());
         let mut eq = Some("eq".to_string());
-        clear_popup_menu(PopupKind::Backpack, &mut bp, &mut eq);
+        clear_popup_menu(&mut bp, &mut eq);
         assert!(bp.is_none(), "меню рюкзака сброшено при открытии");
-        assert_eq!(eq.as_deref(), Some("eq"), "меню персонажа не тронуто");
-        clear_popup_menu(PopupKind::Character, &mut bp, &mut eq);
         assert!(eq.is_none(), "меню персонажа сброшено при открытии");
-        assert!(bp.is_none(), "меню рюкзака уже пусто");
         // Повторное открытие — без паники и без лишних эффектов.
-        clear_popup_menu(PopupKind::Backpack, &mut bp, &mut eq);
+        bp = Some("bp".to_string());
+        eq = Some("eq".to_string());
+        clear_popup_menu(&mut bp, &mut eq);
         assert!(bp.is_none() && eq.is_none());
     }
 

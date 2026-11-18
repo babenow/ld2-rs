@@ -2628,6 +2628,20 @@ impl Root {
                     }
                     this.upgrade_progress =
                         Some((uid.clone(), preview_id.clone(), this.now_ms(), duration_ms));
+                    // M24: единый прогресс-бар левой колонки —
+                    // заточка, подпись «Действие · имя».
+                    let item_name = this
+                        .store
+                        .snapshot
+                        .as_ref()
+                        .and_then(|s| s.char.inventory.iter().find(|i| i.uid == uid))
+                        .map(|i| i.name.clone())
+                        .unwrap_or_default();
+                    this.start_progress(
+                        super::ProgressSource::Sharpen,
+                        format!("{} · {}", t(this.lang, Key::UpgradeBtn), item_name),
+                        duration_ms,
+                    );
                     let _ = cx;
                 },
             ));
