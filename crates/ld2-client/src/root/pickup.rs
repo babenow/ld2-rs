@@ -14,16 +14,21 @@
 use ely::forms::Choice;
 use ely::navigation::Tabs;
 use ely::primitives::DragGhost;
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, Stateful, Window};
+use gpui::{
+    div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, SharedString, Stateful, Window,
+};
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::{Act, Screen};
 
+use crate::fa::fa_icon;
 use crate::palette::Palette;
 
 use super::{
     act_btn, backpack::BackpackTab, btn, scrollable_tab, sheet::quality_color, Click, PopupKind,
     Root,
 };
+
+use std::cell::RefCell;
 
 /// M23: payload перетаскивания вещи из лута в рюкзак — отдельный
 /// newtype (не `String`), чтобы не конфликтовать с перетаскиванием
@@ -225,22 +230,31 @@ impl Root {
             learned && harvest.is_some_and(|h| flag(h, "skin") && !flag(h, "skin_done"));
         let gut_ready = learned && harvest.is_some_and(|h| flag(h, "gut") && !flag(h, "gut_done"));
         let mut harvest_btns = div().flex().flex_row().gap_1();
+        // M24: глифы выбраны заказчиком — FA scissors (снятие шкур) и
+        // FA drumstick-bite (освежевание, «мясо» — результат).
+        let skin_id = entity_id.clone();
         if skin_ready {
-            harvest_btns = harvest_btns.child(btn(
+            harvest_btns = harvest_btns.child(icon_act_btn(
                 cx,
+                "solid/scissors",
                 t(lang, Key::SkinBtn),
                 pal.warn,
                 0xffffff,
-                Click::Harvest(entity_id.clone(), "skin".into()),
+                move |root, cx| {
+                    root.on_click(Click::Harvest(skin_id, "skin".into()), cx);
+                },
             ));
         }
         if gut_ready {
-            harvest_btns = harvest_btns.child(btn(
+            harvest_btns = harvest_btns.child(icon_act_btn(
                 cx,
+                "solid/drumstick-bite",
                 t(lang, Key::GutBtn),
                 pal.warn,
                 0xffffff,
-                Click::Harvest(entity_id.clone(), "gut".into()),
+                move |root, cx| {
+                    root.on_click(Click::Harvest(entity_id, "gut".into()), cx);
+                },
             ));
         }
 
@@ -424,6 +438,43 @@ fn disabled_btn(text: &'static str, pal: &Palette) -> Div {
         .border_color(rgb(pal.border))
         .text_color(rgb(pal.muted))
         .child(text)
+}
+
+/// M24: кнопка действия с глифом Font Awesome слева — как `act_btn`,
+/// но с иконкой (глифы разделки: scissors / drumstick-bite).
+fn icon_act_btn(
+    cx: &mut Context<'_, Root>,
+    icon: &'static str,
+    label: impl Into<SharedString>,
+    bg: u32,
+    fg: u32,
+    f: impl FnOnce(&mut Root, &mut Context<'_, Root>) + 'static,
+) -> Div {
+    let cell = RefCell::new(Some(f));
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .cursor_pointer()
+        .bg(rgb(bg))
+        .text_color(rgb(fg))
+        .hover(move |s| s.bg(rgb(bg)))
+        .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
+        .child(fa_icon(icon, px(14.0), rgb(fg)))
+        .child(label.into())
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                if let Some(f) = cell.borrow_mut().take() {
+                    f(this, cx);
+                }
+                cx.notify();
+            }),
+        )
 }
 
 /// Заголовок колонки окна подятия.
