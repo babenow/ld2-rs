@@ -10,11 +10,11 @@ use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stateful, Window};
 use ld2_core::l10n::{format_duration, t, tf, Key};
 use ld2_core::store::{
-    crime_kind_title, filter_active_statuses, local_epoch, Act, AppStore, LogKind, NpcDialogView,
-    NpcProfession,
+    crime_kind_title, filter_active_buffs, filter_active_statuses, local_epoch, Act, AppStore,
+    LogKind, NpcDialogView, NpcProfession,
 };
 use ld2_protocol::evt::StateSnapshot;
-use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
+use ld2_protocol::types::{Entity, EntityKind, ItemSnapshot, LocationSnapshot, Severity};
 
 use crate::palette::Palette;
 use ely::buttons::IconButton;
@@ -44,7 +44,11 @@ pub(crate) fn power_strike_open(skills: &[ld2_protocol::types::SkillSnapshot]) -
 
 /// M17/F30b: uid надетого посоха — слот `staff` удалён (посох теперь
 /// двуручное оружие правой руки), ищем по типу среди надетого.
-fn equipped_staff_uid(snap: &StateSnapshot) -> Option<String> {
+/// M24: надетая экипировка с вставленными рунами — кнопки каста на
+/// панели и хоткей «руна». Раньше брался только посох (`item_type ==
+/// "staff"`): руны в мече/броне (ADR-012) кнопки не получали —
+/// активная руна «не активировалась» (указание заказчика).
+fn equipped_rune_items(snap: &StateSnapshot) -> Vec<&ItemSnapshot> {
     let equipped: std::collections::HashSet<&str> = snap
         .char
         .equip
@@ -55,8 +59,9 @@ fn equipped_staff_uid(snap: &StateSnapshot) -> Option<String> {
     snap.char
         .inventory
         .iter()
-        .find(|i| i.item_type == "staff" && equipped.contains(i.uid.as_str()))
-        .map(|i| i.uid.clone())
+        .filter(|i| equipped.contains(i.uid.as_str()))
+        .filter(|i| i.sockets.iter().flatten().any(|s| s.rune.is_some()))
+        .collect()
 }
 
 impl Root {
@@ -70,20 +75,18 @@ impl Root {
             .as_ref()
             .map(|s| s.magic.mana.rune_cost)
             .unwrap_or(0);
-        let staff_uid = equipped_staff_uid(snap)?;
-        let staff = snap.char.inventory.iter().find(|i| i.uid == staff_uid)?;
-        staff
-            .sockets
-            .iter()
-            .flatten()
-            .find(|socket| {
+        for staff in equipped_rune_items(snap) {
+            if let Some(socket) = staff.sockets.iter().flatten().find(|socket| {
                 socket.rune.as_ref().is_some_and(|r| r.charges > 0)
                     && (rune_cost <= 0 || snap.char.mp.cur >= rune_cost)
-            })
-            .map(|socket| Click::RuneCast {
-                staff_uid: staff_uid.clone(),
-                socket_index: socket.index,
-            })
+            }) {
+                return Some(Click::RuneCast {
+                    staff_uid: staff.uid.clone(),
+                    socket_index: socket.index,
+                });
+            }
+        }
+        None
     }
 
     /// M14/F4: первый расходник боя (свиток/зелье) — хоткей «6».
@@ -693,6 +696,17 @@ impl Root {
             resource_color,
             pal,
         ));
+        // M24: индикаторы вставленных рун (указание заказчика) —
+        // под индикатором ресурса: глиф · прогрессбар заполнения ·
+        // N/M (правее глифа бар, правее бара — заряды).
+        for row in self.rune_indicator_rows(snap, pal) {
+            col = col.child(row);
+        }
+        // M24: индикаторы бафов рун (указание заказчика): активные
+        // баффы рун; за3 с до конца — моргание раз в секунду.
+        for row in self.rune_buff_rows(snap, pal) {
+            col = col.child(row);
+        }
         col = col.child(
             div()
                 .text_size(px(12.0))
@@ -1204,6 +1218,205 @@ impl Root {
     /// побег → руны → свитки/зелья. Каждая кнопка учитывает собственный
     /// кулдаун и глобальный (приоритет — max) и показывает причину
     /// недоступности в тултипе.
+    /// M24: строки индикаторов вставленных рун — под индикатором
+    /// ресурса персонажа (указание заказчика): глиф руны, правее —
+    /// прогрессбар заполнения заряда, правее бара — `N/M`. Только
+    /// РУНЫ из НАДЕТОЙ экипировки (боевой ресурс); самоцветы не
+    /// показываются — у них нет заклинания (`spell` пустой) и бар
+    /// зарядов бессмыслен. Бар — время до следующего такта тикера
+    /// (`time`), при `item`-режиме — доля зарядов; максимум — бар
+    /// заполнен. Тултип (указание заказчика): имя · редкость,
+    /// серверные подписи (§8) и заряды.
+    fn rune_indicator_rows(&self, snap: &StateSnapshot, pal: &Palette) -> Vec<Stateful<Div>> {
+        let lang = self.lang;
+        let equipped: std::collections::HashSet<&str> = snap
+            .char
+            .equip
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        let now = self.now_ms();
+        let phase = self.store.rune_recharge_phase_ms.unwrap_or(now);
+        let (mode, interval_ms) = self
+            .store
+            .session
+            .as_ref()
+            .map(|s| {
+                (
+                    s.magic.rune_recharge.clone(),
+                    (s.magic.rune_recharge_s * 1000.0).round() as i64,
+                )
+            })
+            .unwrap_or_else(|| ("time".to_string(), 30_000));
+        // Доля прошедшего такта (время до следующего заряда).
+        let tick_fill = ((now - phase) as f32 / (interval_ms.max(1) as f32)).clamp(0.0, 1.0);
+        let mut rows = Vec::new();
+        for item in &snap.char.inventory {
+            if !equipped.contains(item.uid.as_str()) {
+                continue;
+            }
+            let Some(sockets) = item.sockets.as_ref() else {
+                continue;
+            };
+            for socket in sockets {
+                let Some(rune) = socket.rune.as_ref() else {
+                    continue;
+                };
+                // M24: только руны — у самоцветов spell пустой
+                // (заклинания нет), бар зарядов для них бессмыслен.
+                if rune.spell.is_empty() {
+                    continue;
+                }
+                let fill = if rune.charges >= rune.max {
+                    1.0
+                } else if mode == "time" {
+                    tick_fill
+                } else {
+                    rune.charges as f32 / rune.max.max(1) as f32
+                };
+                // Тултип: имя · редкость, серверные подписи (§8)
+                // и заряды (указание заказчика).
+                let mut tip = vec![format!(
+                    "{} · {}",
+                    rune.name,
+                    rarity_label(lang, rune.rarity.as_deref().unwrap_or("common"))
+                )];
+                tip.extend(rune.detail.iter().flatten().cloned());
+                tip.push(format!(
+                    "{}: {}/{}",
+                    t(lang, Key::StatCharges),
+                    rune.charges,
+                    rune.max
+                ));
+                let (head_c, body_c) = (pal.text, pal.muted);
+                let row = div()
+                    .id(format!("ld2-rune-ind-{}-{}", item.uid, socket.index))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .child(crate::rune_glyph::glyph_div_for(
+                                rune.glyph.as_deref(),
+                                &rune.name,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .w(px(88.0))
+                            .h(px(8.0))
+                            .rounded_md()
+                            .bg(rgb(pal.border))
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(gpui::relative(fill.clamp(0.0, 1.0)))
+                                    .rounded_md()
+                                    .bg(rgb(pal.accent)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format!("{}/{}", rune.charges, rune.max)),
+                    )
+                    .tooltip(Tooltip::rich(move |_, _| {
+                        let mut col = div().flex().flex_col().gap_1();
+                        for (i, line) in tip.iter().enumerate() {
+                            col = col.child(
+                                div()
+                                    .text_size(if i == 0 { px(12.0) } else { px(11.0) })
+                                    .text_color(if i == 0 { rgb(head_c) } else { rgb(body_c) })
+                                    .child(line.clone()),
+                            );
+                        }
+                        col.into_any_element()
+                    }));
+                rows.push(row);
+            }
+        }
+        rows
+    }
+
+    /// M24: строки активных бафов рун — глиф, название (стак) и
+    /// остаток; когда до конца ≤3 с — строка моргает раз в секунду
+    /// (указание заказчика; полупрозрачность — без прыжков строки).
+    fn rune_buff_rows(&self, snap: &StateSnapshot, pal: &Palette) -> Vec<Stateful<Div>> {
+        let lang = self.lang;
+        let now_ms = self.now_ms();
+        let now = now_ms / 1000; // epoch-секунды (expires_at)
+        let active = filter_active_buffs(&snap.char.buffs, now);
+        if active.is_empty() {
+            return Vec::new();
+        }
+        let equipped: std::collections::HashSet<&str> = snap
+            .char
+            .equip
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        let mut glyphs: std::collections::HashMap<&str, Option<String>> =
+            std::collections::HashMap::new();
+        for item in &snap.char.inventory {
+            if !equipped.contains(item.uid.as_str()) {
+                continue;
+            }
+            for socket in item.sockets.iter().flatten() {
+                if let Some(rune) = &socket.rune {
+                    if let Some(def_id) = rune.def_id.as_deref() {
+                        glyphs.insert(def_id, rune.glyph.clone());
+                    }
+                }
+            }
+        }
+        let mut rows = Vec::new();
+        for buff in active {
+            // Индикаторы — только рунные баффы (kind = def_id руны).
+            if !buff.kind.starts_with("rune_") {
+                continue;
+            }
+            let left = (buff.expires_at - now).max(0);
+            // Моргание раз в секунду на последних3 секундах.
+            let dim = left <= 3 && (now_ms / 500) % 2 == 1;
+            let glyph = glyphs.get(buff.kind.as_str()).cloned().flatten();
+            let title = if buff.stacks > 1 {
+                format!("{} ×{}", buff.title, buff.stacks)
+            } else {
+                buff.title.clone()
+            };
+            rows.push(
+                div()
+                    .id(format!("ld2-rune-buff-{}", buff.kind))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .opacity(if dim { 0.0 } else { 1.0 })
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .child(crate::rune_glyph::glyph_div_for(
+                                glyph.as_deref(),
+                                &buff.kind,
+                            )),
+                    )
+                    .child(div().text_size(px(12.0)).child(title))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format_duration(lang, left)),
+                    ),
+            );
+        }
+        rows
+    }
+
     /// M24: единый прогресс-бар левой колонки — одна сущность на
     /// снятие шкур/освежевание, инкрустацию и заточку (подпись
     /// «Действие · имя», запуск — `Root::start_progress`); гаснет в
@@ -1320,83 +1533,83 @@ impl Root {
             row = row.child(cd_disabled("ld2-act-flee", flee_label, left, lang, pal));
         }
 
-        // ── 4) Руны экипированного посоха: ×N зарядов (ФР-09) ──
-        if let Some(staff_uid) = equipped_staff_uid(snap) {
-            if let Some(staff) = snap.char.inventory.iter().find(|i| i.uid == staff_uid) {
-                for socket in staff.sockets.iter().flatten() {
-                    let Some(rune) = &socket.rune else { continue };
-                    let charges_ok = rune.charges > 0;
-                    let mp_ok = rune_cost <= 0 || snap.char.mp.cur >= rune_cost;
-                    let label = format!("{} ×{}", rune.name, rune.charges);
-                    // Причина недоступности: сначала требования
-                    // (заряды/мана), потом кулдаун (у кулдауна — таймер
-                    // и в label, как у остальных кнопок панели).
-                    let off: Option<OffReason> = if !charges_ok {
-                        Some(OffReason::Req(t(lang, Key::NoCharge).to_string()))
-                    } else if !mp_ok {
-                        Some(OffReason::Req(t(lang, Key::NotEnoughMp).to_string()))
+        // ── 4) Руны надетой экипировки: ×N зарядов (ФР-09; M24 —
+        // не только посох: мечи/броня с рунными слотами, ADR-012) ──
+        for staff in equipped_rune_items(snap) {
+            let staff_uid = staff.uid.clone();
+            for socket in staff.sockets.iter().flatten() {
+                let Some(rune) = &socket.rune else { continue };
+                let charges_ok = rune.charges > 0;
+                let mp_ok = rune_cost <= 0 || snap.char.mp.cur >= rune_cost;
+                let label = format!("{} ×{}", rune.name, rune.charges);
+                // Причина недоступности: сначала требования
+                // (заряды/мана), потом кулдаун (у кулдауна — таймер
+                // и в label, как у остальных кнопок панели).
+                let off: Option<OffReason> = if !charges_ok {
+                    Some(OffReason::Req(t(lang, Key::NoCharge).to_string()))
+                } else if !mp_ok {
+                    Some(OffReason::Req(t(lang, Key::NotEnoughMp).to_string()))
+                } else {
+                    // M17/F30g: кулдаун самой руны (cooldown_s) +
+                    // глобальный — бар по полной длительности.
+                    let cd = rune
+                        .def_id
+                        .as_deref()
+                        .and_then(|d| self.store.item_cd_bar(d, now_ms));
+                    let own = cd.map(|(l, _)| l).unwrap_or(0);
+                    let (ok, left) = ready(own);
+                    if ok {
+                        None
                     } else {
-                        // M17/F30g: кулдаун самой руны (cooldown_s) +
-                        // глобальный — бар по полной длительности.
-                        let cd = rune
+                        Some(OffReason::Cd(left))
+                    }
+                };
+                match off {
+                    None => {
+                        let slot = btn(
+                            cx,
+                            label,
+                            pal.accent,
+                            pal.accent_text,
+                            Click::RuneCast {
+                                staff_uid: staff_uid.clone(),
+                                socket_index: socket.index,
+                            },
+                        );
+                        // M11.4: стоимость каста — тултип (egui-паритет).
+                        row = row.child(if rune_cost > 0 {
+                            slot.id(format!("ld2-rune-{staff_uid}-{}", socket.index))
+                                .tooltip(Tooltip::text(format!("{rune_cost} MP")))
+                                .into_any_element()
+                        } else {
+                            slot.into_any_element()
+                        });
+                    }
+                    Some(OffReason::Req(reason)) => {
+                        row = row.child(action_disabled(
+                            &format!("ld2-rune-off-{staff_uid}-{}", socket.index),
+                            label,
+                            reason,
+                            pal,
+                        ));
+                    }
+                    Some(OffReason::Cd(left)) => {
+                        // M17/F30g: бар по полной длительности
+                        // предметного кулдауна (GCD — дефолт 1 с).
+                        let total = rune
                             .def_id
                             .as_deref()
-                            .and_then(|d| self.store.item_cd_bar(d, now_ms));
-                        let own = cd.map(|(l, _)| l).unwrap_or(0);
-                        let (ok, left) = ready(own);
-                        if ok {
-                            None
-                        } else {
-                            Some(OffReason::Cd(left))
-                        }
-                    };
-                    match off {
-                        None => {
-                            let slot = btn(
-                                cx,
-                                label,
-                                pal.accent,
-                                pal.accent_text,
-                                Click::RuneCast {
-                                    staff_uid: staff_uid.clone(),
-                                    socket_index: socket.index,
-                                },
-                            );
-                            // M11.4: стоимость каста — тултип (egui-паритет).
-                            row = row.child(if rune_cost > 0 {
-                                slot.id(format!("ld2-rune-{}", socket.index))
-                                    .tooltip(Tooltip::text(format!("{rune_cost} MP")))
-                                    .into_any_element()
-                            } else {
-                                slot.into_any_element()
-                            });
-                        }
-                        Some(OffReason::Req(reason)) => {
-                            row = row.child(action_disabled(
-                                &format!("ld2-rune-off-{}", socket.index),
-                                label,
-                                reason,
-                                pal,
-                            ));
-                        }
-                        Some(OffReason::Cd(left)) => {
-                            // M17/F30g: бар по полной длительности
-                            // предметного кулдауна (GCD — дефолт 1 с).
-                            let total = rune
-                                .def_id
-                                .as_deref()
-                                .and_then(|d| self.store.item_cd_bar(d, now_ms))
-                                .map(|(_, t)| t)
-                                .unwrap_or(1000);
-                            row = row.child(cd_bar_button(
-                                &format!("ld2-rune-off-{}", socket.index),
-                                label,
-                                left,
-                                total,
-                                lang,
-                                pal,
-                            ));
-                        }
+                            .and_then(|d| self.store.item_cd_bar(d, now_ms))
+                            .map(|(_, t)| t)
+                            .unwrap_or(1000);
+                        row = row.child(cd_bar_button(
+                            &format!("ld2-rune-off-{staff_uid}-{}", socket.index),
+                            label,
+                            left,
+                            total,
+                            lang,
+                            pal,
+                        ));
                     }
                 }
             }

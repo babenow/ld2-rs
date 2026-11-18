@@ -178,7 +178,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
             "max_len": 500, "cooldown_s": 1.5 },
   "inventory": { "slots": 100, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
-  "magic": { "rune_recharge": "time", "scroll_requires_target": true,  // time|item (M18/F58c)
+  "magic": { "rune_recharge": "time", "rune_recharge_s": 30, "scroll_requires_target": true,  // time|item (M18/F58c); с на один заряд (M24, без поля — 30)
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "quests": { "max_active": 10 },             // M18/F36: лимит текущих квестов
   "characters": [
@@ -306,7 +306,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны посоха |
-| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие) |
+| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие); **M24**: инкрустация в **один** предмет — стак (qty>1) не заполняется целиком: целевая штука становится отдельной строкой (`evt/item/added`), старый стак −1 (`evt/item/state`), ack несёт `staff` уже новой строки |
 | `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune, char?}` | − | извлечение (цель надета — ack несёт `char`, M18/F32) |
 | `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после»; **M18/F54:** без активного камня → `E_INGREDIENTS`; `chance` уже включает бонус камня × рейты сервера |
 | `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение; **M18/F54:** тратит 1 шт. активного камня (`evt/item/state` qty−1 либо `evt/item/removed`), камень сбрасывается |

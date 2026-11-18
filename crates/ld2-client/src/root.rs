@@ -12,7 +12,9 @@ use gpui::{
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
-use ld2_core::store::{local_epoch, local_epoch_ms, Act, AppStore, Effect, Screen};
+use ld2_core::store::{
+    filter_active_buffs, local_epoch, local_epoch_ms, Act, AppStore, Effect, Screen,
+};
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
 use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove};
 
@@ -902,6 +904,11 @@ impl Root {
         // M22: прогресс-бар разделки (5 с) должен идти плавно —
         // держим быстрый тик (50 мс) с notify, пока он активен.
         let harvest_active = self.store.harvest.is_some();
+        // M24: прогрессбары зарядов рун живут по времени — тик,
+        // пока хотя бы одна руна в надетом снаряжении не заполнена.
+        let rune_bar_active = self.rune_bar_active();
+        // M24: индикаторы бафов рун — живой отсчёт и моргание.
+        let rune_buffs_active = self.rune_buffs_active();
         // M24 фикс: 4-й элемент — **длительность** (док поля), но
         // сравнивался с epoch-мс как дедлайн → старт уходил мгновенно
         // и прогресс-бар заточки не был виден. Теперь: старт + длительность.
@@ -1001,6 +1008,8 @@ impl Root {
             || inscribe_active
             || upgrade_progress_active
             || harvest_active
+            || rune_bar_active
+            || rune_buffs_active
         {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
@@ -1012,6 +1021,8 @@ impl Root {
                 || inscribe_active
                 || upgrade_progress_active
                 || harvest_active
+                || rune_bar_active
+                || rune_buffs_active
             {
                 50
             } else {
@@ -1131,6 +1142,45 @@ impl Root {
             format!("{} · {}", t(self.lang, Key::InscribeCasting), target),
             INSCRIBE_MS,
         );
+    }
+
+    /// M24: заряды рун в надетом снаряжении ниже максимума (режим
+    /// `time`) — тик 50 мс, пока прогрессбары заполняются.
+    fn rune_bar_active(&self) -> bool {
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return false;
+        };
+        let Some(session) = self.store.session.as_ref() else {
+            return false;
+        };
+        if session.magic.rune_recharge != "time" {
+            return false;
+        }
+        let equipped: std::collections::HashSet<&str> = snap
+            .char
+            .equip
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        snap.char
+            .inventory
+            .iter()
+            .filter(|i| equipped.contains(i.uid.as_str()))
+            .flat_map(|i| i.sockets.iter().flatten())
+            .any(|s| s.rune.as_ref().is_some_and(|r| r.charges < r.max))
+    }
+
+    /// M24: активны ли бафы рун — тик для отсчёта остатка и
+    /// моргания на последних3 секундах.
+    fn rune_buffs_active(&self) -> bool {
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return false;
+        };
+        let now = self.now_ms() / 1000;
+        filter_active_buffs(&snap.char.buffs, now)
+            .iter()
+            .any(|b| b.kind.starts_with("rune_"))
     }
 
     /// M24: запуск единого прогресс-бара левой колонки — подпись
@@ -1486,7 +1536,7 @@ impl Root {
                     cx.notify();
                     return;
                 }
-                tracing::debug!("закрытие окна сокетов: Esc");
+                tracing::info!("закрытие окна сокетов: Esc");
                 self.store.close_socketing();
                 self.socket_popup.open = false;
                 cx.notify();
@@ -2092,6 +2142,7 @@ impl Root {
                                         if root.socket_pick.is_some() {
                                             root.socket_pick = None;
                                         } else {
+                                            tracing::info!("закрытие окна сокетов: скрим");
                                             root.store.close_socketing();
                                             root.socket_popup.open = false;
                                         }

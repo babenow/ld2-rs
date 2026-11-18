@@ -180,6 +180,7 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
         },
         magic: MagicConfig {
             rune_recharge: "item".into(),
+            rune_recharge_s: 30.0,
             scroll_requires_target: true,
             mana: ManaConfig {
                 regen_out_s: 45,

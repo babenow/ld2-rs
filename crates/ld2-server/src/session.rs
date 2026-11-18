@@ -5758,7 +5758,7 @@ impl Session {
         };
         let pool = &self.state.pool;
 
-        let Some(staff) = (match db::items::find(pool, &cmd.staff_uid, &char_id).await {
+        let Some(mut staff) = (match db::items::find(pool, &cmd.staff_uid, &char_id).await {
             Ok(item) => item,
             Err(e) => {
                 warn!("socket.insert (поиск посоха): {e}");
@@ -5918,6 +5918,41 @@ impl Session {
             "def_id": rune_def.id,
             "rune": rune_obj
         });
+        // M24 фикс (указание заказчика): инкрустация — в ОДИН предмет.
+        // Стак (qty>1) не заполняется целиком: целевая штука — новая
+        // строка (паритет фикса заточки a996b53), старый стак убывает
+        // на 1; сокеты пишутся уже в новую строку. Надетая вещь стаком
+        // (админ-кейс) — без сплита, как раньше.
+        let mut split: Option<(String, i64)> = None;
+        if staff.equipped_slot.is_none() && staff.qty > 1 {
+            let mut new_row = match db::items::insert(pool, &char_id, &staff.def_id, 1).await {
+                Ok(row) => row,
+                Err(e) => {
+                    warn!("socket.insert (новая строка): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            if staff.upgrade > 0 {
+                if let Err(e) = db::items::set_upgrade(pool, &new_row.uid, staff.upgrade).await {
+                    warn!("socket.insert (уровень новой строки): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+                new_row.upgrade = staff.upgrade;
+            }
+            if let Some(bonuses) = staff.bonuses.clone() {
+                if let Err(e) = db::items::set_bonuses(pool, &new_row.uid, bonuses).await {
+                    warn!("socket.insert (бонусы новой строки): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+            let new_qty = i64::from(staff.qty) - 1;
+            if let Err(e) = db::items::set_qty(pool, &staff.uid, new_qty).await {
+                warn!("socket.insert (убыль стака): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            split = Some((staff.uid.clone(), new_qty));
+            staff = new_row;
+        }
         let sockets_value = Value::Array(sockets);
         if let Err(e) = db::items::set_sockets(pool, &staff.uid, sockets_value).await {
             warn!("socket.insert (запись): {e}");
@@ -5972,6 +6007,29 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
+        // M24 фикс: события стака — новая строка (уже с сокетами) и
+        // убыль старого стака; идут после событий руны, до ack клиента.
+        if let Some((old_uid, new_qty)) = &split {
+            outs.push(out_event(
+                "evt/item/added",
+                None,
+                serde_json::to_value(ItemAdded {
+                    item: item_snapshot(&staff_row, &staff_def),
+                })
+                .unwrap_or_default(),
+            ));
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(new_qty));
+            outs.push(out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: old_uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            ));
+        }
         let mut payload = serde_json::Map::new();
         payload.insert(
             "staff".into(),
