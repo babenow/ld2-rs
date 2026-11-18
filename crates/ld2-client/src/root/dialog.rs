@@ -242,6 +242,15 @@ impl Root {
             dialog_id: dialog.id.clone(),
             values,
         };
+        // M24: submit админ-диалога количества — содержимое цели
+        // правой колонки устаревает (свой рюкзак обновляют события
+        // инвентаря, потому для self перезапрос не нужен).
+        if cmd.dialog_id.starts_with("admin.")
+            && self.admin_popup.open
+            && self.admin_target != "self"
+        {
+            self.admin_target_request = true;
+        }
         self.send_cmd(&cmd, Act::DialogSubmit);
         self.close_game_dialog();
         cx.notify();

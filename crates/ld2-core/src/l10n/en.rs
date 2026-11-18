@@ -491,5 +491,7 @@ pub(super) fn t(key: Key) -> &'static str {
         AdminInvSearch => "Search backpack…",
         AdminNothing => "Nothing found",
         RarityAll => "All",
+        AdminPlayerName => "Player name…",
+        AdminTargetGo => "Apply",
     }
 }
