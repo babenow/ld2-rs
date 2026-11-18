@@ -92,6 +92,9 @@ pub struct LiveMob {
     pub damage: i64,
     /// Следующая атака моба (epoch, мс).
     pub next_attack_at: i64,
+    /// M24: одноразовый «админ-лут» (админ-панель): попадёт в труп
+    /// при смерти; респавн создаёт нового моба → пусто (in-memory).
+    pub bonus_loot: Vec<String>,
     /// M18/F58d (ADR-012 §5): дебаффы рун на мобе.
     /// Стан (эпоха, мс): моб не атакует, пока не истёк.
     pub stun_until: i64,
@@ -638,6 +641,7 @@ impl World {
                     respawn,
                     hp_start,
                     harvest: extra.get("harvest").and_then(|v| v.as_object()).cloned(),
+                    bonus_loot: Vec::new(),
                 };
                 // M20: шаблон сида — источник данных при респавне.
                 self.mob_seed.insert(e.id.clone(), mob.clone());
@@ -700,6 +704,71 @@ impl World {
     }
 
     /// Персонажи в локации (жертвы агрессии).
+    /// M24: админ-лут монстра (одноразовый, в труп при смерти).
+    pub fn mob_bonus_add(&mut self, mob_id: &str, def_id: &str) -> bool {
+        match self.mobs.get_mut(mob_id) {
+            Some(mob) => {
+                mob.bonus_loot.push(def_id.to_string());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// M24: убрать `count` позиций админ-лута монстра с `idx`.
+    pub fn mob_bonus_remove_at(&mut self, mob_id: &str, idx: usize, count: usize) -> bool {
+        match self.mobs.get_mut(mob_id) {
+            Some(mob) if idx < mob.bonus_loot.len() => {
+                let end = (idx + count).min(mob.bonus_loot.len());
+                mob.bonus_loot.drain(idx..end);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// M24: текущий админ-лут монстра (для admin.target.info).
+    pub fn mob_bonus(&self, mob_id: &str) -> Vec<String> {
+        self.mobs
+            .get(mob_id)
+            .map(|mob| mob.bonus_loot.clone())
+            .unwrap_or_default()
+    }
+
+    /// M24: инъекция в общий лут трупа → обновлённый труп (для
+    /// `evt/corpse/created`); `None` — трупа нет.
+    pub fn corpse_loot_add(&mut self, corpse_id: &str, def_id: &str) -> Option<LiveCorpse> {
+        let corpse = self.corpses.get_mut(corpse_id)?;
+        corpse.loot.push(Some(def_id.to_string()));
+        Some(corpse.clone())
+    }
+
+    /// M24: убрать `count` слотов трупа начиная с `idx` (общий лут
+    /// либо «Внутри» при `inner`) → обновлённый труп; `None` —
+    /// трупа/слотов нет.
+    pub fn corpse_slot_remove_at(
+        &mut self,
+        corpse_id: &str,
+        inner: bool,
+        idx: usize,
+        count: usize,
+    ) -> Option<LiveCorpse> {
+        let corpse = self.corpses.get_mut(corpse_id)?;
+        let slots = if inner {
+            &mut corpse.inner_loot
+        } else {
+            &mut corpse.loot
+        };
+        if idx >= slots.len() {
+            return None;
+        }
+        let end = (idx + count).min(slots.len());
+        for slot in slots.iter_mut().take(end).skip(idx) {
+            *slot = None;
+        }
+        Some(corpse.clone())
+    }
+
     pub fn chars_in_location(&self, location_id: &str) -> Vec<String> {
         let mut chars: Vec<String> = self
             .char_loc
@@ -914,13 +983,15 @@ impl World {
         self.corpse_seq += 1;
         let corpse_id = format!("cor_d{}", self.corpse_seq);
         // M20: таблица лута — в труп попадают только выпавшие по шансу
-        // (строки старого формата — всегда).
-        let loot: Vec<String> = mob
+        // (строки старого формата — всегда); M24: админ-лут монстра
+        // добавляется сверху (одноразово, до респавна).
+        let mut loot: Vec<String> = mob
             .drops
             .iter()
             .filter(|d| roll_chance(d.chance))
             .map(|d| d.def_id.clone())
             .collect();
+        loot.extend(mob.bonus_loot.iter().cloned());
         self.corpses.insert(
             corpse_id.clone(),
             LiveCorpse {
