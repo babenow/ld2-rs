@@ -11,6 +11,8 @@
 //! `store.pickup` (модалка осмотра не перетирается); после взятия
 //! лут перезапрашивается из `tick` (см. `Root::pump_pickup`).
 
+use ely::forms::Choice;
+use ely::navigation::Tabs;
 use ely::primitives::DragGhost;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, Stateful, Window};
 use ld2_core::l10n::{t, Key};
@@ -18,7 +20,9 @@ use ld2_core::store::{Act, Screen};
 
 use crate::palette::Palette;
 
-use super::{act_btn, scrollable_tab, sheet::quality_color, Click, PopupKind, Root};
+use super::{
+    act_btn, backpack::BackpackTab, scrollable_tab, sheet::quality_color, Click, PopupKind, Root,
+};
 
 /// M23: payload перетаскивания вещи из лута в рюкзак — отдельный
 /// newtype (не `String`), чтобы не конфликтовать с перетаскиванием
@@ -107,6 +111,30 @@ impl Root {
             })
             .unwrap_or_default();
 
+        // Вкладки-фильтры рюкзака (как в окне рюкзака): общий
+        // `backpack_tab` — выбор живёт в конфиге и синхронен с главным
+        // окном; свой id, чтобы не конфликтовать с открытым окном
+        // рюкзака (уникальность id gpui в кадре).
+        let tab = self.backpack_tab;
+        let choices: Vec<Choice> = BackpackTab::all()
+            .iter()
+            .map(|(candidate, key)| {
+                Choice::new(candidate.as_str(), t(lang, *key)).icon(candidate.icon())
+            })
+            .collect();
+        let this = cx.entity();
+        let tabs = Tabs::new("ld2-pickup-tabs", choices, tab.as_str()).on_change(
+            move |value, _window, acx| {
+                let value = value.to_string();
+                this.update(acx, |root, cx| {
+                    root.backpack_tab = BackpackTab::parse(&value);
+                    root.config.backpack_tab = value;
+                    root.save_config();
+                    cx.notify();
+                });
+            },
+        );
+
         let grid = self.backpack_grid(cx, pal, "ld2-pickup");
         // Зона-приёмник: перетаскивание вещи сюда = взять (`item.use`).
         // Замыкания on_drag/on_drop требуют 'static — цвет копируем.
@@ -157,6 +185,8 @@ impl Root {
             .min_w_0()
             .min_h_0()
             .child(col_title(t(lang, Key::BackpackTitle).to_string(), pal))
+            .child(tabs)
+            .child(div().h(px(1.0)).bg(rgb(pal.border)))
             .child(drop_target)
             .child(
                 div()
@@ -193,7 +223,7 @@ impl Root {
                     .child(left_scroll),
             )
             .child(div().w(px(1.0)).bg(rgb(pal.border)))
-            .child(div().flex().flex_col().w(px(340.0)).min_h_0().child(right));
+            .child(div().flex().flex_col().w(px(440.0)).min_h_0().child(right));
 
         Some(self.popup_window(
             window,
