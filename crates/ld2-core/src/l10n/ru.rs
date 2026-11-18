@@ -488,6 +488,7 @@ pub(super) fn t(key: Key) -> &'static str {
         AdminItemsSheet => "Предметы",
         AdminGodMode => "Режим бога (неуязвимость)",
         AdminSearch => "Поиск предмета…",
+        AdminInvSearch => "Поиск в рюкзаке…",
         AdminNothing => "Ничего не найдено",
     }
 }

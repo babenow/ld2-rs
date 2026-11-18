@@ -401,6 +401,11 @@ pub struct Root {
     admin_catalog_request: bool,
     /// M24: цель выдачи (F24b — всегда self; F24c — селект целей).
     admin_target: String,
+    /// M24: вкладка-фильтр правой колонки (независима от левой,
+    /// не персистентна — разовый просмотр содержимого цели).
+    admin_inv_tab: backpack::BackpackTab,
+    /// M24: строка поиска правой колонки.
+    admin_inv_search: Option<Entity<TextInput>>,
     /// M21: вооружённая кнопка «Сбросить» (второй клик — cmd/craft.reset).
     prof_reset_armed: Option<String>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
@@ -696,6 +701,8 @@ impl Root {
             admin_search: None,
             admin_catalog_request: false,
             admin_target: "self".into(),
+            admin_inv_tab: backpack::BackpackTab::default(),
+            admin_inv_search: None,
             prof_reset_armed: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
@@ -1205,6 +1212,13 @@ impl Root {
             window,
             cx,
             t(lang, Key::AdminSearch).to_string(),
+            false,
+            None,
+        ));
+        self.admin_inv_search = Some(mk(
+            window,
+            cx,
+            t(lang, Key::AdminInvSearch).to_string(),
             false,
             None,
         ));

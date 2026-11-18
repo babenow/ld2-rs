@@ -25,7 +25,7 @@ use crate::fa::fa_icon;
 use crate::palette::Palette;
 
 use super::backpack::{tab_for_type, BackpackTab};
-use super::sheet::{item_color, rarity_label};
+use super::sheet::{item_color, rarity_color, rarity_label};
 use super::{scrollable_tab, Click, PopupKind, Root};
 
 /// M24: payload перетаскивания предмета из каталога в цель — свой
@@ -184,12 +184,33 @@ impl Root {
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
             .child(left_body);
 
-        // ── право: цель (F24b — свой рюкзак) как зона приёма ─────
+        // ── право: цель (свой рюкзак) — СВОИ фильтры предметов ───
+        // (вкладки независимы от левого каталога, поиск — своё поле;
+        // указание заказчика: фильтры в правом окне тоже нужны).
+        let inv_query = self
+            .ti(&self.admin_inv_search)
+            .read(cx)
+            .text()
+            .to_lowercase();
+        let inv_tab = self.admin_inv_tab;
         let inv: Vec<ItemSnapshot> = self
             .store
             .snapshot
             .as_ref()
-            .map(|s| s.char.inventory.clone())
+            .map(|s| {
+                s.char
+                    .inventory
+                    .iter()
+                    .filter(|item| {
+                        let in_tab =
+                            inv_tab == BackpackTab::All || tab_for_type(&item.item_type) == inv_tab;
+                        let matches_query =
+                            inv_query.is_empty() || item.name.to_lowercase().contains(&inv_query);
+                        in_tab && matches_query
+                    })
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         let mut inv_col = div().flex().flex_col().gap_1();
         let inv_body = if inv.is_empty() {
@@ -225,6 +246,22 @@ impl Root {
                 &self.admin_inv_scroll,
                 inv_body,
             ));
+        let inv_choices: Vec<Choice> = BackpackTab::all()
+            .iter()
+            .map(|(candidate, key)| {
+                Choice::new(candidate.as_str(), t(lang, *key)).icon(candidate.icon())
+            })
+            .collect();
+        let inv_tabs = Tabs::new("ld2-admin-inv-tabs", inv_choices, inv_tab.as_str()).on_change({
+            let this = cx.entity();
+            move |value, _window, acx| {
+                let value = value.to_string();
+                this.update(acx, |root, cx| {
+                    root.admin_inv_tab = BackpackTab::parse(&value);
+                    cx.notify();
+                });
+            }
+        });
         let right = div()
             .flex()
             .flex_col()
@@ -238,6 +275,12 @@ impl Root {
                     .text_color(rgb(pal.accent))
                     .child(t(lang, Key::BackpackTitle)),
             )
+            .child(SearchInput::new(
+                "ld2-admin-inv-search",
+                self.ti(&self.admin_inv_search),
+            ))
+            .child(inv_tabs)
+            .child(div().h(px(1.0)).bg(rgb(pal.border)))
             .child(drop_target);
 
         let body = div()
@@ -277,6 +320,8 @@ fn catalog_row(
     let itype = item["type"].as_str().unwrap_or("?");
     let rarity = item["rarity"].as_str().unwrap_or("common");
     let qty = item["qty"].as_i64().unwrap_or(1);
+    // Имя — цветом ранга (указание заказчика), ранг — справа.
+    let name_color = rarity_color(rarity, &pal);
     let ghost_title: gpui::SharedString = name.clone().into();
     let drag_id = def_id.clone();
     div()
@@ -293,18 +338,22 @@ fn catalog_row(
         .border_color(rgb(pal.border))
         .cursor_pointer()
         .hover(move |s| s.bg(rgb(pal.selection)))
+        // Имя занимает весь столбец (ellipses), ранг — по правому
+        // краю, тот же цвет — у самого имени.
         .child(
             div()
+                .flex_grow_1()
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
+                .text_color(rgb(name_color))
                 .child(format!("{name} ({itype})")),
         )
-        .child(div().flex_grow_1())
         .child(
             div()
                 .text_size(px(11.0))
+                .text_right()
                 .text_color(rgb(pal.muted))
                 .child(rarity_label(lang, rarity)),
         )

@@ -576,6 +576,7 @@ pub enum Key {
     AdminItemsSheet,
     AdminGodMode,
     AdminSearch,
+    AdminInvSearch,
     AdminNothing,
 }
 
@@ -1132,6 +1133,7 @@ mod tests {
         Key::AdminItemsSheet,
         Key::AdminGodMode,
         Key::AdminSearch,
+        Key::AdminInvSearch,
         Key::AdminNothing,
     ];
 
