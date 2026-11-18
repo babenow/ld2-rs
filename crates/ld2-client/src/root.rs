@@ -2006,6 +2006,11 @@ impl Root {
             Click::LootOpen(id) => {
                 self.pickup_id = Some(id);
                 self.pickup_sel = None;
+                // Лут прошлого трупа не должен мелькнуть под новым.
+                self.store.pickup = None;
+                // Без флага pump не отправит запрос, а рендер с пустыми
+                // данными закроет окно в первом же кадре (баг M23).
+                self.pickup_request = true;
                 self.open_popup(PopupKind::LootPickup);
                 self.pump_pickup(cx);
             }
