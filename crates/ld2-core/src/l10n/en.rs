@@ -488,6 +488,7 @@ pub(super) fn t(key: Key) -> &'static str {
         AdminItemsSheet => "Items",
         AdminGodMode => "God mode (invulnerability)",
         AdminSearch => "Search items…",
+        AdminInvSearch => "Search backpack…",
         AdminNothing => "Nothing found",
     }
 }
