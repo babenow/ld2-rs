@@ -2433,7 +2433,7 @@ impl Root {
                     .map(|e| e.name.strip_prefix("Труп: ").unwrap_or(&e.name).to_string())
                     .unwrap_or_default();
                 let cmd = ld2_protocol::cmd::CorpseHarvest {
-                    entity_id: id,
+                    entity_id: id.clone(),
                     action: action.clone(),
                 };
                 match self.transport.send(&cmd) {
@@ -2441,10 +2441,12 @@ impl Root {
                         self.store.on_world_sent(Act::Harvest);
                         // Прогресс-бар — с момента отправки (5 с);
                         // отказ сервера чистит Act::Harvest (ошибка).
+                        // entity_id (M24): итог другого трупа бар не гасит.
                         self.store.harvest = Some(ld2_core::store::HarvestProgress {
                             started_ms: self.now_ms(),
                             action,
                             name,
+                            entity_id: id,
                         });
                     }
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),

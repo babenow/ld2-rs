@@ -161,7 +161,8 @@ impl Session {
         // M24: разделка занята — блок действий персонажа (§9 E_BUSY).
         // Исключения: item-* (прерывают — M23), информационные
         // (осмотр/снапшот/чат/диалоги), admin-панель, corpse.harvest
-        // (свой E_COOLDOWN).
+        // (переключение на другой труп разрешено; E_COOLDOWN — только
+        // повторный старт на том же трупе).
         const HARVEST_BLOCKED: &[&str] = &[
             "cmd/location.move",
             "cmd/combat.attack",
@@ -2516,7 +2517,9 @@ impl Session {
     /// шлёт `evt/harvest/result`); все проверки — до старта:
     /// труп в локации с флагом действия и не сделан, профессия
     /// изучена, нож в инвентаре, гейт уровней (треб − уровень <25),
-    /// нет активного джоба.
+    /// нет активного джоба на этом трупе. M24: старт на **другом**
+    /// трупе разрешён — текущая разделка прерывается, шкура
+    /// брошенного трупа портится (для gut и skin одинаково).
     async fn corpse_harvest(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
@@ -2535,7 +2538,11 @@ impl Session {
         // Труп, флаги, «уже сделано» — в мире.
         let (name, required) = {
             let world = self.state.world.lock().expect("мир");
-            if world.harvest_job(&char_id).is_some() {
+            // M24: переключение на ДРУГОЙ труп разрешено — текущая
+            // разделка прерывается ниже (шкура брошенного трупа
+            // портится); повторный старт на том же трупе — E_COOLDOWN.
+            let prev = world.harvest_job(&char_id).map(|j| j.corpse_id.clone());
+            if prev.as_deref() == Some(cmd.entity_id.as_str()) {
                 return vec![Self::err(
                     seq,
                     ErrorCode::Cooldown,
@@ -2629,6 +2636,34 @@ impl Session {
                 "нужен нож для снятия шкур",
             )];
         }
+        // M24: переключение — текущая разделка прерывается, шкура
+        // брошенного трупа испорчена (для gut и skin одинаково:
+        // снять шкуру после нельзя, повторить gut можно). Итог и
+        // обновление трупа шлём ДО ack: клиент гасит бар по
+        // evt/harvest/result и только потом получает старт нового.
+        let interrupted = {
+            let mut world = self.state.world.lock().expect("мир");
+            let old = world.cancel_harvest(&char_id);
+            if let Some(job) = &old {
+                world.ruin_skin(&job.corpse_id);
+            }
+            old
+        };
+        let mut outs: Vec<Out> = Vec::new();
+        if let Some(job) = interrupted {
+            let result = ld2_protocol::evt::HarvestResult {
+                entity_id: job.corpse_id.clone(),
+                name: job.name.clone(),
+                action: job.action.clone(),
+                ok: false,
+                ruined: true,
+            };
+            if let Some(text) = event_payload_text("evt/harvest/result", &result) {
+                outs.push(Out::Text(text));
+            }
+            // Флаги «шкура испорчена» — всем в локации (окно подятия).
+            outs.extend(self.broadcast_corpse(&job.corpse_id));
+        }
         // Старт джоба (5 с).
         let at = crate::time::now_epoch() + 5;
         {
@@ -2641,10 +2676,11 @@ impl Session {
                 at,
             });
         }
-        vec![Self::ack_payload(
+        outs.push(Self::ack_payload(
             seq,
             &serde_json::json!({ "action": cmd.action, "name": name }),
-        )]
+        ));
+        outs
     }
 
     async fn take_loot(&mut self, seq: u32, char_id: &str, loot_uid: &str) -> Vec<Out> {
