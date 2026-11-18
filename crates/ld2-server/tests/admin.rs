@@ -659,44 +659,50 @@ async fn admin_gives_to_container_and_shop() {
     let base_len = before.as_array().expect("items").len();
     assert_eq!(base_len, 3, "база сундука: {before}");
 
-    // Выдача2 → надстройка (слоты после базовых defs).
+    // Выдача2 → ОДИН стак с указанным количеством (указание
+    // заказчика): одна позиция qty=2, а не две позиции.
     give_flow(&mut c, &cont, "gold_coin", 2).await;
     let info = target_info(&mut c, &cont).await;
     let items = info.as_array().expect("items");
-    assert_eq!(items.len(), base_len + 2, "надстройка сундука: {info}");
+    assert_eq!(items.len(), base_len + 1, "один стак: {info}");
+    assert_eq!(items[items.len() - 1]["qty"], 2, "количество стака: {info}");
 
-    // Взятие инъекции ИГРОКОМ — uid продолжает индексацию после базы
-    // (путь cmd/item.use → take_loot: ветка idx >= base_len).
+    // Взятие стака игроком — ровно 2 монеты, позиция исчезает.
     let take_uid = format!("loot:cont_forest_chest:{base_len}");
     let seq = c
         .send("cmd/item.use", json!({ "item_uid": take_uid }))
         .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "взять надстройку");
-    c.wait_event("evt/item/added").await;
-    let info = target_info(&mut c, &cont).await;
-    assert_eq!(
-        info.as_array().expect("items").len(),
-        base_len + 1,
-        "слот занят: {info}"
-    );
-
-    // Удаление остатка надстройки.
-    let info = target_info(&mut c, &cont).await;
-    let x_ref = info
-        .as_array()
-        .expect("items")
-        .iter()
-        .find(|i| i["ref"].as_str().is_some_and(|r| r.starts_with("contx:")))
-        .expect("contx-реф")["ref"]
-        .as_str()
-        .expect("ref")
-        .to_string();
-    remove_flow(&mut c, &cont, &x_ref, 1).await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "взять стак");
+    let added = c.wait_event("evt/item/added").await;
+    assert_eq!(added["payload"]["item"]["qty"], 2, "взято ровно2: {added}");
     let info = target_info(&mut c, &cont).await;
     assert_eq!(
         info.as_array().expect("items").len(),
         base_len,
-        "надстройка удалена: {info}"
+        "слот занят: {info}"
+    );
+
+    // Частичное удаление: стак3 → убрали1 → остаётся2 → убрали2 → пусто.
+    give_flow(&mut c, &cont, "gold_coin", 3).await;
+    let info = target_info(&mut c, &cont).await;
+    let items = info.as_array().expect("items");
+    assert_eq!(items.len(), base_len + 1, "новый стак: {info}");
+    let x_ref = items[items.len() - 1]["ref"]
+        .as_str()
+        .expect("ref")
+        .to_string();
+    assert!(x_ref.starts_with("contx:"), "ref: {x_ref}");
+    remove_flow(&mut c, &cont, &x_ref, 1).await;
+    let info = target_info(&mut c, &cont).await;
+    let items = info.as_array().expect("items");
+    assert_eq!(items.len(), base_len + 1, "стак остался: {info}");
+    assert_eq!(items[items.len() - 1]["qty"], 2, "остаток2: {info}");
+    remove_flow(&mut c, &cont, &x_ref, 2).await;
+    let info = target_info(&mut c, &cont).await;
+    assert_eq!(
+        info.as_array().expect("items").len(),
+        base_len,
+        "стак удалён целиком: {info}"
     );
 
     // Tombstone базового слота — исчезает из списка.

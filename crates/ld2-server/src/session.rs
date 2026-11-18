@@ -1192,7 +1192,7 @@ impl Session {
                 .filter(|i| world.container_base_removed(&entity.id, *i))
                 .collect()
         };
-        let extras: Vec<Option<String>> = {
+        let extras: Vec<Option<(String, i64)>> = {
             let world = self.state.world.lock().expect("мир");
             world.container_extra(&entity.id)
         };
@@ -1241,7 +1241,7 @@ impl Session {
         let base_len = defs.len();
         let mut extras_remaining = 0usize;
         for (n, slot) in extras.iter().enumerate() {
-            let Some(def_id) = slot else {
+            let Some((def_id, qty)) = slot else {
                 continue; // слот взят/удалён
             };
             extras_remaining += 1;
@@ -1260,7 +1260,8 @@ impl Session {
             let row = db::items::ItemRow {
                 uid: loot_uid,
                 def_id: def_id.clone(),
-                qty: def.qty,
+                // M24: количество стака админа, не из определения.
+                qty: i32::try_from(*qty).unwrap_or(i32::MAX),
                 upgrade: 0,
                 equipped_slot: None,
                 sockets: serde_json::json!([]),
@@ -2735,6 +2736,7 @@ impl Session {
         let base_len = defs.len();
         // M24: базовый слот (может быть удалён админом — tombstone)
         // либо надстройка сундука (админ-инъекция после базовых defs).
+        let mut extra_qty: Option<i64> = None;
         let def_id = if let Some(def_id) = defs.get(idx).cloned() {
             let removed = {
                 let world = self.state.world.lock().expect("мир");
@@ -2745,16 +2747,15 @@ impl Session {
             }
             def_id
         } else if idx >= base_len {
-            let extra = {
+            let slot = {
                 let world = self.state.world.lock().expect("мир");
-                world
-                    .container_extra(&entity.id)
-                    .get(idx - base_len)
-                    .cloned()
-                    .flatten()
+                world.container_extra_slot(&entity.id, idx - base_len)
             };
-            match extra {
-                Some(def_id) => def_id,
+            match slot {
+                Some((def_id, qty)) => {
+                    extra_qty = Some(qty);
+                    def_id
+                }
                 None => {
                     return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого лута")];
                 }
@@ -2797,7 +2798,10 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         }
-        match db::items::take_loot_tx(&pool, loot_uid, char_id, &def_id, i64::from(def.qty)).await {
+        // M24: надстройка сундука несёт своё количество (стак
+        // админа); базовый слот — количество из определения.
+        let grant_qty = extra_qty.unwrap_or_else(|| i64::from(def.qty));
+        match db::items::take_loot_tx(&pool, loot_uid, char_id, &def_id, grant_qty).await {
             Ok(None) => vec![Self::err(seq, ErrorCode::ItemGone, "уже собрано")],
             Ok(Some((row, stacked))) => {
                 let item = item_snapshot(&row, &def);
@@ -2829,7 +2833,7 @@ impl Session {
                     // M24: надстройка сундука — слот занят (in-memory;
                     // респавн сундука её не трогает).
                     if idx >= base_len {
-                        world.container_extra_take_at(entity_id, idx - base_len, 1);
+                        world.container_extra_clear(entity_id, idx - base_len);
                     }
                     world.schedule_loot_respawn(entity_id);
                 }
@@ -3612,7 +3616,7 @@ impl Session {
             let (entity_id, idx) = rest.rsplit_once(':')?;
             let idx: usize = idx.parse().ok()?;
             let world = self.state.world.lock().expect("мир");
-            world.container_extra(entity_id).get(idx)?.clone()?
+            world.container_extra_slot(entity_id, idx)?.0
         } else if let Some(rest) = item_ref.strip_prefix("xshop:") {
             let idx: usize = rest.parse().ok()?;
             let npc_id = target.strip_prefix("shop:")?;
@@ -3816,104 +3820,105 @@ impl Session {
         }
         // Сундук/магазин (F24d) — статика локации/контента; труп/
         // монстр — память мира; блокировки не держатся через await.
-        let slots: Vec<(String, String)> =
-            if cmd.target.starts_with("container:") {
-                let id = &cmd.target["container:".len()..];
-                let current = self.location_id.clone().unwrap_or_default();
-                let Ok(Some(loc_row)) = db::locations::get(&self.state.pool, &current).await else {
-                    return vec![Self::err(seq, ErrorCode::TargetGone, "сундука нет")];
+        let slots: Vec<(String, String, Option<i64>)> = if cmd.target.starts_with("container:") {
+            let id = &cmd.target["container:".len()..];
+            let current = self.location_id.clone().unwrap_or_default();
+            let Ok(Some(loc_row)) = db::locations::get(&self.state.pool, &current).await else {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "сундука нет")];
+            };
+            let entities: Vec<Entity> =
+                serde_json::from_value(loc_row.entities).unwrap_or_default();
+            let Some(entity) = entities.into_iter().find(|e| e.id == id) else {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "сундука нет")];
+            };
+            let defs = entity_loot_defs(&entity);
+            let (removed, extra) = {
+                let world = self.state.world.lock().expect("мир");
+                let removed: std::collections::HashSet<usize> = (0..defs.len())
+                    .filter(|i| world.container_base_removed(id, *i))
+                    .collect();
+                (removed, world.container_extra(id))
+            };
+            let mut out: Vec<(String, String, Option<i64>)> = defs
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !removed.contains(i))
+                .map(|(i, d)| (format!("cont:{id}:{i}"), d.clone(), None))
+                .collect();
+            out.extend(extra.iter().enumerate().filter_map(|(n, slot)| {
+                slot.as_ref()
+                    .map(|(d, q)| (format!("contx:{id}:{n}"), d.clone(), Some(*q)))
+            }));
+            out
+        } else if cmd.target.starts_with("shop:") {
+            let npc = &cmd.target["shop:".len()..];
+            let Some(shop) = self.state.shops.get(npc) else {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "магазина нет")];
+            };
+            let (extra, removed) = {
+                let world = self.state.world.lock().expect("мир");
+                let mut removed = std::collections::HashSet::new();
+                for (tab, currency) in shop.currencies.iter().enumerate() {
+                    for idx in 0..currency.items.len() {
+                        if world.shop_content_removed(npc, tab, idx) {
+                            removed.insert((tab, idx));
+                        }
+                    }
+                }
+                (world.shop_extra(npc), removed)
+            };
+            let mut out: Vec<(String, String, Option<i64>)> = Vec::new();
+            for (tab, currency) in shop.currencies.iter().enumerate() {
+                for (idx, def_id) in currency.items.iter().enumerate() {
+                    if removed.contains(&(tab, idx)) {
+                        continue;
+                    }
+                    out.push((format!("shop:{tab}:{idx}"), def_id.clone(), None));
+                }
+            }
+            out.extend(extra.iter().enumerate().filter_map(|(n, slot)| {
+                slot.as_ref()
+                    .map(|d| (format!("xshop:{n}"), d.clone(), None))
+            }));
+            out
+        } else {
+            let world = self.state.world.lock().expect("мир");
+            if let Some(id) = cmd.target.strip_prefix("corpse:") {
+                let Some(corpse) = world.corpse(id) else {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "трупа нет")];
                 };
-                let entities: Vec<Entity> =
-                    serde_json::from_value(loc_row.entities).unwrap_or_default();
-                let Some(entity) = entities.into_iter().find(|e| e.id == id) else {
-                    return vec![Self::err(seq, ErrorCode::TargetGone, "сундука нет")];
-                };
-                let defs = entity_loot_defs(&entity);
-                let (removed, extra) = {
-                    let world = self.state.world.lock().expect("мир");
-                    let removed: std::collections::HashSet<usize> = (0..defs.len())
-                        .filter(|i| world.container_base_removed(id, *i))
-                        .collect();
-                    (removed, world.container_extra(id))
-                };
-                let mut out: Vec<(String, String)> = defs
+                corpse
+                    .loot
                     .iter()
                     .enumerate()
-                    .filter(|(i, _)| !removed.contains(i))
-                    .map(|(i, d)| (format!("cont:{id}:{i}"), d.clone()))
-                    .collect();
-                out.extend(extra.iter().enumerate().filter_map(|(n, slot)| {
-                    slot.as_ref()
-                        .map(|d| (format!("contx:{id}:{n}"), d.clone()))
-                }));
-                out
-            } else if cmd.target.starts_with("shop:") {
-                let npc = &cmd.target["shop:".len()..];
-                let Some(shop) = self.state.shops.get(npc) else {
-                    return vec![Self::err(seq, ErrorCode::TargetGone, "магазина нет")];
-                };
-                let (extra, removed) = {
-                    let world = self.state.world.lock().expect("мир");
-                    let mut removed = std::collections::HashSet::new();
-                    for (tab, currency) in shop.currencies.iter().enumerate() {
-                        for idx in 0..currency.items.len() {
-                            if world.shop_content_removed(npc, tab, idx) {
-                                removed.insert((tab, idx));
-                            }
-                        }
-                    }
-                    (world.shop_extra(npc), removed)
-                };
-                let mut out: Vec<(String, String)> = Vec::new();
-                for (tab, currency) in shop.currencies.iter().enumerate() {
-                    for (idx, def_id) in currency.items.iter().enumerate() {
-                        if removed.contains(&(tab, idx)) {
-                            continue;
-                        }
-                        out.push((format!("shop:{tab}:{idx}"), def_id.clone()));
-                    }
-                }
-                out.extend(extra.iter().enumerate().filter_map(|(n, slot)| {
-                    slot.as_ref().map(|d| (format!("xshop:{n}"), d.clone()))
-                }));
-                out
+                    .filter_map(|(i, slot)| {
+                        slot.as_ref()
+                            .map(|d| (format!("loot:{id}:{i}"), d.clone(), None))
+                    })
+                    .chain(
+                        corpse
+                            .inner_loot
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, slot)| {
+                                slot.as_ref()
+                                    .map(|d| (format!("inner:{id}:{i}"), d.clone(), None))
+                            }),
+                    )
+                    .collect()
+            } else if let Some(id) = cmd.target.strip_prefix("monster:") {
+                world
+                    .mob_bonus(id)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, d)| (format!("bonus:{i}"), d, None))
+                    .collect()
             } else {
-                let world = self.state.world.lock().expect("мир");
-                if let Some(id) = cmd.target.strip_prefix("corpse:") {
-                    let Some(corpse) = world.corpse(id) else {
-                        return vec![Self::err(seq, ErrorCode::TargetGone, "трупа нет")];
-                    };
-                    corpse
-                        .loot
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, slot)| {
-                            slot.as_ref().map(|d| (format!("loot:{id}:{i}"), d.clone()))
-                        })
-                        .chain(
-                            corpse
-                                .inner_loot
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(i, slot)| {
-                                    slot.as_ref()
-                                        .map(|d| (format!("inner:{id}:{i}"), d.clone()))
-                                }),
-                        )
-                        .collect()
-                } else if let Some(id) = cmd.target.strip_prefix("monster:") {
-                    world
-                        .mob_bonus(id)
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, d)| (format!("bonus:{i}"), d))
-                        .collect()
-                } else {
-                    return vec![Self::err(seq, ErrorCode::TargetGone, "неизвестная цель")];
-                }
-            };
+                return vec![Self::err(seq, ErrorCode::TargetGone, "неизвестная цель")];
+            }
+        };
         let mut items: Vec<serde_json::Value> = Vec::new();
-        for (item_ref, def_id) in slots {
+        for (item_ref, def_id, custom_qty) in slots {
             let Some(def) = db::items::def(&self.state.pool, &def_id)
                 .await
                 .ok()
@@ -3927,7 +3932,8 @@ impl Session {
                 "name": def.name,
                 "type": def.item_type,
                 "rarity": def.rarity,
-                "qty": def.qty,
+                // M24: у стака надстройки — своё количество.
+                "qty": custom_qty.unwrap_or_else(|| i64::from(def.qty)),
             }));
         }
         vec![Self::ack_payload(
@@ -4490,14 +4496,14 @@ impl Session {
         }
         {
             let mut world = self.state.world.lock().expect("мир");
-            world.container_extra_add(entity_id, def_id, qty as usize);
+            world.container_extra_add(entity_id, def_id, qty);
         }
         tracing::info!("admin give container: {def_id} ×{qty} → {entity_id}");
         vec![Self::ack_payload(seq, &serde_json::json!({}))]
     }
 
     /// M24: удаление из сундука — базовый слот (глобальный tombstone,
-    /// одна позиция) либо надстройка (`qty` слотов).
+    /// одна позиция) либо `qty` единиц из стака надстройки.
     async fn admin_remove_container(
         &mut self,
         entity_id: &str,
@@ -4545,7 +4551,7 @@ impl Session {
             world.container_base_remove(entity_id, idx);
         } else {
             let mut world = self.state.world.lock().expect("мир");
-            if !world.container_extra_take_at(entity_id, idx, qty as usize) {
+            if !world.container_extra_reduce(entity_id, idx, qty) {
                 return vec![Self::err(seq, ErrorCode::ItemGone, "слотов нет")];
             }
         }
@@ -4574,7 +4580,7 @@ impl Session {
         }
         {
             let mut world = self.state.world.lock().expect("мир");
-            world.shop_extra_add(npc_id, def_id, qty as usize);
+            world.shop_extra_add(npc_id, def_id);
         }
         tracing::info!("admin give shop: {def_id} ×{qty} → {npc_id}");
         vec![Self::ack_payload(seq, &serde_json::json!({}))]
