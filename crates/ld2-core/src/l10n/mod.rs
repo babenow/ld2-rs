@@ -564,6 +564,9 @@ pub enum Key {
     SkillReady,
     TrainingPoints,
     TrainingGold,
+    // M23: окно подятия предмета (лут трупа + рюкзак)
+    PickupTitle,
+    PickupEmpty,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -1111,6 +1114,8 @@ mod tests {
         Key::SkillReady,
         Key::TrainingPoints,
         Key::TrainingGold,
+        Key::PickupTitle,
+        Key::PickupEmpty,
     ];
 
     #[test]

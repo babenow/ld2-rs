@@ -196,7 +196,7 @@ impl Root {
 
         // Тело: сетка активной группы в прокрутке + строка валюты
         // (всегда видна, независимо от вкладки).
-        let grid = self.backpack_grid(cx, pal);
+        let grid = self.backpack_grid(cx, pal, "ld2-bp");
         let body = div()
             .flex()
             .flex_col()
@@ -282,7 +282,15 @@ impl Root {
     /// Сетка предметов активной вкладки: плитка + контекстное меню
     /// (ЛКМ и ПКМ), перетаскивание меняет предметы местами (Reorder →
     /// `cmd/item.move`). Надетое сюда не попадает (M16/F29f).
-    fn backpack_grid(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    /// `id_prefix` — вставка в id виджетов (сетка/строки): окно
+    /// подятия (M23) рисует СВОЙ экземпляр рюкзака одновременно с
+    /// этим окном — id в кадре обязаны различаться.
+    pub(crate) fn backpack_grid(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        id_prefix: &str,
+    ) -> Div {
         let lang = self.lang;
         let tab = self.backpack_tab;
         let Some(snap) = self.store.snapshot.clone() else {
@@ -317,11 +325,11 @@ impl Root {
         // drag меняет предметы местами (порядок строк = порядок сетки).
         let this = cx.entity();
         let order: Vec<String> = items.iter().map(|i| i.uid.clone()).collect();
-        let mut list = Reorder::new("ld2-backpack-rows");
+        let mut list = Reorder::new(format!("{id_prefix}-rows"));
         for item in items {
             let uid = item.uid.clone();
             let tile = div()
-                .id(format!("ld2-bp-item-{uid}"))
+                .id(format!("{id_prefix}-item-{uid}"))
                 .tooltip(Tooltip::text(format!(
                     "{} · {} · +{}",
                     item.name,

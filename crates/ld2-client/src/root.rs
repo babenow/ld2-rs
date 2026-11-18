@@ -20,6 +20,7 @@ mod chars;
 mod chat;
 mod dialog;
 mod game;
+mod pickup;
 mod professions;
 mod quantity;
 mod quests;
@@ -88,6 +89,8 @@ enum PopupKind {
     Dialog,
     /// M21: окно профессий (отдельное, подобно квестам).
     Professions,
+    /// M23: окно подятия предмета — лут трупа слева, рюкзак справа.
+    LootPickup,
 }
 
 impl PopupKind {
@@ -104,6 +107,7 @@ impl PopupKind {
             PopupKind::Quantity => "ld2-quantity",
             PopupKind::Dialog => "ld2-dialog",
             PopupKind::Professions => "ld2-professions",
+            PopupKind::LootPickup => "ld2-pickup",
         }
     }
 }
@@ -134,6 +138,8 @@ fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mu
         PopupKind::Dialog => {}
         // M21: окно профессий контекстных меню не использует.
         PopupKind::Professions => {}
+        // M23: окно подятия — выбор строки, не контекстное меню.
+        PopupKind::LootPickup => {}
     }
 }
 
@@ -230,6 +236,9 @@ pub(crate) enum Click {
     PowerStrike,
     ConfirmDeath,
     LootTake,
+    /// M23: открыть окно подятия предмета по трупу (ЛКМ в списке
+    /// сущностей) — запрос `entity.info` c `Act::PickupInfo`.
+    LootOpen(String),
     /// Лут трупа игрока: открыть подтверждение (uid, name) — ФР-11.
     LootTakeMarker(String, String),
     LootCancel,
@@ -339,6 +348,22 @@ pub struct Root {
     dialog_seen: Option<String>,
     /// M21: окно профессий — popup (отдельное, как квесты).
     professions_popup: PopupState,
+    /// M23: окно подятия предмета — popup (лут слева, рюкзак справа);
+    /// гейт рендера — флаг open + данные `store.pickup`.
+    pickup_popup: PopupState,
+    /// M23: выбранная строка лута (uid) — для кнопки «Забрать».
+    pickup_sel: Option<String>,
+    /// M23: какую сущность перезапрашиваем (`cmd/entity.info`).
+    pickup_id: Option<String>,
+    /// M23: нужен (re)запрос лута — выполняется в `tick`, только когда
+    /// транспорт свободен: корреляция ack'ов стора одиночная
+    /// (`pending`), параллельная команда перетёрла бы чужой ack.
+    pickup_request: bool,
+    /// M23: прокрутка левой колонки окна подятия.
+    pickup_scroll: ScrollHandle,
+    /// M23: прокрутка рюкзак-виджета в правой колонке (своя — ручка
+    /// не должна делиться с окном рюкзака при одновременном открытии).
+    pickup_bp_scroll: ScrollHandle,
     /// M21: вооружённая кнопка «Сбросить» (второй клик — cmd/craft.reset).
     prof_reset_armed: Option<String>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
@@ -612,6 +637,16 @@ impl Root {
                 delta: (0.0, -30.0),
                 ..PopupState::new((880.0, 620.0))
             },
+            // M23: окно подятия — два столбца (лут | рюкзак).
+            pickup_popup: PopupState {
+                delta: (40.0, -30.0),
+                ..PopupState::new((880.0, 560.0))
+            },
+            pickup_sel: None,
+            pickup_id: None,
+            pickup_request: false,
+            pickup_scroll: ScrollHandle::new(),
+            pickup_bp_scroll: ScrollHandle::new(),
             prof_reset_armed: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
@@ -685,6 +720,12 @@ impl Root {
                 }
                 Err(_) => break,
             }
+        }
+
+        // M23: окно подятия — догрузка/обновление лута, когда
+        // транспорт свободен (см. `pickup_request`).
+        if self.pickup_request {
+            self.pump_pickup(cx);
         }
 
         // Результат фоновой проверки обновлений (§12).
@@ -1214,6 +1255,14 @@ impl Root {
         // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
         // настроек/диалога выхода (они ловят Esc сами).
         if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
+            // M23: окно подятия — верхний слой группы попапов (рисуется
+            // последним поверх всех попапов): Esc закрывает его первым.
+            if self.pickup_popup.open {
+                tracing::debug!("закрытие окна подятия: Esc");
+                self.close_pickup();
+                cx.notify();
+                return;
+            }
             // M18/F54: окно заточки (список предметов или сама заточка) —
             // верхний слой группы окон; Esc закрывает оба экрана разом.
             if self.store.sharpen_stone.is_some() || self.store.upgrade.is_some() {
@@ -1477,6 +1526,7 @@ impl Root {
             PopupKind::Quantity => &mut self.quantity_popup,
             PopupKind::Dialog => &mut self.dialog_popup,
             PopupKind::Professions => &mut self.professions_popup,
+            PopupKind::LootPickup => &mut self.pickup_popup,
         }
     }
 
@@ -1493,6 +1543,7 @@ impl Root {
             PopupKind::Quantity => &self.quantity_popup,
             PopupKind::Dialog => &self.dialog_popup,
             PopupKind::Professions => &self.professions_popup,
+            PopupKind::LootPickup => &self.pickup_popup,
         }
     }
 
@@ -1519,6 +1570,45 @@ impl Root {
             PopupKind::Quantity => (400.0, 280.0),
             PopupKind::Dialog => (560.0, 460.0),
             PopupKind::Professions => (880.0, 620.0),
+            PopupKind::LootPickup => (880.0, 560.0),
+        }
+    }
+
+    /// M23: закрытие окна подятия — данные/выбор/запрос чистятся
+    /// вместе с флагом (stale-лут не должен пережить закрытие).
+    pub(crate) fn close_pickup(&mut self) {
+        self.pickup_popup.open = false;
+        self.store.pickup = None;
+        self.pickup_sel = None;
+        self.pickup_id = None;
+        self.pickup_request = false;
+    }
+
+    /// M23: запрос данных окна подятия (`cmd/entity.info` →
+    /// `Act::PickupInfo`) — только при свободном `pending` (см.
+    /// `pickup_request`); иначе ждёт следующего тика.
+    fn pump_pickup(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.pickup_request || !self.pickup_popup.open {
+            return;
+        }
+        if self.store.pending.is_some() {
+            return; // ack-слот занят — ждём
+        }
+        let Some(id) = self.pickup_id.clone() else {
+            self.pickup_request = false;
+            return;
+        };
+        let cmd = ld2_protocol::cmd::EntityInfo { entity_id: id };
+        match self.transport.send(&cmd) {
+            Ok(_) => {
+                self.store.on_world_sent(Act::PickupInfo);
+                self.pickup_request = false;
+                cx.notify();
+            }
+            Err(e) => {
+                self.pickup_request = false;
+                self.store.world_error = Some(format!("нет связи: {e}"));
+            }
         }
     }
 
@@ -1544,6 +1634,7 @@ impl Root {
             PopupKind::Quantity => (0.0, -60.0),
             PopupKind::Dialog => (0.0, -40.0),
             PopupKind::Professions => (0.0, -30.0),
+            PopupKind::LootPickup => (40.0, -30.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1572,6 +1663,8 @@ impl Root {
             PopupKind::Dialog => {}
             // M21: окно профессий открывает кнопка/хоткей.
             PopupKind::Professions => {}
+            // M23: окно подятия — выбор сбрасывает вызывающий.
+            PopupKind::LootPickup => {}
         }
     }
 
@@ -1643,12 +1736,14 @@ impl Root {
         let npc_open = self.store.npc_dialog.is_some();
         let dialog_open = self.store.dialog.is_some();
         let professions_open = self.professions_popup.open;
+        let pickup_open = self.pickup_popup.open;
         if !self.char_popup.open
             && !self.backpack_popup.open
             && !self.quests_popup.open
             && !npc_open
             && !dialog_open
             && !professions_open
+            && !pickup_open
         {
             return None;
         }
@@ -1678,10 +1773,13 @@ impl Root {
                                     scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
                                 root.popup_scrim_down = false;
                                 if close {
-                                    // Верхнее окно: сокеты → заточка →
+                                    // Верхнее окно: подятие → сокеты → заточка →
                                     // описание → диалог → квесты → рюкзак →
-                                    // персонаж.
-                                    if root.quantity_pick.is_some() {
+                                    // персонаж (обратный порядок рендера).
+                                    if root.pickup_popup.open {
+                                        tracing::debug!("закрытие окна подятия: скрим");
+                                        root.close_pickup();
+                                    } else if root.quantity_pick.is_some() {
                                         root.quantity_pick = None;
                                         root.quantity_popup.open = false;
                                     } else if root.store.socketing.is_some() {
@@ -1903,6 +2001,14 @@ impl Root {
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
+            // M23: ЛКМ по трупу — окно подятия (лут слева, рюкзак
+            // справа); данные — отдельный `entity.info` → `pickup`.
+            Click::LootOpen(id) => {
+                self.pickup_id = Some(id);
+                self.pickup_sel = None;
+                self.open_popup(PopupKind::LootPickup);
+                self.pump_pickup(cx);
+            }
             // M18/F35: диалог NPC — реплики/квесты вместо осмотра.
             Click::NpcTalk(id) => {
                 tracing::debug!("вых. cmd/npc.talk {id}");
@@ -1962,6 +2068,9 @@ impl Root {
                         i.uid == uid && matches!(i.item_type.as_str(), "scroll" | "potion")
                     })
                 });
+                // M23: взятие из окна подятия (`loot:`/`inner:`) —
+                // перезапрашиваем его лут, когда транспорт освободится.
+                let is_loot = uid.starts_with("loot:") || uid.starts_with("inner:");
                 let cmd = ld2_protocol::cmd::ItemUse {
                     item_uid: uid,
                     target_id: None,
@@ -1973,6 +2082,9 @@ impl Root {
                         } else {
                             Act::Drop
                         });
+                        if is_loot && self.pickup_popup.open {
+                            self.pickup_request = true;
+                        }
                         if combat_item {
                             self.store.begin_global_cooldown(self.now_ms());
                         }
@@ -3774,6 +3886,10 @@ impl Render for Root {
             })
             // M21: окно профессий — поверх окна диалога.
             .when_some(self.professions_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M23: окно подятия предмета — верхний слой группы попапов.
+            .when_some(self.pickup_window(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))

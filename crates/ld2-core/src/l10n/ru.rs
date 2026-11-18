@@ -479,5 +479,8 @@ pub(super) fn t(key: Key) -> &'static str {
         SkillReady => "возможно повышение ранга",
         TrainingPoints => "{n} очков опыта",
         TrainingGold => "{n} золота",
+        // M23: окно подятия предмета
+        PickupTitle => "Поднять предмет",
+        PickupEmpty => "Нечего забирать",
     }
 }
