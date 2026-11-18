@@ -790,6 +790,14 @@ async fn apply_rage_dealt(
 
 /// поток смерти ФР-06 + синхронизация позиции в мире.
 async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String)> {
+    // M24: «режим бога» — урон не применяется вовсе: ни смерти, ни
+    // потери лута, ни ярости за полученный урон.
+    {
+        let world = state.world.lock().expect("мир");
+        if world.is_god(&hit.char_id) {
+            return Vec::new();
+        }
+    }
     let pool = &state.pool;
     let row = match crate::db::characters::get(pool, &hit.char_id).await {
         Ok(Some(row)) => row,

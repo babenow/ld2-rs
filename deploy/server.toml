@@ -12,6 +12,7 @@ name = "ld2-dev"           # → §5 server.name
 region = "ru"              # → §5 server.region
 # min_client = "0.11.0"    # опционально (§5): если задан — клиенты старше блокируются
 log_level = "info"         # EnvFilter-директива: "info", "info,sqlx=warn"
+allow_scenario = false     # M24: /scenario только для админа (прод)
 
 [database]
 # Секрет: не коммитить (server.toml в .gitignore), chmod 600.

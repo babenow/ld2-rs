@@ -470,6 +470,42 @@ pub struct TimeSync {}
 
 // ─── wire-типы (protocol.md §7: «Идемп.» = +) ────────────────────────────────
 
+// ─── M24: админ-панель предметов (только роль admin, §9 E_PERMISSION) ───────
+
+/// Каталог всех предметов для окна выдачи — один запрос при открытии
+/// окна (вариант A): ack `{items:[{id,name,type,rarity,qty,upgrade,
+/// gold_value}]}`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AdminItems {}
+
+/// Начать выдачу: сервер открывает execute-диалог количества
+/// (`evt/dialog/open`, id `admin.give:<target>#<def_id>` → submit
+/// stateless; разделитель `#`, т.к. цель и def могут содержать `:`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminGiveAsk {
+    /// Цель: `self` | `char:<имя>` | `monster:<id>` | `corpse:<id>` |
+    /// `container:<id>` | `shop:<npc_id>` (F24a — `self`).
+    pub target: String,
+    pub def_id: String,
+}
+
+/// Начать удаление: execute-диалог количества (§7), id
+/// `admin.remove:<target>#<ref>`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminRemoveAsk {
+    pub target: String,
+    /// Ссылка: uid в инвентаре / `loot:<corpse>:<idx>` / слот цели.
+    #[serde(rename = "ref")]
+    pub item_ref: String,
+}
+
+/// M24: «режим бога» — toggle неуязвимости (только admin); состояние
+/// сессионное, живёт в мире (tick смотрит оттуда).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminGodMode {
+    pub enabled: bool,
+}
+
 impl_commands!(
     (AuthLogin, "cmd/auth.login", true),
     (AuthRegister, "cmd/auth.register", true),
@@ -505,6 +541,10 @@ impl_commands!(
     (CorpseHarvest, "cmd/corpse.harvest", false),
     (DialogChoice, "cmd/dialog.choice", false),
     (DialogSubmit, "cmd/dialog.submit", false),
+    (AdminItems, "cmd/admin.items", true),
+    (AdminGiveAsk, "cmd/admin.give.ask", false),
+    (AdminRemoveAsk, "cmd/admin.remove.ask", false),
+    (AdminGodMode, "cmd/admin.god_mode", false),
     (UpgradePreview, "cmd/upgrade.preview", true),
     (UpgradeStart, "cmd/upgrade.start", false),
     (CraftList, "cmd/craft.list", true),

@@ -6,13 +6,14 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
-    AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, ChatDelete, ChatSend,
-    CombatAttack, CraftLearn, CraftRankUp, CraftRecipes, CraftReset, CraftStart, CrimeLog,
-    EntityInfo, GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet,
-    ItemDrop, ItemEquip, ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast,
-    MagicScrollCast, NpcReply, NpcTalk, PartyAccept, PartyInvite, PartyKick, ResourceGather,
-    ShopBuy, ShopList, SkillTrain, SkillUse, SocketExtract, SocketInsert, StateResync,
-    TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
+    AdminGiveAsk, AdminGodMode, AdminItems, AdminRemoveAsk, AuthLogin, AuthRegister, AuthResume,
+    CharCreate, CharDelete, CharSelect, ChatDelete, ChatSend, CombatAttack, CraftLearn,
+    CraftRankUp, CraftRecipes, CraftReset, CraftStart, CrimeLog, EntityInfo, GuildBrowse,
+    GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip, ItemMove,
+    ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcReply, NpcTalk,
+    PartyAccept, PartyInvite, PartyKick, ResourceGather, ShopBuy, ShopList, SkillTrain, SkillUse,
+    SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose,
+    TradeSetGold, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -238,6 +239,11 @@ impl Session {
             // игровые диалоги (M20 — заготовка)
             "cmd/dialog.choice" => self.dialog_choice(env, seq).await,
             "cmd/dialog.submit" => self.dialog_submit(env, seq).await,
+            // M24: админ-панель предметов (гейт role=admin)
+            "cmd/admin.items" => self.admin_items(env, seq).await,
+            "cmd/admin.give.ask" => self.admin_give_ask(env, seq).await,
+            "cmd/admin.remove.ask" => self.admin_remove_ask(env, seq).await,
+            "cmd/admin.god_mode" => self.admin_god_mode(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
             "cmd/skill.train" => self.skill_train(env, seq).await,
             "cmd/item.use" => {
@@ -3331,6 +3337,11 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<ld2_protocol::cmd::DialogSubmit>(env, seq) else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
+        // M24: админ-диалоги количества (выдача/удаление) — своя ветка;
+        // прочие диалоги — прежний echo (заготовка M20).
+        if let Some(rest) = cmd.dialog_id.strip_prefix("admin.") {
+            return self.admin_dialog_submit(rest, &cmd.values, seq).await;
+        }
         tracing::debug!(
             "dialog.submit: dialog={} values={:?}",
             cmd.dialog_id,
@@ -3343,6 +3354,382 @@ impl Session {
                 "values": cmd.values,
             }),
         )]
+    }
+
+    // ── M24: админ-панель предметов ──────────────────────────────────────────
+
+    /// `cmd/admin.items` (§7): каталог всех определений — левая панель
+    /// окна выдачи (вариант A: одним запросом, клиент кэширует и
+    /// фильтрует локально). Тяжёлые поля (stats/requires) не отдаём.
+    async fn admin_items(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        if let Some(err) = self.require_admin(seq) {
+            return vec![err];
+        }
+        let Ok(_cmd) = Self::payload_of::<AdminItems>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let defs = match db::items::defs_all(&self.state.pool).await {
+            Ok(defs) => defs,
+            Err(e) => {
+                warn!("admin items: {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let items: Vec<serde_json::Value> = defs
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "id": d.id,
+                    "name": d.name,
+                    "type": d.item_type,
+                    "rarity": d.rarity,
+                    "qty": d.qty,
+                    "upgrade": d.upgrade,
+                    "gold_value": d.gold_value,
+                })
+            })
+            .collect();
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "items": items }),
+        )]
+    }
+
+    /// `cmd/admin.give.ask` (§7): валидация def/цели → открытие
+    /// execute-диалога количества; id `admin.give:<target>#<def_id>`
+    /// кодирует действие — submit stateless (роль там проверяется
+    /// повторно). F24a: поддерживается `self`, прочие цели — F24c/d.
+    async fn admin_give_ask(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        if let Some(err) = self.require_admin(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<AdminGiveAsk>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if cmd.target != "self" {
+            return vec![Self::err(
+                seq,
+                ErrorCode::TargetGone,
+                "цель не поддерживается",
+            )];
+        }
+        let Some(def) = (match db::items::def(&self.state.pool, &cmd.def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("admin give.ask (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого предмета")];
+        };
+        let open = ld2_protocol::evt::DialogOpen {
+            id: format!("admin.give:{}#{}", cmd.target, cmd.def_id),
+            kind: "execute".into(),
+            title: format!("Выдать «{}»", def.name),
+            pages: Vec::new(),
+            inputs: vec![ld2_protocol::evt::DialogInput {
+                id: "count".into(),
+                label: "Количество".into(),
+                kind: "number".into(),
+                default: "1".into(),
+            }],
+        };
+        vec![
+            Self::ack_payload(seq, &serde_json::json!({})),
+            out_event(
+                "evt/dialog/open",
+                None,
+                serde_json::to_value(open).unwrap_or_default(),
+            ),
+        ]
+    }
+
+    /// `cmd/admin.remove.ask` (§7): execute-диалог количества на
+    /// удаление; F24a — `self` (ref = uid инвентаря).
+    async fn admin_remove_ask(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        if let Some(err) = self.require_admin(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<AdminRemoveAsk>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if cmd.target != "self" {
+            return vec![Self::err(
+                seq,
+                ErrorCode::TargetGone,
+                "цель не поддерживается",
+            )];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let Some(item) = (match db::items::find(pool, &cmd.item_ref, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("admin remove.ask (поиск): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмет не найден")];
+        };
+        let name = match db::items::def(pool, &item.def_id).await {
+            Ok(Some(def)) => def.name,
+            Ok(None) => item.def_id.clone(),
+            Err(e) => {
+                warn!("admin remove.ask (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let open = ld2_protocol::evt::DialogOpen {
+            id: format!("admin.remove:{}#{}", cmd.target, cmd.item_ref),
+            kind: "execute".into(),
+            title: format!("Удалить «{name}»"),
+            pages: Vec::new(),
+            inputs: vec![ld2_protocol::evt::DialogInput {
+                id: "count".into(),
+                label: "Количество".into(),
+                kind: "number".into(),
+                default: "1".into(),
+            }],
+        };
+        vec![
+            Self::ack_payload(seq, &serde_json::json!({})),
+            out_event(
+                "evt/dialog/open",
+                None,
+                serde_json::to_value(open).unwrap_or_default(),
+            ),
+        ]
+    }
+
+    /// `cmd/admin.god_mode` (§7): toggle неуязвимости — состояние в
+    /// мире (tick::apply_mob_hit смотрит оттуда), гейт admin.
+    async fn admin_god_mode(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        if let Some(err) = self.require_admin(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<AdminGodMode>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.set_god(&char_id, cmd.enabled);
+        }
+        tracing::info!("admin god mode: {char_id} → enabled={}", cmd.enabled);
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "enabled": cmd.enabled }),
+        )]
+    }
+
+    /// M24: submit админ-диалога — `give:<target>#<def_id>` /
+    /// `remove:<target>#<ref>`. Роль ПОВТОРНО (диалог мог открыть
+    /// уже не-админ), qty строго 1..=999 (`E_BAD_QTY`).
+    async fn admin_dialog_submit(
+        &mut self,
+        rest: &str,
+        values: &serde_json::Map<String, serde_json::Value>,
+        seq: u32,
+    ) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        if let Some(err) = self.require_admin(seq) {
+            return vec![err];
+        }
+        let qty = values
+            .get("count")
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
+            .unwrap_or(0);
+        if !(1..=999).contains(&qty) {
+            return vec![Self::err(
+                seq,
+                ErrorCode::BadQuantity,
+                "количество: 1..=999",
+            )];
+        }
+        if let Some(args) = rest.strip_prefix("give:") {
+            let Some((target, def_id)) = args.split_once('#') else {
+                return vec![Self::err(seq, ErrorCode::Internal, "битый id диалога")];
+            };
+            if target != "self" {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::TargetGone,
+                    "цель не поддерживается",
+                )];
+            }
+            return self.admin_give_self(def_id, qty, seq).await;
+        }
+        if let Some(args) = rest.strip_prefix("remove:") {
+            let Some((target, item_ref)) = args.split_once('#') else {
+                return vec![Self::err(seq, ErrorCode::Internal, "битый id диалога")];
+            };
+            if target != "self" {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::TargetGone,
+                    "цель не поддерживается",
+                )];
+            }
+            return self.admin_remove_self(item_ref, qty, seq).await;
+        }
+        vec![Self::err(
+            seq,
+            ErrorCode::Internal,
+            "неизвестный админ-диалог",
+        )]
+    }
+
+    /// M24: выдать `qty` в свой рюкзак — стак/слот по общим правилам
+    /// (`take_loot_fits` + `grant_stacking`), сокеты новому экземпляру
+    /// (паритет `scenario_give`), патч инвентаря + аудит.
+    async fn admin_give_self(&mut self, def_id: &str, qty: i64, seq: u32) -> Vec<Out> {
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let Some(def) = (match db::items::def(pool, def_id).await {
+            Ok(def) => def,
+            Err(e) => {
+                warn!("admin give (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого предмета")];
+        };
+        let slots = self.state.config.gameplay.inventory.slots;
+        match Self::take_loot_fits(pool, &char_id, def_id, slots).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return vec![Self::err(
+                    seq,
+                    ErrorCode::InventoryFull,
+                    "инвентарь заполнен",
+                )];
+            }
+            Err(e) => {
+                warn!("admin give (слоты): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
+        let (row, stacked) = match db::items::grant_stacking(pool, &char_id, def_id, qty).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("admin give (grant): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        if !stacked && def.sockets > 0 {
+            if let Err(e) =
+                db::items::set_sockets(pool, &row.uid, Self::empty_sockets(def.sockets)).await
+            {
+                warn!("admin give (сокеты): {e}");
+            }
+        }
+        tracing::info!("admin give: {def_id} ×{qty} → {char_id} (стак={stacked})");
+        let ev = if stacked {
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(row.qty));
+            out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: row.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            )
+        } else {
+            out_event(
+                "evt/item/added",
+                None,
+                serde_json::to_value(ItemAdded {
+                    item: item_snapshot(&row, &def),
+                })
+                .unwrap_or_default(),
+            )
+        };
+        vec![Self::ack_payload(seq, &serde_json::json!({})), ev]
+    }
+
+    /// M24: удалить `qty` из своего рюкзака — весь стак (≥ qty) или
+    /// частично; уведомления `evt/item/removed|state` + аудит.
+    async fn admin_remove_self(&mut self, item_ref: &str, qty: i64, seq: u32) -> Vec<Out> {
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        let pool = &self.state.pool;
+        let Some(item) = (match db::items::find(pool, item_ref, &char_id).await {
+            Ok(item) => item,
+            Err(e) => {
+                warn!("admin remove (поиск): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }) else {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "предмет не найден")];
+        };
+        tracing::info!(
+            "admin remove: {item_ref} ×{qty} из {char_id} (было {})",
+            item.qty
+        );
+        if qty >= i64::from(item.qty) {
+            if let Err(e) = db::items::delete(pool, item_ref).await {
+                warn!("admin remove (delete): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            let ev = out_event(
+                "evt/item/removed",
+                None,
+                serde_json::to_value(ItemRemoved {
+                    uid: item.uid.clone(),
+                    reason: ItemRemovalReason::Consumed,
+                })
+                .unwrap_or_default(),
+            );
+            vec![Self::ack_payload(seq, &serde_json::json!({})), ev]
+        } else {
+            let new_qty = i64::from(item.qty) - qty;
+            if let Err(e) = db::items::set_qty(pool, item_ref, new_qty).await {
+                warn!("admin remove (set_qty): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            let mut patch = serde_json::Map::new();
+            patch.insert("qty".into(), serde_json::json!(new_qty));
+            let ev = out_event(
+                "evt/item/state",
+                None,
+                serde_json::to_value(ItemState {
+                    uid: item.uid.clone(),
+                    patch,
+                })
+                .unwrap_or_default(),
+            );
+            vec![Self::ack_payload(seq, &serde_json::json!({})), ev]
+        }
     }
 
     async fn item_drop(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
@@ -3520,6 +3907,13 @@ impl Session {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
         if let Some(scenario) = cmd.text.strip_prefix("/scenario ") {
+            // M24: дыра из бэклога — раньше префикс не проверялся
+            // вовсе (любой игрок мог `/scenario give`); теперь —
+            // админ либо явный флаг конфига `server.allow_scenario`
+            // (dev/тесты); прод-конфиг без ключа → запрещено.
+            if self.role != "admin" && !self.state.config.server.allow_scenario {
+                return vec![Self::err(seq, ErrorCode::Permission, "сценарии отключены")];
+            }
             return self.scenario(scenario.trim(), seq).await;
         }
         let char_id = match self.require_char_id(seq) {
@@ -8477,6 +8871,20 @@ impl Session {
     /// M14/F19: может ли аккаунт писать в system-чат и удалять сообщения.
     fn is_moderator(&self) -> bool {
         matches!(self.role.as_str(), "admin" | "moderator")
+    }
+
+    /// M24: гейт админ-команд — только роль `admin` (§9 `E_PERMISSION`;
+    /// moderator проходит лишь модерацию чата, M14/F19).
+    fn require_admin(&self, seq: u32) -> Option<Out> {
+        if self.role == "admin" {
+            None
+        } else {
+            Some(Self::err(
+                seq,
+                ErrorCode::Permission,
+                "требуется роль admin",
+            ))
+        }
     }
 
     fn require_auth(&self, seq: u32) -> Option<Out> {
