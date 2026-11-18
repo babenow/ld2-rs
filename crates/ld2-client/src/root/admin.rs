@@ -97,6 +97,7 @@ impl Root {
         // ── лево: поиск + группы + каталог (uniform_list) ────────
         let query = self.ti(&self.admin_search).read(cx).text().to_lowercase();
         let tab = self.backpack_tab;
+        let rarity = self.admin_rarity.clone();
         let catalog: Vec<serde_json::Value> = self
             .store
             .admin_catalog
@@ -113,7 +114,9 @@ impl Root {
                                 .unwrap_or("")
                                 .to_lowercase()
                                 .contains(&query);
-                        in_tab && matches_query
+                        let matches_rarity =
+                            rarity == "all" || it["rarity"].as_str() == Some(rarity.as_str());
+                        in_tab && matches_query && matches_rarity
                     })
                     .cloned()
                     .collect()
@@ -139,6 +142,25 @@ impl Root {
                 });
             }
         });
+
+        // Фильтр раритета — чипы цветом ранга; состояния независимы
+        // по колонкам (id-префиксы разные — уникальность в кадре).
+        let rarity_row = rarity_filter_row(
+            cx,
+            *pal,
+            lang,
+            &self.admin_rarity,
+            "ld2-admin-rarity",
+            |root, v| root.admin_rarity = v,
+        );
+        let inv_rarity_row = rarity_filter_row(
+            cx,
+            *pal,
+            lang,
+            &self.admin_inv_rarity,
+            "ld2-admin-inv-rarity",
+            |root, v| root.admin_inv_rarity = v,
+        );
 
         let left_body = if self.store.admin_catalog.is_none() {
             div()
@@ -181,6 +203,7 @@ impl Root {
                 self.ti(&self.admin_search),
             ))
             .child(tabs)
+            .child(rarity_row)
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
             .child(left_body);
 
@@ -193,6 +216,7 @@ impl Root {
             .text()
             .to_lowercase();
         let inv_tab = self.admin_inv_tab;
+        let inv_rarity = self.admin_inv_rarity.clone();
         let inv: Vec<ItemSnapshot> = self
             .store
             .snapshot
@@ -206,7 +230,8 @@ impl Root {
                             inv_tab == BackpackTab::All || tab_for_type(&item.item_type) == inv_tab;
                         let matches_query =
                             inv_query.is_empty() || item.name.to_lowercase().contains(&inv_query);
-                        in_tab && matches_query
+                        let matches_rarity = inv_rarity == "all" || item.rarity == inv_rarity;
+                        in_tab && matches_query && matches_rarity
                     })
                     .cloned()
                     .collect()
@@ -280,6 +305,7 @@ impl Root {
                 self.ti(&self.admin_inv_search),
             ))
             .child(inv_tabs)
+            .child(inv_rarity_row)
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
             .child(drop_target);
 
@@ -430,4 +456,63 @@ fn target_row(this: Entity<Root>, pal: Palette, lang: Lang, item: &ItemSnapshot)
                 });
             }
         })
+}
+
+/// M24: строка фильтра раритета (чипы цветом ранга) над списком —
+/// «Все» + пять редкостей; `id_prefix` различает левую/правую колонку
+/// (одинаковые id в одном кадре конфликтовали бы), `set` — установка
+/// нужного поля состояния.
+fn rarity_filter_row(
+    cx: &mut Context<'_, Root>,
+    pal: Palette,
+    lang: Lang,
+    active: &str,
+    id_prefix: &str,
+    set: fn(&mut Root, String),
+) -> Div {
+    const OPTIONS: [(&str, Key); 6] = [
+        ("all", Key::RarityAll),
+        ("common", Key::RarityCommon),
+        ("uncommon", Key::RarityUncommon),
+        ("rare", Key::RarityRare),
+        ("epic", Key::RarityEpic),
+        ("legendary", Key::RarityLegendary),
+    ];
+    let mut row = div().flex().flex_row().flex_wrap().gap_1().items_center();
+    for (value, key) in OPTIONS {
+        let is_active = active == value;
+        let color = if value == "all" {
+            pal.muted
+        } else {
+            rarity_color(value, &pal)
+        };
+        let this = cx.entity();
+        let selected_bg = pal.selection;
+        let border = if is_active { pal.accent } else { pal.border };
+        let bg = if is_active { pal.selection } else { pal.panel };
+        let value_owned = value.to_string();
+        row = row.child(
+            div()
+                .id(format!("{id_prefix}-{value}"))
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(border))
+                .bg(rgb(bg))
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(selected_bg)))
+                .text_size(px(11.0))
+                .text_color(rgb(color))
+                .child(t(lang, key))
+                .on_click(move |_, _window, acx| {
+                    let value = value_owned.clone();
+                    this.update(acx, |root, cx| {
+                        set(root, value);
+                        cx.notify();
+                    });
+                }),
+        );
+    }
+    row
 }

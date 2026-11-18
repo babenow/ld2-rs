@@ -406,6 +406,10 @@ pub struct Root {
     admin_inv_tab: backpack::BackpackTab,
     /// M24: строка поиска правой колонки.
     admin_inv_search: Option<Entity<TextInput>>,
+    /// M24: фильтр раритета левого каталога (`all` | rarity).
+    admin_rarity: String,
+    /// M24: фильтр раритета правой колонки (независимый).
+    admin_inv_rarity: String,
     /// M21: вооружённая кнопка «Сбросить» (второй клик — cmd/craft.reset).
     prof_reset_armed: Option<String>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
@@ -703,6 +707,8 @@ impl Root {
             admin_target: "self".into(),
             admin_inv_tab: backpack::BackpackTab::default(),
             admin_inv_search: None,
+            admin_rarity: "all".into(),
+            admin_inv_rarity: "all".into(),
             prof_reset_armed: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).

@@ -578,6 +578,8 @@ pub enum Key {
     AdminSearch,
     AdminInvSearch,
     AdminNothing,
+    /// Чип «Все» в фильтре раритета (M24).
+    RarityAll,
 }
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -1135,6 +1137,7 @@ mod tests {
         Key::AdminSearch,
         Key::AdminInvSearch,
         Key::AdminNothing,
+        Key::RarityAll,
     ];
 
     #[test]
