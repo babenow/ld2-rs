@@ -493,5 +493,6 @@ pub(super) fn t(key: Key) -> &'static str {
         RarityAll => "All",
         AdminPlayerName => "Player name…",
         AdminTargetGo => "Apply",
+        AdminClearAll => "Delete all",
     }
 }

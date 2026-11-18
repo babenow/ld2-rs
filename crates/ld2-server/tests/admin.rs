@@ -231,6 +231,29 @@ async fn admin_catalog_give_and_remove_flow() {
     c.wait_event("evt/item/removed").await;
     let snap = snapshot(&mut c).await;
     assert_eq!(qty_of(&snap, &uid), 0, "предмета нет");
+
+    // Очистка цели «Удалить все» (self): даём стак → команда → пусто.
+    give_flow(&mut c, "self", "gold_coin", 5).await;
+    let info = target_info(&mut c, "self").await;
+    assert!(
+        info.as_array()
+            .expect("items")
+            .iter()
+            .any(|i| i["id"] == "gold_coin"),
+        "до очистки: {info}"
+    );
+    let seq = c.send("cmd/admin.clear", json!({ "target": "self" })).await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "clear self");
+    c.wait_event("evt/item/removed").await;
+    let info = target_info(&mut c, "self").await;
+    assert!(
+        !info
+            .as_array()
+            .expect("items")
+            .iter()
+            .any(|i| i["id"] == "gold_coin"),
+        "после очистки: {info}"
+    );
 }
 
 /// Режим бога: только админ, toggle с эхо ack.
@@ -489,6 +512,18 @@ async fn admin_gives_to_corpse_monster_and_char() {
     };
     let items = info["payload"]["items"].as_array().expect("items");
     assert_eq!(items.len(), before_len + 1, "слот удалён: {info}");
+
+    // Очистка трупа целиком (кнопка «Удалить все»).
+    let seq = admin
+        .send("cmd/admin.clear", json!({ "target": corpse_target }))
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "clear corpse");
+    admin.wait_event("evt/corpse/created").await;
+    let info = target_info(&mut admin, &corpse_target).await;
+    assert!(
+        info.as_array().expect("items").is_empty(),
+        "труп пуст: {info}"
+    );
 
     // Неизвестная цель → E_TARGET_GONE.
     let seq = admin

@@ -266,6 +266,8 @@ pub(crate) enum Click {
     /// M24: выбрать цель правой колонки (`self`/`char:`/`monster:`/
     /// `corpse:`) → `cmd/admin.target.info`.
     AdminTarget(String),
+    /// M24: «Удалить все» — очистка предметов выбранной цели.
+    AdminClear(String),
     CloseDetail,
     SwitchChar,
 }
@@ -2480,6 +2482,20 @@ impl Root {
                 self.store.admin_target_items = None;
                 self.admin_target_request = true;
                 self.pump_admin_target(cx);
+            }
+            // M24: очистка цели — свои предметы уходят событиями
+            // снапшота, чужие (не-self) перечитываем после ack.
+            Click::AdminClear(target) => {
+                let cmd = ld2_protocol::cmd::AdminClear { target };
+                match self.transport.send(&cmd) {
+                    Ok(_) => {
+                        self.store.on_world_sent(Act::AdminClear);
+                        if self.admin_target != "self" {
+                            self.admin_target_request = true;
+                        }
+                    }
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
             }
             Click::AdminGod(enabled) => {
                 let cmd = ld2_protocol::cmd::AdminGodMode { enabled };

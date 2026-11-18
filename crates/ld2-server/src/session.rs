@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
-    AdminGiveAsk, AdminGodMode, AdminItems, AdminRemoveAsk, AdminTargetInfo, AuthLogin,
+    AdminClear, AdminGiveAsk, AdminGodMode, AdminItems, AdminRemoveAsk, AdminTargetInfo, AuthLogin,
     AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, ChatDelete, ChatSend,
     CombatAttack, CraftLearn, CraftRankUp, CraftRecipes, CraftReset, CraftStart, CrimeLog,
     EntityInfo, GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet,
@@ -245,6 +245,7 @@ impl Session {
             "cmd/admin.remove.ask" => self.admin_remove_ask(env, seq).await,
             "cmd/admin.god_mode" => self.admin_god_mode(env, seq).await,
             "cmd/admin.target.info" => self.admin_target_info(env, seq).await,
+            "cmd/admin.clear" => self.admin_clear(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
             "cmd/skill.train" => self.skill_train(env, seq).await,
             "cmd/item.use" => {
@@ -3940,6 +3941,160 @@ impl Session {
             seq,
             &serde_json::json!({ "items": items }),
         )]
+    }
+
+    /// `cmd/admin.clear` (§7): удалить ВСЕ предметы цели (кнопка
+    /// «Удалить все» в админ-окне): инвентарь — все записи, труп —
+    /// все слоты (broadcast), сундук — база tombstone-ами + надстройка,
+    /// магазин — контент + надстройка, монстр — весь лут (восстановится
+    /// респавном). Аудит каждой операции.
+    async fn admin_clear(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        if let Some(err) = self.require_admin(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<AdminClear>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if !self.admin_target_valid(&cmd.target).await {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "цель не найдена")];
+        }
+
+        // ── инвентарь (self/char) ──
+        if let Some(char_id) = self.admin_target_char(&cmd.target).await {
+            let own = match self.require_char_id(seq) {
+                Ok(id) => id,
+                Err(out) => return vec![out],
+            };
+            let rows = match db::items::delete_all(&self.state.pool, &char_id).await {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!("admin clear (инвентарь {char_id}): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            tracing::info!(
+                "admin clear inventory: {char_id} ({} предметов)",
+                rows.len()
+            );
+            if own == char_id {
+                let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+                for row in rows {
+                    outs.push(out_event(
+                        "evt/item/removed",
+                        None,
+                        serde_json::to_value(ItemRemoved {
+                            uid: row.uid,
+                            reason: ItemRemovalReason::Consumed,
+                        })
+                        .unwrap_or_default(),
+                    ));
+                }
+                return outs;
+            }
+            // Чужой персонаж: события — в его коннект (оффлайн просто
+            // увидит пустой инвентарь при входе).
+            {
+                let world = self.state.world.lock().expect("мир");
+                for row in rows {
+                    world.send_to_char(
+                        &char_id,
+                        event_text(
+                            "evt/item/removed",
+                            None,
+                            serde_json::to_value(ItemRemoved {
+                                uid: row.uid,
+                                reason: ItemRemovalReason::Consumed,
+                            })
+                            .unwrap_or_default(),
+                        ),
+                    );
+                }
+            }
+            return vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        }
+
+        // ── труп: все слоты + broadcast ──
+        if let Some(id) = cmd.target.strip_prefix("corpse:") {
+            let cleared = {
+                let mut world = self.state.world.lock().expect("мир");
+                world.corpse_clear(id)
+            };
+            if cleared.is_none() {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "трупа нет")];
+            }
+            tracing::info!("admin clear corpse: {id}");
+            let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+            outs.extend(self.broadcast_corpse(id));
+            return outs;
+        }
+
+        // ── сундук: база → tombstone (глобально) + надстройка ──
+        if let Some(id) = cmd.target.strip_prefix("container:") {
+            let current = self.location_id.clone().unwrap_or_default();
+            let defs_len = {
+                let Ok(Some(loc_row)) = db::locations::get(&self.state.pool, &current).await else {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "локации нет")];
+                };
+                let entities: Vec<Entity> =
+                    serde_json::from_value(loc_row.entities).unwrap_or_default();
+                entities
+                    .iter()
+                    .find(|e| e.id == id)
+                    .map(|e| entity_loot_defs(e).len())
+                    .unwrap_or(0)
+            };
+            {
+                let mut world = self.state.world.lock().expect("мир");
+                for i in 0..defs_len {
+                    world.container_base_remove(id, i);
+                }
+                world.container_clear(id);
+            }
+            tracing::info!("admin clear container: {id} (база {defs_len})");
+            return vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        }
+
+        // ── магазин: контент → tombstone + надстройка ──
+        if let Some(npc) = cmd.target.strip_prefix("shop:") {
+            let Some(shop) = self.state.shops.get(npc) else {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "магазина нет")];
+            };
+            let tabs: Vec<(usize, usize)> = shop
+                .currencies
+                .iter()
+                .enumerate()
+                .map(|(tab, currency)| (tab, currency.items.len()))
+                .collect();
+            {
+                let mut world = self.state.world.lock().expect("мир");
+                for (tab, len) in tabs {
+                    for idx in 0..len {
+                        world.shop_content_remove(npc, tab, idx);
+                    }
+                }
+                world.shop_clear(npc);
+            }
+            tracing::info!("admin clear shop: {npc}");
+            return vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        }
+
+        // ── монстр: весь живой лут (восстановится респавном) ──
+        if let Some(id) = cmd.target.strip_prefix("monster:") {
+            let ok = {
+                let mut world = self.state.world.lock().expect("мир");
+                world.mob_drops_clear(id)
+            };
+            if !ok {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "монстра нет")];
+            }
+            tracing::info!("admin clear monster: {id}");
+            return vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        }
+
+        vec![Self::err(seq, ErrorCode::TargetGone, "неизвестная цель")]
     }
 
     /// M24: submit админ-диалога — `give:<target>#<def_id>` /

@@ -73,7 +73,8 @@ impl Root {
 
         // ── левая колонка: лут + блок «Внутри» ─────────────────────
         let mut left = div().flex().flex_col().gap_1();
-        left = left.child(col_title(t(lang, Key::LootLabel).to_string(), pal));
+        // M24: подпись колонки — «Предметы» (вместо «Лут»).
+        left = left.child(col_title(t(lang, Key::AdminItemsSheet).to_string(), pal));
         if loot.is_empty() {
             left = left.child(
                 div()
@@ -206,6 +207,43 @@ impl Root {
                 Click::LootTakeAll,
             )
         };
+        // M24: кнопки разделки в статус-баре — когда изучена
+        // профессия снятия шкур и труп разделываемый (флаги как в
+        // контекстном меню; сделанные действия скрыты).
+        let entity = &detail["entity"];
+        let entity_id = entity["id"].as_str().unwrap_or_default().to_string();
+        let harvest = entity["harvest"].as_object();
+        let learned = self
+            .store
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.char.professions.iter().any(|p| p.id == "skinning"));
+        let flag = |h: &serde_json::Map<String, serde_json::Value>, key: &str| {
+            h.get(key).and_then(|v| v.as_bool()) == Some(true)
+        };
+        let skin_ready =
+            learned && harvest.is_some_and(|h| flag(h, "skin") && !flag(h, "skin_done"));
+        let gut_ready = learned && harvest.is_some_and(|h| flag(h, "gut") && !flag(h, "gut_done"));
+        let mut harvest_btns = div().flex().flex_row().gap_1();
+        if skin_ready {
+            harvest_btns = harvest_btns.child(btn(
+                cx,
+                t(lang, Key::SkinBtn),
+                pal.warn,
+                0xffffff,
+                Click::Harvest(entity_id.clone(), "skin".into()),
+            ));
+        }
+        if gut_ready {
+            harvest_btns = harvest_btns.child(btn(
+                cx,
+                t(lang, Key::GutBtn),
+                pal.warn,
+                0xffffff,
+                Click::Harvest(entity_id.clone(), "gut".into()),
+            ));
+        }
+
         let footer = div()
             .flex()
             .flex_row()
@@ -234,6 +272,7 @@ impl Root {
                     .text_color(rgb(pal.muted))
                     .child(sel_name),
             )
+            .child(harvest_btns)
             .child(take)
             .child(take_all);
 
@@ -255,12 +294,18 @@ impl Root {
             .child(div().w(px(1.0)).bg(rgb(pal.border)))
             .child(div().flex().flex_col().w(px(440.0)).min_h_0().child(right));
 
+        // M24: заголовок — имя трупа (указание заказчика); пока
+        // данных нет — прежний текст (ветка загрузки).
+        let title = detail["entity"]["name"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| t(lang, Key::PickupTitle).to_string());
         Some(self.popup_window(
             window,
             cx,
             pal,
             PopupKind::LootPickup,
-            t(lang, Key::PickupTitle),
+            title,
             None,
             body,
             Some(footer),
@@ -282,6 +327,8 @@ impl Root {
             .map(rgb)
             .unwrap_or_else(|| rgb(pal.text));
         let selected = self.pickup_sel.as_deref() == Some(uid.as_str());
+        // M24: количество в стаке — справа (показываем при >1).
+        let qty = item["qty"].as_i64().filter(|q| *q > 1);
         let ghost_title: gpui::SharedString = name.clone().into();
         div()
             .id(format!("ld2-pickup-row-{uid}"))
@@ -300,6 +347,12 @@ impl Root {
             .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
             .child(div().text_color(color).child(format!("• {name} ({itype})")))
             .child(div().flex_grow_1())
+            .children(qty.map(|q| {
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(pal.muted))
+                    .child(format!("×{q}"))
+            }))
             .on_click(cx.listener({
                 // on_drag ниже забирает uid в payload — клик с копией.
                 let uid = uid.clone();

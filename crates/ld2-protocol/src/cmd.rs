@@ -506,7 +506,15 @@ pub struct AdminGodMode {
     pub enabled: bool,
 }
 
-/// M24: содержимое цели для правой колонки админ-окна (§7):
+/// M24: удалить ВСЕ предметы выбранной цели (кнопка в админ-окне):
+/// инвентарь — все записи, труп — все слоты, сундук — база (tombstone)
+/// + надстройка, магазин — контент + надстройка, монстр — весь лут.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminClear {
+    pub target: String,
+}
+
+/// M24: содержимое выбранной цели правой колонки (кроме self —
 /// ack `{items: [{ref, id, name, type, rarity, qty}]}` — рюкзак
 /// (`self`/`char:<имя>`), лут трупа (`corpse:<id>`), будущий лут
 /// монстра (`monster:<id>`).
@@ -555,6 +563,7 @@ impl_commands!(
     (AdminRemoveAsk, "cmd/admin.remove.ask", false),
     (AdminGodMode, "cmd/admin.god_mode", false),
     (AdminTargetInfo, "cmd/admin.target.info", true),
+    (AdminClear, "cmd/admin.clear", false),
     (UpgradePreview, "cmd/upgrade.preview", true),
     (UpgradeStart, "cmd/upgrade.start", false),
     (CraftList, "cmd/craft.list", true),
