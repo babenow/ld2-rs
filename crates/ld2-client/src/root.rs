@@ -617,6 +617,23 @@ const TYPING_FIELDS: &[TypingField] = &[
         name: "domain",
         get: |r| &r.domain_input,
     },
+    // M24: поля фильтров админ-панели — при наборе не должны
+    // срабатывать горячие клавиши (C/I/… открывали окна).
+    TypingField {
+        screen: Screen::Game,
+        name: "admin_search",
+        get: |r| &r.admin_search,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "admin_inv_search",
+        get: |r| &r.admin_inv_search,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "admin_player",
+        get: |r| &r.admin_player,
+    },
 ];
 
 impl Root {
@@ -1301,6 +1318,14 @@ impl Root {
             .filter(|f| f.screen == self.store.screen)
             .filter_map(|f| (f.get)(self).as_ref())
             .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+            // M24: поля execute-диалога (ввод количества) живут в
+            // `dialog_inputs`, а не в TYPING_FIELDS — цифры не должны
+            // стрелять хоткеями hotbar.
+            || self.dialog_inputs.as_ref().is_some_and(|(_, fields)| {
+                fields.iter().any(|(_, input)| {
+                    input.read(cx).focus_handle(cx).is_focused(window)
+                })
+            })
     }
 
     /// M18/F41: снять фокус со всех полей ввода окна (`Window::blur`).
@@ -4432,7 +4457,7 @@ mod tests {
     /// Login → Game не блокирует хоткеи.
     #[test]
     fn typing_fields_cover_every_input_and_gate_game() {
-        const ALL: [&str; 13] = [
+        const ALL: [&str; 16] = [
             "login",
             "password",
             "reg_login",
@@ -4446,6 +4471,9 @@ mod tests {
             "chat_filter",
             "delete_name",
             "create_name",
+            "admin_search",
+            "admin_inv_search",
+            "admin_player",
         ];
         for field in TYPING_FIELDS {
             assert!(
@@ -4468,7 +4496,16 @@ mod tests {
             .collect();
         assert_eq!(
             game,
-            ["chat", "chat_filter", "guild", "host", "domain"],
+            [
+                "chat",
+                "chat_filter",
+                "guild",
+                "host",
+                "domain",
+                "admin_search",
+                "admin_inv_search",
+                "admin_player",
+            ],
             "игровой экран проверяет только свои поля"
         );
     }

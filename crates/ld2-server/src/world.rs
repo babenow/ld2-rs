@@ -335,7 +335,7 @@ pub struct World {
     /// M24: надстройки сундуков (entity_id -> слоты ПОСЛЕ базовых
     /// defs; `None` - взято/удалено; индексы стабильны - только
     /// добавление в конец). In-memory до рестарта.
-    container_extra: HashMap<String, Vec<Option<String>>>,
+    container_extra: HashMap<String, Vec<Option<(String, i64)>>>,
     /// M24: глобальные «удалено админом» базовые слоты сундуков
     /// ((entity_id, idx); сильнее персонального `loot_taken` - не
     /// возвращается и при респавне).
@@ -785,35 +785,59 @@ impl World {
     // ── M24: надстройки сундуков и магазинов (in-memory) ──────────────────
 
     /// Слоты надстройки сундука (позиции после базовых defs).
-    pub fn container_extra(&self, entity_id: &str) -> Vec<Option<String>> {
+    pub fn container_extra(&self, entity_id: &str) -> Vec<Option<(String, i64)>> {
         self.container_extra
             .get(entity_id)
             .cloned()
             .unwrap_or_default()
     }
 
-    /// Добавить `count` позиций в надстройку сундука.
-    pub fn container_extra_add(&mut self, entity_id: &str, def_id: &str, count: usize) {
+    /// Добавить в надстройку сундука **один стак** с указанным
+    /// количеством (указание заказчика): складывается с уже лежащим
+    /// таким же дефом, иначе — одна новая позиция.
+    pub fn container_extra_add(&mut self, entity_id: &str, def_id: &str, qty: i64) {
         let slots = self
             .container_extra
             .entry(entity_id.to_string())
             .or_default();
-        for _ in 0..count {
-            slots.push(Some(def_id.to_string()));
+        if let Some(slot) = slots.iter_mut().flatten().find(|slot| slot.0 == def_id) {
+            slot.1 = (slot.1 + qty).min(i64::from(i32::MAX));
+            return;
+        }
+        slots.push(Some((def_id.to_string(), qty)));
+    }
+
+    /// Слот надстройки сундука: (def_id, количество).
+    pub fn container_extra_slot(&self, entity_id: &str, idx: usize) -> Option<(String, i64)> {
+        self.container_extra.get(entity_id)?.get(idx)?.clone()
+    }
+
+    /// Занять весь слот надстройки (взятие игроком/удаление целиком).
+    pub fn container_extra_clear(&mut self, entity_id: &str, idx: usize) -> bool {
+        match self.container_extra.get_mut(entity_id) {
+            Some(slots) if idx < slots.len() && slots[idx].is_some() => {
+                slots[idx] = None;
+                true
+            }
+            _ => false,
         }
     }
 
-    /// Занять `count` слотов надстройки сундука с `idx` (`None` -
-    /// слотов нет; индексы не сдвигаются).
-    pub fn container_extra_take_at(&mut self, entity_id: &str, idx: usize, count: usize) -> bool {
+    /// Убрать `count` единиц из слота надстройки (частичное удаление
+    /// админом): остаток < count → слот освобождается.
+    pub fn container_extra_reduce(&mut self, entity_id: &str, idx: usize, count: i64) -> bool {
         match self.container_extra.get_mut(entity_id) {
-            Some(slots) if idx < slots.len() => {
-                let end = (idx + count).min(slots.len());
-                for slot in slots.iter_mut().take(end).skip(idx) {
-                    *slot = None;
+            Some(slots) if idx < slots.len() => match slots[idx].as_mut() {
+                Some((_, qty)) if count >= *qty => {
+                    slots[idx] = None;
+                    true
                 }
-                true
-            }
+                Some((_, qty)) => {
+                    *qty -= count;
+                    true
+                }
+                None => false,
+            },
             _ => false,
         }
     }
@@ -834,12 +858,14 @@ impl World {
         self.shop_extra.get(npc_id).cloned().unwrap_or_default()
     }
 
-    /// Добавить `count` позиций в надстройку магазина.
-    pub fn shop_extra_add(&mut self, npc_id: &str, def_id: &str, count: usize) {
+    /// Добавить позицию в надстройку магазина — **одна позиция на
+    /// предмет** (магазин не лимитирован, копии не нужны).
+    pub fn shop_extra_add(&mut self, npc_id: &str, def_id: &str) {
         let slots = self.shop_extra.entry(npc_id.to_string()).or_default();
-        for _ in 0..count {
-            slots.push(Some(def_id.to_string()));
+        if slots.iter().flatten().any(|d| d == def_id) {
+            return;
         }
+        slots.push(Some(def_id.to_string()));
     }
 
     /// Удалить `count` позиций надстройки магазина с `idx`.
