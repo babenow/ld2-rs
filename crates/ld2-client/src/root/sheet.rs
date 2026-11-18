@@ -15,8 +15,8 @@
 
 use ely::overlays::Dialog;
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, Context, Div, DragMoveEvent, EmptyView, MouseButton,
-    SharedString, Window,
+    div, prelude::*, px, rgb, AnyElement, Context, CursorStyle, Div, DragMoveEvent, EmptyView,
+    MouseButton, SharedString, Window,
 };
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{
@@ -724,7 +724,9 @@ impl Root {
                 },
             ));
 
-        // M15/F25c: уголок изменения размера (правый нижний).
+        // M15/F25c: уголок изменения размера (правый нижний) — M24:
+        // видимого квадратика больше нет (указание заказчика),
+        // только курсор диагонального ресайза при наведении.
         let grip_this = cx.entity();
         let resize_grip = div()
             .id(format!("{id}-resize"))
@@ -732,12 +734,7 @@ impl Root {
             .right_0()
             .bottom_0()
             .size(px(18.0))
-            .rounded_md()
-            .border_l_1()
-            .border_t_1()
-            .border_color(rgb(pal.border))
-            .bg(rgb(pal.panel))
-            .cursor_pointer()
+            .cursor(CursorStyle::ResizeUpLeftDownRight)
             // M15/F25e: жест начат на уголке — scrim не закроет.
             .on_mouse_down(
                 MouseButton::Left,
