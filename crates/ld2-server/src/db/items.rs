@@ -127,6 +127,32 @@ pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx
     .await
 }
 
+/// M24: инвентарь персонажа с данными определений (правая колонка
+/// админ-окна): uid/деф/количество + имя/тип/редкость одним запросом.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminInvRow {
+    pub uid: String,
+    pub def_id: String,
+    pub qty: i32,
+    pub name: String,
+    pub item_type: String,
+    pub rarity: String,
+}
+
+pub async fn admin_inventory(
+    pool: &PgPool,
+    char_id: &str,
+) -> Result<Vec<AdminInvRow>, sqlx::Error> {
+    sqlx::query_as::<_, AdminInvRow>(
+        "SELECT i.uid, i.def_id, i.qty, d.name, d.item_type, d.rarity \
+         FROM items i JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 ORDER BY i.created_at, i.uid",
+    )
+    .bind(char_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// M24: каталог всех определений (админ-панель, вариант A — одним
 /// запросом); порядок — по типу и имени.
 pub async fn defs_all(pool: &PgPool) -> Result<Vec<ItemDefRow>, sqlx::Error> {

@@ -291,3 +291,215 @@ async fn scenario_gated_without_flag() {
     assert_eq!(c.ack(seq).await["result"], "ok", "админ проходит");
     c.wait_event("evt/item/added").await;
 }
+
+/// M24 F24c: цели выдачи/удаления — игрок по имени (онлайн получает
+/// события), лут трупа (broadcast evt/corpse/created), админ-лут
+/// монстра (one-shot до респавна); неизвестная цель → E_TARGET_GONE.
+#[tokio::test]
+async fn admin_gives_to_corpse_monster_and_char() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut admin, _login, _char) = in_world_admin(&ws, &db_url).await;
+    let (mut other, _login2, _char2) = in_world(&ws).await;
+
+    // Имя второго игрока — из его снапшота.
+    let other_snap = snapshot(&mut other).await;
+    let other_name = other_snap["char"]["name"]
+        .as_str()
+        .expect("имя")
+        .to_string();
+
+    // ── цель: другой игрок по имени ──
+    let target = format!("char:{other_name}");
+    let seq = admin
+        .send(
+            "cmd/admin.give.ask",
+            json!({ "target": target, "def_id": "gold_coin" }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "ask char");
+    let open = admin.wait_event("evt/dialog/open").await;
+    let give_id = open["payload"]["id"].as_str().expect("id").to_string();
+    let seq = admin
+        .send(
+            "cmd/dialog.submit",
+            json!({ "dialog_id": give_id, "values": { "count": 3 } }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "выдать3");
+    // Онлайн-цель получает событие в свой коннект.
+    let added = other.wait_event("evt/item/added").await;
+    let uid = added["payload"]["item"]["uid"]
+        .as_str()
+        .expect("uid")
+        .to_string();
+    let info = {
+        let seq = admin
+            .send("cmd/admin.target.info", json!({ "target": target }))
+            .await;
+        admin.ack(seq).await
+    };
+    let items = info["payload"]["items"].as_array().expect("items");
+    assert!(
+        items.iter().any(|i| i["ref"] == uid && i["qty"] == 3),
+        "инвентарь цели: {info}"
+    );
+
+    // Удаление2 из3 у цели.
+    let seq = admin
+        .send(
+            "cmd/admin.remove.ask",
+            json!({ "target": target, "ref": uid }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "remove ask");
+    let open = admin.wait_event("evt/dialog/open").await;
+    let remove_id = open["payload"]["id"].as_str().expect("id").to_string();
+    let seq = admin
+        .send(
+            "cmd/dialog.submit",
+            json!({ "dialog_id": remove_id, "values": { "count": 2 } }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "удалить2");
+    other.wait_event("evt/item/state").await;
+
+    // ── цели в лесу: труп и монстр ──
+    let seq = admin
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "в лес");
+
+    // Монстр (пока жив): админ-лут one-shot — до убийства, т.к. цель
+    // должна существовать в локации.
+    let monster_target = "monster:m_3".to_string();
+    let seq = admin
+        .send(
+            "cmd/admin.give.ask",
+            json!({ "target": monster_target, "def_id": "gold_coin" }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "ask monster");
+    let open = admin.wait_event("evt/dialog/open").await;
+    let give_id = open["payload"]["id"].as_str().expect("id").to_string();
+    let seq = admin
+        .send(
+            "cmd/dialog.submit",
+            json!({ "dialog_id": give_id, "values": { "count": 1 } }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "выдать монстру");
+    let info = {
+        let seq = admin
+            .send("cmd/admin.target.info", json!({ "target": monster_target }))
+            .await;
+        admin.ack(seq).await
+    };
+    let items = info["payload"]["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "одна позиция: {info}");
+    assert_eq!(items[0]["ref"], "bonus:0", "ref: {info}");
+
+    let seq = admin
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "атака");
+    let corpse_evt = admin.wait_event("evt/corpse/created").await;
+    let corpse_id = corpse_evt["payload"]["entity"]["id"]
+        .as_str()
+        .expect("id трупа")
+        .to_string();
+    admin.wait_event("evt/combat/end").await;
+
+    // Труп: выдача2 слотов → broadcast обновления трупа; слотов
+    // «до» не считаем в ассерте иначе — у волка свой дроп.
+    let corpse_target = format!("corpse:{corpse_id}");
+    let before_len = {
+        let seq = admin
+            .send("cmd/admin.target.info", json!({ "target": corpse_target }))
+            .await;
+        let ack = admin.ack(seq).await;
+        ack["payload"]["items"].as_array().expect("items до").len()
+    };
+    let seq = admin
+        .send(
+            "cmd/admin.give.ask",
+            json!({ "target": corpse_target, "def_id": "gold_coin" }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "ask corpse");
+    let open = admin.wait_event("evt/dialog/open").await;
+    let give_id = open["payload"]["id"].as_str().expect("id").to_string();
+    let seq = admin
+        .send(
+            "cmd/dialog.submit",
+            json!({ "dialog_id": give_id, "values": { "count": 2 } }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "выдать в труп");
+    let update = admin.wait_event("evt/corpse/created").await;
+    assert_eq!(
+        update["payload"]["entity"]["id"], corpse_id,
+        "broadcast трупа"
+    );
+    let info = {
+        let seq = admin
+            .send("cmd/admin.target.info", json!({ "target": corpse_target }))
+            .await;
+        admin.ack(seq).await
+    };
+    let items = info["payload"]["items"].as_array().expect("items");
+    assert_eq!(
+        items.len(),
+        before_len + 2,
+        "инъекция добавила ровно два слота: {info}"
+    );
+    // Инъекция добавляется в конец — последний слот наш.
+    let slot_ref = items[items.len() - 1]["ref"]
+        .as_str()
+        .expect("ref")
+        .to_string();
+    assert!(slot_ref.starts_with(&format!("loot:{corpse_id}:")), "ref");
+
+    // Удаление одного слота трупа.
+    let seq = admin
+        .send(
+            "cmd/admin.remove.ask",
+            json!({ "target": corpse_target, "ref": slot_ref }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "remove corpse ask");
+    let open = admin.wait_event("evt/dialog/open").await;
+    let remove_id = open["payload"]["id"].as_str().expect("id").to_string();
+    let seq = admin
+        .send(
+            "cmd/dialog.submit",
+            json!({ "dialog_id": remove_id, "values": { "count": 1 } }),
+        )
+        .await;
+    assert_eq!(admin.ack(seq).await["result"], "ok", "удалить слот");
+    admin.wait_event("evt/corpse/created").await;
+    let info = {
+        let seq = admin
+            .send("cmd/admin.target.info", json!({ "target": corpse_target }))
+            .await;
+        admin.ack(seq).await
+    };
+    let items = info["payload"]["items"].as_array().expect("items");
+    assert_eq!(items.len(), before_len + 1, "слот удалён: {info}");
+
+    // Неизвестная цель → E_TARGET_GONE.
+    let seq = admin
+        .send(
+            "cmd/admin.give.ask",
+            json!({ "target": "container:нет", "def_id": "gold_coin" }),
+        )
+        .await;
+    assert_eq!(
+        admin.ack(seq).await["error"]["code"],
+        "E_TARGET_GONE",
+        "неизвестная цель"
+    );
+}

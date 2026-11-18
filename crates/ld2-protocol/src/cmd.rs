@@ -506,6 +506,15 @@ pub struct AdminGodMode {
     pub enabled: bool,
 }
 
+/// M24: содержимое цели для правой колонки админ-окна (§7):
+/// ack `{items: [{ref, id, name, type, rarity, qty}]}` — рюкзак
+/// (`self`/`char:<имя>`), лут трупа (`corpse:<id>`), будущий лут
+/// монстра (`monster:<id>`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminTargetInfo {
+    pub target: String,
+}
+
 impl_commands!(
     (AuthLogin, "cmd/auth.login", true),
     (AuthRegister, "cmd/auth.register", true),
@@ -545,6 +554,7 @@ impl_commands!(
     (AdminGiveAsk, "cmd/admin.give.ask", false),
     (AdminRemoveAsk, "cmd/admin.remove.ask", false),
     (AdminGodMode, "cmd/admin.god_mode", false),
+    (AdminTargetInfo, "cmd/admin.target.info", true),
     (UpgradePreview, "cmd/upgrade.preview", true),
     (UpgradeStart, "cmd/upgrade.start", false),
     (CraftList, "cmd/craft.list", true),

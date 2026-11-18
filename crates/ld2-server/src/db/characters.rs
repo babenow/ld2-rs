@@ -48,6 +48,15 @@ pub async fn count_alive(pool: &PgPool, account_id: i64) -> Result<i64, sqlx::Er
     .await
 }
 
+/// M24: id персонажа по имени (админ-панель: выдача игроку по имени,
+/// в т.ч. оффлайн); `None` — нет такого/удалён.
+pub async fn id_by_name(pool: &PgPool, name: &str) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT id FROM characters WHERE name = $1 AND deleted_at IS NULL")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+}
+
 /// Новый персонаж; `None` — имя занято среди живых (частичный UNIQUE-индекс
 /// → `E_NAME_TAKEN`).
 pub async fn create(

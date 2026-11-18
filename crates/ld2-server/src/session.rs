@@ -6,14 +6,14 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
-    AdminGiveAsk, AdminGodMode, AdminItems, AdminRemoveAsk, AuthLogin, AuthRegister, AuthResume,
-    CharCreate, CharDelete, CharSelect, ChatDelete, ChatSend, CombatAttack, CraftLearn,
-    CraftRankUp, CraftRecipes, CraftReset, CraftStart, CrimeLog, EntityInfo, GuildBrowse,
-    GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet, ItemDrop, ItemEquip, ItemMove,
-    ItemUnequip, ItemUse, LocationMove, MagicRuneCast, MagicScrollCast, NpcReply, NpcTalk,
-    PartyAccept, PartyInvite, PartyKick, ResourceGather, ShopBuy, ShopList, SkillTrain, SkillUse,
-    SocketExtract, SocketInsert, StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose,
-    TradeSetGold, UpgradePreview, UpgradeStart,
+    AdminGiveAsk, AdminGodMode, AdminItems, AdminRemoveAsk, AdminTargetInfo, AuthLogin,
+    AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, ChatDelete, ChatSend,
+    CombatAttack, CraftLearn, CraftRankUp, CraftRecipes, CraftReset, CraftStart, CrimeLog,
+    EntityInfo, GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet,
+    ItemDrop, ItemEquip, ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast,
+    MagicScrollCast, NpcReply, NpcTalk, PartyAccept, PartyInvite, PartyKick, ResourceGather,
+    ShopBuy, ShopList, SkillTrain, SkillUse, SocketExtract, SocketInsert, StateResync,
+    TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -244,6 +244,7 @@ impl Session {
             "cmd/admin.give.ask" => self.admin_give_ask(env, seq).await,
             "cmd/admin.remove.ask" => self.admin_remove_ask(env, seq).await,
             "cmd/admin.god_mode" => self.admin_god_mode(env, seq).await,
+            "cmd/admin.target.info" => self.admin_target_info(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
             "cmd/skill.train" => self.skill_train(env, seq).await,
             "cmd/item.use" => {
@@ -3358,6 +3359,20 @@ impl Session {
 
     // ── M24: админ-панель предметов ──────────────────────────────────────────
 
+    /// M24: гейт админ-команд — только роль `admin` (§9 E_PERMISSION;
+    /// moderator проходит лишь модерацию чата, M14/F19).
+    fn require_admin(&self, seq: u32) -> Option<Out> {
+        if self.role == "admin" {
+            None
+        } else {
+            Some(Self::err(
+                seq,
+                ErrorCode::Permission,
+                "требуется роль admin",
+            ))
+        }
+    }
+
     /// `cmd/admin.items` (§7): каталог всех определений — левая панель
     /// окна выдачи (вариант A: одним запросом, клиент кэширует и
     /// фильтрует локально). Тяжёлые поля (stats/requires) не отдаём.
@@ -3398,10 +3413,78 @@ impl Session {
         )]
     }
 
+    /// M24: цель существует и валидна для текущего контекста:
+    /// `self` (выбран персонаж), `char:<имя>` (есть в БД, в т.ч.
+    /// оффлайн), `corpse:<id>`/`monster:<id>` (в текущей локации).
+    /// Сундук/магазин — F24d.
+    async fn admin_target_valid(&self, target: &str) -> bool {
+        if target == "self" {
+            return self.selected_char_id.is_some();
+        }
+        if let Some(name) = target.strip_prefix("char:") {
+            return matches!(
+                db::characters::id_by_name(&self.state.pool, name).await,
+                Ok(Some(_))
+            );
+        }
+        let current = self.location_id.clone().unwrap_or_default();
+        let world = self.state.world.lock().expect("мир");
+        if let Some(id) = target.strip_prefix("corpse:") {
+            return world.corpse(id).is_some_and(|c| c.location_id == current);
+        }
+        if let Some(id) = target.strip_prefix("monster:") {
+            return world.mob(id).is_some_and(|m| m.location_id == current);
+        }
+        false
+    }
+
+    /// M24: char_id цели-игрока (`self` → свой персонаж).
+    async fn admin_target_char(&self, target: &str) -> Option<String> {
+        if target == "self" {
+            return self.selected_char_id.clone();
+        }
+        let name = target.strip_prefix("char:")?;
+        db::characters::id_by_name(&self.state.pool, name)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// M24: имя предмета для заголовка диалога удаления (по цели и ref):
+    /// uid инвентаря / `loot:`-слот / `inner:`-слот / `bonus:`-лут монстра.
+    async fn admin_item_name(&self, target: &str, item_ref: &str) -> Option<String> {
+        let def_id = if let Some(rest) = item_ref.strip_prefix("loot:") {
+            let (corpse_id, idx) = rest.rsplit_once(':')?;
+            let idx: usize = idx.parse().ok()?;
+            let world = self.state.world.lock().expect("мир");
+            world.corpse(corpse_id)?.loot.get(idx)?.clone()?
+        } else if let Some(rest) = item_ref.strip_prefix("inner:") {
+            let (corpse_id, idx) = rest.rsplit_once(':')?;
+            let idx: usize = idx.parse().ok()?;
+            let world = self.state.world.lock().expect("мир");
+            world.corpse(corpse_id)?.inner_loot.get(idx)?.clone()?
+        } else if let Some(rest) = item_ref.strip_prefix("bonus:") {
+            let idx: usize = rest.parse().ok()?;
+            let mob_id = target.strip_prefix("monster:")?;
+            let world = self.state.world.lock().expect("мир");
+            world.mob_bonus(mob_id).get(idx)?.clone()
+        } else {
+            let char_id = self.admin_target_char(target).await?;
+            let row = db::items::find(&self.state.pool, item_ref, &char_id)
+                .await
+                .ok()??;
+            row.def_id
+        };
+        db::items::def(&self.state.pool, &def_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|d| d.name)
+    }
+
     /// `cmd/admin.give.ask` (§7): валидация def/цели → открытие
     /// execute-диалога количества; id `admin.give:<target>#<def_id>`
-    /// кодирует действие — submit stateless (роль там проверяется
-    /// повторно). F24a: поддерживается `self`, прочие цели — F24c/d.
+    /// кодирует действие — submit stateless (роль там повторно).
     async fn admin_give_ask(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
@@ -3412,11 +3495,11 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<AdminGiveAsk>(env, seq) else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
-        if cmd.target != "self" {
+        if !self.admin_target_valid(&cmd.target).await {
             return vec![Self::err(
                 seq,
                 ErrorCode::TargetGone,
-                "цель не поддерживается",
+                "цель не найдена или не поддерживается",
             )];
         }
         let Some(def) = (match db::items::def(&self.state.pool, &cmd.def_id).await {
@@ -3451,7 +3534,7 @@ impl Session {
     }
 
     /// `cmd/admin.remove.ask` (§7): execute-диалог количества на
-    /// удаление; F24a — `self` (ref = uid инвентаря).
+    /// удаление; ref — uid / `loot:`/`inner:`-слот / `bonus:`.
     async fn admin_remove_ask(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
@@ -3462,35 +3545,17 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<AdminRemoveAsk>(env, seq) else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
-        if cmd.target != "self" {
+        if !self.admin_target_valid(&cmd.target).await {
             return vec![Self::err(
                 seq,
                 ErrorCode::TargetGone,
-                "цель не поддерживается",
+                "цель не найдена или не поддерживается",
             )];
         }
-        let char_id = match self.require_char_id(seq) {
-            Ok(id) => id,
-            Err(out) => return vec![out],
-        };
-        let pool = &self.state.pool;
-        let Some(item) = (match db::items::find(pool, &cmd.item_ref, &char_id).await {
-            Ok(item) => item,
-            Err(e) => {
-                warn!("admin remove.ask (поиск): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }) else {
-            return vec![Self::err(seq, ErrorCode::ItemGone, "предмет не найден")];
-        };
-        let name = match db::items::def(pool, &item.def_id).await {
-            Ok(Some(def)) => def.name,
-            Ok(None) => item.def_id.clone(),
-            Err(e) => {
-                warn!("admin remove.ask (определение): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        };
+        let name = self
+            .admin_item_name(&cmd.target, &cmd.item_ref)
+            .await
+            .unwrap_or_else(|| cmd.item_ref.clone());
         let open = ld2_protocol::evt::DialogOpen {
             id: format!("admin.remove:{}#{}", cmd.target, cmd.item_ref),
             kind: "execute".into(),
@@ -3540,9 +3605,113 @@ impl Session {
         )]
     }
 
+    /// `cmd/admin.target.info` (§7): содержимое цели для правой
+    /// колонки админ-окна — инвентарь (`self`/`char:`), слоты лута
+    /// трупа (`loot:`/`inner:`), админ-лут монстра (`bonus:`).
+    async fn admin_target_info(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        if let Some(err) = self.require_admin(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<AdminTargetInfo>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        if !self.admin_target_valid(&cmd.target).await {
+            return vec![Self::err(seq, ErrorCode::TargetGone, "цель не найдена")];
+        }
+        // Инвентарь (self/char) — одним SQL с джойном определений.
+        if let Some(char_id) = self.admin_target_char(&cmd.target).await {
+            let rows = match db::items::admin_inventory(&self.state.pool, &char_id).await {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!("admin target.info (инвентарь {char_id}): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let items: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "ref": r.uid,
+                        "id": r.def_id,
+                        "name": r.name,
+                        "type": r.item_type,
+                        "rarity": r.rarity,
+                        "qty": r.qty,
+                    })
+                })
+                .collect();
+            return vec![Self::ack_payload(
+                seq,
+                &serde_json::json!({ "items": items }),
+            )];
+        }
+        // Труп/монстр — слоты из мира; блокировка не держится через await.
+        let slots: Vec<(String, String)> = {
+            let world = self.state.world.lock().expect("мир");
+            if let Some(id) = cmd.target.strip_prefix("corpse:") {
+                let Some(corpse) = world.corpse(id) else {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "трупа нет")];
+                };
+                corpse
+                    .loot
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, slot)| {
+                        slot.as_ref().map(|d| (format!("loot:{id}:{i}"), d.clone()))
+                    })
+                    .chain(
+                        corpse
+                            .inner_loot
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, slot)| {
+                                slot.as_ref()
+                                    .map(|d| (format!("inner:{id}:{i}"), d.clone()))
+                            }),
+                    )
+                    .collect()
+            } else if let Some(id) = cmd.target.strip_prefix("monster:") {
+                world
+                    .mob_bonus(id)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, d)| (format!("bonus:{i}"), d))
+                    .collect()
+            } else {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "неизвестная цель")];
+            }
+        };
+        let mut items: Vec<serde_json::Value> = Vec::new();
+        for (item_ref, def_id) in slots {
+            let Some(def) = db::items::def(&self.state.pool, &def_id)
+                .await
+                .ok()
+                .flatten()
+            else {
+                continue; // слот ссылается на несуществующее определение
+            };
+            items.push(serde_json::json!({
+                "ref": item_ref,
+                "id": def.id,
+                "name": def.name,
+                "type": def.item_type,
+                "rarity": def.rarity,
+                "qty": def.qty,
+            }));
+        }
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({ "items": items }),
+        )]
+    }
+
     /// M24: submit админ-диалога — `give:<target>#<def_id>` /
     /// `remove:<target>#<ref>`. Роль ПОВТОРНО (диалог мог открыть
-    /// уже не-админ), qty строго 1..=999 (`E_BAD_QTY`).
+    /// уже не-админ), qty строго 1..=999 (`E_BAD_QTY`), цель
+    /// валидируется повторно (могла исчезнуть).
     async fn admin_dialog_submit(
         &mut self,
         rest: &str,
@@ -3573,27 +3742,68 @@ impl Session {
             let Some((target, def_id)) = args.split_once('#') else {
                 return vec![Self::err(seq, ErrorCode::Internal, "битый id диалога")];
             };
-            if target != "self" {
-                return vec![Self::err(
-                    seq,
-                    ErrorCode::TargetGone,
-                    "цель не поддерживается",
-                )];
+            if !self.admin_target_valid(target).await {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "цель исчезла")];
             }
-            return self.admin_give_self(def_id, qty, seq).await;
+            if let Some(id) = target.strip_prefix("corpse:") {
+                return self.admin_give_corpse(id, def_id, qty, seq).await;
+            }
+            if let Some(id) = target.strip_prefix("monster:") {
+                return self.admin_give_monster(id, def_id, qty, seq).await;
+            }
+            let Some(char_id) = self.admin_target_char(target).await else {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "персонаж не найден")];
+            };
+            return self.admin_give_to(&char_id, def_id, qty, seq).await;
         }
         if let Some(args) = rest.strip_prefix("remove:") {
             let Some((target, item_ref)) = args.split_once('#') else {
                 return vec![Self::err(seq, ErrorCode::Internal, "битый id диалога")];
             };
-            if target != "self" {
-                return vec![Self::err(
-                    seq,
-                    ErrorCode::TargetGone,
-                    "цель не поддерживается",
-                )];
+            if !self.admin_target_valid(target).await {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "цель исчезла")];
             }
-            return self.admin_remove_self(item_ref, qty, seq).await;
+            // Слоты трупа и админ-лут монстра — по формату ref.
+            if let Some(rest) = item_ref.strip_prefix("loot:") {
+                let Some((corpse_id, idx)) = rest.rsplit_once(':') else {
+                    return vec![Self::err(seq, ErrorCode::Internal, "битый ref")];
+                };
+                let Ok(idx) = idx.parse::<usize>() else {
+                    return vec![Self::err(seq, ErrorCode::Internal, "битый ref")];
+                };
+                return self
+                    .admin_remove_corpse_slot(corpse_id, false, idx, qty, seq)
+                    .await;
+            }
+            if let Some(rest) = item_ref.strip_prefix("inner:") {
+                let Some((corpse_id, idx)) = rest.rsplit_once(':') else {
+                    return vec![Self::err(seq, ErrorCode::Internal, "битый ref")];
+                };
+                let Ok(idx) = idx.parse::<usize>() else {
+                    return vec![Self::err(seq, ErrorCode::Internal, "битый ref")];
+                };
+                return self
+                    .admin_remove_corpse_slot(corpse_id, true, idx, qty, seq)
+                    .await;
+            }
+            if let Some(rest) = item_ref.strip_prefix("bonus:") {
+                let Ok(idx) = rest.parse::<usize>() else {
+                    return vec![Self::err(seq, ErrorCode::Internal, "битый ref")];
+                };
+                let Some(mob_id) = target.strip_prefix("monster:") else {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::Internal,
+                        "bonus- ref без монстра",
+                    )];
+                };
+                return self.admin_remove_monster(mob_id, idx, qty, seq).await;
+            }
+            // Инвентарь (self/char) — uid.
+            let Some(char_id) = self.admin_target_char(target).await else {
+                return vec![Self::err(seq, ErrorCode::TargetGone, "персонаж не найден")];
+            };
+            return self.admin_remove_from(&char_id, item_ref, qty, seq).await;
         }
         vec![Self::err(
             seq,
@@ -3602,11 +3812,19 @@ impl Session {
         )]
     }
 
-    /// M24: выдать `qty` в свой рюкзак — стак/слот по общим правилам
-    /// (`take_loot_fits` + `grant_stacking`), сокеты новому экземпляру
-    /// (паритет `scenario_give`), патч инвентаря + аудит.
-    async fn admin_give_self(&mut self, def_id: &str, qty: i64, seq: u32) -> Vec<Out> {
-        let char_id = match self.require_char_id(seq) {
+    /// M24: выдать `qty` в инвентарь `target_char` — стак/слот по
+    /// общим правилам (`take_loot_fits` + `grant_stacking`), сокеты
+    /// новому экземпляру (паритет `scenario_give`); себе — события
+    /// Out, другому (онлайн) — в его коннект (оффлайн увидит при
+    /// входе — инвентарь из БД); аудит.
+    async fn admin_give_to(
+        &mut self,
+        target_char: &str,
+        def_id: &str,
+        qty: i64,
+        seq: u32,
+    ) -> Vec<Out> {
+        let own = match self.require_char_id(seq) {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
@@ -3621,7 +3839,7 @@ impl Session {
             return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого предмета")];
         };
         let slots = self.state.config.gameplay.inventory.slots;
-        match Self::take_loot_fits(pool, &char_id, def_id, slots).await {
+        match Self::take_loot_fits(pool, target_char, def_id, slots).await {
             Ok(true) => {}
             Ok(false) => {
                 return vec![Self::err(
@@ -3635,7 +3853,7 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         }
-        let (row, stacked) = match db::items::grant_stacking(pool, &char_id, def_id, qty).await {
+        let (row, stacked) = match db::items::grant_stacking(pool, target_char, def_id, qty).await {
             Ok(v) => v,
             Err(e) => {
                 warn!("admin give (grant): {e}");
@@ -3649,11 +3867,11 @@ impl Session {
                 warn!("admin give (сокеты): {e}");
             }
         }
-        tracing::info!("admin give: {def_id} ×{qty} → {char_id} (стак={stacked})");
-        let ev = if stacked {
+        tracing::info!("admin give: {def_id} ×{qty} → {target_char} (стак={stacked})");
+        let text = if stacked {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(row.qty));
-            out_event(
+            event_text(
                 "evt/item/state",
                 None,
                 serde_json::to_value(ItemState {
@@ -3663,7 +3881,7 @@ impl Session {
                 .unwrap_or_default(),
             )
         } else {
-            out_event(
+            event_text(
                 "evt/item/added",
                 None,
                 serde_json::to_value(ItemAdded {
@@ -3672,18 +3890,35 @@ impl Session {
                 .unwrap_or_default(),
             )
         };
-        vec![Self::ack_payload(seq, &serde_json::json!({})), ev]
+        if target_char == own {
+            vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                Out::Text(text),
+            ]
+        } else {
+            {
+                let world = self.state.world.lock().expect("мир");
+                world.send_to_char(target_char, text);
+            }
+            vec![Self::ack_payload(seq, &serde_json::json!({}))]
+        }
     }
 
-    /// M24: удалить `qty` из своего рюкзака — весь стак (≥ qty) или
-    /// частично; уведомления `evt/item/removed|state` + аудит.
-    async fn admin_remove_self(&mut self, item_ref: &str, qty: i64, seq: u32) -> Vec<Out> {
-        let char_id = match self.require_char_id(seq) {
+    /// M24: удалить `qty` из инвентаря `target_char` — весь стак
+    /// (≥ qty) или частично; маршрутизация событий как в выдаче.
+    async fn admin_remove_from(
+        &mut self,
+        target_char: &str,
+        item_ref: &str,
+        qty: i64,
+        seq: u32,
+    ) -> Vec<Out> {
+        let own = match self.require_char_id(seq) {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
         let pool = &self.state.pool;
-        let Some(item) = (match db::items::find(pool, item_ref, &char_id).await {
+        let Some(item) = (match db::items::find(pool, item_ref, target_char).await {
             Ok(item) => item,
             Err(e) => {
                 warn!("admin remove (поиск): {e}");
@@ -3693,15 +3928,15 @@ impl Session {
             return vec![Self::err(seq, ErrorCode::ItemGone, "предмет не найден")];
         };
         tracing::info!(
-            "admin remove: {item_ref} ×{qty} из {char_id} (было {})",
+            "admin remove: {item_ref} ×{qty} из {target_char} (было {})",
             item.qty
         );
-        if qty >= i64::from(item.qty) {
+        let text = if qty >= i64::from(item.qty) {
             if let Err(e) = db::items::delete(pool, item_ref).await {
                 warn!("admin remove (delete): {e}");
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
-            let ev = out_event(
+            event_text(
                 "evt/item/removed",
                 None,
                 serde_json::to_value(ItemRemoved {
@@ -3709,8 +3944,7 @@ impl Session {
                     reason: ItemRemovalReason::Consumed,
                 })
                 .unwrap_or_default(),
-            );
-            vec![Self::ack_payload(seq, &serde_json::json!({})), ev]
+            )
         } else {
             let new_qty = i64::from(item.qty) - qty;
             if let Err(e) = db::items::set_qty(pool, item_ref, new_qty).await {
@@ -3719,7 +3953,7 @@ impl Session {
             }
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(new_qty));
-            let ev = out_event(
+            event_text(
                 "evt/item/state",
                 None,
                 serde_json::to_value(ItemState {
@@ -3727,9 +3961,193 @@ impl Session {
                     patch,
                 })
                 .unwrap_or_default(),
-            );
-            vec![Self::ack_payload(seq, &serde_json::json!({})), ev]
+            )
+        };
+        if target_char == own {
+            vec![
+                Self::ack_payload(seq, &serde_json::json!({})),
+                Out::Text(text),
+            ]
+        } else {
+            {
+                let world = self.state.world.lock().expect("мир");
+                world.send_to_char(target_char, text);
+            }
+            vec![Self::ack_payload(seq, &serde_json::json!({}))]
         }
+    }
+
+    /// M24: обновление трупа всем в локации (себе — Out, остальным —
+    /// в коннекты): лут инъекции/удаления виден без переоткрытия.
+    fn broadcast_corpse(&self, corpse_id: &str) -> Vec<Out> {
+        let current = self.location_id.clone().unwrap_or_default();
+        let text = {
+            let world = self.state.world.lock().expect("мир");
+            let Some(corpse) = world.corpse(corpse_id) else {
+                return Vec::new();
+            };
+            let loot_count = corpse.loot.iter().filter(|l| l.is_some()).count() as u32;
+            event_text(
+                "evt/corpse/created",
+                None,
+                serde_json::to_value(ld2_protocol::evt::CorpseCreated {
+                    entity: corpse.entity(),
+                    loot_count,
+                })
+                .unwrap_or_default(),
+            )
+        };
+        let own = self.selected_char_id.clone();
+        let world = self.state.world.lock().expect("мир");
+        let outs = vec![Out::Text(text.clone())];
+        for addr in world.chars_in_location(&current) {
+            if own.as_deref() != Some(addr.as_str()) {
+                world.send_to_char(&addr, text.clone());
+            }
+        }
+        outs
+    }
+
+    /// M24: выдача `qty` слотов в лут трупа (общий список) + broadcast.
+    async fn admin_give_corpse(
+        &mut self,
+        corpse_id: &str,
+        def_id: &str,
+        qty: i64,
+        seq: u32,
+    ) -> Vec<Out> {
+        if db::items::def(&self.state.pool, def_id)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого предмета")];
+        }
+        let current = self.location_id.clone().unwrap_or_default();
+        {
+            let world = self.state.world.lock().expect("мир");
+            match world.corpse(corpse_id) {
+                Some(corpse) if corpse.location_id == current => {}
+                _ => return vec![Self::err(seq, ErrorCode::TargetGone, "трупа нет в локации")],
+            }
+        }
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            for _ in 0..qty {
+                if world.corpse_loot_add(corpse_id, def_id).is_none() {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "трупа нет")];
+                }
+            }
+        }
+        tracing::info!("admin give corpse: {def_id} ×{qty} → {corpse_id}");
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        outs.extend(self.broadcast_corpse(corpse_id));
+        outs
+    }
+
+    /// M24: удаление слотов трупа (общий лут/«Внутри») + broadcast.
+    async fn admin_remove_corpse_slot(
+        &mut self,
+        corpse_id: &str,
+        inner: bool,
+        idx: usize,
+        qty: i64,
+        seq: u32,
+    ) -> Vec<Out> {
+        let current = self.location_id.clone().unwrap_or_default();
+        {
+            let world = self.state.world.lock().expect("мир");
+            match world.corpse(corpse_id) {
+                Some(corpse) if corpse.location_id == current => {}
+                _ => return vec![Self::err(seq, ErrorCode::TargetGone, "трупа нет в локации")],
+            }
+        }
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            if world
+                .corpse_slot_remove_at(corpse_id, inner, idx, qty as usize)
+                .is_none()
+            {
+                return vec![Self::err(seq, ErrorCode::ItemGone, "слотов нет")];
+            }
+        }
+        tracing::info!(
+            "admin remove corpse{}: {corpse_id} ×{qty} с {idx}",
+            if inner { " inner" } else { "" }
+        );
+        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
+        outs.extend(self.broadcast_corpse(corpse_id));
+        outs
+    }
+
+    /// M24: админ-лут монстра (`qty` копий) — попадёт в труп при
+    /// смерти, при респавне забудется (in-memory, one-shot).
+    async fn admin_give_monster(
+        &mut self,
+        mob_id: &str,
+        def_id: &str,
+        qty: i64,
+        seq: u32,
+    ) -> Vec<Out> {
+        if db::items::def(&self.state.pool, def_id)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            return vec![Self::err(seq, ErrorCode::ItemGone, "нет такого предмета")];
+        }
+        let current = self.location_id.clone().unwrap_or_default();
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            match world.mob(mob_id) {
+                Some(mob) if mob.location_id == current => {}
+                _ => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::TargetGone,
+                        "монстра нет в локации",
+                    )]
+                }
+            }
+            for _ in 0..qty {
+                if !world.mob_bonus_add(mob_id, def_id) {
+                    return vec![Self::err(seq, ErrorCode::TargetGone, "монстра нет")];
+                }
+            }
+        }
+        tracing::info!("admin give monster: {def_id} ×{qty} → {mob_id}");
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    /// M24: убрать `qty` позиций админ-лута монстра с `idx`.
+    async fn admin_remove_monster(
+        &mut self,
+        mob_id: &str,
+        idx: usize,
+        qty: i64,
+        seq: u32,
+    ) -> Vec<Out> {
+        let current = self.location_id.clone().unwrap_or_default();
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            match world.mob(mob_id) {
+                Some(mob) if mob.location_id == current => {}
+                _ => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::TargetGone,
+                        "монстра нет в локации",
+                    )]
+                }
+            }
+            if !world.mob_bonus_remove_at(mob_id, idx, qty as usize) {
+                return vec![Self::err(seq, ErrorCode::ItemGone, "лута монстра нет")];
+            }
+        }
+        tracing::info!("admin remove monster: {mob_id} ×{qty} с {idx}");
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
     }
 
     async fn item_drop(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
@@ -8871,20 +9289,6 @@ impl Session {
     /// M14/F19: может ли аккаунт писать в system-чат и удалять сообщения.
     fn is_moderator(&self) -> bool {
         matches!(self.role.as_str(), "admin" | "moderator")
-    }
-
-    /// M24: гейт админ-команд — только роль `admin` (§9 `E_PERMISSION`;
-    /// moderator проходит лишь модерацию чата, M14/F19).
-    fn require_admin(&self, seq: u32) -> Option<Out> {
-        if self.role == "admin" {
-            None
-        } else {
-            Some(Self::err(
-                seq,
-                ErrorCode::Permission,
-                "требуется роль admin",
-            ))
-        }
     }
 
     fn require_auth(&self, seq: u32) -> Option<Out> {

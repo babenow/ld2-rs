@@ -347,6 +347,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `admin.give.ask` | `{ target, def_id }` | `{}` + `evt/dialog/open` | − | M24: открыть execute-диалог количества выдачи; id `admin.give:<target>#<def_id>` (разделитель `#`); `E_ITEM_GONE` (нет def), `E_TARGET_GONE` (цель не поддерживается) |
 | `admin.remove.ask` | `{ target, ref }` | `{}` + `evt/dialog/open` | − | M24: execute-диалог количества удаления; id `admin.remove:<target>#<ref>`; F24a — `self` (ref = uid) |
 | `admin.god_mode` | `{ enabled }` | `{ enabled }` | − | M24: toggle «режим бога» (неуязвимость: урон не применяется вовсе); только `role=admin`, состояние сессионное (в мире) |
+| `admin.target.info` | `{ target }` | `{ items: [{ref, id, name, type, rarity, qty}] }` | + | M24: содержимое цели правой колонки — инвентарь (`self`/`char:<имя>`, оффлайн тоже), слоты трупа (`corpse:<id>`, ref `loot:`/`inner:`), админ-лут монстра (`monster:<id>`, ref `bonus:<idx>`); `E_TARGET_GONE` |
 
 **Ограничения текста чата:** `chat.max_len`, `chat.cooldown_s` из §5; превышение → `E_RATE_LIMITED` c `retry_after_s`.
 
