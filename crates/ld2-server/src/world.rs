@@ -332,6 +332,19 @@ pub struct World {
     /// M24: «режим бога» — персонажи с неуязвимостью (админ-toggle;
     /// tick::apply_mob_hit не применяет по ним урон вовсе).
     god_chars: HashSet<String>,
+    /// M24: надстройки сундуков (entity_id -> слоты ПОСЛЕ базовых
+    /// defs; `None` - взято/удалено; индексы стабильны - только
+    /// добавление в конец). In-memory до рестарта.
+    container_extra: HashMap<String, Vec<Option<String>>>,
+    /// M24: глобальные «удалено админом» базовые слоты сундуков
+    /// ((entity_id, idx); сильнее персонального `loot_taken` - не
+    /// возвращается и при респавне).
+    container_removed: HashSet<(String, usize)>,
+    /// M24: надстройки магазинов NPC (npc_id -> def_id; `None` -
+    /// удалено). In-memory до рестарта.
+    shop_extra: HashMap<String, Vec<Option<String>>>,
+    /// M24: удалённые админом контентные товары: (npc_id, таб, idx).
+    shop_removed: HashSet<(String, usize, usize)>,
     /// char_id → текущая локация (мишени агрессивных мобов).
     char_loc: HashMap<String, String>,
     /// (char_id, skill_id) → до какого момента кулдаун (epoch-с, §4/M14).
@@ -767,6 +780,90 @@ impl World {
             *slot = None;
         }
         Some(corpse.clone())
+    }
+
+    // ── M24: надстройки сундуков и магазинов (in-memory) ──────────────────
+
+    /// Слоты надстройки сундука (позиции после базовых defs).
+    pub fn container_extra(&self, entity_id: &str) -> Vec<Option<String>> {
+        self.container_extra
+            .get(entity_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Добавить `count` позиций в надстройку сундука.
+    pub fn container_extra_add(&mut self, entity_id: &str, def_id: &str, count: usize) {
+        let slots = self
+            .container_extra
+            .entry(entity_id.to_string())
+            .or_default();
+        for _ in 0..count {
+            slots.push(Some(def_id.to_string()));
+        }
+    }
+
+    /// Занять `count` слотов надстройки сундука с `idx` (`None` -
+    /// слотов нет; индексы не сдвигаются).
+    pub fn container_extra_take_at(&mut self, entity_id: &str, idx: usize, count: usize) -> bool {
+        match self.container_extra.get_mut(entity_id) {
+            Some(slots) if idx < slots.len() => {
+                let end = (idx + count).min(slots.len());
+                for slot in slots.iter_mut().take(end).skip(idx) {
+                    *slot = None;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Базовый слот сундука удалён админом (tombstone)?
+    pub fn container_base_removed(&self, entity_id: &str, idx: usize) -> bool {
+        self.container_removed
+            .contains(&(entity_id.to_string(), idx))
+    }
+
+    /// Пометить базовый слот сундука удалённым (глобально).
+    pub fn container_base_remove(&mut self, entity_id: &str, idx: usize) {
+        self.container_removed.insert((entity_id.to_string(), idx));
+    }
+
+    /// Позиции надстройки магазина (`None` - удалено).
+    pub fn shop_extra(&self, npc_id: &str) -> Vec<Option<String>> {
+        self.shop_extra.get(npc_id).cloned().unwrap_or_default()
+    }
+
+    /// Добавить `count` позиций в надстройку магазина.
+    pub fn shop_extra_add(&mut self, npc_id: &str, def_id: &str, count: usize) {
+        let slots = self.shop_extra.entry(npc_id.to_string()).or_default();
+        for _ in 0..count {
+            slots.push(Some(def_id.to_string()));
+        }
+    }
+
+    /// Удалить `count` позиций надстройки магазина с `idx`.
+    pub fn shop_extra_take_at(&mut self, npc_id: &str, idx: usize, count: usize) -> bool {
+        match self.shop_extra.get_mut(npc_id) {
+            Some(slots) if idx < slots.len() => {
+                let end = (idx + count).min(slots.len());
+                for slot in slots.iter_mut().take(end).skip(idx) {
+                    *slot = None;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Контентный товар магазина удалён админом?
+    pub fn shop_content_removed(&self, npc_id: &str, tab: usize, idx: usize) -> bool {
+        self.shop_removed.contains(&(npc_id.to_string(), tab, idx))
+    }
+
+    /// Пометить контентный товар магазина удалённым.
+    pub fn shop_content_remove(&mut self, npc_id: &str, tab: usize, idx: usize) {
+        self.shop_removed.insert((npc_id.to_string(), tab, idx));
     }
 
     pub fn chars_in_location(&self, location_id: &str) -> Vec<String> {
