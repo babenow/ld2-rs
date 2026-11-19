@@ -306,7 +306,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
 | `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
-| `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны посоха; **M24**: `stats.class` руны (warrior\|archer\|mage) — каст только своему классу, иначе `E_REQUIREMENT_ATTR` (нет поля — любому классу) |
+| `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны предмета с сокетами (M25 — не только посох); **M24**: `stats.class` руны (warrior\|archer\|mage) — каст только своему классу, иначе `E_REQUIREMENT_ATTR` (нет поля — любому классу) |
 | `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие); **M24**: инкрустация в **один** предмет — стак (qty>1) не заполняется целиком: целевая штука становится отдельной строкой (`evt/item/added`), старый стак −1 (`evt/item/state`), ack несёт `staff` уже новой строки |
 | `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune, char?}` | − | извлечение (цель надета — ack несёт `char`, M18/F32) |
 | `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после»; **M18/F54:** без активного камня → `E_INGREDIENTS`; `chance` уже включает бонус камня × рейты сервера |

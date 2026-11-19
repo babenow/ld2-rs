@@ -5883,7 +5883,8 @@ impl Session {
             )];
         };
         // M17/F30a: сокеты принимает любой предмет с `sockets > 0`
-        // (посохи и мечи равноправны); каст руны — только посох.
+        // (посохи и мечи равноправны); M25 — и каст с любого
+        // предмета с сокетами (раньше только посох).
         if staff_def.sockets == 0 {
             return vec![Self::err(
                 seq,
@@ -6372,7 +6373,10 @@ impl Session {
         if charges < cost_charges {
             return vec![Self::err(seq, ErrorCode::NoCharges, "руна разряжена")];
         }
-        if staff_def.item_type != "staff" || staff_def.sockets == 0 {
+        // M25 (заказчик): каст с любого предмета с сокетами — панель
+        // показывает руны мечей, активация должна работать (раньше
+        // «только посох» — E_NO_RUNE_SLOT на кнопке меча).
+        if staff_def.sockets == 0 {
             return vec![Self::err(
                 seq,
                 ErrorCode::NoRuneSlot,
@@ -6380,8 +6384,7 @@ impl Session {
             )];
         }
         // M24: класс руны (stats.class) — каст только своим классом
-        // (нет поля — любой, §11). После типа посоха: E_NO_RUNE_SLOT
-        // важнее (каст с меча — про тип, не про класс).
+        // (нет поля — любой, §11). После проверки сокетов.
         if let Some(class) = rune_def.stats.get("class").and_then(|v| v.as_str()) {
             let profile = db::characters::get(&pool, &char_id)
                 .await
@@ -10646,12 +10649,6 @@ pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_i
         let Ok(Some(rune_def)) = db::items::def(&state.pool, rune_def_id).await else {
             continue;
         };
-        // M24: класс руны — авто-приём только своего класса.
-        if let Some(class) = rune_def.stats.get("class").and_then(|v| v.as_str()) {
-            if profile.as_deref() != Some(class) {
-                continue;
-            }
-        }
         // M24: класс руны — авто-приём только своего класса.
         if let Some(class) = rune_def.stats.get("class").and_then(|v| v.as_str()) {
             if profile.as_deref() != Some(class) {

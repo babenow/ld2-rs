@@ -164,38 +164,19 @@ async fn rune_weapon_gem_armor_only_and_equipped_attrs() {
     );
 }
 
-/// M17/F30a: меч принимает руны (инкрустация/извлечение, damage в
-/// сокете), но каст руны остаётся привилегией посоха.
+/// M25 (заказчик): меч принимает руны и **кастует** — кнопки панели
+/// для рун меча активны (раньше каст был привилегией посоха).
 #[tokio::test]
-async fn sword_takes_runes_but_cannot_cast() {
+async fn sword_takes_runes_and_casts() {
     let Some(db_url) = common::test_url() else {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
     };
     let ws = common::start_ws_server(&db_url).await;
-    let (mut c, _login, _char) = in_world(&ws).await;
+    let (mut c, _login, char_id) = in_world(&ws).await; // warrior
 
     let sword = give(&mut c, "sword_knight").await; // sockets: 1 (контент)
-    let rune = give(&mut c, "rune_fire").await;
-    // M18/F31: сокеты видны в снапшоте до первой вставки — меч
-    // попадает в список целей инкрустации (окно их отфильтровывает).
-    let seq = c
-        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
-        .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "resync");
-    let snap = c.wait_event("evt/state/snapshot").await;
-    let item = snap["payload"]["char"]["inventory"]
-        .as_array()
-        .expect("инвентарь")
-        .iter()
-        .find(|i| i["uid"] == sword)
-        .expect("меч в инвентаре")
-        .clone();
-    let socks = item["sockets"].as_array().expect("сокеты меча");
-    assert_eq!(socks.len(), 1, "сокет до вставки: {item}");
-    assert!(socks[0]["rune"].is_null(), "сокет свободен: {item}");
-
-    // Инкрустация в меч — паритет с посохом; damage пишется в сокет.
+    let rune = give(&mut c, "rune_fury").await; // class: warrior
     let seq = c
         .send(
             "cmd/socket.insert",
@@ -204,14 +185,17 @@ async fn sword_takes_runes_but_cannot_cast() {
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "инкрустация в меч: {ack}");
-    assert_eq!(
-        ack["payload"]["staff"]["sockets"][0]["rune"]["damage"], 12,
-        "damage руны в сокете: {ack}"
-    );
     let removed = c.wait_event("evt/item/removed").await;
     assert_eq!(removed["payload"]["uid"], rune, "руна израсходована");
 
-    // Каст из меча — отказ: только посох (E_NO_RUNE_SLOT).
+    // Каст с меча разрешён (M25); воину нужна ярость — даём ресурс.
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("пул");
+    sqlx::query("UPDATE characters SET mp_cur = 50 WHERE id = $1")
+        .bind(&char_id)
+        .execute(&pool)
+        .await
+        .expect("ярость");
+    pool.close().await;
     let seq = c
         .send(
             "cmd/magic.rune_cast",
@@ -219,10 +203,9 @@ async fn sword_takes_runes_but_cannot_cast() {
         )
         .await;
     let ack = c.ack(seq).await;
-    assert_eq!(ack["error"]["code"], "E_NO_RUNE_SLOT", "каст с меча: {ack}");
+    assert_eq!(ack["result"], "ok", "каст с меча: {ack}");
 
-    // Извлечение обратно — руна возвращается в ack (без item/added:
-    // клиент применяет её из payload, см. store::socket_ack).
+    // Извлечение обратно — паритет с посохом.
     let seq = c
         .send(
             "cmd/socket.extract",
@@ -231,11 +214,7 @@ async fn sword_takes_runes_but_cannot_cast() {
         .await;
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "извлечение из меча: {ack}");
-    assert_eq!(ack["payload"]["rune"]["name"], "Руна огня", "{ack}");
-    assert_eq!(
-        ack["payload"]["rune"]["qty"], 1,
-        "руна вернулась (новый инстанс)"
-    );
+    assert_eq!(ack["payload"]["rune"]["name"], "Руна ярости", "{ack}");
 }
 
 #[tokio::test]
