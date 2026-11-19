@@ -220,6 +220,7 @@ pub fn session_config(
             },
         },
         // M18/F36: лимит текущих квестов (§5, DoD: конфиг, не код).
+        journal_ttl_s: cfg.world.journal_ttl_s,
         quests: QuestsConfig {
             max_active: g.quests.max_active,
         },

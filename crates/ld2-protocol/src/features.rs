@@ -28,6 +28,10 @@ pub struct SessionConfig {
     pub inventory: InventoryConfig,
     pub upgrade: UpgradeConfig,
     pub magic: MagicConfig,
+    /// M25: время жизни строки журнала (Лог), с; `0` — не удаляются;
+    /// старый сервер без поля → 30 (§11).
+    #[serde(default = "default_journal_ttl_s")]
+    pub journal_ttl_s: i64,
     /// M18/F36: лимит текущих квестов (§5, DoD: конфиг, не код).
     #[serde(default = "default_quest_max_active")]
     pub quests: QuestsConfig,
@@ -146,6 +150,11 @@ pub struct QuestsConfig {
 }
 
 /// Фолбэк лимита квестов для клиентов со старым сервером (§11).
+/// Фолбэк `journal_ttl_s` для сервера без поля (§11).
+fn default_journal_ttl_s() -> i64 {
+    30
+}
+
 fn default_quest_max_active() -> QuestsConfig {
     QuestsConfig { max_active: 10 }
 }
@@ -189,5 +198,11 @@ mod tests {
         }))
         .expect("deserialize");
         assert_eq!(v.rune_recharge_s, 30.0, "фолбэк для старого сервера");
+    }
+
+    /// M25/§11: старый сервер без journal_ttl_s → 30 с.
+    #[test]
+    fn journal_ttl_defaults_to_thirty() {
+        assert_eq!(default_journal_ttl_s(), 30);
     }
 }

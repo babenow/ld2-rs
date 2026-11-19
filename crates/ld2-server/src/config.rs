@@ -359,6 +359,10 @@ pub struct WorldSection {
     /// Для теста —60.
     #[serde(default = "default_drop_ttl")]
     pub drop_ttl_s: i64,
+    /// M25: время жизни строки журнала (Лог), с; `0` — не удаляются.
+    /// Запрашивается клиентом через session.start; по умолчанию 30.
+    #[serde(default = "default_journal_ttl")]
+    pub journal_ttl_s: i64,
     /// M20: дефолтный респавн мобов `{min_s, max_s}` — для мобов без
     /// `respawn` в контенте; нет поля и нет дефолта — моб не
     /// возрождается (план M20, решение 5).
@@ -368,6 +372,10 @@ pub struct WorldSection {
 
 const fn default_corpse_ttl() -> i64 {
     60
+}
+
+const fn default_journal_ttl() -> i64 {
+    30
 }
 
 const fn default_drop_ttl() -> i64 {

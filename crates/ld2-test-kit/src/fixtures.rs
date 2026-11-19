@@ -178,6 +178,7 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
             shows_chance: true,
             duration_s: 3.0,
         },
+        journal_ttl_s: 30,
         magic: MagicConfig {
             rune_recharge: "item".into(),
             rune_recharge_s: 30.0,

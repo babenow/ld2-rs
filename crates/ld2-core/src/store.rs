@@ -162,6 +162,8 @@ pub enum LogKind {
 pub struct LogEntry {
     pub kind: LogKind,
     pub text: String,
+    /// M25: момент добавления (epoch, мс) — истечение журнала.
+    pub at: i64,
 }
 
 /// Посещённая локация (ФР-03: кэш для истории; граф — v1.1, D9).
@@ -2317,7 +2319,27 @@ impl AppStore {
         self.log.push_back(LogEntry {
             kind,
             text: text.into(),
+            at: local_epoch_ms(),
         });
+    }
+
+    /// M25: удалить строки журнала старше TTL (порядок — от старых);
+    /// true — что-то удалено (нужен repaint). `ttl_s <= 0` — ничего
+    /// не удаляется (настройка сервера `journal_ttl_s`).
+    pub fn expire_log(&mut self, now_ms: i64, ttl_s: i64) -> bool {
+        if ttl_s <= 0 {
+            return false;
+        }
+        let limit = ttl_s.saturating_mul(1000);
+        let mut removed = false;
+        while let Some(front) = self.log.front() {
+            if now_ms.saturating_sub(front.at) < limit {
+                break;
+            }
+            self.log.pop_front();
+            removed = true;
+        }
+        removed
     }
 
     fn push_visited(&mut self, location: &LocationSnapshot) {
@@ -4987,6 +5009,29 @@ mod tests {
         assert!(store.crime_log_loaded);
         assert_eq!(store.crime_log.len(), 1);
         assert_eq!(store.crime_log[0].delta_s, 3471);
+    }
+
+    /// M25: журнал исчезающий — строки старше TTL удаляются, свежие
+    /// остаются; ttl <= 0 — ничего не удаляется.
+    #[test]
+    fn expire_log_removes_old_entries() {
+        let mut store = in_game();
+        store.log.clear(); // истечение — от старого конца
+        let base = store.log.len();
+        store.push_log(LogKind::System, "старая");
+        store.log.back_mut().expect("строка").at = local_epoch_ms() - 31_000;
+        store.push_log(LogKind::System, "свежая");
+        assert!(store.expire_log(local_epoch_ms(), 30), "старая удалена");
+        assert_eq!(store.log.len(), base + 1, "свежая осталась");
+        assert_eq!(store.log.back().expect("строка").text, "свежая");
+        // ttl <= 0 — не удаляем (сервер запретил истечение).
+        store.push_log(LogKind::System, "давняя");
+        store.log.back_mut().expect("строка").at = local_epoch_ms() - 60_000;
+        assert!(
+            !store.expire_log(local_epoch_ms(), 0),
+            "ttl0 — без истечения"
+        );
+        assert_eq!(store.log.len(), base + 2, "ничего не удалено");
     }
 
     #[test]

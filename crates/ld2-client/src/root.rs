@@ -920,6 +920,15 @@ impl Root {
         if stun_expired {
             self.store.stun = None;
         }
+        // M25: журнал локации исчезающий — строки старше TTL сервера
+        // (`journal_ttl_s`, по умолчанию 30 с) удаляются.
+        let log_ttl_s = self
+            .store
+            .session
+            .as_ref()
+            .map(|s| s.journal_ttl_s)
+            .unwrap_or(30);
+        let log_expired = self.store.expire_log(local_epoch_ms(), log_ttl_s);
         // M24 фикс: 4-й элемент — **длительность** (док поля), но
         // сравнивался с epoch-мс как дедлайн → старт уходил мгновенно
         // и прогресс-бар заточки не был виден. Теперь: старт + длительность.
@@ -1023,6 +1032,7 @@ impl Root {
             || rune_buffs_active
             || attack_bar_active
             || stun_expired
+            || log_expired
         {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
