@@ -974,19 +974,22 @@ impl Root {
         loc: &LocationSnapshot,
     ) -> Div {
         let lang = self.lang;
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .gap_2()
-            .items_center()
-            .flex_wrap()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(format!("{}:", t(lang, Key::ExitsLabel))),
-            );
+        // M25: вид по образцу заказчика — заголовок, разделитель
+        // «---» и вертикальный список; стрелка — направление выхода
+        // ИЗ локации (`dir`).
+        let mut col = div().flex().flex_col().gap_1().child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(format!("{}:", t(lang, Key::ExitsLabel))),
+        );
+        col = col.child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child("---"),
+        );
         if loc.exits.is_empty() {
-            row = row.child(
+            col = col.child(
                 div()
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::NoExits)),
@@ -994,15 +997,21 @@ impl Root {
         }
         for exit in &loc.exits {
             let id = exit.id.clone();
-            row = row.child(btn(
-                cx,
-                format!("→ {}", exit.label),
-                pal.panel,
-                pal.accent,
-                Click::MoveExit(id),
-            ));
+            let arrow = match exit.dir.as_deref() {
+                Some("north") => "↑",
+                Some("south") => "↓",
+                Some("east") => "→",
+                Some("west") => "←",
+                _ => "",
+            };
+            let label = if arrow.is_empty() {
+                exit.label.clone()
+            } else {
+                format!("{} {arrow}", exit.label)
+            };
+            col = col.child(btn(cx, label, pal.panel, pal.accent, Click::MoveExit(id)));
         }
-        row
+        col
     }
 
     fn entities_block(
