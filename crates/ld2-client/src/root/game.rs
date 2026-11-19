@@ -688,6 +688,8 @@ impl Root {
                             .child(t(self.lang, Key::AltNavHint))
                     }))
                     // Журнал/чат — последним (M14/F2/F7).
+                    // M25: журнал приклеен к низу центра (заказчик).
+                    .child(div().flex_grow_1().min_h_0())
                     .child(self.journal_block(cx, pal)),
             )
             // M25: правая колонка —20 %: история посещений (верх)
@@ -1954,9 +1956,11 @@ impl Root {
             .bg(rgb(pal.panel))
             .border_1()
             .border_color(rgb(pal.border))
-            // Блок занимает остаток высоты центра (M14/F7).
-            .flex_grow_1()
-            .min_h(px(180.0))
+            // M25: фиксированная высота — 20 % игрового поля
+            // (заказчик); к низу центра приклеивает spacer выше.
+            .h(gpui::relative(0.2))
+            .min_h(px(120.0))
+            .flex_shrink_0()
             .child(head)
             .child(body)
     }
@@ -2530,8 +2534,8 @@ fn stat_bar(
                         .bg(rgb(color)),
                 ),
         )
-        // Контур: тёмная копия со сдвигом1px + белая поверх —
-        // читается и на заливке, и на фоне трека.
+        // Плашка: подпись на фоне панели — контраст и к заливке,
+        // и к треку, без теней (указание заказчика).
         .child(
             div()
                 .absolute()
@@ -2539,24 +2543,18 @@ fn stat_bar(
                 .flex()
                 .items_center()
                 .justify_center()
-                .ml(px(1.0))
-                .mt(px(1.0))
-                .text_size(px(text_size))
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(0x18_18_18))
-                .child(text.clone()),
-        )
-        .child(
-            div()
-                .absolute()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(text_size))
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(0xff_ff_ff))
-                .child(text),
+                .child(
+                    div()
+                        .px_1()
+                        .rounded_md()
+                        .bg(rgb(pal.panel))
+                        .border_1()
+                        .border_color(rgb(pal.border))
+                        .text_size(px(text_size))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(pal.text))
+                        .child(text),
+                ),
         )
 }
 
