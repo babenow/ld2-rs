@@ -436,10 +436,19 @@ pub struct SkillGate {
 pub struct CombatSection {
     /// Период атак в бою, с (тик-луп `combat.attack`).
     pub attack_interval_s: f64,
+    /// M25: минимальная скорость атаки моба, с — пол интервала
+    /// (настройка сервера); контент-параметр моба `attack_speed`
+    /// (мс) прибавляется сверху — замедление.
+    #[serde(default = "default_min_attack_interval_s")]
+    pub min_attack_interval_s: f64,
     /// Базовый урон персонажа (v1 без формул оружия — см. отклонение).
     pub base_damage: i64,
     /// Шанс успешного побега (`cmd/combat.flee`), `0..=1`.
     pub flee_chance: f64,
+}
+
+const fn default_min_attack_interval_s() -> f64 {
+    0.5
 }
 
 /// M15/F24: уровень персонажа — квадратичная кривая опыта за
@@ -780,6 +789,16 @@ impl Config {
         }
 
         // [gameplay.combat] (M12.5)
+        // M25: минимальная скорость атаки моба — пол интервала.
+        if !(self.gameplay.combat.min_attack_interval_s.is_finite()
+            && self.gameplay.combat.min_attack_interval_s >= 0.1
+            && self.gameplay.combat.min_attack_interval_s <= 60.0)
+        {
+            out.push(format!(
+                "gameplay.combat.min_attack_interval_s: должен быть в 0.1..=60 (получено: {})",
+                self.gameplay.combat.min_attack_interval_s
+            ));
+        }
         if !(self.gameplay.combat.attack_interval_s >= 0.1
             && self.gameplay.combat.attack_interval_s <= 60.0)
         {

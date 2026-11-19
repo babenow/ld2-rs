@@ -49,15 +49,6 @@ use ely::theme::{Mode, Theme};
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
 const RELEASE: bool = !cfg!(debug_assertions);
 
-/// M14/F7: какая вкладка активна в блоке журнала (внизу центра).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LogTab {
-    /// Мир (лог событий) — свободная прокрутка.
-    Log,
-    /// Чат: каналы + фильтр + ввод (stick-to-bottom остаётся).
-    Chat,
-}
-
 /// M14/F15: перетаскивание окна за TitleBar (payload drag gpui).
 #[derive(Debug)]
 struct TitlebarDrag;
@@ -505,7 +496,6 @@ pub struct Root {
     /// M15/F26: прокрутка вкладки «Параметры» (16 строк).
     params_scroll: ScrollHandle,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
-    log_tab: LogTab,
     /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
     settings_tab: SettingsTab,
     settings_scroll: ScrollHandle,
@@ -790,7 +780,6 @@ impl Root {
             backpack_scroll: ScrollHandle::new(),
             quests_scroll: ScrollHandle::new(),
             params_scroll: ScrollHandle::new(),
-            log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
             host_editing: false,

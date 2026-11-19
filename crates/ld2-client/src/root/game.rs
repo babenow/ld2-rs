@@ -28,9 +28,7 @@ use ely::primitives::{IconName, Tooltip};
 use super::quests::goals_summary;
 use super::sheet::rarity_label;
 use super::social::show_party;
-use super::{
-    act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, Click, LogTab, PopupKind, Root,
-};
+use super::{act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, Click, PopupKind, Root};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -912,48 +910,49 @@ impl Root {
     // ── центр: локация, выходы, сущности ──────────────────────────────────
 
     fn location_block(&mut self, pal: &Palette, loc: &LocationSnapshot) -> Div {
-        // M14/F15: название локации — зелёное, если безопасная,
-        // красное, если небезопасная (pvp) — как в шапке.
-        let pvp = loc.flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
-        let name_color = if pvp { pal.danger } else { pal.success };
-        let mut head = div().flex().flex_row().gap_2().items_center().child(
-            div()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_size(px(16.0))
-                .text_color(rgb(name_color))
-                .child(loc.name.clone()),
-        );
+        // M25: название локации убрано (указание заказчика); остаются
+        // только флаги (pvp/safe/прочие).
+        let mut flags = div().flex().flex_row().gap_2().items_center();
+        let mut has_flags = false;
         for flag in &loc.flags {
             let (text, color) = match flag.as_str() {
                 "pvp" => ("PvP", pal.warn),
                 "safe" => ("safe", pal.success),
                 other => (other, pal.muted),
             };
-            head = head.child(
+            has_flags = true;
+            flags = flags.child(
                 div()
                     .text_size(px(12.0))
                     .text_color(rgb(color))
                     .child(text.to_string()),
             );
         }
-        head.child(
+        let mut col = div().flex().flex_col().gap_1();
+        if has_flags {
+            col = col.child(flags);
+        }
+        // M25: описание без фона карточки; под ним дивидер и сразу
+        // лог локации (указание заказчика).
+        col = col.child(
             div()
                 .id("location_text")
-                .flex_grow_1()
                 .h(px(110.0))
                 .overflow_y_scroll()
-                .px_2()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.border))
                 .child(
                     div()
                         .text_size(px(13.0))
                         .text_color(rgb(pal.text))
                         .child(loc.text.clone()),
                 ),
-        )
+        );
+        col = col.child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child("---"),
+        );
+        col.child(self.location_log(pal))
     }
 
     /// Тосты мира (world_error/notice) — как в egui-панели локации.
@@ -1841,120 +1840,80 @@ impl Root {
 
     // ── журнал мира (ФР-17) ───────────────────────────────────────────────
 
-    /// M14/F7: блок журнала внизу центра — две вкладки **Лог | Чат**.
-    /// Лог прокручивается свободно: приклеивание вниз только когда
-    /// пользователь и так внизу ([`scroll_at_bottom`]); иначе новые
-    /// строки копятся и показываются кнопкой «▼ N новых» в шапке.
-    fn journal_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let lang = self.lang;
-        let dark = pal.bg == crate::palette::palette("dark").bg;
+    /// M25: лог локации — внутри карточки описания (указание
+    /// заказчика); автопрокрутка вниз (M14/F13).
+    fn location_log(&mut self, pal: &Palette) -> Div {
         let len = self.store.log.len();
-
-        // M14/F13: лог **всегда промотан вниз** (замена свободной
-        // прокрутки F7): новая строка возвращает вниз; вручную
-        // поднять можно до прихода следующей строки.
-        // Фикс: весь контент — ОДИН ребёнок ScrollArea, поэтому
-        // scroll_to_item(len-1) бил в несуществующий индекс
-        // (child_bounds.get() = None → no-op). У gpui есть
-        // прямой scroll_to_bottom().
+        // M14/F13: лог всегда промотан вниз — новая строка возвращает
+        // вниз; вручную поднять можно до прихода следующей строки.
         if len != self.journal_seen && len > 0 {
             self.journal_scroll.scroll_to_bottom();
         }
         self.journal_seen = len;
-
-        // Шапка: вкладки «Журнал»/«Чат» + счётчик строк.
-        let active = match self.log_tab {
-            LogTab::Log => "log",
-            LogTab::Chat => "chat",
-        };
-        // M14/F12: иконки вкладок (метки без изменений).
-        let choices = vec![
-            Choice::new("log", t(lang, Key::LogLabel)).icon(IconName::BookOpen),
-            Choice::new("chat", t(lang, Key::ChLabel)).icon(IconName::MessageSquare),
-        ];
-        let this = cx.entity();
-        let mut head = div().flex().flex_row().items_center().gap_2();
-        head = head.child(Tabs::new("ld2-journal-tabs", choices, active).on_change(
-            move |value, _window, acx| {
-                let value = value.to_string();
-                this.update(acx, |root, cx| {
-                    root.log_tab = if value == "chat" {
-                        LogTab::Chat
-                    } else {
-                        LogTab::Log
-                    };
-                    cx.notify();
-                });
-            },
-        ));
-        head = head.child(div().flex_grow_1());
-        head = head.child(
-            div()
-                .text_size(px(12.0))
-                .text_color(rgb(pal.muted))
-                .child(len.to_string()),
-        );
-        // Тело активной вкладки.
-        // Тело: flex-колонка, где сам ScrollArea — flex-элемент
-        // (flex_grow_1 + min_h_0): его высота тогда определяется
-        // layout'ом, а не процентом от auto-родителя — иначе
-        // `size_full()` у Ely превращается в auto, контейнер растёт
-        // по контенту и сообщения выходят за границы без прокрутки.
+        let dark = pal.bg == crate::palette::palette("dark").bg;
         // M14/F8: размер шрифта лога из настроек (10…20 px).
         let log_font = self.config.log_font_px;
         // M14/F13: цвета/жирность строк боя — из настроек.
         let damage_color = self.config.log_damage_color.clone();
         let attack_color = self.config.log_attack_color.clone();
         let damage_bold = self.config.log_damage_bold;
-        let body =
-            match self.log_tab {
-                LogTab::Log => div().flex().flex_col().flex_grow_1().min_h_0().child(
-                    ScrollArea::new("ld2-log-scroll")
-                        .vertical()
-                        .track_scroll(&self.journal_scroll)
-                        .flex_grow_1()
-                        .min_h_0()
-                        .child(div().flex().flex_col().gap_1().children(
-                            self.store.log.iter().map(|entry| {
-                                // M14/F13: урон персонажу — цвет из
-                                // настроек (+жирный), его атаки — свой
-                                // цвет; прочие kinds — прежняя палитра.
-                                let (color, bold) = match entry.kind {
-                                    LogKind::CombatIn => (
-                                        hex_to_u32(&damage_color).unwrap_or(0xe0_6c_75),
-                                        damage_bold,
-                                    ),
-                                    LogKind::CombatOut => {
-                                        (hex_to_u32(&attack_color).unwrap_or(0x61_af_ef), false)
-                                    }
-                                    kind => (log_color(kind, dark), false),
-                                };
-                                // M17/F30f: **...** — жирные сегменты
-                                // (слова заклинания и урон), §8.
-                                let text = entry.text.clone();
-                                let line = div()
-                                    .text_size(px(log_font))
-                                    .text_color(rgb(color))
-                                    .when(bold, |line| line.font_weight(gpui::FontWeight::BOLD));
-                                if text.contains("**") {
-                                    line.flex().flex_row().children(
-                                        split_bold(&text).into_iter().map(|(seg, is_bold)| {
+        div().flex().flex_col().min_h_0().h(px(96.0)).child(
+            ScrollArea::new("ld2-log-scroll")
+                .vertical()
+                .track_scroll(&self.journal_scroll)
+                .flex_grow_1()
+                .min_h_0()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .children(self.store.log.iter().map(|entry| {
+                            let (color, bold) = match entry.kind {
+                                LogKind::CombatIn => {
+                                    (hex_to_u32(&damage_color).unwrap_or(0xe0_6c_75), damage_bold)
+                                }
+                                LogKind::CombatOut => {
+                                    (hex_to_u32(&attack_color).unwrap_or(0x61_af_ef), false)
+                                }
+                                kind => (log_color(kind, dark), false),
+                            };
+                            // M17/F30f: **...** — жирные сегменты
+                            // (слова заклинания и урон), §8.
+                            let text = entry.text.clone();
+                            let line = div()
+                                .text_size(px(log_font))
+                                .text_color(rgb(color))
+                                .when(bold, |line| line.font_weight(gpui::FontWeight::BOLD));
+                            if text.contains("**") {
+                                line.flex()
+                                    .flex_row()
+                                    .children(split_bold(&text).into_iter().map(
+                                        |(seg, is_bold)| {
                                             div()
                                                 .when(is_bold, |d| {
                                                     d.font_weight(gpui::FontWeight::BOLD)
                                                 })
                                                 .child(seg.to_string())
-                                        }),
-                                    )
-                                } else {
-                                    line.child(text)
-                                }
-                            }),
-                        )),
+                                        },
+                                    ))
+                            } else {
+                                line.child(text)
+                            }
+                        })),
                 ),
-                LogTab::Chat => self.chat_body(cx, pal),
-            };
+        )
+    }
 
+    /// M25: чат — внизу центра (лог переехал в карточку локации);
+    /// высота фиксированная —20 % игрового поля (заказчик).
+    fn journal_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let head = div().flex().flex_row().items_center().gap_2().child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(t(lang, Key::ChLabel)),
+        );
         div()
             .flex()
             .flex_col()
@@ -1965,13 +1924,20 @@ impl Root {
             .bg(rgb(pal.panel))
             .border_1()
             .border_color(rgb(pal.border))
-            // M25: фиксированная высота — 20 % игрового поля
-            // (заказчик); к низу центра приклеивает spacer выше.
+            // M25: фиксированная высота —20 % игрового поля; к низу
+            // центра приклеивает spacer выше.
             .h(gpui::relative(0.2))
             .min_h(px(120.0))
             .flex_shrink_0()
             .child(head)
-            .child(body)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_grow_1()
+                    .min_h_0()
+                    .child(self.chat_body(cx, pal)),
+            )
     }
 
     // ── модалки (паритет egui-окон) ───────────────────────────────────────
@@ -2543,8 +2509,8 @@ fn stat_bar(
                         .bg(rgb(color)),
                 ),
         )
-        // Побитовый инверс заливки бара и жирный — без фона и теней
-        // (указание заказчика).
+        // Тёмная полупрозрачная плашка + белый жирный — читается
+        // и на заливке, и на треке (выбор заказчика).
         .child(
             div()
                 .absolute()
@@ -2552,10 +2518,16 @@ fn stat_bar(
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(px(text_size))
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(!color & 0xff_ff_ff))
-                .child(text),
+                .child(
+                    div()
+                        .px_1()
+                        .rounded_md()
+                        .bg(gpui::rgba(0x00_00_00_99))
+                        .text_size(px(text_size))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(0xff_ff_ff))
+                        .child(text),
+                ),
         )
 }
 
