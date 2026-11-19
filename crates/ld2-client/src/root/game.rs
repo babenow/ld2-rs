@@ -1067,22 +1067,21 @@ impl Root {
         if player_corpse {
             row = row.child(div().text_color(rgb(pal.warn)).child("⚠"));
         }
-        // M25: босс — особая строка: череп, имя цветом опасности,
-        // глиф и имя текущей фазы (смена фазы приходит событием).
-        if let Some(boss) = &entity.boss {
+        // M25: босс — особая строка: череп перед именем (цвет
+        // опасности), глиф/имя текущей фазы и каст (подготовка).
+        if entity.boss.is_some() {
+            row = row.child(fa_icon("solid/skull", px(13.0), rgb(pal.danger)));
             row = row.child(
                 div()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .child(fa_icon("solid/skull", px(13.0), rgb(pal.danger)))
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(rgb(pal.danger))
-                            .child(entity.name.clone()),
-                    ),
+                    .flex_grow_1()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(rgb(pal.danger))
+                    .child(entity.name.clone()),
             );
+        } else {
+            row = row.child(div().flex_grow_1().child(entity.name.clone()));
+        }
+        if let Some(boss) = &entity.boss {
             row = row.child(
                 div()
                     .flex_row()
@@ -1099,8 +1098,14 @@ impl Root {
                             .child(boss.name.clone()),
                     ),
             );
-        } else {
-            row = row.child(div().flex_grow_1().child(entity.name.clone()));
+            if let Some(casting) = &boss.casting {
+                row = row.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(pal.warn))
+                        .child(tf(lang, Key::MobCasting, &[("{name}", casting.as_str())])),
+                );
+            }
         }
         if let Some(hp) = &entity.hp {
             row = row.child(bar(
@@ -1109,6 +1114,36 @@ impl Root {
                 pal.danger,
                 pal,
             ));
+        }
+        // M25: кого монстр атакует — «атакует вас» / «атакует {имя}».
+        if entity.kind == EntityKind::Monster {
+            if let Some(target_id) = entity.attacking.clone() {
+                let my_id = self.store.snapshot.as_ref().map(|s| s.char.id.clone());
+                if Some(target_id.as_str()) == my_id.as_deref() {
+                    row = row.child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.danger))
+                            .child(t(lang, Key::MobAttacksYou)),
+                    );
+                } else {
+                    let name = self.store.snapshot.as_ref().and_then(|s| {
+                        s.location
+                            .entities
+                            .iter()
+                            .find(|e| e.id == target_id && e.kind == EntityKind::Player)
+                            .map(|e| e.name.clone())
+                    });
+                    if let Some(name) = name {
+                        row = row.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(pal.warn))
+                                .child(tf(lang, Key::MobAttacks, &[("{name}", name.as_str())])),
+                        );
+                    }
+                }
+            }
         }
         // M25: прогресс-бар атаки монстра — по заполнении атака
         // (сервер шлёт evt/mob/attack с новым сроком).

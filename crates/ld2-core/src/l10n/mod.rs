@@ -228,6 +228,12 @@ pub enum Key {
     GutBtn,
     /// M24: руна чужого класса — кнопка каста недоступна.
     RuneWrongClass,
+    /// M25: монстр атакует вас (строка в списке).
+    MobAttacksYou,
+    /// M25: монстр атакует игрока — `{name}`.
+    MobAttacks,
+    /// M25: босс готовит навык — `{name}`.
+    MobCasting,
     /// M24: руна чужого класса — кнопка каста недоступна.
     InnerLabel,
     DialogHistory,
@@ -839,6 +845,9 @@ mod tests {
         Key::SkinBtn,
         Key::GutBtn,
         Key::RuneWrongClass,
+        Key::MobAttacksYou,
+        Key::MobAttacks,
+        Key::MobCasting,
         Key::InnerLabel,
         Key::DialogHistory,
         Key::ProfRank1,

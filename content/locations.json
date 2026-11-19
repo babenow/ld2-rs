@@ -557,14 +557,29 @@
                 "name": "Огненное дыхание",
                 "glyph": "f",
                 "cooldown_s": 20,
-                "damage": 25
+                "damage": 25,
+                "cast_s": 2
               },
               {
                 "id": "tail_swipe",
                 "name": "Удар хвостом",
                 "glyph": "t",
                 "cooldown_s": 12,
-                "damage": 15
+                "damage": 15,
+                "cast_s": 1
+              },
+              {
+                "id": "dragon_fury",
+                "name": "Ярость дракона",
+                "glyph": "r",
+                "cooldown_s": 45,
+                "damage": 0,
+                "cast_s": 3,
+                "self_buff": {
+                  "damage_mult": 1.5,
+                  "interval_mult": 0.85,
+                  "duration_s": 15
+                }
               }
             ]
           }
