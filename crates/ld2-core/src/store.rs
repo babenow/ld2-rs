@@ -206,6 +206,16 @@ pub enum NotifyKind {
     Upgrade,
 }
 
+/// M25: активный стан — всплывающее окно с прогрессбаром времени.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StunView {
+    pub title: String,
+    /// Срок стана (epoch, мс).
+    pub until_ms: i64,
+    /// Момент наложения (для прогрессбара).
+    pub started_ms: i64,
+}
+
 #[derive(Debug)]
 pub struct AppStore {
     pub screen: Screen,
@@ -322,6 +332,8 @@ pub struct AppStore {
     pub admin_catalog: Option<Vec<serde_json::Value>>,
     /// M24: состояние «режим бога» (эхо `cmd/admin.god_mode`).
     pub admin_god: bool,
+    /// M25: активный стан (окно с прогрессбаром; истекает в tick).
+    pub stun: Option<StunView>,
     /// M24: содержимое выбранной цели правой колонки (кроме self —
     /// тот приходит снапшотом).
     pub admin_target_items: Option<Vec<serde_json::Value>>,
@@ -725,6 +737,7 @@ impl AppStore {
             pickup_dirty: false,
             admin_catalog: None,
             admin_god: false,
+            stun: None,
             admin_target_items: None,
             npc_dialog: None,
             pending_delete: None,
@@ -1693,6 +1706,25 @@ impl AppStore {
                 }
                 vec![]
             }
+            // M25: дебафф контроля — стан открывает окно с
+            // прогрессбаром, остальные эффекты — строка журнала.
+            "evt/char/afflict" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::CharAfflict>(payload)
+                else {
+                    return vec![];
+                };
+                if ev.kind == "stun" {
+                    self.stun = Some(StunView {
+                        title: ev.title,
+                        until_ms: ev.until_ms,
+                        started_ms: local_epoch_ms(),
+                    });
+                } else {
+                    let secs = ((ev.until_ms - local_epoch_ms()).max(0) + 999) / 1000;
+                    self.push_log(LogKind::CombatIn, format!("{} — {} с", ev.title, secs));
+                }
+                vec![]
+            }
             "evt/char/death" => {
                 // ФР-06: сводка утраченного — модалка, закрывается подтверждением.
                 // M18: в журнал НЕ выводим — утраченное видно в самой
@@ -2470,6 +2502,7 @@ impl AppStore {
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
+        self.stun = None;
         self.admin_target_items = None;
         self.upgrade = None;
         self.socketing = None;
@@ -2545,6 +2578,7 @@ impl AppStore {
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
+        self.stun = None;
         self.admin_target_items = None;
         self.item_detail = None;
         self.death = None;

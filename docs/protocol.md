@@ -381,6 +381,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/mob/phase` | `{ entity_id, phase, name, glyph? }` | M25: босс перешёл в фазу по времени боя — глиф/имя в списке монстров + журнал |
 | `evt/mob/skill` | `{ entity_id, source_name, name, glyph? }` | M25: босс использовал навык — журнал |
 | `evt/mob/cast` | `{ entity_id, source_name, name, glyph?, ends_at }` | M25: босс начал каст (подготовка — не атакует) — «готовит: …» в списке/журнале |
+| `evt/char/afflict` | `{ kind: stun\|silence\|blind, title, until_ms }` | M25: наложен эффект приёма босса — стан: всплывающее окно с прогрессбаром; прочие — журнал |
 | `evt/corpse/created` | `{ entity: Entity, loot_count }` | труп (`was_player` различает игрока) |
 | `evt/corpse/looted` | `{ corpse_id, by, by_name, was_player }` | лут собран; если `was_player` — клиент показывает предупреждение о статусе |
 
@@ -463,6 +464,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_REQUIREMENT_ATTR` | не хватает атрибута/уровня |
 | `E_PROFESSION` | нет требуемой профессии |
 | `E_INVENTORY_FULL` | инвентарь заполнен |
+| `E_STUNNED` | M25: дебафф контроля (стан/немота/ослепление от приёмов босса) — команды заблокированы до `until_ms` |
 | `E_BUSY` | M24: персонаж занят разделкой — действия мира/развития отклоняются, пока идёт таймер (`item.*` — исключение, прерывает по M23) |
 | `E_BAD_QTY` | M24: количество в админ-диалоге вне допустимого диапазона (1..=999; для валюты `type=money` верхней границы нет — до INTEGER-стака) |
 | `E_ITEM_GONE` | предмета уже нет (двойное действие/обмен) |

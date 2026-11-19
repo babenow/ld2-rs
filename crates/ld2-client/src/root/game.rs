@@ -135,6 +135,44 @@ impl Root {
                     .into_any_element(),
             );
         }
+        // M25: стан — всплывающее окно с прогрессбаром времени
+        // (закрывается само по истечении — tick чистит store.stun).
+        if let Some(stun) = self.store.stun.clone() {
+            let total = (stun.until_ms - stun.started_ms).max(1);
+            let left = (stun.until_ms - self.now_ms()).max(0);
+            let frac = (1.0 - left as f32 / total as f32).clamp(0.0, 1.0);
+            let body = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .w(px(240.0))
+                        .h(px(10.0))
+                        .rounded_md()
+                        .bg(rgb(pal.border))
+                        .child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(frac))
+                                .rounded_md()
+                                .bg(rgb(pal.danger)),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(pal.muted))
+                        .child(format_duration(self.lang, left / 1000)),
+                )
+                .into_any_element();
+            return Some(
+                Dialog::new("ld2-stun", stun.title.clone(), |_window, _cx| {})
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
         if let Some(detail) = self.store.entity_detail.clone() {
             let name = detail["entity"]["name"].as_str().unwrap_or("?").to_string();
             let body = self.examine_view(cx, pal, detail).into_any_element();

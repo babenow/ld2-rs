@@ -113,6 +113,27 @@ pub struct BossSkill {
     /// M25: бафф на себя при применении.
     #[serde(default)]
     pub self_buff: Option<BossSelfBuff>,
+    /// M25: эффект на игроков при применении (стан/немота/ослепление).
+    #[serde(default)]
+    pub effect: Option<BossEffect>,
+}
+
+/// M25: эффект приёма босса на игроков локации.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BossEffect {
+    /// `stun` (ничего нельзя) | `silence` (нет магии) | `blind` (нет атак).
+    pub kind: String,
+    pub duration_s: i64,
+}
+
+/// M25: название эффекта контроля (сервер — истина, RU).
+pub fn effect_title(kind: &str) -> String {
+    match kind {
+        "stun" => "Оглушение".to_string(),
+        "silence" => "Немота".to_string(),
+        "blind" => "Ослепление".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// M25: исход такта навыков босса.
@@ -523,6 +544,9 @@ pub struct World {
     /// Снятие шкур: активные разделки (ключ — персонаж, одна за раз;
     /// сервер-джоб на5 с).
     harvest_jobs: HashMap<String, HarvestJob>,
+    /// M25: дебаффы контроля персонажей (эффекты приёмов босса):
+    /// char_id → (kind → until, epoch мс).
+    char_effects: HashMap<String, HashMap<String, i64>>,
 }
 
 impl World {
@@ -538,6 +562,28 @@ impl World {
     /// M24: есть ли у персонажа неуязвимость (тик, боевые расчёты).
     pub fn is_god(&self, char_id: &str) -> bool {
         self.god_chars.contains(char_id)
+    }
+
+    /// M25: наложить эффект контроля (не короче уже действующего);
+    /// true — применён.
+    pub fn set_char_effect(&mut self, char_id: &str, kind: &str, until_ms: i64) -> bool {
+        let entry = self.char_effects.entry(char_id.to_string()).or_default();
+        let fresh = entry.get(kind).copied().unwrap_or(0) < until_ms;
+        if fresh {
+            entry.insert(kind.to_string(), until_ms);
+        }
+        fresh
+    }
+
+    /// M25: срок активного эффекта (просроченный не активен).
+    pub fn char_effect_until(&self, char_id: &str, kind: &str, now_ms: i64) -> Option<i64> {
+        let until = self.char_effects.get(char_id)?.get(kind).copied()?;
+        (until > now_ms).then_some(until)
+    }
+
+    /// M25: активен ли эффект контроля сейчас.
+    pub fn char_effect_active(&self, char_id: &str, kind: &str, now_ms: i64) -> bool {
+        self.char_effect_until(char_id, kind, now_ms).is_some()
     }
 
     /// M17/F30f: чем бьёт персонаж — творительный из экипированного

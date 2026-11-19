@@ -558,7 +558,11 @@
                 "glyph": "f",
                 "cooldown_s": 20,
                 "damage": 25,
-                "cast_s": 2
+                "cast_s": 2,
+                "effect": {
+                  "kind": "blind",
+                  "duration_s": 4
+                }
               },
               {
                 "id": "tail_swipe",
@@ -566,7 +570,11 @@
                 "glyph": "t",
                 "cooldown_s": 12,
                 "damage": 15,
-                "cast_s": 1
+                "cast_s": 1,
+                "effect": {
+                  "kind": "stun",
+                  "duration_s": 3
+                }
               },
               {
                 "id": "dragon_fury",

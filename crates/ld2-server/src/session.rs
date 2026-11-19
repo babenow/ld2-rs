@@ -203,6 +203,11 @@ impl Session {
         if HARVEST_BLOCKED.contains(&env.msg_type.as_str()) && self.char_is_harvesting() {
             return vec![Self::err(seq, ErrorCode::Busy, "персонаж занят разделкой")];
         }
+        // M25: дебаффы контроля (эффекты приёмов босса): стан — ничего,
+        // немота — магия, ослепление — атаки/навыки.
+        if let Some((code, msg)) = self.char_effect_gate(env.msg_type.as_str()) {
+            return vec![Self::err(seq, code, msg)];
+        }
 
         match env.msg_type.as_str() {
             // auth / session (ADR-006, §4.5)
@@ -817,6 +822,26 @@ impl Session {
         ];
         // ФР-13/§5: реплей истории чата (server_history) после снапшота.
         outs.extend(self.chat_history_events().await);
+        // M25: активные дебаффы контроля после перезахода — на
+        // отображение (стан открывает окно с прогрессбаром).
+        {
+            let now = crate::time::now_ms();
+            let world = self.state.world.lock().expect("мир");
+            for kind in ["stun", "silence", "blind"] {
+                if let Some(until) = world.char_effect_until(&row.id, kind, now) {
+                    outs.push(out_event(
+                        "evt/char/afflict",
+                        None,
+                        serde_json::to_value(ld2_protocol::evt::CharAfflict {
+                            kind: kind.to_string(),
+                            title: crate::world::effect_title(kind),
+                            until_ms: until,
+                        })
+                        .unwrap_or_default(),
+                    ));
+                }
+            }
+        }
         outs
     }
 
@@ -3546,6 +3571,79 @@ impl Session {
     // ── M24: админ-панель предметов ──────────────────────────────────────────
 
     /// M24: активная разделка персонажа — блок действий (`E_BUSY`).
+    /// M25: активные дебаффы контроля → (код, сообщение) по типу
+    /// команды; блокируемые списки — внутри (const в fn).
+    fn char_effect_gate(&self, msg_type: &str) -> Option<(ErrorCode, String)> {
+        const STUN_BLOCKED: &[&str] = &[
+            "cmd/location.move",
+            "cmd/combat.attack",
+            "cmd/combat.stop",
+            "cmd/combat.flee",
+            "cmd/skill.use",
+            "cmd/magic.rune_cast",
+            "cmd/magic.scroll_cast",
+            "cmd/resource.gather",
+            "cmd/craft.start",
+            "cmd/quest.accept",
+            "cmd/quest.turn_in",
+            "cmd/quest.abandon",
+            "cmd/trade.open",
+            "cmd/trade.add_item",
+            "cmd/trade.set_gold",
+            "cmd/trade.propose",
+            "cmd/trade.accept",
+            "cmd/trade.cancel",
+            "cmd/party.create",
+            "cmd/party.invite",
+            "cmd/party.accept",
+            "cmd/party.decline",
+            "cmd/party.leave",
+            "cmd/party.kick",
+            "cmd/guild.create",
+            "cmd/guild.join",
+            "cmd/guild.leave",
+            "cmd/guild.invite",
+            "cmd/guild.kick",
+            "cmd/guild.rank_set",
+            "cmd/shop.buy",
+            "cmd/upgrade.preview",
+            "cmd/upgrade.start",
+            "cmd/socket.insert",
+            "cmd/socket.extract",
+            "cmd/item.use",
+            "cmd/item.drop",
+            "cmd/item.equip",
+            "cmd/item.unequip",
+            "cmd/item.move",
+            "cmd/corpse.harvest",
+        ];
+        const SILENCE_BLOCKED: &[&str] = &["cmd/magic.rune_cast", "cmd/magic.scroll_cast"];
+        const BLIND_BLOCKED: &[&str] = &["cmd/combat.attack", "cmd/skill.use"];
+        let now = crate::time::now_ms();
+        let char_id = self.selected_char_id.as_deref()?;
+        let (stunned, silenced, blinded) = {
+            let world = self.state.world.lock().expect("мир");
+            (
+                world.char_effect_active(char_id, "stun", now),
+                world.char_effect_active(char_id, "silence", now),
+                world.char_effect_active(char_id, "blind", now),
+            )
+        };
+        if stunned && STUN_BLOCKED.contains(&msg_type) {
+            return Some((ErrorCode::Stunned, "оглушён".to_string()));
+        }
+        if silenced && SILENCE_BLOCKED.contains(&msg_type) {
+            return Some((ErrorCode::Stunned, "немота — нельзя колдовать".to_string()));
+        }
+        if blinded && BLIND_BLOCKED.contains(&msg_type) {
+            return Some((
+                ErrorCode::Stunned,
+                "ослепление — нельзя атаковать".to_string(),
+            ));
+        }
+        None
+    }
+
     fn char_is_harvesting(&self) -> bool {
         let Some(char_id) = self.selected_char_id.as_ref() else {
             return false;

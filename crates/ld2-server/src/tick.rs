@@ -707,6 +707,25 @@ fn plan_combat(
                         });
                     }
                 }
+                // M25: эффект приёма — контроль над игроками локации
+                // (стан/немота/ослепление) + событие на отображение.
+                if let Some(effect) = &skill.effect {
+                    for addr in world.chars_in_location(&loc) {
+                        let until = now_ms + effect.duration_s.max(1) * 1000;
+                        if world.set_char_effect(&addr, &effect.kind, until) {
+                            push_event(
+                                &mut plan,
+                                &addr,
+                                "evt/char/afflict",
+                                &ld2_protocol::evt::CharAfflict {
+                                    kind: effect.kind.clone(),
+                                    title: crate::world::effect_title(&effect.kind),
+                                    until_ms: until,
+                                },
+                            );
+                        }
+                    }
+                }
             }
             crate::world::BossSkillTick::None => {}
         }

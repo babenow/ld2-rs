@@ -620,6 +620,17 @@ pub struct MobCast {
     pub ends_at: i64,
 }
 
+/// M25: дебафф контроля персонажа (эффект приёма босса): стан —
+/// всплывающее окно с прогрессбаром, остальные — журнал.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharAfflict {
+    /// `stun` | `silence` | `blind`.
+    pub kind: String,
+    pub title: String,
+    /// Срок действия (epoch, мс).
+    pub until_ms: i64,
+}
+
 /// M25: босс использовал навык.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MobSkill {
@@ -648,6 +659,7 @@ impl_events!(
     (MobPhase, "evt/mob/phase"),
     (MobSkill, "evt/mob/skill"),
     (MobCast, "evt/mob/cast"),
+    (CharAfflict, "evt/char/afflict"),
     (CorpseCreated, "evt/corpse/created"),
     (CorpseLooted, "evt/corpse/looted"),
     (CombatHit, "evt/combat/hit"),

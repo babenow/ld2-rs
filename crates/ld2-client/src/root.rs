@@ -911,6 +911,15 @@ impl Root {
         let rune_buffs_active = self.rune_buffs_active();
         // M25: бары атак монстров — живая заливка до следующей атаки.
         let attack_bar_active = self.attack_bars_active();
+        // M25: стан истёк — закрываем всплывающее окно.
+        let stun_expired = self
+            .store
+            .stun
+            .as_ref()
+            .is_some_and(|s| self.now_ms() >= s.until_ms);
+        if stun_expired {
+            self.store.stun = None;
+        }
         // M24 фикс: 4-й элемент — **длительность** (док поля), но
         // сравнивался с epoch-мс как дедлайн → старт уходил мгновенно
         // и прогресс-бар заточки не был виден. Теперь: старт + длительность.
@@ -1013,6 +1022,7 @@ impl Root {
             || rune_bar_active
             || rune_buffs_active
             || attack_bar_active
+            || stun_expired
         {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();

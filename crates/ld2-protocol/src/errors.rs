@@ -88,6 +88,9 @@ pub enum ErrorCode {
     BadQuantity,
     /// M24: персонаж занят разделкой — действия блокированы (`E_BUSY`).
     Busy,
+    /// M25: дебафф контроля (стан/немота/ослепление) — действия
+    /// блокированы (`E_STUNNED`).
+    Stunned,
     Internal,
     /// Код, неизвестный этой версии клиента (новее контракта / расширение сервера).
     Unknown(String),
@@ -146,6 +149,7 @@ impl ErrorCode {
             Self::TooLarge => "E_TOO_LARGE",
             Self::BadQuantity => "E_BAD_QTY",
             Self::Busy => "E_BUSY",
+            Self::Stunned => "E_STUNNED",
 
             Self::Internal => "E_INTERNAL",
             Self::Unknown(raw) => raw,
@@ -206,6 +210,7 @@ impl FromStr for ErrorCode {
             "E_TOO_LARGE" => Self::TooLarge,
             "E_BAD_QTY" => Self::BadQuantity,
             "E_BUSY" => Self::Busy,
+            "E_STUNNED" => Self::Stunned,
 
             "E_INTERNAL" => Self::Internal,
             other => Self::Unknown(other.to_string()),

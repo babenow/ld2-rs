@@ -56,7 +56,8 @@ fn temp_content() -> PathBuf {
                         "skills": [
                             { "id": "test_bolt", "name": "Испытательный разряд",
                               "glyph": "x", "cooldown_s": 5, "damage": 1,
-                              "cast_s": 1 }
+                              "cast_s": 1,
+                              "effect": { "kind": "stun", "duration_s": 2 } }
                         ]
                     }
                 }));
@@ -124,7 +125,32 @@ async fn boss_cast_phases_skills_and_attack_bar() {
         "навык: {skill}"
     );
 
-    // 4) Обычная атака после применения — бар атаки.
+    // 4) Эффект приёма — стан: событие и блок действий (E_STUNNED).
+    let afflict = c
+        .wait(|v| v["type"] == "evt/char/afflict" && v["payload"]["kind"] == "stun")
+        .await;
+    assert_eq!(afflict["payload"]["title"], "Оглушение", "{afflict}");
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_south" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_STUNNED",
+        "стан блокирует действия"
+    );
+    // Стан истёк (2 с) — действия снова доступны.
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_south" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "после стана можно");
+    // Вернуться в лес — продолжаем проверки бара/снапшота.
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "обратно в лес");
+
+    // 5) Обычная атака после применения — бар атаки.
     let attack = c
         .wait(|v| v["type"] == "evt/mob/attack" && v["payload"]["entity_id"] == "m_test_boss")
         .await;
