@@ -2509,44 +2509,6 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
         )
 }
 
-/// M25: комплементарный цвет (противоположный тон) — подпись на
-/// заливке бара; насыщенность/ярность с полами, чтобы читалось и на
-/// заливке, и на треке (указание заказчика: «более комплиментарный»).
-fn complementary(color: u32) -> u32 {
-    let r = ((color >> 16) & 0xff) as f32;
-    let g = ((color >> 8) & 0xff) as f32;
-    let b = (color & 0xff) as f32;
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let delta = max - min;
-    let hue = if delta == 0.0 {
-        0.0
-    } else if max == r {
-        60.0 * (((g - b) / delta) % 6.0)
-    } else if max == g {
-        60.0 * (((b - r) / delta) + 2.0)
-    } else {
-        60.0 * (((r - g) / delta) + 4.0)
-    };
-    let hue = (hue + 180.0).rem_euclid(360.0);
-    let sat = if max == 0.0 { 0.0 } else { delta / max };
-    let sat = sat.clamp(0.55, 0.95);
-    let val = (max / 255.0).clamp(0.65, 0.95);
-    let c = val * sat;
-    let x = c * (1.0 - (((hue / 60.0) % 2.0) - 1.0).abs());
-    let m = val - c;
-    let (r1, g1, b1) = match (hue / 60.0) as i32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let to8 = |v: f32| ((v * 255.0).round().clamp(0.0, 255.0)) as u32;
-    (to8(r1 + m) << 16) | (to8(g1 + m) << 8) | to8(b1 + m)
-}
-
 /// M25: виджет шкалы (заказчик): цифры ПОВЕРХ бара (внутри), заливка
 /// — `color` (ХП остаётся зелёным), текст белый с тёмным контуром —
 /// контраст и к заливке, и к фону трека. Параметры: цвет, максимум,
@@ -2581,8 +2543,8 @@ fn stat_bar(
                         .bg(rgb(color)),
                 ),
         )
-        // Комплементарный цвет к заливке бара и жирный — без фона
-        // и теней (указание заказчика: белый/плашка/инверс не подошли).
+        // Побитовый инверс заливки бара и жирный — без фона и теней
+        // (указание заказчика).
         .child(
             div()
                 .absolute()
@@ -2592,7 +2554,7 @@ fn stat_bar(
                 .justify_center()
                 .text_size(px(text_size))
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(complementary(color)))
+                .text_color(rgb(!color & 0xff_ff_ff))
                 .child(text),
         )
 }
