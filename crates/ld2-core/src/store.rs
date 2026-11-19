@@ -1490,10 +1490,12 @@ impl AppStore {
                         .find(|e| e.id == ev.entity_id)
                     {
                         mob_name = entity.name.clone();
+                        let casting = entity.boss.as_ref().and_then(|b| b.casting.clone());
                         entity.boss = Some(ld2_protocol::types::BossState {
                             phase: ev.phase,
                             name: ev.name.clone(),
                             glyph: ev.glyph.clone(),
+                            casting,
                         });
                     }
                 }
@@ -1504,10 +1506,48 @@ impl AppStore {
                 vec![]
             }
             // M25: босс использовал навык — журнал.
+            // M25: босс начал каст — журнал и «готовит …» в списке.
+            "evt/mob/cast" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobCast>(payload) else {
+                    return vec![];
+                };
+                let mut boss_name = ev.entity_id.clone();
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == ev.entity_id)
+                    {
+                        boss_name = entity.name.clone();
+                        if let Some(boss) = entity.boss.as_mut() {
+                            boss.casting = Some(ev.name.clone());
+                        }
+                    }
+                }
+                self.push_log(
+                    LogKind::CombatIn,
+                    format!("{boss_name} готовит: {}", ev.name),
+                );
+                vec![]
+            }
+            // M25: босс использовал навык — журнал, каст завершён.
             "evt/mob/skill" => {
                 let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobSkill>(payload) else {
                     return vec![];
                 };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == ev.entity_id)
+                    {
+                        if let Some(boss) = entity.boss.as_mut() {
+                            boss.casting = None;
+                        }
+                    }
+                }
                 self.push_log(
                     LogKind::CombatIn,
                     format!("{} использует {}", ev.source_name, ev.name),

@@ -57,9 +57,12 @@ pub struct Entity {
     pub was_player: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggro: Option<bool>,
-    /// M25: босс — текущая фаза (имя/глиф) для списка монстров.
+    /// M25: босс — текущая фаза (имя/глиф/каст) для списка монстров.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boss: Option<BossState>,
+    /// M25: кого монстр атакует (id цели) — «атакует вас/имя».
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attacking: Option<String>,
     /// M25: следующая атака моба (epoch, мс) — прогресс-бар атаки.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_attack_at: Option<i64>,
@@ -80,6 +83,9 @@ pub struct BossState {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glyph: Option<String>,
+    /// M25: имя навыка в касте (подготовка) — строка босса.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub casting: Option<String>,
 }
 
 /// Выход из локации; `dir` — опционное каноническое направление для хоткеев.

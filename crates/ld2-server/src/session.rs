@@ -1202,6 +1202,7 @@ impl Session {
                 boss: None,
                 next_attack_at: None,
                 attack_interval: None,
+                attacking: None,
                 extra,
             };
             let looted = (slots.is_empty() || remaining == 0)

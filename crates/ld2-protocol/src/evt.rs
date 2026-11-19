@@ -609,6 +609,17 @@ pub struct MobPhase {
     pub glyph: Option<String>,
 }
 
+/// M25: босс начал каст навыка (подготовка — босс не атакует).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobCast {
+    pub entity_id: String,
+    pub source_name: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+    pub ends_at: i64,
+}
+
 /// M25: босс использовал навык.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MobSkill {
@@ -636,6 +647,7 @@ impl_events!(
     (MobAttack, "evt/mob/attack"),
     (MobPhase, "evt/mob/phase"),
     (MobSkill, "evt/mob/skill"),
+    (MobCast, "evt/mob/cast"),
     (CorpseCreated, "evt/corpse/created"),
     (CorpseLooted, "evt/corpse/looted"),
     (CombatHit, "evt/combat/hit"),

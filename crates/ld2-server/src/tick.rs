@@ -654,43 +654,76 @@ fn plan_combat(
                 }
             }
         }
-        let (damage_mult, interval_mult) = world.boss_phase_mult(&mob_id);
-        // M25: интервал — множитель фазы босса и минимальное время
-        // атаки на сервере (systems::mob_attack_interval, пол 500 мс).
-        let interval_ms = crate::systems::mob_attack_interval(attack_interval_ms, interval_mult);
+        let (damage_mult, interval_mult) = world.boss_phase_mult(&mob_id, now_ms);
+        // M25: интервал — множитель фазы/баффа босса, минимальное
+        // время атаки на сервере (пол 500 мс) и замедление из
+        // контента (`attack_speed`, мс прибавкой к интервалу).
+        let interval_ms = crate::systems::mob_attack_interval(attack_interval_ms, interval_mult)
+            + world.mob_attack_speed(&mob_id);
         world.set_mob_next_attack(&mob_id, now_ms + interval_ms);
         world.set_mob_attack_interval(&mob_id, interval_ms);
-        // M25: навык босса (кулдаун истёк) — урон игрокам локации +
-        // событие «{имя} использует {навык}».
-        if let Some(skill) = world.boss_take_skill(&mob_id, now_ms) {
-            let skill_damage = ((skill.damage as f64) * damage_mult).round() as i64;
-            let boss_name = world
-                .mob(&mob_id)
-                .map(|m| m.name.clone())
-                .unwrap_or_default();
-            for addr in world.chars_in_location(&loc) {
-                push_event(
-                    &mut plan,
-                    &addr,
-                    "evt/mob/skill",
-                    &ld2_protocol::evt::MobSkill {
-                        entity_id: mob_id.clone(),
-                        source_name: boss_name.clone(),
-                        name: skill.name.clone(),
-                        glyph: skill.glyph.clone(),
-                    },
-                );
-                if skill_damage > 0 {
-                    plan.mob_hits.push(MobHit {
-                        char_id: addr,
-                        amount: skill_damage,
-                    });
+        // M25: навыки босса — каст (подготовка: босс не атакует) либо
+        // применение мгновенного/готового каста.
+        let (skill_tick, casting) = world.boss_skill_tick(&mob_id, now_ms);
+        let boss_name = world
+            .mob(&mob_id)
+            .map(|m| m.name.clone())
+            .unwrap_or_default();
+        match &skill_tick {
+            crate::world::BossSkillTick::Started(skill) => {
+                for addr in world.chars_in_location(&loc) {
+                    push_event(
+                        &mut plan,
+                        &addr,
+                        "evt/mob/cast",
+                        &ld2_protocol::evt::MobCast {
+                            entity_id: mob_id.clone(),
+                            source_name: boss_name.clone(),
+                            name: skill.name.clone(),
+                            glyph: skill.glyph.clone(),
+                            ends_at: now_ms + skill.cast_s.max(1) * 1000,
+                        },
+                    );
                 }
             }
+            crate::world::BossSkillTick::Applied(skill) => {
+                let skill_damage = ((skill.damage as f64) * damage_mult).round() as i64;
+                for addr in world.chars_in_location(&loc) {
+                    push_event(
+                        &mut plan,
+                        &addr,
+                        "evt/mob/skill",
+                        &ld2_protocol::evt::MobSkill {
+                            entity_id: mob_id.clone(),
+                            source_name: boss_name.clone(),
+                            name: skill.name.clone(),
+                            glyph: skill.glyph.clone(),
+                        },
+                    );
+                    if skill_damage > 0 {
+                        plan.mob_hits.push(MobHit {
+                            char_id: addr,
+                            amount: skill_damage,
+                        });
+                    }
+                }
+            }
+            crate::world::BossSkillTick::None => {}
+        }
+        // Подготовка/применение навыка — без обычной атаки в такт.
+        if casting
+            || matches!(
+                skill_tick,
+                crate::world::BossSkillTick::Started(_) | crate::world::BossSkillTick::Applied(_)
+            )
+        {
+            continue;
         }
         let Some(victim) = world.chars_in_location(&loc).into_iter().next() else {
             continue;
         };
+        // M25: цель атаки — для строки «атакует вас/имя» в списке.
+        world.set_mob_target(&mob_id, &victim);
         let amount = ((world.mob_damage(&mob_id) as f64) * damage_mult).round() as i64;
         if amount <= 0 {
             continue;

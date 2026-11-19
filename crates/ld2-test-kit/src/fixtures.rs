@@ -248,6 +248,7 @@ pub fn village() -> LocationSnapshot {
             boss: None,
             next_attack_at: None,
             attack_interval: None,
+            attacking: None,
             extra: Default::default(),
         }],
         extra: Default::default(),
@@ -277,6 +278,7 @@ pub fn forest() -> LocationSnapshot {
                 boss: None,
                 next_attack_at: None,
                 attack_interval: None,
+                attacking: None,
                 extra: Default::default(),
             },
             Entity {
@@ -290,6 +292,7 @@ pub fn forest() -> LocationSnapshot {
                 boss: None,
                 next_attack_at: None,
                 attack_interval: None,
+                attacking: None,
                 extra: Default::default(),
             },
             Entity {
@@ -303,6 +306,7 @@ pub fn forest() -> LocationSnapshot {
                 boss: None,
                 next_attack_at: None,
                 attack_interval: None,
+                attacking: None,
                 extra: Default::default(),
             },
         ],

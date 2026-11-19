@@ -87,7 +87,17 @@ pub struct BossPhase {
     pub interval_mult: f64,
 }
 
-/// M25: навык босса — кулдаун и урон (применяется к игрокам локации).
+/// M25: бафф босса на себя при применении навыка.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BossSelfBuff {
+    #[serde(default = "boss_mult_one")]
+    pub damage_mult: f64,
+    #[serde(default = "boss_mult_one")]
+    pub interval_mult: f64,
+    pub duration_s: i64,
+}
+
+/// M25: навык босса — кулдаун, каст (подготовка) и урон/бафф.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct BossSkill {
     pub id: String,
@@ -96,6 +106,31 @@ pub struct BossSkill {
     pub glyph: Option<String>,
     pub cooldown_s: i64,
     pub damage: i64,
+    /// M25: время применения, с;0 — мгновенно. Во время каста босс
+    /// не атакует (подготовка).
+    #[serde(default)]
+    pub cast_s: i64,
+    /// M25: бафф на себя при применении.
+    #[serde(default)]
+    pub self_buff: Option<BossSelfBuff>,
+}
+
+/// M25: исход такта навыков босса.
+#[derive(Debug, Clone)]
+pub enum BossSkillTick {
+    None,
+    /// Навык начал кастоваться (подготовка).
+    Started(BossSkill),
+    /// Навык применён (мгновенный или завершённый каст).
+    Applied(BossSkill),
+}
+
+/// M25: активный каст босса.
+#[derive(Debug, Clone)]
+pub struct BossCast {
+    pub skill: BossSkill,
+    /// Epoch, мс завершения подготовки.
+    pub ends_at: i64,
 }
 
 /// M25: конфиг босса из контента (`boss: {phases, skills}`).
@@ -123,6 +158,12 @@ pub struct BossRuntime {
     pub next_skill_at: i64,
     /// Ротация навыков.
     pub skill_i: usize,
+    /// M25: активный каст — во время подготовки босс не атакует.
+    pub casting: Option<BossCast>,
+    /// M25: бафф на себя (множители действуют до buff_until).
+    pub buff_until: i64,
+    pub buff_damage_mult: f64,
+    pub buff_interval_mult: f64,
 }
 
 impl BossRuntime {
@@ -133,6 +174,19 @@ impl BossRuntime {
             phase: 0,
             next_skill_at: 0,
             skill_i: 0,
+            casting: None,
+            buff_until: 0,
+            buff_damage_mult: 1.0,
+            buff_interval_mult: 1.0,
+        }
+    }
+
+    /// M25: применить self_buff навыка (множители до duration_s).
+    fn apply_self_buff(&mut self, skill: &BossSkill, now_ms: i64) {
+        if let Some(buff) = &skill.self_buff {
+            self.buff_until = now_ms + buff.duration_s.max(1) * 1000;
+            self.buff_damage_mult = buff.damage_mult.max(0.0);
+            self.buff_interval_mult = buff.interval_mult.max(0.05);
         }
     }
 }
@@ -184,6 +238,11 @@ pub struct LiveMob {
     pub boss: Option<BossRuntime>,
     /// M25: интервал атаки, мс (бар клиента;0 — ещё не планировался).
     pub attack_interval: i64,
+    /// M25: прибавка к интервалу атаки, мс (content `attack_speed` —
+    /// замедление скорости атаки моба).
+    pub attack_speed: i64,
+    /// M25: кого монстр атакует (id цели) — «атакует вас/имя».
+    pub target: Option<String>,
 }
 
 impl LiveMob {
@@ -210,10 +269,12 @@ impl LiveMob {
                     phase: b.phase as u32,
                     name: p.name.clone(),
                     glyph: p.glyph.clone(),
+                    casting: b.casting.as_ref().map(|c| c.skill.name.clone()),
                 })
             }),
             next_attack_at: (self.next_attack_at > 0).then_some(self.next_attack_at),
             attack_interval: (self.attack_interval > 0).then_some(self.attack_interval),
+            attacking: self.target.clone(),
             extra: Default::default(),
         }
     }
@@ -294,6 +355,7 @@ impl ResourceNode {
             boss: None,
             next_attack_at: None,
             attack_interval: None,
+            attacking: None,
             extra: Default::default(),
         }
     }
@@ -338,6 +400,7 @@ impl LiveCorpse {
             boss: None,
             next_attack_at: None,
             attack_interval: None,
+            attacking: None,
             extra,
         }
     }
@@ -746,6 +809,11 @@ impl World {
                         .and_then(|v| serde_json::from_value::<BossConfig>(v.clone()).ok())
                         .map(BossRuntime::new),
                     attack_interval: 0,
+                    attack_speed: extra
+                        .get("attack_speed")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    target: None,
                 };
                 // M20: шаблон сида — источник данных при респавне.
                 self.mob_seed.insert(e.id.clone(), mob.clone());
@@ -1088,28 +1156,61 @@ impl World {
 
     /// M25: множители текущей фазы босса (урон, интервал); не босс —
     /// единицы (интервал не опуска ниже пола — см. systems).
-    pub fn boss_phase_mult(&self, mob_id: &str) -> (f64, f64) {
+    pub fn boss_phase_mult(&self, mob_id: &str, now_ms: i64) -> (f64, f64) {
         let Some(boss) = self.mobs.get(mob_id).and_then(|m| m.boss.as_ref()) else {
             return (1.0, 1.0);
         };
-        match boss.cfg.phases.get(boss.phase) {
+        let (mut damage, mut interval) = match boss.cfg.phases.get(boss.phase) {
             Some(p) => (p.damage_mult.max(0.0), p.interval_mult.max(0.05)),
             None => (1.0, 1.0),
+        };
+        // M25: бафф босса на себя (self_buff) — множит фазу.
+        if now_ms < boss.buff_until {
+            damage *= boss.buff_damage_mult;
+            interval *= boss.buff_interval_mult;
         }
+        (damage, interval)
     }
 
-    /// M25: готовый навык босса (кулдаун истёк) — ротация; планирует
-    /// следующий каст.
-    pub fn boss_take_skill(&mut self, mob_id: &str, now_ms: i64) -> Option<BossSkill> {
-        let mob = self.mobs.get_mut(mob_id)?;
-        let boss = mob.boss.as_mut()?;
+    /// M25: такт навыков босса — каст (подготовка, босс не атакует)
+    /// либо применение; ротация навыков, self_buff применяется при
+    /// выданном умении. `(исход, идёт каст)`.
+    pub fn boss_skill_tick(&mut self, mob_id: &str, now_ms: i64) -> (BossSkillTick, bool) {
+        let Some(mob) = self.mobs.get_mut(mob_id) else {
+            return (BossSkillTick::None, false);
+        };
+        let Some(boss) = mob.boss.as_mut() else {
+            return (BossSkillTick::None, false);
+        };
+        // Завершение каста → применение (кулдаун от конца подготовки).
+        if let Some(cast) = boss.casting.clone() {
+            if now_ms >= cast.ends_at {
+                boss.casting = None;
+                boss.next_skill_at = now_ms + cast.skill.cooldown_s.max(1) * 1000;
+                boss.apply_self_buff(&cast.skill, now_ms);
+                return (BossSkillTick::Applied(cast.skill), false);
+            }
+            return (BossSkillTick::None, true);
+        }
         if boss.cfg.skills.is_empty() || now_ms < boss.next_skill_at {
-            return None;
+            return (BossSkillTick::None, false);
         }
         let skill = boss.cfg.skills[boss.skill_i % boss.cfg.skills.len()].clone();
         boss.skill_i += 1;
-        boss.next_skill_at = now_ms + skill.cooldown_s.max(1) * 1000;
-        Some(skill)
+        if skill.cast_s <= 0 {
+            // Мгновенный навык — применяем сразу.
+            boss.next_skill_at = now_ms + skill.cooldown_s.max(1) * 1000;
+            boss.apply_self_buff(&skill, now_ms);
+            return (BossSkillTick::Applied(skill), false);
+        }
+        // Каст: во время подготовки босс не атакует.
+        let ends_at = now_ms + skill.cast_s.max(1) * 1000;
+        boss.next_skill_at = ends_at + skill.cooldown_s.max(1) * 1000;
+        boss.casting = Some(BossCast {
+            skill: skill.clone(),
+            ends_at,
+        });
+        (BossSkillTick::Started(skill), true)
     }
 
     /// M25: состояние босса для события смены фазы (имя/глиф фазы).
@@ -1120,11 +1221,27 @@ impl World {
             phase: boss.phase as u32,
             name: p.name.clone(),
             glyph: p.glyph.clone(),
+            casting: boss.casting.as_ref().map(|c| c.skill.name.clone()),
         })
     }
 
     /// M25: интервал атаки моба для бара клиента (запоминается при
     /// планировании атаки).
+    /// M25: прибавка к интервалу атаки из контента (замедление).
+    pub fn mob_attack_speed(&self, mob_id: &str) -> i64 {
+        self.mobs
+            .get(mob_id)
+            .map(|m| m.attack_speed.max(0))
+            .unwrap_or(0)
+    }
+
+    /// M25: запомнить цель атаки моба (для списка «атакует …»).
+    pub fn set_mob_target(&mut self, mob_id: &str, target: &str) {
+        if let Some(mob) = self.mobs.get_mut(mob_id) {
+            mob.target = Some(target.to_string());
+        }
+    }
+
     pub fn set_mob_attack_interval(&mut self, mob_id: &str, ms: i64) {
         if let Some(mob) = self.mobs.get_mut(mob_id) {
             mob.attack_interval = ms;
@@ -1258,6 +1375,7 @@ impl World {
                 boss: None,
                 next_attack_at: None,
                 attack_interval: None,
+                attacking: None,
                 extra,
             });
         }

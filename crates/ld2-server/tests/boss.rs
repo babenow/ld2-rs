@@ -1,6 +1,7 @@
 //! M25: босс-дракон против реального сервера (гейт:
-//! LD2_TEST_DATABASE_URL): фазы по времени боя, навыки на кулдауне,
-//! бар атаки монстров и минимальное время атаки на сервере.
+//! LD2_TEST_DATABASE_URL): фазы по времени боя, каст навыков
+//! (подготовка — босс не атакует), навыки на кулдауне, бар атаки
+//! монстров, цель атаки и минимальное время атаки на сервере.
 
 mod common;
 
@@ -8,8 +9,9 @@ use common::in_world;
 use serde_json::json;
 use std::path::PathBuf;
 
-/// Временный контент: копия каталога + тест-босс в лесу (фазы через
-/// 1 с, навык с кулдауном 1 с) — паттерн tests/rune_effects.rs.
+/// Временный контент: копия каталога + тест-босс в лесу — фазы через
+/// 1 с, навык с кастом 1 с/кулдауном 5 с, замедление атаки +500 мс
+/// (паттерн tests/rune_effects.rs).
 fn temp_content() -> PathBuf {
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
     let tmp = std::env::temp_dir().join(format!(
@@ -43,6 +45,7 @@ fn temp_content() -> PathBuf {
                     "aggro": true,
                     "difficulty": 5,
                     "damage": 1,
+                    "attack_speed": 500,
                     "boss_ai": {
                         "phases": [
                             { "after_s": 0, "name": "Пробуждение", "glyph": "a",
@@ -52,7 +55,8 @@ fn temp_content() -> PathBuf {
                         ],
                         "skills": [
                             { "id": "test_bolt", "name": "Испытательный разряд",
-                              "glyph": "x", "cooldown_s": 1, "damage": 1 }
+                              "glyph": "x", "cooldown_s": 5, "damage": 1,
+                              "cast_s": 1 }
                         ]
                     }
                 }));
@@ -63,11 +67,11 @@ fn temp_content() -> PathBuf {
     tmp
 }
 
-/// M25: босс — фазы по времени боя (событие с глифом), навык на
-/// кулдауне, бар атаки в снапшоте и пол минимального времени атаки
-/// (конфиг 0.1 с → сервер держит 500 мс).
+/// M25: босс — каст (подготовка), фазы по времени боя (глиф), навык
+/// после каста, бар атаки/цель в снапшоте; пол атаки500 мс + замедление
+/// контента500 мс → интервал1000 мс (конфиг в тесте0.1 с).
 #[tokio::test]
-async fn boss_phases_skills_and_attack_bar() {
+async fn boss_cast_phases_skills_and_attack_bar() {
     let Some(db_url) = common::test_url() else {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
@@ -82,25 +86,22 @@ async fn boss_phases_skills_and_attack_bar() {
         })
         .await
     );
-    let (mut c, _login, _char) = in_world(&ws).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
 
-    // В лес — босс агрессивен, первая атака сразу при входе.
+    // В лес — босс агрессивен, каст начинается при входе.
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
 
-    // 1) Бар атаки: событие с интервалом = пол 500 мс.
-    let attack = c
-        .wait(|v| v["type"] == "evt/mob/attack" && v["payload"]["entity_id"] == "m_test_boss")
+    // 1) Каст (подготовка) — событие до применения.
+    let cast = c
+        .wait(|v| v["type"] == "evt/mob/cast" && v["payload"]["entity_id"] == "m_test_boss")
         .await;
-    assert_eq!(
-        attack["payload"]["interval_ms"], 500,
-        "минимальное время атаки: {attack}"
-    );
+    assert_eq!(cast["payload"]["name"], "Испытательный разряд", "{cast}");
     assert!(
-        attack["payload"]["next_attack_at"].as_i64().unwrap_or(0) > 0,
-        "срок следующей атаки: {attack}"
+        cast["payload"]["ends_at"].as_i64().unwrap_or(0) > 0,
+        "срок каста: {cast}"
     );
 
     // 2) Фаза по времени боя (after_s = 1) — событие с глифом.
@@ -114,7 +115,7 @@ async fn boss_phases_skills_and_attack_bar() {
     assert_eq!(phase["payload"]["name"], "Ярость", "имя фазы: {phase}");
     assert_eq!(phase["payload"]["glyph"], "b", "глиф фазы: {phase}");
 
-    // 3) Навык босса (кулдаун 1 с) — событие для журнала.
+    // 3) Навык применён после каста (кулдаун5 с).
     let skill = c
         .wait(|v| v["type"] == "evt/mob/skill" && v["payload"]["entity_id"] == "m_test_boss")
         .await;
@@ -122,12 +123,21 @@ async fn boss_phases_skills_and_attack_bar() {
         skill["payload"]["name"], "Испытательный разряд",
         "навык: {skill}"
     );
+
+    // 4) Обычная атака после применения — бар атаки.
+    let attack = c
+        .wait(|v| v["type"] == "evt/mob/attack" && v["payload"]["entity_id"] == "m_test_boss")
+        .await;
     assert_eq!(
-        skill["payload"]["source_name"], "Испытательный дракон",
-        "источник: {skill}"
+        attack["payload"]["interval_ms"], 1000,
+        "пол500 + замедление500: {attack}"
+    );
+    assert!(
+        attack["payload"]["next_attack_at"].as_i64().unwrap_or(0) > 0,
+        "срок следующей атаки: {attack}"
     );
 
-    // 4) Снапшот: босс-состояние и параметры бара у монстра.
+    // 5) Снапшот: фаза, бар, цель атаки.
     let seq = c
         .send("cmd/state.resync", json!({ "last_state_version": 1 }))
         .await;
@@ -144,9 +154,13 @@ async fn boss_phases_skills_and_attack_bar() {
         boss["boss"]["phase"].as_u64().unwrap_or(0) >= 1,
         "фаза в снапшоте: {boss}"
     );
-    assert_eq!(boss["attack_interval"], 500, "интервал: {boss}");
+    assert_eq!(boss["attack_interval"], 1000, "интервал: {boss}");
     assert!(
         boss["next_attack_at"].as_i64().unwrap_or(0) > 0,
         "бар: {boss}"
+    );
+    assert_eq!(
+        boss["attacking"], char_id,
+        "монстр атакует персонажа: {boss}"
     );
 }
