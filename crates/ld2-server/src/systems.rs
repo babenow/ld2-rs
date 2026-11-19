@@ -294,6 +294,16 @@ pub fn resource_name(profile: &str) -> &'static str {
     }
 }
 
+/// M25: минимальное время атаки моба на сервере, мс — жёсткий пол
+/// независимо от конфига (защита от «пулемёта» и осмысленный бар).
+pub const MIN_MOB_ATTACK_MS: i64 = 500;
+
+/// M25: интервал атаки моба — конфиг × множитель фазы босса, но не
+/// ниже [`MIN_MOB_ATTACK_MS`].
+pub fn mob_attack_interval(base_ms: i64, phase_mult: f64) -> i64 {
+    ((base_ms as f64 * phase_mult).round() as i64).max(MIN_MOB_ATTACK_MS)
+}
+
 /// Прирост ярости за урон (воин): доля `rage_gain_pct`, округление
 /// вверх; не-воин или нулевой урон → 0.
 pub fn rage_gain(res: &crate::config::ResourceSection, profile: &str, damage: i64) -> i64 {
@@ -886,5 +896,22 @@ mod tests {
         assert_eq!(rage_gain(res, "warrior", 1), 1, "0.15 → 1");
         assert_eq!(rage_gain(res, "mage", 10), 0);
         assert_eq!(rage_gain(res, "warrior", 0), 0);
+    }
+
+    /// M25: пол минимального времени атаки и ускорение фазы босса.
+    #[test]
+    fn mob_attack_interval_respects_floor() {
+        assert_eq!(mob_attack_interval(1000, 1.0), 1000, "обычный");
+        assert_eq!(
+            mob_attack_interval(100, 1.0),
+            MIN_MOB_ATTACK_MS,
+            "конфиг ниже пола"
+        );
+        assert_eq!(mob_attack_interval(1000, 0.7), 700, "фаза ускоряет");
+        assert_eq!(
+            mob_attack_interval(500, 0.1),
+            MIN_MOB_ATTACK_MS,
+            "пол держится"
+        );
     }
 }

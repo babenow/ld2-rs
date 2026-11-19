@@ -1458,6 +1458,62 @@ impl AppStore {
                 );
                 vec![]
             }
+            // M25: моб атаковал — бар атаки (следующая атака/интервал).
+            "evt/mob/attack" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobAttack>(payload) else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == ev.entity_id)
+                    {
+                        entity.next_attack_at = Some(ev.next_attack_at);
+                        entity.attack_interval = Some(ev.interval_ms);
+                    }
+                }
+                vec![]
+            }
+            // M25: босс сменил фазу — глиф/имя в списке + журнал.
+            "evt/mob/phase" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobPhase>(payload) else {
+                    return vec![];
+                };
+                let mut mob_name = ev.entity_id.clone();
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == ev.entity_id)
+                    {
+                        mob_name = entity.name.clone();
+                        entity.boss = Some(ld2_protocol::types::BossState {
+                            phase: ev.phase,
+                            name: ev.name.clone(),
+                            glyph: ev.glyph.clone(),
+                        });
+                    }
+                }
+                self.push_log(
+                    LogKind::System,
+                    format!("{mob_name} входит в фазу: {}", ev.name),
+                );
+                vec![]
+            }
+            // M25: босс использовал навык — журнал.
+            "evt/mob/skill" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobSkill>(payload) else {
+                    return vec![];
+                };
+                self.push_log(
+                    LogKind::CombatIn,
+                    format!("{} использует {}", ev.source_name, ev.name),
+                );
+                vec![]
+            }
             "evt/corpse/created" => {
                 let Ok(corpse) = serde_json::from_value::<CorpseCreated>(payload) else {
                     return vec![];

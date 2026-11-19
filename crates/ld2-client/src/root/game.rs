@@ -16,6 +16,7 @@ use ld2_core::store::{
 use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, ItemSnapshot, LocationSnapshot, Severity};
 
+use crate::fa::fa_icon;
 use crate::palette::Palette;
 use ely::buttons::IconButton;
 use ely::forms::Choice;
@@ -1066,7 +1067,41 @@ impl Root {
         if player_corpse {
             row = row.child(div().text_color(rgb(pal.warn)).child("⚠"));
         }
-        row = row.child(div().flex_grow_1().child(entity.name.clone()));
+        // M25: босс — особая строка: череп, имя цветом опасности,
+        // глиф и имя текущей фазы (смена фазы приходит событием).
+        if let Some(boss) = &entity.boss {
+            row = row.child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(fa_icon("solid/skull", px(13.0), rgb(pal.danger)))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(rgb(pal.danger))
+                            .child(entity.name.clone()),
+                    ),
+            );
+            row = row.child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(crate::rune_glyph::glyph_div_for(
+                        boss.glyph.as_deref(),
+                        &boss.name,
+                    ))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.muted))
+                            .child(boss.name.clone()),
+                    ),
+            );
+        } else {
+            row = row.child(div().flex_grow_1().child(entity.name.clone()));
+        }
         if let Some(hp) = &entity.hp {
             row = row.child(bar(
                 hp.cur as f32 / hp.max.max(1) as f32,
@@ -1074,6 +1109,21 @@ impl Root {
                 pal.danger,
                 pal,
             ));
+        }
+        // M25: прогресс-бар атаки монстра — по заполнении атака
+        // (сервер шлёт evt/mob/attack с новым сроком).
+        if entity.kind == EntityKind::Monster {
+            if let (Some(next), Some(interval)) = (entity.next_attack_at, entity.attack_interval) {
+                if interval > 0 {
+                    let now = self.now_ms();
+                    let frac = if next <= now {
+                        1.0
+                    } else {
+                        1.0 - (next - now) as f32 / interval as f32
+                    };
+                    row = row.child(bar(frac.clamp(0.0, 1.0), String::new(), pal.accent, pal));
+                }
+            }
         }
         for tag in entity.tags.iter().flatten() {
             row = row.child(

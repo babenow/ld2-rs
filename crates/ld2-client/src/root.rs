@@ -909,6 +909,8 @@ impl Root {
         let rune_bar_active = self.rune_bar_active();
         // M24: индикаторы бафов рун — живой отсчёт и моргание.
         let rune_buffs_active = self.rune_buffs_active();
+        // M25: бары атак монстров — живая заливка до следующей атаки.
+        let attack_bar_active = self.attack_bars_active();
         // M24 фикс: 4-й элемент — **длительность** (док поля), но
         // сравнивался с epoch-мс как дедлайн → старт уходил мгновенно
         // и прогресс-бар заточки не был виден. Теперь: старт + длительность.
@@ -1010,6 +1012,7 @@ impl Root {
             || harvest_active
             || rune_bar_active
             || rune_buffs_active
+            || attack_bar_active
         {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
@@ -1023,6 +1026,7 @@ impl Root {
                 || harvest_active
                 || rune_bar_active
                 || rune_buffs_active
+                || attack_bar_active
             {
                 50
             } else {
@@ -1169,6 +1173,20 @@ impl Root {
             .filter(|i| equipped.contains(i.uid.as_str()))
             .flat_map(|i| i.sockets.iter().flatten())
             .any(|s| s.rune.as_ref().is_some_and(|r| r.charges < r.max))
+    }
+
+    /// M25: есть ли в локации монстры с непрожёванным баром атаки —
+    /// тик50 мс, чтобы заливка шла плавно.
+    fn attack_bars_active(&self) -> bool {
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return false;
+        };
+        let now = self.now_ms();
+        snap.location.entities.iter().any(|e| {
+            e.kind == ld2_protocol::types::EntityKind::Monster
+                && e.next_attack_at.unwrap_or(0) > now
+                && e.attack_interval.unwrap_or(0) > 0
+        })
     }
 
     /// M24: активны ли бафы рун — тик для отсчёта остатка и

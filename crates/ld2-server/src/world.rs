@@ -73,6 +73,70 @@ fn rand_range(min: i64, max: i64) -> i64 {
     min + (u64::from_be_bytes(buf) % span) as i64
 }
 
+/// M25: фаза босса — по времени боя (`after_s` от вступления в бой);
+/// множители силы/скорости; `glyph` — знак фазы (шрифт рун).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BossPhase {
+    pub after_s: i64,
+    pub name: String,
+    #[serde(default)]
+    pub glyph: Option<String>,
+    #[serde(default = "boss_mult_one")]
+    pub damage_mult: f64,
+    #[serde(default = "boss_mult_one")]
+    pub interval_mult: f64,
+}
+
+/// M25: навык босса — кулдаун и урон (применяется к игрокам локации).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BossSkill {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub glyph: Option<String>,
+    pub cooldown_s: i64,
+    pub damage: i64,
+}
+
+/// M25: конфиг босса из контента (`boss: {phases, skills}`).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BossConfig {
+    #[serde(default)]
+    pub phases: Vec<BossPhase>,
+    #[serde(default)]
+    pub skills: Vec<BossSkill>,
+}
+
+fn boss_mult_one() -> f64 {
+    1.0
+}
+
+/// M25: рантайм босса — фазы идут от вступления в бой (первая атака),
+/// навыки — на кулдауне с ротацией. Респавн берёт чистый сид.
+#[derive(Debug, Clone)]
+pub struct BossRuntime {
+    pub cfg: BossConfig,
+    /// Вступление в бой (epoch, мс);0 — ещё не сражался.
+    pub since: i64,
+    pub phase: usize,
+    /// Следующий навык (epoch, мс);0 — готов сразу.
+    pub next_skill_at: i64,
+    /// Ротация навыков.
+    pub skill_i: usize,
+}
+
+impl BossRuntime {
+    pub fn new(cfg: BossConfig) -> Self {
+        Self {
+            cfg,
+            since: 0,
+            phase: 0,
+            next_skill_at: 0,
+            skill_i: 0,
+        }
+    }
+}
+
 /// Живой моб локации (создаётся из сида, умирает → труп).
 #[derive(Debug, Clone)]
 pub struct LiveMob {
@@ -116,6 +180,10 @@ pub struct LiveMob {
     /// Снятие шкур: флаги разделки из контента (`harvest`:
     /// `{level, skin, gut}`) — переходят в труп при убийстве.
     pub harvest: Option<serde_json::Map<String, serde_json::Value>>,
+    /// M25: босс — фазы по времени боя и навыки на кулдауне.
+    pub boss: Option<BossRuntime>,
+    /// M25: интервал атаки, мс (бар клиента;0 — ещё не планировался).
+    pub attack_interval: i64,
 }
 
 impl LiveMob {
@@ -136,6 +204,16 @@ impl LiveMob {
             },
             was_player: None,
             aggro: Some(self.aggro),
+            boss: self.boss.as_ref().and_then(|b| {
+                let p = b.cfg.phases.get(b.phase)?;
+                Some(ld2_protocol::types::BossState {
+                    phase: b.phase as u32,
+                    name: p.name.clone(),
+                    glyph: p.glyph.clone(),
+                })
+            }),
+            next_attack_at: (self.next_attack_at > 0).then_some(self.next_attack_at),
+            attack_interval: (self.attack_interval > 0).then_some(self.attack_interval),
             extra: Default::default(),
         }
     }
@@ -213,6 +291,9 @@ impl ResourceNode {
             tags: None,
             was_player: None,
             aggro: None,
+            boss: None,
+            next_attack_at: None,
+            attack_interval: None,
             extra: Default::default(),
         }
     }
@@ -254,6 +335,9 @@ impl LiveCorpse {
             tags: None,
             was_player: None,
             aggro: None,
+            boss: None,
+            next_attack_at: None,
+            attack_interval: None,
             extra,
         }
     }
@@ -655,6 +739,13 @@ impl World {
                     hp_start,
                     harvest: extra.get("harvest").and_then(|v| v.as_object()).cloned(),
                     bonus_loot: Vec::new(),
+                    // M25: босс — конфиг фаз/навыков из контента
+                    // (`boss_ai`: ключ `boss` занят display-полем Entity).
+                    boss: extra
+                        .get("boss_ai")
+                        .and_then(|v| serde_json::from_value::<BossConfig>(v.clone()).ok())
+                        .map(BossRuntime::new),
+                    attack_interval: 0,
                 };
                 // M20: шаблон сида — источник данных при респавне.
                 self.mob_seed.insert(e.id.clone(), mob.clone());
@@ -975,6 +1066,71 @@ impl World {
         self.mobs.get(mob_id).map(|m| m.next_attack_at)
     }
 
+    /// M25: такт босса — вступление в бой (первая атака) и переход
+    /// фазы по времени боя; `(фаза, изменилась)` — события клиенту.
+    pub fn boss_tick(&mut self, mob_id: &str, now_ms: i64) -> Option<(usize, bool)> {
+        let mob = self.mobs.get_mut(mob_id)?;
+        let boss = mob.boss.as_mut()?;
+        if boss.since == 0 {
+            boss.since = now_ms;
+        }
+        let fight_ms = (now_ms - boss.since).max(0);
+        let target = boss
+            .cfg
+            .phases
+            .iter()
+            .rposition(|p| fight_ms >= p.after_s.saturating_mul(1000))
+            .unwrap_or(0);
+        let changed = target != boss.phase;
+        boss.phase = target;
+        Some((target, changed))
+    }
+
+    /// M25: множители текущей фазы босса (урон, интервал); не босс —
+    /// единицы (интервал не опуска ниже пола — см. systems).
+    pub fn boss_phase_mult(&self, mob_id: &str) -> (f64, f64) {
+        let Some(boss) = self.mobs.get(mob_id).and_then(|m| m.boss.as_ref()) else {
+            return (1.0, 1.0);
+        };
+        match boss.cfg.phases.get(boss.phase) {
+            Some(p) => (p.damage_mult.max(0.0), p.interval_mult.max(0.05)),
+            None => (1.0, 1.0),
+        }
+    }
+
+    /// M25: готовый навык босса (кулдаун истёк) — ротация; планирует
+    /// следующий каст.
+    pub fn boss_take_skill(&mut self, mob_id: &str, now_ms: i64) -> Option<BossSkill> {
+        let mob = self.mobs.get_mut(mob_id)?;
+        let boss = mob.boss.as_mut()?;
+        if boss.cfg.skills.is_empty() || now_ms < boss.next_skill_at {
+            return None;
+        }
+        let skill = boss.cfg.skills[boss.skill_i % boss.cfg.skills.len()].clone();
+        boss.skill_i += 1;
+        boss.next_skill_at = now_ms + skill.cooldown_s.max(1) * 1000;
+        Some(skill)
+    }
+
+    /// M25: состояние босса для события смены фазы (имя/глиф фазы).
+    pub fn boss_state(&self, mob_id: &str) -> Option<ld2_protocol::types::BossState> {
+        let boss = self.mobs.get(mob_id)?.boss.as_ref()?;
+        let p = boss.cfg.phases.get(boss.phase)?;
+        Some(ld2_protocol::types::BossState {
+            phase: boss.phase as u32,
+            name: p.name.clone(),
+            glyph: p.glyph.clone(),
+        })
+    }
+
+    /// M25: интервал атаки моба для бара клиента (запоминается при
+    /// планировании атаки).
+    pub fn set_mob_attack_interval(&mut self, mob_id: &str, ms: i64) {
+        if let Some(mob) = self.mobs.get_mut(mob_id) {
+            mob.attack_interval = ms;
+        }
+    }
+
     pub fn set_mob_next_attack(&mut self, mob_id: &str, at_ms: i64) {
         if let Some(mob) = self.mobs.get_mut(mob_id) {
             mob.next_attack_at = at_ms;
@@ -1099,6 +1255,9 @@ impl World {
                 tags: None,
                 was_player: None,
                 aggro: None,
+                boss: None,
+                next_attack_at: None,
+                attack_interval: None,
                 extra,
             });
         }

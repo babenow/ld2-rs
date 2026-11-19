@@ -57,10 +57,29 @@ pub struct Entity {
     pub was_player: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggro: Option<bool>,
+    /// M25: босс — текущая фаза (имя/глиф) для списка монстров.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boss: Option<BossState>,
+    /// M25: следующая атака моба (epoch, мс) — прогресс-бар атаки.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_attack_at: Option<i64>,
+    /// M25: интервал атаки моба, мс (знаменатель бара).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack_interval: Option<i64>,
     /// Незнакомые поля (например, ссылки на лут контента) сохраняются и
     /// не ломают десериализацию (§2.3, §11.2).
     #[serde(flatten, default)]
     pub extra: JsonMap,
+}
+
+/// M25: состояние босса в списке монстров — текущая фаза по времени
+/// боя (сервер — истина; аддитивно §11: поля нет у старого сервера).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BossState {
+    pub phase: u32,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
 }
 
 /// Выход из локации; `dir` — опционное каноническое направление для хоткеев.

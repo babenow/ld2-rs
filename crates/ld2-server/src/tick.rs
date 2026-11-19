@@ -635,11 +635,63 @@ fn plan_combat(
         if world.mob_stunned(&mob_id, now_ms) {
             continue;
         }
-        world.set_mob_next_attack(&mob_id, now_ms + attack_interval_ms);
+        // M25: босс — вступление в бой и переход фазы по времени боя;
+        // смена фазы → событие всем в локации (глиф в списке монстров).
+        if let Some((_, true)) = world.boss_tick(&mob_id, now_ms) {
+            if let Some(state) = world.boss_state(&mob_id) {
+                for addr in world.chars_in_location(&loc) {
+                    push_event(
+                        &mut plan,
+                        &addr,
+                        "evt/mob/phase",
+                        &ld2_protocol::evt::MobPhase {
+                            entity_id: mob_id.clone(),
+                            phase: state.phase,
+                            name: state.name.clone(),
+                            glyph: state.glyph.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        let (damage_mult, interval_mult) = world.boss_phase_mult(&mob_id);
+        // M25: интервал — множитель фазы босса и минимальное время
+        // атаки на сервере (systems::mob_attack_interval, пол 500 мс).
+        let interval_ms = crate::systems::mob_attack_interval(attack_interval_ms, interval_mult);
+        world.set_mob_next_attack(&mob_id, now_ms + interval_ms);
+        world.set_mob_attack_interval(&mob_id, interval_ms);
+        // M25: навык босса (кулдаун истёк) — урон игрокам локации +
+        // событие «{имя} использует {навык}».
+        if let Some(skill) = world.boss_take_skill(&mob_id, now_ms) {
+            let skill_damage = ((skill.damage as f64) * damage_mult).round() as i64;
+            let boss_name = world
+                .mob(&mob_id)
+                .map(|m| m.name.clone())
+                .unwrap_or_default();
+            for addr in world.chars_in_location(&loc) {
+                push_event(
+                    &mut plan,
+                    &addr,
+                    "evt/mob/skill",
+                    &ld2_protocol::evt::MobSkill {
+                        entity_id: mob_id.clone(),
+                        source_name: boss_name.clone(),
+                        name: skill.name.clone(),
+                        glyph: skill.glyph.clone(),
+                    },
+                );
+                if skill_damage > 0 {
+                    plan.mob_hits.push(MobHit {
+                        char_id: addr,
+                        amount: skill_damage,
+                    });
+                }
+            }
+        }
         let Some(victim) = world.chars_in_location(&loc).into_iter().next() else {
             continue;
         };
-        let amount = world.mob_damage(&mob_id);
+        let amount = ((world.mob_damage(&mob_id) as f64) * damage_mult).round() as i64;
         if amount <= 0 {
             continue;
         }
@@ -665,6 +717,19 @@ fn plan_combat(
                 extra: Default::default(),
             },
         );
+        // M25: бар атаки — клиент узнаёт срок следующей атаки.
+        for addr in world.chars_in_location(&loc) {
+            push_event(
+                &mut plan,
+                &addr,
+                "evt/mob/attack",
+                &ld2_protocol::evt::MobAttack {
+                    entity_id: mob_id.clone(),
+                    next_attack_at: now_ms + interval_ms,
+                    interval_ms,
+                },
+            );
+        }
         plan.mob_hits.push(MobHit {
             char_id: victim,
             amount,

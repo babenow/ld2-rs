@@ -590,6 +590,35 @@ pub struct CharLevelUp {
 
 // ─── wire-типы (protocol.md §8) ──────────────────────────────────────────────
 
+/// M25: моб атаковал — следующая атака через `interval_ms`
+/// (прогресс-бар атаки монстров на клиенте).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobAttack {
+    pub entity_id: String,
+    pub next_attack_at: i64,
+    pub interval_ms: i64,
+}
+
+/// M25: босс перешёл в фазу (по времени боя).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobPhase {
+    pub entity_id: String,
+    pub phase: u32,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+}
+
+/// M25: босс использовал навык.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobSkill {
+    pub entity_id: String,
+    pub source_name: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+}
+
 impl_events!(
     (StateSnapshot, "evt/state/snapshot"),
     (StateDelta, "evt/state/delta"),
@@ -604,6 +633,9 @@ impl_events!(
     (EntityMove, "evt/entity/move"),
     (EntityHp, "evt/entity/hp"),
     (EntityDespawn, "evt/entity/despawn"),
+    (MobAttack, "evt/mob/attack"),
+    (MobPhase, "evt/mob/phase"),
+    (MobSkill, "evt/mob/skill"),
     (CorpseCreated, "evt/corpse/created"),
     (CorpseLooted, "evt/corpse/looted"),
     (CombatHit, "evt/combat/hit"),

@@ -377,6 +377,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/entity/move` | `{ entity_id, patch }` | перемещение/изменение внутри локации |
 | `evt/entity/hp` | `{ entity_id, hp }` | смена HP |
 | `evt/entity/despawn` | `{ entity_id, location_id, kind? }` | исчезновение (смерть/уход/TTL); `kind` M20 — «{name} исчез» для предмета |
+| `evt/mob/attack` | `{ entity_id, next_attack_at, interval_ms }` | M25: моб атаковал — бар атаки у монстра в списке (заполнение → атака); `interval_ms` — с полом `MIN_MOB_ATTACK_MS` (500 мс) |
+| `evt/mob/phase` | `{ entity_id, phase, name, glyph? }` | M25: босс перешёл в фазу по времени боя — глиф/имя в списке монстров + журнал |
+| `evt/mob/skill` | `{ entity_id, source_name, name, glyph? }` | M25: босс использовал навык — журнал |
 | `evt/corpse/created` | `{ entity: Entity, loot_count }` | труп (`was_player` различает игрока) |
 | `evt/corpse/looted` | `{ corpse_id, by, by_name, was_player }` | лут собран; если `was_player` — клиент показывает предупреждение о статусе |
 

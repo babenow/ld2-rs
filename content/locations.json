@@ -141,12 +141,12 @@
             "min_s": 60,
             "max_s": 120
           },
-                    "harvest": {
-                      "level": 20,
-                      "skin": true,
-                      "gut": true
-                    },
-                    "drops": [
+          "harvest": {
+            "level": 20,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
             "potion_heal",
             "gold_coin"
           ]
@@ -426,12 +426,12 @@
             "min_s": 30,
             "max_s": 60
           },
-                    "harvest": {
-                      "level": 1,
-                      "skin": true,
-                      "gut": true
-                    },
-                    "drops": [
+          "harvest": {
+            "level": 1,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
             "gold_coin"
           ]
         },
@@ -448,12 +448,12 @@
             "min_s": 30,
             "max_s": 60
           },
-                    "harvest": {
-                      "level": 1,
-                      "skin": true,
-                      "gut": true
-                    },
-                    "drops": [
+          "harvest": {
+            "level": 1,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
             "gold_coin"
           ]
         },
@@ -470,12 +470,12 @@
             "min_s": 30,
             "max_s": 60
           },
-                    "harvest": {
-                      "level": 1,
-                      "skin": true,
-                      "gut": true
-                    },
-                    "drops": [
+          "harvest": {
+            "level": 1,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
             "gold_coin",
             "herb"
           ]
@@ -497,16 +497,77 @@
             "min_s": 60,
             "max_s": 120
           },
-                    "harvest": {
-                      "level": 4,
-                      "skin": true,
-                      "gut": true
-                    },
-                    "drops": [
+          "harvest": {
+            "level": 4,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
             "potion_heal",
             "gold_coin",
             "herb"
           ]
+        },
+        {
+          "id": "m_dragon",
+          "kind": "monster",
+          "name": "Древний дракон",
+          "hp": {
+            "cur": 400,
+            "max": 400
+          },
+          "tags": [
+            "boss",
+            "aggro"
+          ],
+          "aggro": true,
+          "difficulty": 10,
+          "damage": 10,
+          "respawn": {
+            "min_s": 300,
+            "max_s": 600
+          },
+          "boss_ai": {
+            "phases": [
+              {
+                "after_s": 0,
+                "name": "Пробуждение",
+                "glyph": "a",
+                "damage_mult": 1.0,
+                "interval_mult": 1.0
+              },
+              {
+                "after_s": 30,
+                "name": "Ярость",
+                "glyph": "b",
+                "damage_mult": 1.5,
+                "interval_mult": 0.85
+              },
+              {
+                "after_s": 60,
+                "name": "Разрушение",
+                "glyph": "c",
+                "damage_mult": 2.0,
+                "interval_mult": 0.7
+              }
+            ],
+            "skills": [
+              {
+                "id": "flame_breath",
+                "name": "Огненное дыхание",
+                "glyph": "f",
+                "cooldown_s": 20,
+                "damage": 25
+              },
+              {
+                "id": "tail_swipe",
+                "name": "Удар хвостом",
+                "glyph": "t",
+                "cooldown_s": 12,
+                "damage": 15
+              }
+            ]
+          }
         }
       ]
     }
