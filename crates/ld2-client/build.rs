@@ -3,11 +3,17 @@
 //!
 //! Файлы из `assets/fa` не правятся — в них лежит embedded-комментарий
 //! лицензии CC BY 4.0 (атрибуция), см. `assets/fa/LICENSE.txt`.
+//!
+//! Windows: встраивание `assets/icons/icon.ico` в exe (иконка в
+//! проводнике, таскбаре и ярлыках; окно на Windows берёт её же).
+//! Гейт — `CARGO_CFG_TARGET_OS` (паттерн из README winresource):
+//! build.rs компилируется под хостом, а не под целевой ОС.
 
 use std::{env, fs, path::Path};
 
 fn main() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    windows_icon(&manifest);
     let root = Path::new(&manifest).join("assets/fa");
     println!("cargo:rerun-if-changed={}", root.display());
 
@@ -61,4 +67,19 @@ fn main() {
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR");
     fs::write(Path::new(&out_dir).join("fa_icons.rs"), out).expect("запись fa_icons.rs");
+}
+
+/// Windows: icon.ico → ресурс exe (RT_GROUP_ICON). На не-Windows
+/// целевые ОС (в т.ч. при сборке на mac/linux) — ранний выход:
+/// иконка не нужна, и winresource не вызывается вовсе.
+fn windows_icon(manifest: &str) {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let icon = Path::new(manifest).join("assets/icons/icon.ico");
+    println!("cargo:rerun-if-changed={}", icon.display());
+    winresource::WindowsResource::new()
+        .set_icon(icon.to_str().expect("путь icon.ico в utf8"))
+        .compile()
+        .expect("встраивание icon.ico в exe (winresource)");
 }

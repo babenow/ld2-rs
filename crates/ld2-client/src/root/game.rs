@@ -23,7 +23,7 @@ use ely::forms::Choice;
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
-use ely::primitives::{IconName, Tooltip};
+use ely::primitives::{Divider, IconName, Tooltip};
 
 use super::quests::goals_summary;
 use super::sheet::rarity_label;
@@ -910,30 +910,9 @@ impl Root {
     // ── центр: локация, выходы, сущности ──────────────────────────────────
 
     fn location_block(&mut self, pal: &Palette, loc: &LocationSnapshot) -> Div {
-        // M25: название локации убрано (указание заказчика); остаются
-        // только флаги (pvp/safe/прочие).
-        let mut flags = div().flex().flex_row().gap_2().items_center();
-        let mut has_flags = false;
-        for flag in &loc.flags {
-            let (text, color) = match flag.as_str() {
-                "pvp" => ("PvP", pal.warn),
-                "safe" => ("safe", pal.success),
-                other => (other, pal.muted),
-            };
-            has_flags = true;
-            flags = flags.child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(rgb(color))
-                    .child(text.to_string()),
-            );
-        }
-        let mut col = div().flex().flex_col().gap_1();
-        if has_flags {
-            col = col.child(flags);
-        }
-        // M25: описание без фона карточки; под ним дивидер и сразу
-        // лог локации (указание заказчика).
+        // M25: без названия и флагов (заказчик): описание, дивидер
+        // Ely и сразу лог — приклеен к низу описания.
+        let mut col = div().flex().flex_col();
         col = col.child(
             div()
                 .id("location_text")
@@ -946,12 +925,7 @@ impl Root {
                         .child(loc.text.clone()),
                 ),
         );
-        col = col.child(
-            div()
-                .text_size(px(12.0))
-                .text_color(rgb(pal.muted))
-                .child("---"),
-        );
+        col = col.child(Divider::horizontal());
         col.child(self.location_log(pal))
     }
 
@@ -981,12 +955,7 @@ impl Root {
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(format!("{}:", t(lang, Key::ExitsLabel))),
         );
-        col = col.child(
-            div()
-                .text_size(px(12.0))
-                .text_color(rgb(pal.muted))
-                .child("---"),
-        );
+        col = col.child(Divider::horizontal());
         if loc.exits.is_empty() {
             col = col.child(
                 div()

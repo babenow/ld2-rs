@@ -11,6 +11,7 @@ mod root;
 mod rune_glyph;
 
 use std::borrow::Cow;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ely::{theme::Mode, theme::Theme, Assets};
@@ -23,6 +24,35 @@ use ld2_core::transport::{self, TransportConfig};
 use tokio::sync::mpsc;
 
 use crate::root::{Root, Shell};
+
+/// Иконка окна X11 (gpui: `WindowOptions.icon` — только x11-бэкенд).
+/// PNG 256px рендерится в RGBA из embedded-байтов — отдельной ротации
+/// файла на диске не нужно (генерация: `scripts/make-icons.sh`).
+#[cfg(target_os = "linux")]
+fn window_icon() -> Option<Arc<image::RgbaImage>> {
+    let bytes = include_bytes!("../assets/icons/icon-256.png");
+    let img = image::load_from_memory(bytes).ok()?.to_rgba8();
+    Some(Arc::new(img))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn window_icon() -> Option<Arc<image::RgbaImage>> {
+    None
+}
+
+/// app_id окна (Wayland): совпадает со `StartupWMClass` в
+/// `likedimion.desktop` — лаунчер сопоставляет окно с .desktop и
+/// вешает иконку из hicolor-темы. На Wayland поле окна `icon`
+/// не поддерживается, app_id — канонический путь.
+#[cfg(target_os = "linux")]
+fn window_app_id() -> Option<String> {
+    Some("ld2-gpui".into())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn window_app_id() -> Option<String> {
+    None
+}
 
 fn main() -> anyhow::Result<()> {
     let _log_guard = ld2_core::logging::init()?;
@@ -176,6 +206,11 @@ fn main() -> anyhow::Result<()> {
                     // M14/F2: минимум окна — 960×640 (ТЗ: компоновка
                     // трёх колонок не должна схлопываться).
                     window_min_size: Some(size(px(960.0), px(640.0))),
+                    // Иконка приложения (Linux): app_id — Wayland,
+                    // icon — X11 (встроенный PNG 256px); на macOS/Windows
+                    // иконка — из .app-bundle/ресурсов exe.
+                    app_id: window_app_id(),
+                    icon: window_icon(),
                     ..Default::default()
                 },
                 move |_, _| root.clone(),
