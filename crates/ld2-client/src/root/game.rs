@@ -2543,8 +2543,8 @@ fn stat_bar(
                         .bg(rgb(color)),
                 ),
         )
-        // Плашка: подпись на фоне панели — контраст и к заливке,
-        // и к треку, без теней (указание заказчика).
+        // Обратный цвет к заливке бара и жирный — без фона и теней
+        // (указание заказчика: белый и плашка не подошли).
         .child(
             div()
                 .absolute()
@@ -2552,18 +2552,10 @@ fn stat_bar(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(
-                    div()
-                        .px_1()
-                        .rounded_md()
-                        .bg(rgb(pal.panel))
-                        .border_1()
-                        .border_color(rgb(pal.border))
-                        .text_size(px(text_size))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(pal.text))
-                        .child(text),
-                ),
+                .text_size(px(text_size))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(rgb(!color & 0xff_ff_ff))
+                .child(text),
         )
 }
 
