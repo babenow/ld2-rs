@@ -740,15 +740,15 @@ impl Root {
         col = col.child(name_row);
 
         // Ресурсы (ФР-04/09).
-        col = col.child(bar(
-            snap.char.hp.cur as f32 / snap.char.hp.max.max(1) as f32,
-            format!(
-                "{} {}/{}",
-                t(lang, Key::HpLabel),
-                snap.char.hp.cur,
-                snap.char.hp.max
-            ),
+        // M25: шкала ХП — виджет stat_bar (выше/шире — параметры,
+        // цифры поверх бара, зелёная заливка).
+        col = col.child(stat_bar(
             pal.success,
+            snap.char.hp.max,
+            snap.char.hp.cur,
+            t(lang, Key::HpLabel),
+            BAR_WIDTH,
+            16.0,
             pal,
         ));
         // M18: ресурс по профилю — адреналин (красный), энергия
@@ -759,13 +759,14 @@ impl Root {
             Some("archer") => (t(lang, Key::EnergyLabel), 0xb8_96_1e),
             _ => (t(lang, Key::MpLabel), pal.accent),
         };
-        col = col.child(bar(
-            snap.char.mp.cur as f32 / snap.char.mp.max.max(1) as f32,
-            format!(
-                "{} {}/{}",
-                resource_label, snap.char.mp.cur, snap.char.mp.max
-            ),
+        // M25: шкала ресурса — тот же виджет (цвет по профилю).
+        col = col.child(stat_bar(
             resource_color,
+            snap.char.mp.max,
+            snap.char.mp.cur,
+            resource_label,
+            BAR_WIDTH,
+            16.0,
             pal,
         ));
         // M24: индикаторы вставленных рун (указание заказчика) —
@@ -2492,6 +2493,70 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
                 .text_size(px(12.0))
                 .text_color(rgb(pal.muted))
                 .child(label),
+        )
+}
+
+/// M25: виджет шкалы (заказчик): цифры ПОВЕРХ бара (внутри), заливка
+/// — `color` (ХП остаётся зелёным), текст белый с тёмным контуром —
+/// контраст и к заливке, и к фону трека. Параметры: цвет, максимум,
+/// текущее, надпись, ширина, высота.
+fn stat_bar(
+    color: u32,
+    max: i64,
+    cur: i64,
+    label: &str,
+    width: f32,
+    height: f32,
+    pal: &Palette,
+) -> Div {
+    let frac = (cur as f32 / max.max(1) as f32).clamp(0.0, 1.0);
+    let text = format!("{label} {cur}/{max}");
+    let text_size = (height - 6.0).max(9.0);
+    div()
+        .relative()
+        .w(px(width))
+        .h(px(height))
+        .child(
+            div()
+                .absolute()
+                .size_full()
+                .rounded_md()
+                .bg(rgb(pal.border))
+                .child(
+                    div()
+                        .h_full()
+                        .w(gpui::relative(frac))
+                        .rounded_md()
+                        .bg(rgb(color)),
+                ),
+        )
+        // Контур: тёмная копия со сдвигом1px + белая поверх —
+        // читается и на заливке, и на фоне трека.
+        .child(
+            div()
+                .absolute()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .ml(px(1.0))
+                .mt(px(1.0))
+                .text_size(px(text_size))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(rgb(0x18_18_18))
+                .child(text.clone()),
+        )
+        .child(
+            div()
+                .absolute()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(text_size))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(rgb(0xff_ff_ff))
+                .child(text),
         )
 }
 
