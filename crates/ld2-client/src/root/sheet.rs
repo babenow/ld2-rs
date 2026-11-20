@@ -1567,21 +1567,6 @@ impl Root {
             // цветом предмета при наведении; фон и тексты не меняются
             // (контрастный текст отменён — баг при скролле).
             row = row.hover(move |st| st.border_color(rgb(color)));
-            // R-dnd: тянем предмет ИЗ слота (выброс/снятие).
-            let drag_payload = ItemDrag {
-                uid: item.uid.clone(),
-                from: DragSource::Equip(slot.clone()),
-                slot_req: item.slot.clone(),
-            };
-            let drag_this = cx.entity();
-            row = row.on_drag(drag_payload, move |drag, _, _, cx| {
-                drag_this.update(cx, |root, cx| {
-                    root.drag_item = Some(drag.clone());
-                    root.drop_hit = None;
-                    cx.notify();
-                });
-                cx.new(|_| EmptyView)
-            });
             // R-dnd: зона приёма для предметов из рюкзака.
             let zone_slot = slot.clone();
             let zone_this = cx.entity();
