@@ -9,7 +9,7 @@ use ely::forms::Choice;
 use ely::menus::ContextMenu;
 use ely::motion::Reorder;
 use ely::navigation::Tabs;
-use ely::primitives::{Icon, IconName, Tooltip};
+use ely::primitives::{Icon, IconName, TooltipTrigger};
 use gpui::{
     div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, MouseButton,
     SharedString, Window,
@@ -333,59 +333,6 @@ impl Root {
             let uid = item.uid.clone();
             let tile = div()
                 .id(format!("{id_prefix}-item-{uid}"))
-                .tooltip({
-                    // Заказчик 2026-11-20: описание предмета в тултипе —
-                    // тот же виджет, что и окно описания; появляется
-                    // плавно (анимация Ely), исчезает быстро.
-                    let detail = serde_json::to_value(item).unwrap_or_default();
-                    let skills = self.skill_names_for(&detail);
-                    let theme = self.config.theme.clone();
-                    let name_line = format!(
-                        "{} · {} · +{}",
-                        item.name,
-                        rarity_label(lang, &item.rarity),
-                        item.upgrade
-                    );
-                    let rarity = item.rarity.clone();
-                    Tooltip::rich(move |_, _| {
-                        let pal = crate::palette::palette(&theme);
-                        // Фон и вид — как у окна описания: карточка
-                        // pal.panel с рамкой цвета редкости (заказчик);
-                        // отрицательные поля гасят паддинг сурфейса.
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .mx(px(-8.0))
-                            .my(px(-4.0))
-                            .p(px(10.0))
-                            .rounded_md()
-                            .bg(rgb(pal.panel))
-                            .border_1()
-                            .border_color(rgb(rarity_color(&rarity, &pal)))
-                            .when(matches!(rarity.as_str(), "epic" | "legendary"), |card| {
-                                let base = rarity_color(&rarity, &pal) & 0xff_ffff;
-                                card.shadow(vec![gpui::BoxShadow {
-                                    color: gpui::rgba((base << 8) | 0x66).into(),
-                                    offset: gpui::point(px(0.0), px(0.0)),
-                                    blur_radius: px(12.0),
-                                    spread_radius: px(2.0),
-                                    inset: false,
-                                }])
-                            })
-                            .text_color(rgb(pal.text))
-                            .text_size(px(13.0))
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .child(name_line.clone()),
-                            )
-                            .child(super::sheet::item_description_body(
-                                lang, &pal, &detail, &skills,
-                            ))
-                            .into_any_element()
-                    })
-                })
                 .flex()
                 .flex_row()
                 .gap_2()
@@ -475,6 +422,75 @@ impl Root {
             )
             .manual(request)
             .child(tile);
+            // Тултип описания (заказчик 2026-11-20): тот же виджет, что
+            // и окно описания; появляется через 1с наведения курсора;
+            // свечение медленно пульсирует НАРУЖУ (~2.5 с).
+            let tip_detail = serde_json::to_value(item).unwrap_or_default();
+            let tip_skills = self.skill_names_for(&tip_detail);
+            let tip_theme = self.config.theme.clone();
+            let tip_name_line = format!(
+                "{} · {} · +{}",
+                item.name,
+                rarity_label(lang, &item.rarity),
+                item.upgrade
+            );
+            let tip_rarity = item.rarity.clone();
+            let tip_lang = lang;
+            // Пульс свечения НАРУЖУ (заказчик): тень дышит
+            // alpha 0.10…0.50 (~2.5 с) цветом редкости — на карточке
+            // внутри тултипа.
+            let pulse_rarity = tip_rarity.clone();
+            let pulse_uid = uid.clone();
+            let ctx = TooltipTrigger::new(format!("ld2-bp-tip-{uid}"), ctx, move |_, _| {
+                let pulse_rarity = pulse_rarity.clone();
+                let pulse_uid = pulse_uid.clone();
+                let pal = crate::palette::palette(&tip_theme);
+                // Фон и вид — как у окна описания: карточка
+                // pal.panel с рамкой цвета редкости; отрицательные
+                // поля гасят паддинг сурфейса.
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .mx(px(-8.0))
+                    .my(px(-4.0))
+                    .p(px(10.0))
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .border_1()
+                    .border_color(rgb(rarity_color(&tip_rarity, &pal)))
+                    .text_color(rgb(pal.text))
+                    .text_size(px(13.0))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(tip_name_line.clone()),
+                    )
+                    .child(super::sheet::item_description_body(
+                        tip_lang,
+                        &pal,
+                        &tip_detail,
+                        &tip_skills,
+                    ))
+                    .with_animation(
+                        SharedString::from(format!("tip-pulse-{pulse_uid}")),
+                        Animation::new(std::time::Duration::from_millis(2500)).repeat(),
+                        move |card, t| {
+                            let alpha: f32 = (0.30 + 0.20 * (2.0 * std::f32::consts::PI * t).sin())
+                                .clamp(0.10, 0.50);
+                            let base = rarity_color(&pulse_rarity, &pal) & 0xff_ffff;
+                            card.shadow(vec![gpui::BoxShadow {
+                                color: gpui::rgba((base << 8) | (alpha * 255.0) as u32).into(),
+                                offset: gpui::point(px(0.0), px(0.0)),
+                                blur_radius: px(14.0),
+                                spread_radius: px(2.0),
+                                inset: false,
+                            }])
+                        },
+                    )
+                    .into_any_element()
+            })
+            .delay(std::time::Duration::from_secs(1));
             // Отступ между строками списка (у Reorder нет gap).
             list = list.row(uid, div().pb(px(8.0)).child(ctx));
         }

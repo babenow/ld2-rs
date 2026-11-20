@@ -36,7 +36,7 @@ use ely::forms::{Choice, Input};
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
-use ely::primitives::{IconName, Tooltip};
+use ely::primitives::{IconName, Tooltip, TooltipTrigger};
 
 use super::quests::goals_summary;
 use super::{
@@ -1499,50 +1499,6 @@ impl Root {
             let tip_name = item.name.clone();
             let tip_lang = lang;
             let tip_rarity = item.rarity.clone();
-            row = row.tooltip(Tooltip::rich(move |_, _| {
-                let pal = crate::palette::palette(&tip_theme);
-                // Фон и вид — как у окна описания: карточка pal.panel
-                // с рамкой цвета редкости (заказчик); отрицательные
-                // поля гасят паддинг сурфейса.
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .mx(px(-8.0))
-                    .my(px(-4.0))
-                    .p(px(10.0))
-                    .rounded_md()
-                    .bg(rgb(pal.panel))
-                    .border_1()
-                    .border_color(rgb(rarity_color(&tip_rarity, &pal)))
-                    .when(
-                        matches!(tip_rarity.as_str(), "epic" | "legendary"),
-                        |card| {
-                            let base = rarity_color(&tip_rarity, &pal) & 0xff_ffff;
-                            card.shadow(vec![gpui::BoxShadow {
-                                color: gpui::rgba((base << 8) | 0x66).into(),
-                                offset: gpui::point(px(0.0), px(0.0)),
-                                blur_radius: px(12.0),
-                                spread_radius: px(2.0),
-                                inset: false,
-                            }])
-                        },
-                    )
-                    .text_color(rgb(pal.text))
-                    .text_size(px(13.0))
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(tip_name.clone()),
-                    )
-                    .child(item_description_body(
-                        tip_lang,
-                        &pal,
-                        &tip_detail,
-                        &tip_skills,
-                    ))
-                    .into_any_element()
-            }));
             // Меню предмета (F29d): Описание и Снять — вместо кнопок.
             let mut menu = Menu::new();
             let detail = serde_json::to_value(item).unwrap_or_default();
@@ -1608,7 +1564,7 @@ impl Root {
                     }),
                 );
             // Переливание (заказчик 2026-11-20): эпик/легендарка — на
-            // наведении оттенок рамки и свечения циклится (~4 с);
+            // наведении играет ЯРКОСТЬ цвета редкости (бриллиант);
             // без наведения — статичное внутреннее свечение.
             let hover_key = format!("eq:{slot}");
             let shimmering = matches!(item.rarity.as_str(), "epic" | "legendary")
@@ -1629,14 +1585,14 @@ impl Root {
                     Animation::new(std::time::Duration::from_secs(4)).repeat(),
                     move |el, t| {
                         let hsla: gpui::Hsla = gpui::rgba((base << 8) | 0xff).into();
-                        // Переливание ВОКРУГ цвета редкости: оттенок
-                        // качается ±36° (0.10) и возвращается — цикл
-                        // замкнутый, базовый цвет остаётся доминирующим.
-                        let swing = 0.10 * (2.0 * std::f32::consts::PI * t).sin();
-                        let hue = (hsla.h + swing + 1.0) % 1.0;
-                        el.border_color(gpui::hsla(hue, hsla.s, hsla.l, 1.0))
+                        // Бриллиантовое переливание: играет ЯРКОСТЬ
+                        // цвета редкости — оттенок не меняется, других
+                        // цветов нет (заказчик).
+                        let l = (hsla.l + 0.18 * (2.0 * std::f32::consts::PI * t).sin())
+                            .clamp(0.0, 1.0);
+                        el.border_color(gpui::hsla(hsla.h, hsla.s, l, 1.0))
                             .shadow(vec![gpui::BoxShadow {
-                                color: gpui::hsla(hue, hsla.s, hsla.l, 0.35),
+                                color: gpui::hsla(hsla.h, hsla.s, l, 0.35),
                                 offset: gpui::point(px(0.0), px(0.0)),
                                 blur_radius: px(8.0),
                                 spread_radius: px(0.0),
@@ -1651,6 +1607,59 @@ impl Root {
             let row = ContextMenu::new(format!("ld2-equip-ctx-{slot}"), menu)
                 .manual(request)
                 .child(row);
+            // Тултип описания (заказчик 2026-11-20): через 1с наведения;
+            // свечение медленно пульсирует наружу (~2.5 с) — пульс на
+            // карточке внутри тултипа.
+            let pulse_rarity = tip_rarity.clone();
+            let row = TooltipTrigger::new(format!("ld2-equip-tip-{slot}"), row, move |_, _| {
+                let pulse_rarity = pulse_rarity.clone();
+                let hover_key = hover_key.clone();
+                let pal = crate::palette::palette(&tip_theme);
+                // Фон и вид — как у окна описания; отрицательные
+                // поля гасят паддинг сурфейса.
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .mx(px(-8.0))
+                    .my(px(-4.0))
+                    .p(px(10.0))
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .border_1()
+                    .border_color(rgb(rarity_color(&tip_rarity, &pal)))
+                    .text_color(rgb(pal.text))
+                    .text_size(px(13.0))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(tip_name.clone()),
+                    )
+                    .child(item_description_body(
+                        tip_lang,
+                        &pal,
+                        &tip_detail,
+                        &tip_skills,
+                    ))
+                    .with_animation(
+                        SharedString::from(format!("tip-pulse-{hover_key}")),
+                        Animation::new(std::time::Duration::from_millis(2500)).repeat(),
+                        move |card, t| {
+                            let alpha: f32 = (0.30 + 0.20 * (2.0 * std::f32::consts::PI * t).sin())
+                                .clamp(0.10, 0.50);
+                            let base = rarity_color(&pulse_rarity, &pal) & 0xff_ffff;
+                            card.shadow(vec![gpui::BoxShadow {
+                                color: gpui::rgba((base << 8) | (alpha * 255.0) as u32).into(),
+                                offset: gpui::point(px(0.0), px(0.0)),
+                                blur_radius: px(14.0),
+                                spread_radius: px(2.0),
+                                inset: false,
+                            }])
+                        },
+                    )
+                    .into_any_element()
+            })
+            .delay(std::time::Duration::from_secs(1));
             if matches!(slot.as_str(), "main_hand" | "off_hand") {
                 hand_rows.push(row.into_any_element());
             } else {
