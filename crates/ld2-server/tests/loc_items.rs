@@ -175,3 +175,58 @@ async fn drop_pickup_between_players_and_ttl() {
     assert_eq!(expired_a["payload"]["name"], "Зелье лечения");
     assert_eq!(expired_b["payload"]["name"], "Зелье лечения");
 }
+
+#[tokio::test]
+async fn drop_epic_item_works() {
+    // R-dnd (заказчик): эпики/легендарки должны выбрасываться —
+    // серверного ограничения по редкости нет; проверяем полный путь.
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, _, _) = in_world(&ws).await;
+
+    // Руна пламени (epic) из контента.
+    let uid = give(&mut a, "rune_flame_ash").await;
+
+    let seq = a.send("cmd/item.drop", json!({ "item_uid": uid })).await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "выброс эпика");
+    // Порядок прихода недетерминирован (прямой ответ vs out_tx) —
+    // собираем оба события в любом порядке.
+    let mut spawn_evt = None;
+    let mut dropped_evt = None;
+    for _ in 0..10 {
+        let env = a
+            .wait(|v| v["type"] == "evt/entity/spawn" || v["type"] == "evt/item/dropped")
+            .await;
+        if env["type"] == "evt/entity/spawn" && spawn_evt.is_none() {
+            spawn_evt = Some(env.clone());
+        }
+        if env["type"] == "evt/item/dropped" && dropped_evt.is_none() {
+            dropped_evt = Some(env);
+        }
+        if spawn_evt.is_some() && dropped_evt.is_some() {
+            break;
+        }
+    }
+    let spawn = spawn_evt.expect("evt/entity/spawn пришёл");
+    let dropped = dropped_evt.expect("evt/item/dropped пришёл");
+    assert_eq!(
+        dropped["payload"]["item_name"],
+        "Руна пламени: Искра-Порыв-Пепел"
+    );
+    assert_eq!(spawn["payload"]["location_id"], "l_village");
+
+    let seq = a
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok");
+    let snap = a.wait_event("evt/state/snapshot").await;
+    let ground = snap["payload"]["location"]["entities"]
+        .as_array()
+        .expect("entities")
+        .iter()
+        .any(|e| e["ground"] == true);
+    assert!(ground, "эпик лежит на земле: {snap}");
+}
