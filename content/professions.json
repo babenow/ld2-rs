@@ -1,12 +1,18 @@
 {
   "professions": [
-    { "id": "blacksmith", "name": "Кузнец", "type": "primary" },
-    { "id": "alchemist", "name": "Алхимик", "type": "primary" },
-    { "id": "scribe", "name": "Начертатель", "type": "primary" },
+    { "id": "herbalist", "name": "Травничество", "type": "primary" },
+    { "id": "alchemist", "name": "Алхимия", "type": "primary" },
+    { "id": "mining", "name": "Горное дело", "type": "primary" },
+    { "id": "blacksmith", "name": "Кузнечное дело", "type": "primary" },
+    { "id": "skinning", "name": "Снятие шкур", "type": "primary" },
+    { "id": "leatherworking", "name": "Кожевенное дело", "type": "primary" },
+    { "id": "tailor", "name": "Портняжное дело", "type": "primary" },
+    { "id": "scribe", "name": "Начертание", "type": "primary" },
+    { "id": "woodcutting", "name": "Лесозаготовка", "type": "primary" },
     { "id": "woodcarver", "name": "Резчик", "type": "primary" },
-    { "id": "tailor", "name": "Портной", "type": "primary" },
-    { "id": "cook", "name": "Повар", "type": "primary" },
-    { "id": "herbalist", "name": "Травник", "type": "secondary" },
-    { "id": "hunter", "name": "Охотник", "type": "secondary" }
+    { "id": "jeweler", "name": "Ювелирное дело", "type": "primary" },
+    { "id": "cook", "name": "Кулинария", "type": "secondary" },
+    { "id": "fishing", "name": "Рыболовство", "type": "secondary" },
+    { "id": "medic", "name": "Лечение", "type": "secondary" }
   ]
 }

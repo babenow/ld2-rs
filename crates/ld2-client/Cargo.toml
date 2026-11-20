@@ -20,3 +20,12 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 keyring = { workspace = true }
 unicode-segmentation = "1"
+# Иконка окна X11 (Linux): gpui WindowOptions.icon = Arc<image::RgbaImage>.
+# Зависимость безусловная (тип нужен в сигнатуре на всех платформах),
+# версия — та же, что в графе gpui (0.25): типы совпадают.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+# Windows: встраивание icon.ico в exe (проводник/таскбар/ярлыки).
+# build.rs гейтит по CARGO_CFG_TARGET_OS — на других hosts это no-op.
+winresource = { version = "0.1", default-features = false }

@@ -34,6 +34,11 @@ pub enum EntityKind {
     Npc,
     Corpse,
     Object,
+    /// M20/F20b: объект-ресурс (жила/дерево/трава) — `cmd/resource.gather`.
+    Resource,
+    /// M20/F20c: контейнер (сундук) — лут `loot:<entity>:<idx>`
+    /// однократно на персонажа (паритет трупа).
+    Container,
 }
 
 /// Строка в `location.entities` (§6). `was_player` — ключевой маркер трупа
@@ -52,10 +57,35 @@ pub struct Entity {
     pub was_player: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggro: Option<bool>,
+    /// M25: босс — текущая фаза (имя/глиф/каст) для списка монстров.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boss: Option<BossState>,
+    /// M25: кого монстр атакует (id цели) — «атакует вас/имя».
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attacking: Option<String>,
+    /// M25: следующая атака моба (epoch, мс) — прогресс-бар атаки.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_attack_at: Option<i64>,
+    /// M25: интервал атаки моба, мс (знаменатель бара).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack_interval: Option<i64>,
     /// Незнакомые поля (например, ссылки на лут контента) сохраняются и
     /// не ломают десериализацию (§2.3, §11.2).
     #[serde(flatten, default)]
     pub extra: JsonMap,
+}
+
+/// M25: состояние босса в списке монстров — текущая фаза по времени
+/// боя (сервер — истина; аддитивно §11: поля нет у старого сервера).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BossState {
+    pub phase: u32,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+    /// M25: имя навыка в касте (подготовка) — строка босса.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub casting: Option<String>,
 }
 
 /// Выход из локации; `dir` — опционное каноническое направление для хоткеев.
@@ -114,6 +144,11 @@ pub struct RuneInfo {
     /// или руны → клиент фолбэчит стабильным хешем имени руны.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glyph: Option<String>,
+    /// M24: класс руны (`stats.class`: warrior|archer|mage) — каст
+    /// и авто-приём только своему классу; аддитивно §11: поля нет у
+    /// сервера/старой записи → любому классу.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
     /// M18/F58f: раритет вставленного предмета — у самоцвета символ
     /// в отображении зависит от него (предмет и слот). Сервер кладёт
     /// при инкрустации (§8); аддитивно §11: поля нет → клиент
@@ -301,6 +336,10 @@ pub struct QuestState {
 pub struct ProfessionSnapshot {
     pub id: String,
     pub rank: u32,
+    /// M21: уровень профессии (0..max_level) — вторая шкала; ранг
+    /// определяется границами уровней (кратно rank_span).
+    #[serde(default)]
+    pub level: u32,
     pub xp: i64,
     pub xp_to_next: i64,
     #[serde(flatten, default)]

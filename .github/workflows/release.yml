@@ -45,10 +45,23 @@ jobs:
           mkdir -p "$DIR"
           cp target/release/ld2-gpui "$DIR/"
           cp README.md "$DIR/" 2>/dev/null || true
+          # Иконки и .desktop — для запуска из распакованного архива
+          # (ярлык на .desktop или перенос в ~/.local/share).
+          cp -r crates/ld2-client/assets/icons "$DIR/icons"
+          rm -f "$DIR/icons/icon-1024.png" "$DIR/icons/icon.ico" "$DIR/icons/icon.icns"
           tar -czf "${DIR}.tar.gz" "$DIR"
-          # .deb (dpkg-deb есть на ubuntu-runner).
+          # .deb (dpkg-deb есть на ubuntu-runner). Иконки — hicolor
+          # (иконка лаунчера), .desktop — запись меню (StartupWMClass
+          # = app_id окна gpui, main.rs).
           mkdir -p pkg/DEBIAN pkg/usr/bin
           cp target/release/ld2-gpui pkg/usr/bin/
+          ICONS=crates/ld2-client/assets/icons
+          for S in 16 32 48 128 256; do
+            mkdir -p "pkg/usr/share/icons/hicolor/${S}x${S}/apps"
+            cp "$ICONS/icon-$S.png" "pkg/usr/share/icons/hicolor/${S}x${S}/apps/likedimion.png"
+          done
+          mkdir -p pkg/usr/share/applications
+          cp "$ICONS/likedimion.desktop" pkg/usr/share/applications/
           cat > pkg/DEBIAN/control <<EOF
           Package: ld2
           Version: ${VER}
@@ -77,18 +90,22 @@ jobs:
           GPUI_BIN="universal-ld2-gpui"
           if [ ! -f "$GPUI_BIN" ]; then GPUI_BIN="target/release/ld2-gpui"; fi
           APP="ld2.app"
-          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp "$GPUI_BIN" "$APP/Contents/MacOS/ld2-gpui"
+          # Иконка .app в Dock/Finder (CFBundleIconFile → Resources/icon.icns).
+          cp crates/ld2-client/assets/icons/icon.icns "$APP/Contents/Resources/icon.icns"
           cat > "$APP/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
             <key>CFBundleName</key><string>ld2</string>
+            <key>CFBundleDisplayName</key><string>Likedimion</string>
             <key>CFBundleIdentifier</key><string>ru.ld2.client</string>
             <key>CFBundleVersion</key><string>${VER}</string>
             <key>CFBundleShortVersionString</key><string>${VER}</string>
             <key>CFBundleExecutable</key><string>ld2-gpui</string>
+            <key>CFBundleIconFile</key><string>icon</string>
             <key>CFBundlePackageType</key><string>APPL</string>
           </dict>
           </plist>
@@ -108,6 +125,9 @@ jobs:
           $dir = "ld2-$ver-windows-x86_64"
           New-Item -ItemType Directory -Path $dir | Out-Null
           Copy-Item target/release/ld2-gpui.exe $dir/
+          # .ico рядом с exe — для ярлыков (иконка exe уже встроена
+          # через build.rs/winresource).
+          Copy-Item crates/ld2-client/assets/icons/icon.ico $dir/
           if (Test-Path README.md) { Copy-Item README.md $dir/ }
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
           "ASSETS=$dir.zip" | Out-File -FilePath $env:GITHUB_ENV -Append

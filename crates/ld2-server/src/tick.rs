@@ -26,7 +26,14 @@ pub async fn init(state: &SharedState) -> Result<(), sqlx::Error> {
             .await?;
     {
         let mut world = state.world.lock().expect("мир");
-        world.seed_mobs(&rows);
+        world.seed_mobs(
+            &rows,
+            state
+                .config
+                .world
+                .respawn_default
+                .map(|r| (r.min_s, r.max_s)),
+        );
     }
     tokio::spawn(run(state.clone()));
     Ok(())
@@ -57,6 +64,13 @@ pub async fn run(state: SharedState) {
             crime_expire_step(&state).await;
             buff_expire_step(&state).await;
             craft_finish_step(&state).await;
+            // M20: TTL — выброшенные предметы и трупы исчезают.
+            ground_expire_step(&state).await;
+            corpse_expire_step(&state).await;
+            // M20: респавны мобов и статического лута по сроку.
+            respawn_step(&state).await;
+            // Снятие шкур: готовые разделки (сервер-джобы5 с).
+            harvest_step(&state).await;
             // M18/F58c: заряды рун (режим `time`; `item` — без тикера).
             recharge_acc += 1.0;
             let interval_s = state.config.gameplay.magic.rune_recharge_s;
@@ -621,11 +635,120 @@ fn plan_combat(
         if world.mob_stunned(&mob_id, now_ms) {
             continue;
         }
-        world.set_mob_next_attack(&mob_id, now_ms + attack_interval_ms);
+        // M25: босс — вступление в бой и переход фазы по времени боя;
+        // смена фазы → событие всем в локации (глиф в списке монстров).
+        if let Some((_, true)) = world.boss_tick(&mob_id, now_ms) {
+            if let Some(state) = world.boss_state(&mob_id) {
+                for addr in world.chars_in_location(&loc) {
+                    push_event(
+                        &mut plan,
+                        &addr,
+                        "evt/mob/phase",
+                        &ld2_protocol::evt::MobPhase {
+                            entity_id: mob_id.clone(),
+                            phase: state.phase,
+                            name: state.name.clone(),
+                            glyph: state.glyph.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        let (damage_mult, interval_mult) = world.boss_phase_mult(&mob_id, now_ms);
+        // M25: интервал — (база конфига + замедление моба
+        // `attack_speed`, мс) × множитель фазы/баффа, но не ниже
+        // настройки сервера min_attack_interval_s («минимальная
+        // скорость атаки») — крупные мобы бьют редко даже в поздних
+        // фазах.
+        let interval_ms = crate::systems::mob_attack_interval(
+            attack_interval_ms + world.mob_attack_speed(&mob_id),
+            interval_mult,
+            (cfg.min_attack_interval_s * 1000.0).round() as i64,
+        );
+        world.set_mob_next_attack(&mob_id, now_ms + interval_ms);
+        world.set_mob_attack_interval(&mob_id, interval_ms);
+        // M25: навыки босса — каст (подготовка: босс не атакует) либо
+        // применение мгновенного/готового каста.
+        let (skill_tick, casting) = world.boss_skill_tick(&mob_id, now_ms);
+        let boss_name = world
+            .mob(&mob_id)
+            .map(|m| m.name.clone())
+            .unwrap_or_default();
+        match &skill_tick {
+            crate::world::BossSkillTick::Started(skill) => {
+                for addr in world.chars_in_location(&loc) {
+                    push_event(
+                        &mut plan,
+                        &addr,
+                        "evt/mob/cast",
+                        &ld2_protocol::evt::MobCast {
+                            entity_id: mob_id.clone(),
+                            source_name: boss_name.clone(),
+                            name: skill.name.clone(),
+                            glyph: skill.glyph.clone(),
+                            ends_at: now_ms + skill.cast_s.max(1) * 1000,
+                        },
+                    );
+                }
+            }
+            crate::world::BossSkillTick::Applied(skill) => {
+                let skill_damage = ((skill.damage as f64) * damage_mult).round() as i64;
+                for addr in world.chars_in_location(&loc) {
+                    push_event(
+                        &mut plan,
+                        &addr,
+                        "evt/mob/skill",
+                        &ld2_protocol::evt::MobSkill {
+                            entity_id: mob_id.clone(),
+                            source_name: boss_name.clone(),
+                            name: skill.name.clone(),
+                            glyph: skill.glyph.clone(),
+                        },
+                    );
+                    if skill_damage > 0 {
+                        plan.mob_hits.push(MobHit {
+                            char_id: addr,
+                            amount: skill_damage,
+                        });
+                    }
+                }
+                // M25: эффект приёма — контроль над игроками локации
+                // (стан/немота/ослепление) + событие на отображение.
+                if let Some(effect) = &skill.effect {
+                    for addr in world.chars_in_location(&loc) {
+                        let until = now_ms + effect.duration_s.max(1) * 1000;
+                        if world.set_char_effect(&addr, &effect.kind, until) {
+                            push_event(
+                                &mut plan,
+                                &addr,
+                                "evt/char/afflict",
+                                &ld2_protocol::evt::CharAfflict {
+                                    kind: effect.kind.clone(),
+                                    title: crate::world::effect_title(&effect.kind),
+                                    until_ms: until,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+            crate::world::BossSkillTick::None => {}
+        }
+        // Подготовка/применение навыка — без обычной атаки в такт.
+        if casting
+            || matches!(
+                skill_tick,
+                crate::world::BossSkillTick::Started(_) | crate::world::BossSkillTick::Applied(_)
+            )
+        {
+            continue;
+        }
         let Some(victim) = world.chars_in_location(&loc).into_iter().next() else {
             continue;
         };
-        let amount = world.mob_damage(&mob_id);
+        // M25: цель атаки — для строки «атакует вас/имя» в списке.
+        world.set_mob_target(&mob_id, &victim);
+        let amount = ((world.mob_damage(&mob_id) as f64) * damage_mult).round() as i64;
         if amount <= 0 {
             continue;
         }
@@ -651,6 +774,19 @@ fn plan_combat(
                 extra: Default::default(),
             },
         );
+        // M25: бар атаки — клиент узнаёт срок следующей атаки.
+        for addr in world.chars_in_location(&loc) {
+            push_event(
+                &mut plan,
+                &addr,
+                "evt/mob/attack",
+                &ld2_protocol::evt::MobAttack {
+                    entity_id: mob_id.clone(),
+                    next_attack_at: now_ms + interval_ms,
+                    interval_ms,
+                },
+            );
+        }
         plan.mob_hits.push(MobHit {
             char_id: victim,
             amount,
@@ -682,6 +818,7 @@ pub(crate) fn mob_kill_effects(
             &EntityDespawn {
                 entity_id: target.to_string(),
                 location_id: loc.to_string(),
+                kind: Some(ld2_protocol::types::EntityKind::Monster),
             },
         );
         if let Some(corpse_id) = &corpse_id {
@@ -775,6 +912,38 @@ async fn apply_rage_dealt(
 
 /// поток смерти ФР-06 + синхронизация позиции в мире.
 async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String)> {
+    // M24: «режим бога» — урон не применяется вовсе: ни смерти, ни
+    // потери лута, ни ярости за полученный урон.
+    {
+        let world = state.world.lock().expect("мир");
+        if world.is_god(&hit.char_id) {
+            return Vec::new();
+        }
+    }
+    // M24: урон прерывает активную разделку — семантика M23:
+    // skin → кожа испорчена (повтор невозможен, «Шкура испорчена»
+    // в журнале), gut → просто отмена (повтор разрешён); шкура в
+    // лут не попадает, опыта нет (finish_harvest не выполняется).
+    let harvest_evt = {
+        let mut world = state.world.lock().expect("мир");
+        world.cancel_harvest(&hit.char_id).map(|job| {
+            let ruined = job.action == "skin";
+            if ruined {
+                world.ruin_skin(&job.corpse_id);
+            }
+            event_text(
+                "evt/harvest/result",
+                &serde_json::to_value(ld2_protocol::evt::HarvestResult {
+                    entity_id: job.corpse_id,
+                    name: job.name,
+                    action: job.action,
+                    ok: false,
+                    ruined,
+                })
+                .unwrap_or_default(),
+            )
+        })
+    };
     let pool = &state.pool;
     let row = match crate::db::characters::get(pool, &hit.char_id).await {
         Ok(Some(row)) => row,
@@ -787,11 +956,15 @@ async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String
     let new_hp = (i64::from(row.hp_cur) - hit.amount).max(0);
     if new_hp == 0 {
         // Смерть: позиция после респауна — источник истины для мира.
-        let events = crate::death::kill_character(state, &hit.char_id).await;
+        let mut events = crate::death::kill_character(state, &hit.char_id).await;
         if let Ok(Some(row)) = crate::db::characters::get(pool, &hit.char_id).await {
             let mut world = state.world.lock().expect("мир");
             world.set_char_location(&hit.char_id, &row.location_id);
             world.end_combat(&hit.char_id);
+        }
+        // M24: прерванная уроном разделка — итог клиенту и при смерти.
+        if let Some(text) = harvest_evt {
+            events.push((hit.char_id.clone(), text));
         }
         return events;
     }
@@ -821,7 +994,12 @@ async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String
         None,
         serde_json::to_value(CharStats { patch }).unwrap_or_default(),
     );
-    vec![(hit.char_id.clone(), text)]
+    let mut out = vec![(hit.char_id.clone(), text)];
+    // M24: итог прерванной разделки — следом за патчем характеристик.
+    if let Some(text) = harvest_evt {
+        out.push((hit.char_id.clone(), text));
+    }
+    out
 }
 
 /// Применить XP убийства: навык оружия персонажа (экипировка → `item_defs.skill`,
@@ -852,7 +1030,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         }
     };
 
-    let (xp, rank, max_attr) = match (
+    let (xp, rank, max_attr, total_xp, char_name, gender) = match (
         crate::db::skills::learned_one(pool, &work.char_id, &skill_id).await,
         crate::db::characters::get(pool, &work.char_id).await,
     ) {
@@ -861,7 +1039,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
                 serde_json::from_value(row.attrs).unwrap_or_default();
             let max_attr = attrs.values().max().copied().unwrap_or(0);
             let (xp, rank) = learned.unwrap_or((0, 0));
-            (xp, rank, max_attr)
+            (xp, rank, max_attr, row.total_xp, row.name, row.gender)
         }
         (Err(e), _) | (_, Err(e)) => {
             warn!("тик (XP {}): {e}", work.char_id);
@@ -876,6 +1054,32 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         if let Err(e) = crate::db::characters::add_total_xp(pool, &work.char_id, work.amount).await
         {
             warn!("тик (total_xp {}): {e}", work.char_id);
+        }
+        // M22: новый уровень персонажа — анонс в локации (своему
+        // персонажу клиент пишет «Вы получили…» по char_id).
+        let level_cfg = &state.config.gameplay.level;
+        let (old_level, ..) = crate::systems::level_for_total(total_xp, level_cfg);
+        let (new_level, ..) = crate::systems::level_for_total(total_xp + work.amount, level_cfg);
+        if new_level > old_level {
+            let payload = ld2_protocol::evt::CharLevelUp {
+                char_id: work.char_id.clone(),
+                name: char_name.clone(),
+                gender: gender.clone(),
+                level: new_level,
+            };
+            let text = crate::session::event_text(
+                "evt/char/level_up",
+                None,
+                serde_json::to_value(payload).unwrap_or_default(),
+            );
+            if !text.is_empty() {
+                let world = state.world.lock().expect("мир");
+                if let Some(loc) = world.char_location(&work.char_id) {
+                    for addr in world.chars_in_location(&loc) {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                }
+            }
         }
     }
 
@@ -1055,6 +1259,308 @@ async fn regen_step(state: &SharedState) {
 }
 
 /// M18/F58d (ADR-012 §6): снятие истёкших баффов рун раз в секунду —
+/// M20: респавны по сроку (очередь `World`): моб возвращается из
+/// шаблона сида со стартовым HP → `evt/entity/spawn`, его старый труп
+/// уходит → `evt/entity/despawn` (kind=corpse); статический лут —
+/// сброс `loot_taken` в БД (без события — клиент осматривает заново).
+async fn respawn_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let due = {
+        let mut world = state.world.lock().expect("мир");
+        world.due_respawns(now)
+    };
+    for entry in due {
+        match entry.kind {
+            crate::world::RespawnKind::Mob { corpse_id } => {
+                let (entity, corpse_id) = {
+                    let mut world = state.world.lock().expect("мир");
+                    let entity = world.respawn_mob(&entry.entity_id);
+                    let corpse = corpse_id
+                        .as_deref()
+                        .and_then(|id| world.remove_corpse(id))
+                        .map(|c| c.id);
+                    (entity, corpse)
+                };
+                let Some(entity) = entity else {
+                    continue; // нет шаблона (не должен случиться)
+                };
+                let world = state.world.lock().expect("мир");
+                // Сначала старый труп (вместе с лутом), затем моб.
+                if let Some(corpse_id) = corpse_id {
+                    let text = event_text(
+                        "evt/entity/despawn",
+                        &ld2_protocol::evt::EntityDespawn {
+                            entity_id: corpse_id,
+                            location_id: entry.location_id.clone(),
+                            kind: Some(ld2_protocol::types::EntityKind::Corpse),
+                        },
+                    );
+                    for addr in world.chars_in_location(&entry.location_id) {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                }
+                let text = event_text(
+                    "evt/entity/spawn",
+                    &ld2_protocol::evt::EntitySpawn {
+                        entity,
+                        location_id: entry.location_id.clone(),
+                    },
+                );
+                for addr in world.chars_in_location(&entry.location_id) {
+                    world.send_to_char(&addr, text.clone());
+                }
+            }
+            crate::world::RespawnKind::Loot => {
+                if let Err(e) =
+                    crate::db::items::loot_taken_reset(&state.pool, &entry.entity_id).await
+                {
+                    warn!("респавн лута ({}): {e}", entry.entity_id);
+                }
+            }
+            crate::world::RespawnKind::Resource => {
+                let restored = {
+                    let mut world = state.world.lock().expect("мир");
+                    world.respawn_resource(&entry.entity_id)
+                };
+                let Some((node, was_hidden)) = restored else {
+                    continue; // нет узла (не должен случиться)
+                };
+                let world = state.world.lock().expect("мир");
+                if was_hidden {
+                    // Трава исчезала → возвращается видимой.
+                    let text = event_text(
+                        "evt/entity/spawn",
+                        &ld2_protocol::evt::EntitySpawn {
+                            entity: node.entity(),
+                            location_id: entry.location_id.clone(),
+                        },
+                    );
+                    for addr in world.chars_in_location(&entry.location_id) {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                } else {
+                    // Жилы/деревья остаются — только патч шкалы запаса.
+                    let mut patch = serde_json::Map::new();
+                    patch.insert(
+                        "hp".into(),
+                        serde_json::json!({"cur": node.current, "max": node.max}),
+                    );
+                    let text = event_text(
+                        "evt/entity/move",
+                        &ld2_protocol::evt::EntityMove {
+                            entity_id: node.id.clone(),
+                            patch,
+                        },
+                    );
+                    for addr in world.chars_in_location(&entry.location_id) {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Снятие шкур: готовые разделки → лут в труп (шкуры — в общий
+/// список с качеством по рангу и критом, мясо/потроха — в отдельный
+/// «Внутри»), XP только за снятие шкуры (формула/множители — M22,
+/// docs/professions.md §3), итог персонажу `evt/harvest/result` и
+/// обновление трупа (`evt/corpse/created` — апсерт у клиента).
+async fn harvest_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let due = {
+        let mut world = state.world.lock().expect("мир");
+        world.due_harvests(now)
+    };
+    for job in due {
+        // Профессия персонажа: уровень/ранг (качество, крит, гейт
+        // уровней) — нет строки (сбросили посреди действия) → без XP.
+        let learned = crate::db::professions::learned(&state.pool, &job.char_id)
+            .await
+            .ok()
+            .and_then(|rows| rows.into_iter().find(|(id, _, _, _)| id == "skinning"));
+        // LearnedRow = (id, xp, rank, level) — порядок важен: ранг
+        // идёт первым, уровень вторым (фикс: качество шкуры бралось
+        // с уровня → «Великолепная» вместо обычной).
+        let (rank, level) = learned
+            .as_ref()
+            .map(|(_, _, r, l)| ((*r).max(1) as u32, (*l).max(0) as u32))
+            .unwrap_or((1, 0));
+        // Труп: требуемый уровень — из флагов контента.
+        let required = {
+            let world = state.world.lock().expect("мир");
+            world
+                .corpse(&job.corpse_id)
+                .and_then(|c| {
+                    c.harvest
+                        .as_ref()
+                        .and_then(|h| h.get("level"))
+                        .and_then(|v| v.as_i64())
+                })
+                .unwrap_or(1)
+                .max(1) as u32
+        };
+        let finished = {
+            let mut world = state.world.lock().expect("мир");
+            world.finish_harvest(&job.corpse_id, &job.action, level, rank)
+        };
+        // Итог персонажу — всегда (ok=false: труп исчез/уже разделано).
+        let ok = finished.is_some();
+        let result = ld2_protocol::evt::HarvestResult {
+            entity_id: job.corpse_id.clone(),
+            name: job.name.clone(),
+            action: job.action.clone(),
+            ok,
+            ruined: false,
+        };
+        let text = crate::session::event_text("evt/harvest/result", None, {
+            serde_json::to_value(result).unwrap_or_default()
+        });
+        if !text.is_empty() {
+            let world = state.world.lock().expect("мир");
+            world.send_to_char(&job.char_id, text);
+        }
+        let Some((corpse, _skin, _inner)) = finished else {
+            continue;
+        };
+        // XP — только за снятие шкуры (освежевание не даёт).
+        if job.action == "skin" {
+            if let Some((_, xp_old, rank_row, _)) = learned {
+                let gain = crate::systems::harvest_xp_gain(required, level);
+                if gain > 0 {
+                    let cfg = &state.config.gameplay.professions;
+                    let (xp_new, level_new) =
+                        crate::systems::profession_level_up(cfg, xp_old, level, gain);
+                    match crate::db::professions::grant_progress(
+                        &state.pool,
+                        &job.char_id,
+                        "skinning",
+                        xp_new,
+                        rank_row,
+                        level_new as i32,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            let snapshot = crate::systems::profession_snapshot(
+                                cfg, "skinning", xp_new, rank_row, level_new,
+                            );
+                            let text = crate::session::event_text(
+                                "evt/craft/profession",
+                                None,
+                                serde_json::to_value(ld2_protocol::evt::CraftProfession {
+                                    profession: snapshot,
+                                    name: crate::db::professions::profession_name(
+                                        &state.pool,
+                                        "skinning",
+                                    )
+                                    .await
+                                    .ok()
+                                    .flatten(),
+                                    gain: Some(gain),
+                                })
+                                .unwrap_or_default(),
+                            );
+                            if !text.is_empty() {
+                                let world = state.world.lock().expect("мир");
+                                world.send_to_char(&job.char_id, text);
+                            }
+                        }
+                        Err(e) => warn!("снятие шкур (XP skinning): {e}"),
+                    }
+                }
+            }
+        }
+        // Обновление трупа всем в локации (лут/флаги «сделано»).
+        let loot_count = corpse.loot.iter().filter(|s| s.is_some()).count()
+            + corpse.inner_loot.iter().filter(|s| s.is_some()).count();
+        let updated = ld2_protocol::evt::CorpseCreated {
+            entity: corpse.entity(),
+            loot_count: loot_count as u32,
+        };
+        let text = crate::session::event_text("evt/corpse/created", None, {
+            serde_json::to_value(updated).unwrap_or_default()
+        });
+        if !text.is_empty() {
+            let world = state.world.lock().expect("мир");
+            for addr in world.chars_in_location(&job_corpse_location(&world, &job.corpse_id)) {
+                world.send_to_char(&addr, text.clone());
+            }
+        }
+    }
+}
+
+/// Локация трупа для рассылки (нет трупа — рассылать некуда).
+fn job_corpse_location(world: &crate::world::World, corpse_id: &str) -> String {
+    world
+        .corpse(corpse_id)
+        .map(|c| c.location_id.clone())
+        .unwrap_or_default()
+}
+
+/// M20: выброшенные предметы истекают по `drop_ttl_s` → «{name} исчез»
+/// всем в локации (`ttl <= 0` — выключено).
+async fn ground_expire_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let ttl = state.config.world.drop_ttl_s;
+    if ttl <= 0 {
+        return;
+    }
+    let expired: Vec<(String, ld2_protocol::evt::ItemExpired)> = {
+        let mut world = state.world.lock().expect("мир");
+        world
+            .due_ground(now, ttl)
+            .into_iter()
+            .map(|g| {
+                (
+                    g.location_id.clone(),
+                    ld2_protocol::evt::ItemExpired {
+                        uid: g.id,
+                        name: g.name,
+                    },
+                )
+            })
+            .collect()
+    };
+    for (loc, payload) in expired {
+        let text = event_text("evt/item/expired", &payload);
+        let world = state.world.lock().expect("мир");
+        for addr in world.chars_in_location(&loc) {
+            world.send_to_char(&addr, text.clone());
+        }
+    }
+}
+
+/// M20: трупы старше `corpse_ttl_s` исчезают (вместе с лутом) —
+/// `evt/entity/despawn` (kind=corpse → «{name} исчезает»).
+async fn corpse_expire_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let ttl = state.config.world.corpse_ttl_s;
+    if ttl <= 0 {
+        return;
+    }
+    let expired: Vec<(String, String)> = {
+        let mut world = state.world.lock().expect("мир");
+        world
+            .due_corpses(now, ttl)
+            .into_iter()
+            .map(|c| (c.location_id.clone(), c.id))
+            .collect()
+    };
+    for (loc, corpse_id) in expired {
+        let payload = ld2_protocol::evt::EntityDespawn {
+            entity_id: corpse_id,
+            location_id: loc.clone(),
+            kind: Some(ld2_protocol::types::EntityKind::Corpse),
+        };
+        let text = event_text("evt/entity/despawn", &payload);
+        let world = state.world.lock().expect("мир");
+        for addr in world.chars_in_location(&loc) {
+            world.send_to_char(&addr, text.clone());
+        }
+    }
+}
+
 /// клиенту шлётся **полная замена** списка `evt/char/buffs` (паттерн
 /// `evt/crime/status`); только онлайн-персонажи (как `regen_step`).
 async fn buff_expire_step(state: &SharedState) {
@@ -1248,49 +1754,41 @@ async fn profession_xp_step(
     let learned = crate::db::professions::learned(&state.pool, char_id)
         .await
         .ok()?;
-    let (mut xp, mut rank) = learned
+    let (xp, rank, level) = learned
         .iter()
-        .find(|(id, _, _)| *id == recipe.profession)
-        .map(|(_, x, r)| (*x, *r))
-        .unwrap_or((0, 1));
-    xp += gain;
+        .find(|(id, _, _, _)| *id == recipe.profession)
+        .map(|(_, x, r, l)| (*x, *r, *l))
+        .unwrap_or((0, 1, 0));
     let cfg = &state.config.gameplay.professions;
-    // Рост ранга, пока хватает порога и не достигнут потолок.
-    loop {
-        if rank as u32 >= cfg.rank_max {
-            break;
-        }
-        let need = ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64;
-        if xp < need {
-            break;
-        }
-        xp -= need;
-        rank += 1;
-    }
-    if let Err(e) =
-        crate::db::professions::grant_xp(&state.pool, char_id, &recipe.profession, xp, rank).await
+    // M21: опыт растит УРОВЕНЬ (остаток переносится, потолок —
+    // max_level); ранг меняет только тренер/награда квеста.
+    let (xp, level_new) = crate::systems::profession_level_up(cfg, xp, level.max(0) as u32, gain);
+    if let Err(e) = crate::db::professions::grant_progress(
+        &state.pool,
+        char_id,
+        &recipe.profession,
+        xp,
+        rank,
+        level_new as i32,
+    )
+    .await
     {
         warn!("крафт (XP профессии {char_id}): {e}");
         return None;
     }
-    let rank_u32 = rank.max(1) as u32;
-    let xp_to_next = if rank_u32 >= cfg.rank_max {
-        0
-    } else {
-        ((cfg.xp_to_next_base as f64) * cfg.xp_growth.powi(rank)).round() as i64
-    };
-    let snapshot = ld2_protocol::types::ProfessionSnapshot {
-        id: recipe.profession.clone(),
-        rank: rank_u32,
-        xp,
-        xp_to_next,
-        extra: Default::default(),
-    };
+    let snapshot =
+        crate::systems::profession_snapshot(cfg, &recipe.profession, xp, rank, level_new);
+    let name = crate::db::professions::profession_name(&state.pool, &recipe.profession)
+        .await
+        .ok()
+        .flatten();
     let text = crate::session::event_text(
         "evt/craft/profession",
         None,
         serde_json::to_value(ld2_protocol::evt::CraftProfession {
             profession: snapshot,
+            name,
+            gain: Some(gain),
         })
         .unwrap_or_default(),
     );

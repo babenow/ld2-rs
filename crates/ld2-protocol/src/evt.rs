@@ -178,6 +178,34 @@ pub struct EntityHp {
 pub struct EntityDespawn {
     pub entity_id: String,
     pub location_id: String,
+    /// M20: тип исчезнувшей сущности — клиент различает строки журнала
+    /// («{name} исчезает» vs «{name} исчез» для предмета); аддитивно
+    /// §11: старый сервер не шлёт → прежняя строка.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::types::EntityKind>,
+}
+
+/// M20: предмет в локации исчез (TTL выброса) — журнал «{name} исчез».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemExpired {
+    /// Id наземного предмета (на будущее; журналу нужно name).
+    pub uid: String,
+    pub name: String,
+}
+
+/// M20: выброс предмета в локации — журнал у всех, кто в локации
+/// (§8, аддитивно): «{by} выбросил(а) …» / «Вы выбросили …».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemDropped {
+    /// Кто бросил (`char_id`) — для строки «Вы …» у себя.
+    pub char_id: String,
+    /// Имя персонажа (для «{by} выбросил(а)»).
+    pub by_name: String,
+    /// `male`|`female` — выбор «выбросил/выбросила».
+    pub gender: String,
+    pub qty: i64,
+    /// Название предмета.
+    pub item_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -336,6 +364,13 @@ pub struct CraftResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CraftProfession {
     pub profession: ProfessionSnapshot,
+    /// M22: имя профессии (из контента, рус.) — журнал клиента.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// M22: полученное за действие количество опыта (`None`/0 —
+    /// журнал «{name}: опыт +{n}» не пишется).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -475,7 +510,136 @@ pub struct GuildLog {
     pub entry: GuildLogEntry,
 }
 
+/// M20: страница многостраничного игрового диалога (заготовка).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogPage {
+    pub id: String,
+    pub text: String,
+    /// Кнопки действий (для page-диалога).
+    #[serde(default)]
+    pub actions: Vec<DialogAction>,
+}
+
+/// M20: кнопка действия в игровом диалоге.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogAction {
+    pub id: String,
+    pub label: String,
+}
+
+/// M20: поле ввода execute-диалога («text» | «number»).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogInput {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "dialog_input_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub default: String,
+}
+
+fn dialog_input_kind() -> String {
+    "text".into()
+}
+
+/// M20: открытие игрового диалога — **заготовка** многостраничного
+/// (страницы + действия + кнопка «Назад» на клиенте) и execute-диалога
+/// (ввод данных → `cmd/dialog.submit` возвращает набор вводов).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogOpen {
+    /// Стабильный id диалога (для choice/submit).
+    pub id: String,
+    /// `page` | `execute`.
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub pages: Vec<DialogPage>,
+    #[serde(default)]
+    pub inputs: Vec<DialogInput>,
+}
+
+/// Снятие шкур: разделка завершена — клиент чистит прогресс-бар и
+/// пишет в журнал «Вы освежевали труп …»/«Вы сняли шкуру с трупа …»
+/// (`ok=false` — труп исчез, сообщения нет).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HarvestResult {
+    pub entity_id: String,
+    /// Имя животного (без префикса «Труп:»).
+    pub name: String,
+    /// `skin` | `gut`.
+    pub action: String,
+    pub ok: bool,
+    /// M22: разделка **прервана взаимодействием с предметом** —
+    /// для `skin` кожа испорчена (повтор невозможен), для `gut` —
+    /// просто отмена (можно повторить); клиент пишет «Шкура
+    /// испорчена» и чистит прогресс-бар.
+    #[serde(default)]
+    pub ruined: bool,
+}
+
+/// M22: новый уровень персонажа — журнал: себе «Вы получили новый
+/// уровень!…», остальным в локации «{имя} получил(а) новый уровень!».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharLevelUp {
+    pub char_id: String,
+    pub name: String,
+    /// `male` | `female` — «получил/получила».
+    pub gender: String,
+    pub level: u32,
+}
+
 // ─── wire-типы (protocol.md §8) ──────────────────────────────────────────────
+
+/// M25: моб атаковал — следующая атака через `interval_ms`
+/// (прогресс-бар атаки монстров на клиенте).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobAttack {
+    pub entity_id: String,
+    pub next_attack_at: i64,
+    pub interval_ms: i64,
+}
+
+/// M25: босс перешёл в фазу (по времени боя).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobPhase {
+    pub entity_id: String,
+    pub phase: u32,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+}
+
+/// M25: босс начал каст навыка (подготовка — босс не атакует).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobCast {
+    pub entity_id: String,
+    pub source_name: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+    pub ends_at: i64,
+}
+
+/// M25: дебафф контроля персонажа (эффект приёма босса): стан —
+/// всплывающее окно с прогрессбаром, остальные — журнал.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharAfflict {
+    /// `stun` | `silence` | `blind`.
+    pub kind: String,
+    pub title: String,
+    /// Срок действия (epoch, мс).
+    pub until_ms: i64,
+}
+
+/// M25: босс использовал навык.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobSkill {
+    pub entity_id: String,
+    pub source_name: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+}
 
 impl_events!(
     (StateSnapshot, "evt/state/snapshot"),
@@ -491,6 +655,11 @@ impl_events!(
     (EntityMove, "evt/entity/move"),
     (EntityHp, "evt/entity/hp"),
     (EntityDespawn, "evt/entity/despawn"),
+    (MobAttack, "evt/mob/attack"),
+    (MobPhase, "evt/mob/phase"),
+    (MobSkill, "evt/mob/skill"),
+    (MobCast, "evt/mob/cast"),
+    (CharAfflict, "evt/char/afflict"),
     (CorpseCreated, "evt/corpse/created"),
     (CorpseLooted, "evt/corpse/looted"),
     (CombatHit, "evt/combat/hit"),
@@ -500,6 +669,11 @@ impl_events!(
     (ItemAdded, "evt/item/added"),
     (ItemRemoved, "evt/item/removed"),
     (ItemState, "evt/item/state"),
+    (ItemDropped, "evt/item/dropped"),
+    (ItemExpired, "evt/item/expired"),
+    (HarvestResult, "evt/harvest/result"),
+    (CharLevelUp, "evt/char/level_up"),
+    (DialogOpen, "evt/dialog/open"),
     (UpgradeResult, "evt/upgrade/result"),
     (CraftResult, "evt/craft/result"),
     (CraftProfession, "evt/craft/profession"),

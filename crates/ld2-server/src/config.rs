@@ -57,6 +57,11 @@ pub struct ServerSection {
     pub min_client: Option<String>,
     /// Уровень логирования: EnvFilter-директива (`"info"`, `"info,sqlx=warn"`).
     pub log_level: String,
+    /// M24: разрешить `/scenario …` всем авторизованным (dev/тесты;
+    /// дыра из бэклога — раньше префикс не проверялся вовсе). В
+    /// прод-конфиге ключ отсутствует → false; админ проходит всегда.
+    #[serde(default)]
+    pub allow_scenario: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -303,19 +308,38 @@ impl Default for ResourceSection {
 }
 
 /// Баланс профессий (skills.md §8 `[professions]`, D25 — из конфига).
+/// M21: две шкалы — **уровень** (0…`max_level`, XP-порог растёт) и
+/// **ранг** (1…`ceil(max_level/rank_span)`, границы кратно `rank_span`;
+/// повышение — у тренера за золото или наградой квеста).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfessionsSection {
-    /// Предел ранга профессии (skills.md §5.1: 1…7).
-    pub rank_max: u32,
     /// XP за успешный крафт: `base + per_rank × ранг_рецепта`.
     pub xp_per_craft_base: i64,
     pub xp_per_craft_per_rank: i64,
-    /// Порог ранга: `round(base × growth^rank)`.
-    pub xp_to_next_base: i64,
-    pub xp_growth: f64,
     /// Доля XP при неудаче (skills.md §5.1).
     pub fail_xp_ratio: f64,
+    /// Порог уровня: `round(base × growth^L)` — каждый уровень дороже
+    /// (согласовано: `40 × 1.02^L`).
+    pub level_xp_base: i64,
+    pub level_xp_growth: f64,
+    /// Потолок уровня (на нём опыт перестаёт копиться; верхний ранг
+    /// «Мастер» заканчивает на этом уровне).
+    pub max_level: u32,
+    /// Уровней в ранге — границы рангов кратно этому (50).
+    pub rank_span: u32,
+    /// Цена повышения ранга у тренера: `round(base × growth^ранг)`
+    /// (согласовано: `200 × 1.5^ранг`).
+    pub rank_up_gold_base: i64,
+    pub rank_up_gold_growth: f64,
+}
+
+/// M20: диапазон респавна в секундах — два числа `{min_s, max_s}`,
+/// факт возрождения случайный в диапазоне (план M20, требование 1).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct RespawnRange {
+    pub min_s: i64,
+    pub max_s: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -327,6 +351,39 @@ pub struct WorldSection {
     pub tick_hz: u32,
     /// Периодический флаш онлайн-состояния, с (D27).
     pub autosave_interval_s: u64,
+    /// M20: время жизни трупа, с (вместе с неразобранным лутом);
+    /// `0` — трупы не удаляются. Для теста —60.
+    #[serde(default = "default_corpse_ttl")]
+    pub corpse_ttl_s: i64,
+    /// M20: время жизни выброшенного предмета, с; `0` — не удаляется.
+    /// Для теста —60.
+    #[serde(default = "default_drop_ttl")]
+    pub drop_ttl_s: i64,
+    /// M25: время жизни строки журнала (Лог), с; `0` — не удаляются.
+    /// Запрашивается клиентом через session.start; по умолчанию 30.
+    #[serde(default = "default_journal_ttl")]
+    pub journal_ttl_s: i64,
+    /// M25: локация респавна после смерти; пусто — спавн-локация
+    /// контента (`meta.spawn_location`).
+    #[serde(default)]
+    pub respawn_location_id: Option<String>,
+    /// M20: дефолтный респавн мобов `{min_s, max_s}` — для мобов без
+    /// `respawn` в контенте; нет поля и нет дефолта — моб не
+    /// возрождается (план M20, решение 5).
+    #[serde(default)]
+    pub respawn_default: Option<RespawnRange>,
+}
+
+const fn default_corpse_ttl() -> i64 {
+    60
+}
+
+const fn default_journal_ttl() -> i64 {
+    30
+}
+
+const fn default_drop_ttl() -> i64 {
+    60
 }
 
 /// Константы модели опыта навыков (skills.md §8 — «конфиг сервера», D25).
@@ -383,10 +440,19 @@ pub struct SkillGate {
 pub struct CombatSection {
     /// Период атак в бою, с (тик-луп `combat.attack`).
     pub attack_interval_s: f64,
+    /// M25: минимальная скорость атаки моба, с — пол интервала
+    /// (настройка сервера); контент-параметр моба `attack_speed`
+    /// (мс) прибавляется сверху — замедление.
+    #[serde(default = "default_min_attack_interval_s")]
+    pub min_attack_interval_s: f64,
     /// Базовый урон персонажа (v1 без формул оружия — см. отклонение).
     pub base_damage: i64,
     /// Шанс успешного побега (`cmd/combat.flee`), `0..=1`.
     pub flee_chance: f64,
+}
+
+const fn default_min_attack_interval_s() -> f64 {
+    0.5
 }
 
 /// M15/F24: уровень персонажа — квадратичная кривая опыта за
@@ -575,20 +641,34 @@ impl Config {
             }
         }
 
-        // [gameplay.professions] (M12.6)
-        if self.gameplay.professions.rank_max == 0 {
-            out.push("gameplay.professions.rank_max: должен быть ≥ 1".into());
-        }
+        // [gameplay.professions] (M12.6; M21 — две шкалы)
         if self.gameplay.professions.xp_per_craft_base < 0
             || self.gameplay.professions.xp_per_craft_per_rank < 0
-            || self.gameplay.professions.xp_to_next_base < 1
         {
-            out.push("gameplay.professions.xp_*: base ≥ 0, per_rank ≥ 0, to_next ≥ 1".into());
+            out.push("gameplay.professions.xp_per_craft_*: должно быть ≥ 0".into());
         }
-        if self.gameplay.professions.xp_growth < 1.0 {
+        if self.gameplay.professions.level_xp_base < 1 {
+            out.push("gameplay.professions.level_xp_base: должен быть ≥ 1".into());
+        }
+        if self.gameplay.professions.level_xp_growth < 1.0 {
             out.push(format!(
-                "gameplay.professions.xp_growth: должен быть ≥ 1.0 (получено: {})",
-                self.gameplay.professions.xp_growth
+                "gameplay.professions.level_xp_growth: должен быть ≥ 1.0 (получено: {})",
+                self.gameplay.professions.level_xp_growth
+            ));
+        }
+        if self.gameplay.professions.max_level == 0 {
+            out.push("gameplay.professions.max_level: должен быть ≥ 1".into());
+        }
+        if self.gameplay.professions.rank_span == 0 {
+            out.push("gameplay.professions.rank_span: должен быть ≥ 1".into());
+        }
+        if self.gameplay.professions.rank_up_gold_base < 0
+            || self.gameplay.professions.rank_up_gold_growth < 1.0
+        {
+            out.push(format!(
+                "gameplay.professions.rank_up_gold_*: base ≥ 0, growth ≥ 1.0 (получено: {} / {})",
+                self.gameplay.professions.rank_up_gold_base,
+                self.gameplay.professions.rank_up_gold_growth
             ));
         }
         if !(0.0..=1.0).contains(&self.gameplay.professions.fail_xp_ratio) {
@@ -713,6 +793,16 @@ impl Config {
         }
 
         // [gameplay.combat] (M12.5)
+        // M25: минимальная скорость атаки моба — пол интервала.
+        if !(self.gameplay.combat.min_attack_interval_s.is_finite()
+            && self.gameplay.combat.min_attack_interval_s >= 0.1
+            && self.gameplay.combat.min_attack_interval_s <= 60.0)
+        {
+            out.push(format!(
+                "gameplay.combat.min_attack_interval_s: должен быть в 0.1..=60 (получено: {})",
+                self.gameplay.combat.min_attack_interval_s
+            ));
+        }
         if !(self.gameplay.combat.attack_interval_s >= 0.1
             && self.gameplay.combat.attack_interval_s <= 60.0)
         {

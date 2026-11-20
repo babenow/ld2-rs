@@ -220,7 +220,8 @@
         "school": "frost",
         "charges": 6,
         "max": 8,
-        "glyph": "n"
+        "glyph": "n",
+        "class": "mage"
       },
       "gold_value": 60
     },
@@ -238,7 +239,8 @@
         "charges": 5,
         "max": 8,
         "cost": 2,
-        "glyph": "m"
+        "glyph": "m",
+        "class": "mage"
       },
       "gold_value": 75
     },
@@ -296,13 +298,32 @@
       "cooldown_s": 3.0,
       "stats": {
         "dmg": "13..26",
-        "param": { "crit_chance": 3 }
+        "param": {
+          "crit_chance": 3
+        }
       },
       "bonuses": [
-        { "kind": "attr", "id": "str", "value": 3 },
-        { "kind": "param", "id": "damage", "value": 2 },
-        { "kind": "param", "id": "accuracy", "value": 4, "pct": true },
-        { "kind": "skill", "id": "sword", "value": 1 }
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 4,
+          "pct": true
+        },
+        {
+          "kind": "skill",
+          "id": "sword",
+          "value": 1
+        }
       ],
       "gold_value": 320,
       "skill": "twohand",
@@ -322,12 +343,38 @@
         "dmg": "19..31"
       },
       "bonuses": [
-        { "kind": "attr", "id": "str", "value": 5 },
-        { "kind": "attr", "id": "dex", "value": 5 },
-        { "kind": "param", "id": "damage", "value": 6 },
-        { "kind": "param", "id": "accuracy", "value": 4, "pct": true },
-        { "kind": "param", "id": "crit_chance", "value": 12, "pct": true },
-        { "kind": "skill", "id": "sword", "value": 1 }
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 5
+        },
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 5
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 6
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 4,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 12,
+          "pct": true
+        },
+        {
+          "kind": "skill",
+          "id": "sword",
+          "value": 1
+        }
       ],
       "gold_value": 3200,
       "skill": "twohand",
@@ -842,7 +889,8 @@
         "school": "fire",
         "charges": 7,
         "max": 10,
-        "glyph": "f"
+        "glyph": "f",
+        "class": "mage"
       },
       "gold_value": 40
     },
@@ -860,7 +908,13 @@
         "charges": 6,
         "max": 8,
         "glyph": "p",
-        "buff": { "param": "accuracy", "value": 6, "duration_s": 12, "max_stacks": 3 }
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "class": "archer"
       },
       "gold_value": 55
     },
@@ -878,7 +932,13 @@
         "charges": 6,
         "max": 8,
         "glyph": "r",
-        "buff": { "param": "crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2 }
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "warrior"
       },
       "gold_value": 60
     },
@@ -896,7 +956,13 @@
         "charges": 6,
         "max": 8,
         "glyph": "g",
-        "buff": { "param": "armor", "value": 10, "duration_s": 15, "max_stacks": 3 }
+        "buff": {
+          "param": "armor",
+          "value": 10,
+          "duration_s": 15,
+          "max_stacks": 3
+        },
+        "class": "warrior"
       },
       "gold_value": 55
     },
@@ -914,7 +980,12 @@
         "charges": 5,
         "max": 8,
         "glyph": "b",
-        "effect": { "kind": "bleed", "value": 3, "duration_s": 6 }
+        "effect": {
+          "kind": "bleed",
+          "value": 3,
+          "duration_s": 6
+        },
+        "class": "warrior"
       },
       "gold_value": 80
     },
@@ -932,7 +1003,11 @@
         "charges": 5,
         "max": 8,
         "glyph": "s",
-        "effect": { "kind": "stun", "duration_s": 3 }
+        "effect": {
+          "kind": "stun",
+          "duration_s": 3
+        },
+        "class": "warrior"
       },
       "gold_value": 85
     },
@@ -950,7 +1025,11 @@
         "charges": 5,
         "max": 8,
         "glyph": "v",
-        "effect": { "kind": "root", "duration_s": 5 }
+        "effect": {
+          "kind": "root",
+          "duration_s": 5
+        },
+        "class": "archer"
       },
       "gold_value": 80
     },
@@ -967,6 +1046,186 @@
         "school": "frost"
       },
       "gold_value": 30,
+      "qty": 1
+    },
+    {
+      "id": "skinning_knife",
+      "type": "skinning_knife",
+      "name": "Нож для снятия шкур",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q1",
+      "type": "hide_scraps",
+      "name": "Обрезки шкуры",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 2,
+      "qty": 1
+    },
+    {
+      "id": "hide_q1",
+      "type": "hide",
+      "name": "Шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 12,
+      "qty": 1
+    },
+    {
+      "id": "hide_q2",
+      "type": "hide",
+      "name": "Хорошая шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 24,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q2",
+      "type": "hide_scraps",
+      "name": "Хорошие обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 4,
+      "qty": 1
+    },
+    {
+      "id": "hide_q3",
+      "type": "hide",
+      "name": "Отличная шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 36,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q3",
+      "type": "hide_scraps",
+      "name": "Отличные обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 6,
+      "qty": 1
+    },
+    {
+      "id": "hide_q4",
+      "type": "hide",
+      "name": "Превосходная шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 48,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q4",
+      "type": "hide_scraps",
+      "name": "Превосходные обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 8,
+      "qty": 1
+    },
+    {
+      "id": "hide_q5",
+      "type": "hide",
+      "name": "Великолепная шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 60,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q5",
+      "type": "hide_scraps",
+      "name": "Великолепные обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 10,
+      "qty": 1
+    },
+    {
+      "id": "meat",
+      "type": "meat",
+      "name": "Мясо",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 8,
+      "qty": 1
+    },
+    {
+      "id": "offal",
+      "type": "offal",
+      "name": "Потроха",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
+      "id": "axe",
+      "type": "axe",
+      "name": "Топор",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "pickaxe",
+      "type": "pickaxe",
+      "name": "Кирка",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "sickle",
+      "type": "sickle",
+      "name": "Серп",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "ore_copper",
+      "type": "ore_copper",
+      "name": "Медная руда",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 6,
+      "qty": 1
+    },
+    {
+      "id": "branches",
+      "type": "branches",
+      "name": "Ветки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 1,
       "qty": 1
     },
     {
@@ -1045,7 +1304,9 @@
       "name": "Малый камень усиления",
       "rarity": "common",
       "upgrade": 0,
-      "stats": { "quality": -5 },
+      "stats": {
+        "quality": -5
+      },
       "gold_value": 10,
       "qty": 1
     },
@@ -1055,7 +1316,9 @@
       "name": "Средний камень усиления",
       "rarity": "common",
       "upgrade": 0,
-      "stats": { "quality": 0 },
+      "stats": {
+        "quality": 0
+      },
       "gold_value": 30,
       "qty": 1
     },
@@ -1065,7 +1328,9 @@
       "name": "Большой камень усиления",
       "rarity": "common",
       "upgrade": 0,
-      "stats": { "quality": 5 },
+      "stats": {
+        "quality": 5
+      },
       "gold_value": 60,
       "qty": 1
     }

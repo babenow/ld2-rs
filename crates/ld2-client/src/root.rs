@@ -7,18 +7,26 @@ use std::time::Duration;
 
 use gpui::{
     div, prelude::*, px, rgb, rgba, AnyElement, App, Context, Div, EmptyView, Entity, Focusable,
-    Hsla, MouseButton, Render, ScrollHandle, SharedString, Window, WindowControlArea,
+    Hsla, MouseButton, Render, ScrollHandle, SharedString, UniformListScrollHandle, Window,
+    WindowControlArea,
 };
 use ld2_core::config::{host_allowed, Config, ConfigStore, Hotkeys};
 use ld2_core::l10n::{self, t, tf, Key, Lang};
-use ld2_core::store::{local_epoch, local_epoch_ms, Act, AppStore, Effect, Screen};
+use ld2_core::store::{
+    filter_active_buffs, local_epoch, local_epoch_ms, Act, AppStore, Effect, Screen,
+};
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
 use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove};
 
+mod admin;
 mod backpack;
 mod chars;
 mod chat;
+mod dialog;
 mod game;
+mod pickup;
+mod professions;
+mod quantity;
 mod quests;
 mod register;
 mod sheet;
@@ -40,15 +48,6 @@ use ely::theme::{Mode, Theme};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
 const RELEASE: bool = !cfg!(debug_assertions);
-
-/// M14/F7: какая вкладка активна в блоке журнала (внизу центра).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LogTab {
-    /// Мир (лог событий) — свободная прокрутка.
-    Log,
-    /// Чат: каналы + фильтр + ввод (stick-to-bottom остаётся).
-    Chat,
-}
 
 /// M14/F15: перетаскивание окна за TitleBar (payload drag gpui).
 #[derive(Debug)]
@@ -79,6 +78,16 @@ enum PopupKind {
     Upgrade,
     /// M18: окно сокетов (инкрустация через меню оружия) — popup.
     Socketing,
+    /// M20: окно выбора количества (переиспользуемое: выброс…).
+    Quantity,
+    /// M20: окно игрового диалога (заготовка: страницы/ввод).
+    Dialog,
+    /// M21: окно профессий (отдельное, подобно квестам).
+    Professions,
+    /// M23: окно подятия предмета — лут трупа слева, рюкзак справа.
+    LootPickup,
+    /// M24: админ-панель — листы по кнопкам шапки («Предметы»).
+    AdminPanel,
 }
 
 impl PopupKind {
@@ -92,32 +101,32 @@ impl PopupKind {
             PopupKind::Item => "ld2-item",
             PopupKind::Upgrade => "ld2-upgrade",
             PopupKind::Socketing => "ld2-socket",
+            PopupKind::Quantity => "ld2-quantity",
+            PopupKind::Dialog => "ld2-dialog",
+            PopupKind::Professions => "ld2-professions",
+            PopupKind::LootPickup => "ld2-pickup",
+            PopupKind::AdminPanel => "ld2-admin",
         }
     }
 }
 
-/// M18/F33: открытие окна сбрасывает контекстное меню **своей**
-/// стороны. Иначе закрытие окна с открытым меню оставляло
-/// `bp_menu`/`equip_menu = Some(...)`: keyed state меню и `asked`-
-/// счётчик гаснут вместе с элементом (кадр без рендера), поэтому при
-/// следующем открытии stale-запрос `.manual(Some((n, at)))` открывал
-/// меню само. `open_popup` — единственная точка, где окно становится
-/// открытым, — инвариант: любое открытое окно стартует с пустым меню.
-fn clear_popup_menu<T>(kind: PopupKind, bp_menu: &mut Option<T>, equip_menu: &mut Option<T>) {
-    match kind {
-        PopupKind::Character => *equip_menu = None,
-        PopupKind::Backpack => *bp_menu = None,
-        // M18/F36: окно квестов контекстных меню не использует.
-        PopupKind::Quests => {}
-        // M18/F38: окно диалога NPC тоже.
-        PopupKind::Npc => {}
-        PopupKind::Item => {}
-        // M18/F53: окно заточки — попап.
-        PopupKind::Upgrade => {}
-        // M18: окно сокетов контекстных меню не использует.
-        PopupKind::Socketing => {}
-    }
+/// M18/F33/M24: открытие окна сбрасывает контекстные меню **обеих**
+/// сторон (`bp_menu` + `equip_menu`). Иначе закрытие окна с открытым
+/// меню оставляло `Some(...)`: keyed state меню и `asked`-счётчик
+/// гаснут вместе с элементом (кадр без рендера), и stale-запрос
+/// `.manual(Some((n, at)))` автооткрывал меню при следующем рендере.
+/// M24 (заказчик): окно подятия/админки рисует общий `backpack_grid`
+/// — чистить «своё» меню по kind было мало: в луте самооткрывалось
+/// меню рюкзака. `open_popup` — единственная точка, где окно становится
+/// открытым, — инвариант: любое открытое окно стартует с пустыми
+/// ОБОИМИ меню.
+fn clear_popup_menu<T>(bp_menu: &mut Option<T>, equip_menu: &mut Option<T>) {
+    *bp_menu = None;
+    *equip_menu = None;
 }
+
+/// M20: text-поля execute-диалога — (id поля, поле ввода).
+type DialogTextFields = Vec<(String, Entity<TextInput>)>;
 
 /// M16/F29b: состояние всплывающего окна — геометрия drag/resize и
 /// флаг «жест начат на scrim» (M15/F25e: закрыть может только
@@ -178,6 +187,8 @@ pub(crate) enum Click {
     ToggleInventory,
     /// M18/F36: открыть/закрыть окно квестов (кнопка в шапке).
     ToggleQuests,
+    /// M21: окно профессий (кнопка в шапке/хоткей).
+    ToggleProfessions,
     Theme(&'static str),
     ChatLimit(i64),
     /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
@@ -207,9 +218,31 @@ pub(crate) enum Click {
     PowerStrike,
     ConfirmDeath,
     LootTake,
+    /// M23: «Взять всё» — партия из лута окна подятия в очередь.
+    LootTakeAll,
+    /// M23: открыть окно подятия предмета по трупу (ЛКМ в списке
+    /// сущностей) — запрос `entity.info` c `Act::PickupInfo`.
+    LootOpen(String),
     /// Лут трупа игрока: открыть подтверждение (uid, name) — ФР-11.
     LootTakeMarker(String, String),
     LootCancel,
+    /// M20/F20b: добыть объект-ресурс (`cmd/resource.gather`).
+    Gather(String),
+    /// M22: разделить труп (`action`: skin|gut) — сервер-джоб5 с.
+    Harvest(String, String),
+    /// M24: открыть админ-панель (кнопка в шапке, только admin).
+    AdminOpen,
+    /// M24: выдать предмет из каталога → execute-диалог количества.
+    AdminGive(String),
+    /// M24: удалить предмет из цели → execute-диалог количества.
+    AdminRemove(String),
+    /// M24: тумблер «режим бога» в шапке админ-окна.
+    AdminGod(bool),
+    /// M24: выбрать цель правой колонки (`self`/`char:`/`monster:`/
+    /// `corpse:`) → `cmd/admin.target.info`.
+    AdminTarget(String),
+    /// M24: «Удалить все» — очистка предметов выбранной цели.
+    AdminClear(String),
     CloseDetail,
     SwitchChar,
 }
@@ -227,6 +260,31 @@ enum ExitKind {
 const EXIT_DELAY_MS: i64 = 20_000;
 /// M17/F30a: длительность каст-бара инкрустации, мс (спека: 3 с,
 /// без отмены — движение/урон не прерывают).
+/// M24: единый прогресс-бар левой колонки (указание заказчика) —
+/// одна сущность на снятие шкур/освежевание, инкрустацию и заточку.
+/// Подпись «Действие · имя»; запуск — [`Root::start_progress`];
+/// гаснет в `tick` по исчезновению [`ProgressSource`]-источника.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CastProgress {
+    /// Источник — по нему бар и гаснет.
+    pub(crate) source: ProgressSource,
+    /// Подпись: «Действие · имя».
+    pub(crate) label: String,
+    pub(crate) started_ms: i64,
+    pub(crate) duration_ms: i64,
+}
+
+/// Источник единого прогресс-бара.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProgressSource {
+    /// Разделка трупа — `store.harvest` (сервер-джоб5 с).
+    Harvest,
+    /// Каст инкрустации — `cast_inscribe` ([`INSCRIBE_MS`]).
+    Inscribe,
+    /// Прогресс заточки — `upgrade_progress` (`duration_s`).
+    Sharpen,
+}
+
 pub(crate) const INSCRIBE_MS: i64 = 3_000;
 
 /// Инициализация корневого view (всё, что создаётся вне gpui-контекста).
@@ -292,9 +350,78 @@ pub struct Root {
     item_popup: PopupState,
     /// M18: окно сокетов (инкрустация через меню оружия) — popup.
     socket_popup: PopupState,
+    /// M20: окно выбора количества — popup.
+    quantity_popup: PopupState,
+    /// M20: окно игрового диалога (заготовка) — popup.
+    dialog_popup: PopupState,
     /// M18: вторая страница окна инкрустации — выбранный слот
     /// (список вставок); `None` — страница слотов.
     socket_pick: Option<u32>,
+    /// M20: открытое окно выбора количества (заготовка под покупку…).
+    quantity_pick: Option<quantity::QuantityPick>,
+    /// M20: игровой диалог (заготовка) — индекс текущей страницы.
+    dialog_page: usize,
+    /// M20: execute-диалог — значения number-полей (id → строка).
+    dialog_values: std::collections::HashMap<String, String>,
+    /// M20: execute-диалог — text-поля (`Entity<TextInput>`; создаются
+    /// под диалог, хранятся `(dialog_id, [(input_id, поле)])`).
+    dialog_inputs: Option<(String, DialogTextFields)>,
+    /// M20: id последнего открытого диалога — сброс страницы/полей.
+    dialog_seen: Option<String>,
+    /// M21: окно профессий — popup (отдельное, как квесты).
+    professions_popup: PopupState,
+    /// M23: окно подятия предмета — popup (лут слева, рюкзак справа);
+    /// гейт рендера — флаг open + данные `store.pickup`.
+    pickup_popup: PopupState,
+    /// M23: выбранная строка лута (uid) — для кнопки «Забрать».
+    pickup_sel: Option<String>,
+    /// M23: какую сущность перезапрашиваем (`cmd/entity.info`).
+    pickup_id: Option<String>,
+    /// M23: нужен (re)запрос лута — выполняется в `tick`, только когда
+    /// транспорт свободен: корреляция ack'ов стора одиночная
+    /// (`pending`), параллельная команда перетёрла бы чужой ack.
+    pickup_request: bool,
+    /// M23: прокрутка левой колонки окна подятия.
+    pickup_scroll: ScrollHandle,
+    /// M23: прокрутка рюкзак-виджета в правой колонке (своя — ручка
+    /// не должна делиться с окном рюкзака при одновременном открытии).
+    pickup_bp_scroll: ScrollHandle,
+    /// M23: очередь «Взять всё» — uid-ы, которые ещё предстоит взять;
+    /// отправляется по одному за свободный ack-слот (`pending`
+    /// одиночный, см. `pump_take_queue`).
+    pickup_queue: Vec<String>,
+    /// M23: «Взять всё» на трупе игрока ждёт подтверждения статуса
+    /// (ФР-11) в модалке loot_confirm.
+    pickup_confirm_all: bool,
+    /// M24: окно админ-панели — popup (листы по кнопкам шапки).
+    admin_popup: PopupState,
+    /// M24: прокрутка каталога (uniform_list — виртуализация).
+    admin_scroll: UniformListScrollHandle,
+    /// M24: прокрутка содержимого цели (правая колонка).
+    admin_inv_scroll: ScrollHandle,
+    /// M24: поле поиска предмета в админ-окне.
+    admin_search: Option<Entity<TextInput>>,
+    /// M24: нужен (re)запрос каталога — как `pickup_request` (pending
+    /// одиночный); каталог кэшируется на сессию (вариант A).
+    admin_catalog_request: bool,
+    /// M24: цель выдачи (F24b — всегда self; F24c — селект целей).
+    admin_target: String,
+    /// M24: вкладка-фильтр правой колонки (независима от левой,
+    /// не персистентна — разовый просмотр содержимого цели).
+    admin_inv_tab: backpack::BackpackTab,
+    /// M24: строка поиска правой колонки.
+    admin_inv_search: Option<Entity<TextInput>>,
+    /// M24: фильтр раритета левого каталога (`all` | rarity).
+    admin_rarity: String,
+    /// M24: фильтр раритета правой колонки (независимый).
+    admin_inv_rarity: String,
+    /// M24: нужен (re)запрос содержимого цели (`admin.target.info`) —
+    /// как `admin_catalog_request` (pending одиночный).
+    admin_target_request: bool,
+    /// M24: поле «имя игрока» — цель `char:<имя>` (в т.ч. оффлайн).
+    admin_player: Option<Entity<TextInput>>,
+    /// M21: вооружённая кнопка «Сбросить» (второй клик — cmd/craft.reset).
+    prof_reset_armed: Option<String>,
     /// M18/F53: окно заточки — попап (геометрия карточки).
     upgrade_popup: PopupState,
     /// M16/F29b: mousedown последнего жеста пришёлся на общий scrim
@@ -319,6 +446,8 @@ pub struct Root {
     /// M18/F53: прогресс улучшения в диалоге — (uid, preview_id, старт мс,
     /// длительность мс). Команда `upgrade.start` отправляется по истечении.
     upgrade_progress: Option<(String, String, i64, i64)>,
+    /// M24: единый прогресс-бар левой колонки (см. [`CastProgress`]).
+    cast_progress: Option<CastProgress>,
     /// M14/F17: открытая карточка навыка — id из снапшота.
     skill_info: Option<String>,
     first_frame: bool,
@@ -339,8 +468,7 @@ pub struct Root {
     /// M10.5: окно сделки — поле золота.
     /// M11.3: золото сделки (NumberInput Ely; фиксируется операцией).
     trade_gold_value: f64,
-    /// M11.3: выбранные значения Select (обучение профессии / предмет сделки).
-    learn_pick: Option<String>,
+
     trade_pick: Option<String>,
     /// M11.7 (D20/D21): поле ввода ника и длительность таймера удаления.
     delete_name: Option<Entity<TextInput>>,
@@ -359,6 +487,8 @@ pub struct Root {
     /// M14/F3: обычная прокрутка вкладок листа «Навыки»/«Профессии».
     skills_scroll: ScrollHandle,
     professions_scroll: ScrollHandle,
+    /// M22: прокрутка панели обучения в диалоге НПС.
+    training_scroll: ScrollHandle,
     /// M16/F29b: прокрутка тела окна рюкзака (сетка предметов).
     backpack_scroll: ScrollHandle,
     /// M18/F36: скролл тела окна квестов.
@@ -366,7 +496,6 @@ pub struct Root {
     /// M15/F26: прокрутка вкладки «Параметры» (16 строк).
     params_scroll: ScrollHandle,
     /// M14/F7: активная вкладка блока журнала (Лог/Чат), состояние сессии.
-    log_tab: LogTab,
     /// M14/F9: вкладка настроек и её прокрутка (состояние сессии).
     settings_tab: SettingsTab,
     settings_scroll: ScrollHandle,
@@ -491,6 +620,23 @@ const TYPING_FIELDS: &[TypingField] = &[
         name: "domain",
         get: |r| &r.domain_input,
     },
+    // M24: поля фильтров админ-панели — при наборе не должны
+    // срабатывать горячие клавиши (C/I/… открывали окна).
+    TypingField {
+        screen: Screen::Game,
+        name: "admin_search",
+        get: |r| &r.admin_search,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "admin_inv_search",
+        get: |r| &r.admin_inv_search,
+    },
+    TypingField {
+        screen: Screen::Game,
+        name: "admin_player",
+        get: |r| &r.admin_player,
+    },
 ];
 
 impl Root {
@@ -548,7 +694,52 @@ impl Root {
                 delta: (0.0, -40.0),
                 ..PopupState::new((440.0, 420.0))
             },
+            // M20: окно количества — компактная карточка по центру.
+            quantity_popup: PopupState {
+                delta: (0.0, -60.0),
+                ..PopupState::new((400.0, 280.0))
+            },
+            // M20: окно игрового диалога — карточка по центру.
+            dialog_popup: PopupState::new((560.0, 460.0)),
             socket_pick: None,
+            quantity_pick: None,
+            dialog_page: 0,
+            dialog_values: std::collections::HashMap::new(),
+            dialog_inputs: None,
+            dialog_seen: None,
+            professions_popup: PopupState {
+                delta: (0.0, -30.0),
+                ..PopupState::new((880.0, 620.0))
+            },
+            // M23: окно подятия — два столбца (лут | рюкзак);
+            // правая колонка шире — под вкладки-фильтры рюкзака.
+            pickup_popup: PopupState {
+                delta: (40.0, -30.0),
+                ..PopupState::new((1040.0, 600.0))
+            },
+            pickup_sel: None,
+            pickup_id: None,
+            pickup_request: false,
+            pickup_scroll: ScrollHandle::new(),
+            pickup_bp_scroll: ScrollHandle::new(),
+            pickup_queue: Vec::new(),
+            pickup_confirm_all: false,
+            admin_popup: PopupState {
+                delta: (0.0, -20.0),
+                ..PopupState::new((1040.0, 640.0))
+            },
+            admin_scroll: UniformListScrollHandle::new(),
+            admin_inv_scroll: ScrollHandle::new(),
+            admin_search: None,
+            admin_catalog_request: false,
+            admin_target: "self".into(),
+            admin_inv_tab: backpack::BackpackTab::default(),
+            admin_inv_search: None,
+            admin_rarity: "all".into(),
+            admin_inv_rarity: "all".into(),
+            admin_target_request: false,
+            admin_player: None,
+            prof_reset_armed: None,
             // M18/F53: окно заточки — компактная карточка по центру,
             // без затемнения (см. open_popup: базовый размер).
             upgrade_popup: PopupState {
@@ -563,6 +754,7 @@ impl Root {
             viewport: (0.0, 0.0),
             exit_timer: None,
             upgrade_progress: None,
+            cast_progress: None,
             skill_info: None,
             first_frame: true,
             guild_input: None,
@@ -573,7 +765,6 @@ impl Root {
             chat_filter: None,
             chat_channel: "location".into(),
             trade_gold_value: 0.0,
-            learn_pick: None,
             trade_pick: None,
             delete_name: None,
             delete_delay: 10,
@@ -585,10 +776,10 @@ impl Root {
             npc_seen: 0,
             skills_scroll: ScrollHandle::new(),
             professions_scroll: ScrollHandle::new(),
+            training_scroll: ScrollHandle::new(),
             backpack_scroll: ScrollHandle::new(),
             quests_scroll: ScrollHandle::new(),
             params_scroll: ScrollHandle::new(),
-            log_tab: LogTab::Log,
             settings_tab: SettingsTab::General,
             settings_scroll: ScrollHandle::new(),
             host_editing: false,
@@ -621,6 +812,33 @@ impl Root {
                 }
                 Err(_) => break,
             }
+        }
+
+        // M23: лут трупа обновился (разделка/создание трупа) —
+        // перечитываем, пока окно подятия открыто.
+        if self.store.pickup_dirty {
+            self.store.pickup_dirty = false;
+            if self.pickup_popup.open {
+                self.pickup_request = true;
+            }
+        }
+        // M23: очередь «Взять всё» — по одному взятию за свободный
+        // ack-слот; лут окна перечитывается после неё.
+        if !self.pickup_queue.is_empty() {
+            self.pump_take_queue(cx);
+        }
+        // M23: окно подятия — догрузка/обновления лута, когда
+        // транспорт свободен (см. `pickup_request`).
+        if self.pickup_request && self.pickup_queue.is_empty() {
+            self.pump_pickup(cx);
+        }
+        // M24: админ-панель — догрузка каталога и содержимого цели
+        // при свободном ack-слоте.
+        if self.admin_catalog_request {
+            self.pump_admin_catalog(cx);
+        }
+        if self.admin_target_request {
+            self.pump_admin_target(cx);
         }
 
         // Результат фоновой проверки обновлений (§12).
@@ -672,13 +890,44 @@ impl Root {
         // (из настроек сервера) отправляем cmd/upgrade.start; модалка
         // закроется по evt/upgrade/result.
         let upgrade_progress_active = self.upgrade_progress.is_some();
-        if let Some((uid, preview_id, _started, ends)) = self.upgrade_progress.clone() {
+        // M22: прогресс-бар разделки (5 с) должен идти плавно —
+        // держим быстрый тик (50 мс) с notify, пока он активен.
+        let harvest_active = self.store.harvest.is_some();
+        // M24: прогрессбары зарядов рун живут по времени — тик,
+        // пока хотя бы одна руна в надетом снаряжении не заполнена.
+        let rune_bar_active = self.rune_bar_active();
+        // M24: индикаторы бафов рун — живой отсчёт и моргание.
+        let rune_buffs_active = self.rune_buffs_active();
+        // M25: бары атак монстров — живая заливка до следующей атаки.
+        let attack_bar_active = self.attack_bars_active();
+        // M25: стан истёк — закрываем всплывающее окно.
+        let stun_expired = self
+            .store
+            .stun
+            .as_ref()
+            .is_some_and(|s| self.now_ms() >= s.until_ms);
+        if stun_expired {
+            self.store.stun = None;
+        }
+        // M25: журнал локации исчезающий — строки старше TTL сервера
+        // (`journal_ttl_s`, по умолчанию 30 с) удаляются.
+        let log_ttl_s = self
+            .store
+            .session
+            .as_ref()
+            .map(|s| s.journal_ttl_s)
+            .unwrap_or(30);
+        let log_expired = self.store.expire_log(local_epoch_ms(), log_ttl_s);
+        // M24 фикс: 4-й элемент — **длительность** (док поля), но
+        // сравнивался с epoch-мс как дедлайн → старт уходил мгновенно
+        // и прогресс-бар заточки не был виден. Теперь: старт + длительность.
+        if let Some((uid, preview_id, started, duration)) = self.upgrade_progress.clone() {
             // M18/F54: камень мог выбыть за 3 с прогресса — старт без
             // него сервер отверг бы; сбрасываем, ничего не отправляя.
             if self.store.sharpen_stone.is_none() {
                 tracing::debug!("прогресс заточки сброшен: камень выбыл");
                 self.upgrade_progress = None;
-            } else if self.now_ms() >= ends {
+            } else if self.now_ms() >= started + duration {
                 self.upgrade_progress = None;
                 let cmd = ld2_protocol::cmd::UpgradeStart {
                     item_uid: uid,
@@ -690,6 +939,19 @@ impl Root {
         // Если модалка закрыта (Esc/✕) — сбрасываем прогресс.
         if self.store.upgrade.is_none() && self.store.sharpen_stone.is_none() {
             self.upgrade_progress = None;
+        }
+
+        // M24: единый прогресс-бар левой колонки — гаснет по
+        // исчезновению своего источника (результат/отказ/закрытие).
+        if let Some(p) = self.cast_progress.as_ref() {
+            let gone = match p.source {
+                ProgressSource::Harvest => self.store.harvest.is_none(),
+                ProgressSource::Inscribe => self.cast_inscribe.is_none(),
+                ProgressSource::Sharpen => self.upgrade_progress.is_none(),
+            };
+            if gone {
+                self.cast_progress = None;
+            }
         }
 
         // M18/F53: после результата модалка остаётся открытой —
@@ -749,12 +1011,31 @@ impl Root {
             // M18/F53: прогресс улучшения в диалоге.
             || self.upgrade_progress.is_some();
 
-        if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active {
+        if had_events
+            || cd_active
+            || exit_active
+            || inscribe_active
+            || upgrade_progress_active
+            || harvest_active
+            || rune_bar_active
+            || rune_buffs_active
+            || attack_bar_active
+            || stun_expired
+            || log_expired
+        {
             // gpui перерисовывается только по notify (аналог request_repaint).
             cx.notify();
         }
         Duration::from_millis(
-            if had_events || cd_active || exit_active || inscribe_active || upgrade_progress_active
+            if had_events
+                || cd_active
+                || exit_active
+                || inscribe_active
+                || upgrade_progress_active
+                || harvest_active
+                || rune_bar_active
+                || rune_buffs_active
+                || attack_bar_active
             {
                 50
             } else {
@@ -860,7 +1141,90 @@ impl Root {
             return;
         }
         self.store.close_inscribe();
+        // M24: единый прогресс-бар — подпись «Действие · имя».
+        let target = self
+            .store
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.char.inventory.iter().find(|i| i.uid == target_uid))
+            .map(|i| i.name.clone())
+            .unwrap_or_default();
         self.cast_inscribe = Some((rune_uid, target_uid, self.now_ms() + INSCRIBE_MS));
+        self.start_progress(
+            ProgressSource::Inscribe,
+            format!("{} · {}", t(self.lang, Key::InscribeCasting), target),
+            INSCRIBE_MS,
+        );
+    }
+
+    /// M24: заряды рун в надетом снаряжении ниже максимума (режим
+    /// `time`) — тик 50 мс, пока прогрессбары заполняются.
+    fn rune_bar_active(&self) -> bool {
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return false;
+        };
+        let Some(session) = self.store.session.as_ref() else {
+            return false;
+        };
+        if session.magic.rune_recharge != "time" {
+            return false;
+        }
+        let equipped: std::collections::HashSet<&str> = snap
+            .char
+            .equip
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        snap.char
+            .inventory
+            .iter()
+            .filter(|i| equipped.contains(i.uid.as_str()))
+            .flat_map(|i| i.sockets.iter().flatten())
+            .any(|s| s.rune.as_ref().is_some_and(|r| r.charges < r.max))
+    }
+
+    /// M25: есть ли в локации монстры с непрожёванным баром атаки —
+    /// тик50 мс, чтобы заливка шла плавно.
+    fn attack_bars_active(&self) -> bool {
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return false;
+        };
+        let now = self.now_ms();
+        snap.location.entities.iter().any(|e| {
+            e.kind == ld2_protocol::types::EntityKind::Monster
+                && e.next_attack_at.unwrap_or(0) > now
+                && e.attack_interval.unwrap_or(0) > 0
+        })
+    }
+
+    /// M24: активны ли бафы рун — тик для отсчёта остатка и
+    /// моргания на последних3 секундах.
+    fn rune_buffs_active(&self) -> bool {
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return false;
+        };
+        let now = self.now_ms() / 1000;
+        filter_active_buffs(&snap.char.buffs, now)
+            .iter()
+            .any(|b| b.kind.starts_with("rune_"))
+    }
+
+    /// M24: запуск единого прогресс-бара левой колонки — подпись
+    /// «Действие · имя» и длительность действия; гаснет в `tick` по
+    /// исчезновению [`ProgressSource`]-источника.
+    pub(crate) fn start_progress(
+        &mut self,
+        source: ProgressSource,
+        label: String,
+        duration_ms: i64,
+    ) {
+        self.cast_progress = Some(CastProgress {
+            source,
+            label,
+            started_ms: self.now_ms(),
+            duration_ms: duration_ms.max(1),
+        });
     }
 
     /// M17/F30a: каст завершён — cmd/socket.insert в первый свободный
@@ -1016,6 +1380,27 @@ impl Root {
             false,
             None,
         ));
+        self.admin_search = Some(mk(
+            window,
+            cx,
+            t(lang, Key::AdminSearch).to_string(),
+            false,
+            None,
+        ));
+        self.admin_inv_search = Some(mk(
+            window,
+            cx,
+            t(lang, Key::AdminInvSearch).to_string(),
+            false,
+            None,
+        ));
+        self.admin_player = Some(mk(
+            window,
+            cx,
+            t(lang, Key::AdminPlayerName).to_string(),
+            false,
+            None,
+        ));
 
         self.delete_name = Some(mk(
             window,
@@ -1068,6 +1453,14 @@ impl Root {
             .filter(|f| f.screen == self.store.screen)
             .filter_map(|f| (f.get)(self).as_ref())
             .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+            // M24: поля execute-диалога (ввод количества) живут в
+            // `dialog_inputs`, а не в TYPING_FIELDS — цифры не должны
+            // стрелять хоткеями hotbar.
+            || self.dialog_inputs.as_ref().is_some_and(|(_, fields)| {
+                fields.iter().any(|(_, input)| {
+                    input.read(cx).focus_handle(cx).is_focused(window)
+                })
+            })
     }
 
     /// M18/F41: снять фокус со всех полей ввода окна (`Window::blur`).
@@ -1136,6 +1529,14 @@ impl Root {
         // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
         // настроек/диалога выхода (они ловят Esc сами).
         if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
+            // M23: окно подятия — верхний слой группы попапов (рисуется
+            // последним поверх всех попапов): Esc закрывает его первым.
+            if self.pickup_popup.open {
+                tracing::debug!("закрытие окна подятия: Esc");
+                self.close_pickup();
+                cx.notify();
+                return;
+            }
             // M18/F54: окно заточки (список предметов или сама заточка) —
             // верхний слой группы окон; Esc закрывает оба экрана разом.
             if self.store.sharpen_stone.is_some() || self.store.upgrade.is_some() {
@@ -1147,6 +1548,13 @@ impl Root {
                 cx.notify();
                 return;
             }
+            // M20: окно количества — верхний слой.
+            if self.quantity_pick.is_some() {
+                self.quantity_pick = None;
+                self.quantity_popup.open = false;
+                cx.notify();
+                return;
+            }
             // M18: окно сокетов — верхний слой группы попапов; Esc
             // сначала возвращает со второй страницы к списку слотов.
             if self.store.socketing.is_some() {
@@ -1155,7 +1563,7 @@ impl Root {
                     cx.notify();
                     return;
                 }
-                tracing::debug!("закрытие окна сокетов: Esc");
+                tracing::info!("закрытие окна сокетов: Esc");
                 self.store.close_socketing();
                 self.socket_popup.open = false;
                 cx.notify();
@@ -1165,6 +1573,28 @@ impl Root {
             if self.store.item_detail.is_some() {
                 tracing::debug!("закрытие описания предмета: Esc");
                 self.store.item_detail = None;
+                cx.notify();
+                return;
+            }
+            // M20: игровой диалог — верхний слой (заготовка).
+            if self.store.dialog.is_some() {
+                tracing::debug!("закрытие игрового диалога: Esc");
+                self.close_game_dialog();
+                cx.notify();
+                return;
+            }
+            // M21: окно профессий (заготовка сброса гаснет вместе).
+            if self.professions_popup.open {
+                tracing::debug!("закрытие окна профессий: Esc");
+                self.professions_popup.open = false;
+                self.prof_reset_armed = None;
+                cx.notify();
+                return;
+            }
+            // M24: админ-панель — ниже диалога/профессий в стеке слоёв.
+            if self.admin_popup.open {
+                tracing::debug!("закрытие админ-панели: Esc");
+                self.close_admin();
                 cx.notify();
                 return;
             }
@@ -1225,6 +1655,17 @@ impl Root {
             } else {
                 self.open_popup(PopupKind::Quests);
             }
+            cx.notify();
+            return;
+        }
+        // M21: хоткей окна профессий («p» — кнопка в шапке дублирует).
+        if keystroke_matches(&self.config.hotkeys.open_professions, ks) {
+            if self.professions_popup.open {
+                self.professions_popup.open = false;
+            } else {
+                self.open_popup(PopupKind::Professions);
+            }
+            self.prof_reset_armed = None;
             cx.notify();
             return;
         }
@@ -1363,6 +1804,11 @@ impl Root {
             PopupKind::Item => &mut self.item_popup,
             PopupKind::Upgrade => &mut self.upgrade_popup,
             PopupKind::Socketing => &mut self.socket_popup,
+            PopupKind::Quantity => &mut self.quantity_popup,
+            PopupKind::Dialog => &mut self.dialog_popup,
+            PopupKind::Professions => &mut self.professions_popup,
+            PopupKind::LootPickup => &mut self.pickup_popup,
+            PopupKind::AdminPanel => &mut self.admin_popup,
         }
     }
 
@@ -1376,6 +1822,11 @@ impl Root {
             PopupKind::Item => &self.item_popup,
             PopupKind::Upgrade => &self.upgrade_popup,
             PopupKind::Socketing => &self.socket_popup,
+            PopupKind::Quantity => &self.quantity_popup,
+            PopupKind::Dialog => &self.dialog_popup,
+            PopupKind::Professions => &self.professions_popup,
+            PopupKind::LootPickup => &self.pickup_popup,
+            PopupKind::AdminPanel => &self.admin_popup,
         }
     }
 
@@ -1399,13 +1850,149 @@ impl Root {
             PopupKind::Item => ((vw * 0.28).clamp(320.0, 480.0), 420.0),
             PopupKind::Upgrade => (440.0, 360.0),
             PopupKind::Socketing => (440.0, 420.0),
+            PopupKind::Quantity => (400.0, 280.0),
+            PopupKind::Dialog => (560.0, 460.0),
+            PopupKind::Professions => (880.0, 620.0),
+            PopupKind::LootPickup => (1040.0, 600.0),
+            PopupKind::AdminPanel => (1040.0, 640.0),
+        }
+    }
+
+    /// M24: закрытие админ-панели; каталог остаётся в сторе — кэш
+    /// на сессию (вариант A), чистится при выходе/смене персонажа.
+    fn close_admin(&mut self) {
+        self.admin_popup.open = false;
+        self.admin_catalog_request = false;
+        self.admin_target_request = false;
+        // Цель и её содержимое не переживают закрытие (сущность могла
+        // исчезнуть); каталог остаётся — кэш на сессию.
+        self.admin_target = "self".into();
+        self.store.admin_target_items = None;
+    }
+
+    /// M23: закрытие окна подятия — данные/выбор/запрос чистятся
+    /// вместе с флагом (stale-лут не должен пережить закрытие).
+    pub(crate) fn close_pickup(&mut self) {
+        self.pickup_popup.open = false;
+        self.store.pickup = None;
+        self.pickup_sel = None;
+        self.pickup_id = None;
+        self.pickup_request = false;
+        // Партия «Взять всё» и её подтверждение не переживают окно.
+        self.pickup_queue.clear();
+        self.pickup_confirm_all = false;
+    }
+
+    /// M23: запрос данных окна подятия (`cmd/entity.info` →
+    /// `Act::PickupInfo`) — только при свободном `pending` (см.
+    /// `pickup_request`); иначе ждёт следующего тика.
+    fn pump_pickup(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.pickup_request || !self.pickup_popup.open {
+            return;
+        }
+        if self.store.pending.is_some() {
+            return; // ack-слот занят — ждём
+        }
+        let Some(id) = self.pickup_id.clone() else {
+            self.pickup_request = false;
+            return;
+        };
+        let cmd = ld2_protocol::cmd::EntityInfo { entity_id: id };
+        match self.transport.send(&cmd) {
+            Ok(_) => {
+                self.store.on_world_sent(Act::PickupInfo);
+                self.pickup_request = false;
+                cx.notify();
+            }
+            Err(e) => {
+                self.pickup_request = false;
+                self.store.world_error = Some(format!("нет связи: {e}"));
+            }
+        }
+    }
+
+    /// M23: очередь «Взять всё» — следующий `item.use`, когда
+    /// транспорт свободен (корреляция ack-ов одиночная); после
+    /// отправки ставится `pickup_request` — когда очередь опустеет,
+    /// лут окна освежится обычным перезапросом.
+    fn pump_take_queue(&mut self, cx: &mut Context<'_, Self>) {
+        if self.pickup_queue.is_empty() || !self.pickup_popup.open {
+            return;
+        }
+        if self.store.pending.is_some() {
+            return; // ack-слот занят — ждём
+        }
+        let uid = self.pickup_queue.remove(0);
+        let cmd = ld2_protocol::cmd::ItemUse {
+            item_uid: uid,
+            target_id: None,
+        };
+        match self.transport.send(&cmd) {
+            Ok(_) => {
+                self.store.on_world_sent(Act::Drop);
+                self.pickup_request = true;
+                cx.notify();
+            }
+            Err(e) => {
+                self.pickup_queue.clear();
+                self.store.world_error = Some(format!("нет связи: {e}"));
+            }
+        }
+    }
+
+    /// M24: каталог админ-окна — `cmd/admin.items` при свободном
+    /// `pending` (корреляция ack-ов стора одиночная), как у окна
+    /// подятия; после отправки флаг гаснет.
+    fn pump_admin_catalog(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.admin_catalog_request || !self.admin_popup.open {
+            return;
+        }
+        if self.store.pending.is_some() {
+            return; // ack-слот занят — ждём
+        }
+        let cmd = ld2_protocol::cmd::AdminItems {};
+        match self.transport.send(&cmd) {
+            Ok(_) => {
+                self.store.on_world_sent(Act::AdminCatalog);
+                self.admin_catalog_request = false;
+                cx.notify();
+            }
+            Err(e) => {
+                self.admin_catalog_request = false;
+                self.store.notice = Some(format!("нет связи: {e}"));
+            }
+        }
+    }
+
+    /// M24: содержимое цели правой колонки — `cmd/admin.target.info`
+    /// при свободном `pending` (как каталог); после отправки флаг гаснет.
+    fn pump_admin_target(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.admin_target_request || !self.admin_popup.open {
+            return;
+        }
+        if self.store.pending.is_some() {
+            return; // ack-слот занят — ждём
+        }
+        let cmd = ld2_protocol::cmd::AdminTargetInfo {
+            target: self.admin_target.clone(),
+        };
+        match self.transport.send(&cmd) {
+            Ok(_) => {
+                self.store.on_world_sent(Act::AdminTarget);
+                self.admin_target_request = false;
+                cx.notify();
+            }
+            Err(e) => {
+                self.admin_target_request = false;
+                self.store.notice = Some(format!("нет связи: {e}"));
+            }
         }
     }
 
     fn open_popup(&mut self, kind: PopupKind) {
-        // M18/F33: чистое контекстное меню при каждом открытии (см.
-        // clear_popup_menu).
-        clear_popup_menu(kind, &mut self.bp_menu, &mut self.equip_menu);
+        // M18/F33/M24: чистое контекстное меню при каждом открытии —
+        // оба меню (см. clear_popup_menu).
+        clear_popup_menu(&mut self.bp_menu, &mut self.equip_menu);
         let (vw, vh) = self.viewport;
         let (tw, th) = Self::popup_base_size(kind, self.viewport);
         let (w, h) = if vw > 0.0 && vh > 0.0 {
@@ -1421,6 +2008,11 @@ impl Root {
             PopupKind::Item => (80.0, -20.0),
             PopupKind::Upgrade => (0.0, -40.0),
             PopupKind::Socketing => (0.0, -40.0),
+            PopupKind::Quantity => (0.0, -60.0),
+            PopupKind::Dialog => (0.0, -40.0),
+            PopupKind::Professions => (0.0, -30.0),
+            PopupKind::LootPickup => (40.0, -30.0),
+            PopupKind::AdminPanel => (0.0, -20.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -1443,6 +2035,17 @@ impl Root {
             PopupKind::Upgrade => {}
             // M18: окно сокетов открывает контекстное меню.
             PopupKind::Socketing => {}
+            // M20: окно количества — состояние уже установлено вызывающим.
+            PopupKind::Quantity => {}
+            // M20: окно диалога открывает `evt/dialog/open`.
+            PopupKind::Dialog => {}
+            // M21: окно профессий открывает кнопка/хоткей.
+            PopupKind::Professions => {}
+            // M23: окно подятия — выбор сбрасывает вызывающий.
+            PopupKind::LootPickup => {}
+            // M24: админ-панель — состояние (поиск/каталог) переживает
+            // переоткрытия на сессию.
+            PopupKind::AdminPanel => {}
         }
     }
 
@@ -1512,10 +2115,18 @@ impl Root {
     /// верхнее открытое окно (рюкзак, затем персонаж).
     fn popup_scrim(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
         let npc_open = self.store.npc_dialog.is_some();
+        let dialog_open = self.store.dialog.is_some();
+        let professions_open = self.professions_popup.open;
+        let admin_open = self.admin_popup.open;
+        let pickup_open = self.pickup_popup.open;
         if !self.char_popup.open
             && !self.backpack_popup.open
             && !self.quests_popup.open
             && !npc_open
+            && !dialog_open
+            && !professions_open
+            && !admin_open
+            && !pickup_open
         {
             return None;
         }
@@ -1545,13 +2156,20 @@ impl Root {
                                     scrim_closes_on_up(root.popup_scrim_down, cx.has_active_drag());
                                 root.popup_scrim_down = false;
                                 if close {
-                                    // Верхнее окно: сокеты → заточка →
+                                    // Верхнее окно: подятие → сокеты → заточка →
                                     // описание → диалог → квесты → рюкзак →
-                                    // персонаж.
-                                    if root.store.socketing.is_some() {
+                                    // персонаж (обратный порядок рендера).
+                                    if root.pickup_popup.open {
+                                        tracing::debug!("закрытие окна подятия: скрим");
+                                        root.close_pickup();
+                                    } else if root.quantity_pick.is_some() {
+                                        root.quantity_pick = None;
+                                        root.quantity_popup.open = false;
+                                    } else if root.store.socketing.is_some() {
                                         if root.socket_pick.is_some() {
                                             root.socket_pick = None;
                                         } else {
+                                            tracing::info!("закрытие окна сокетов: скрим");
                                             root.store.close_socketing();
                                             root.socket_popup.open = false;
                                         }
@@ -1564,6 +2182,16 @@ impl Root {
                                         root.upgrade_progress = None;
                                     } else if root.store.item_detail.is_some() {
                                         root.store.item_detail = None;
+                                    } else if root.store.dialog.is_some() {
+                                        tracing::debug!("закрытие игрового диалога: скрим");
+                                        root.close_game_dialog();
+                                    } else if root.professions_popup.open {
+                                        tracing::debug!("закрытие окна профессий: скрим");
+                                        root.professions_popup.open = false;
+                                        root.prof_reset_armed = None;
+                                    } else if root.admin_popup.open {
+                                        tracing::debug!("закрытие админ-панели: скрим");
+                                        root.close_admin();
                                     } else if root.store.npc_dialog.is_some() {
                                         tracing::debug!("закрытие диалога NPC: скрим");
                                         root.store.npc_dialog = None;
@@ -1643,6 +2271,15 @@ impl Root {
                 } else {
                     self.open_popup(PopupKind::Quests);
                 }
+                cx.notify();
+            }
+            Click::ToggleProfessions => {
+                if self.professions_popup.open {
+                    self.professions_popup.open = false;
+                } else {
+                    self.open_popup(PopupKind::Professions);
+                }
+                self.prof_reset_armed = None;
                 cx.notify();
             }
             Click::Theme(theme) => {
@@ -1751,6 +2388,19 @@ impl Root {
                     Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
                 }
             }
+            // M23: ЛКМ по трупу — окно подятия (лут слева, рюкзак
+            // справа); данные — отдельный `entity.info` → `pickup`.
+            Click::LootOpen(id) => {
+                self.pickup_id = Some(id);
+                self.pickup_sel = None;
+                // Лут прошлого трупа не должен мелькнуть под новым.
+                self.store.pickup = None;
+                // Без флага pump не отправит запрос, а рендер с пустыми
+                // данными закроет окно в первом же кадре (баг M23).
+                self.pickup_request = true;
+                self.open_popup(PopupKind::LootPickup);
+                self.pump_pickup(cx);
+            }
             // M18/F35: диалог NPC — реплики/квесты вместо осмотра.
             Click::NpcTalk(id) => {
                 tracing::debug!("вых. cmd/npc.talk {id}");
@@ -1810,6 +2460,9 @@ impl Root {
                         i.uid == uid && matches!(i.item_type.as_str(), "scroll" | "potion")
                     })
                 });
+                // M23: взятие из окна подятия (`loot:`/`inner:`) —
+                // перезапрашиваем его лут, когда транспорт освободится.
+                let is_loot = uid.starts_with("loot:") || uid.starts_with("inner:");
                 let cmd = ld2_protocol::cmd::ItemUse {
                     item_uid: uid,
                     target_id: None,
@@ -1821,6 +2474,9 @@ impl Root {
                         } else {
                             Act::Drop
                         });
+                        if is_loot && self.pickup_popup.open {
+                            self.pickup_request = true;
+                        }
                         if combat_item {
                             self.store.begin_global_cooldown(self.now_ms());
                         }
@@ -1850,12 +2506,151 @@ impl Root {
             }
             Click::ConfirmDeath => self.store.confirm_death(),
             Click::LootTakeMarker(uid, name) => self.store.set_loot_confirm(uid, name),
-            Click::LootTake => {
-                if let Some((uid, _)) = self.store.loot_confirm.clone() {
-                    self.on_click(Click::UseItem(uid), cx);
+            // M23: «Взять всё» — партия в очередь; труп игрока —
+            // одно подтверждение статуса на всю партию (ФР-11).
+            Click::LootTakeAll => {
+                let Some(detail) = self.store.pickup.clone() else {
+                    return;
+                };
+                let uids = pickup::pickup_uids(&detail);
+                if uids.is_empty() {
+                    return;
+                }
+                if detail["was_player"] == true {
+                    self.pickup_confirm_all = true;
+                    let name = detail["entity"]["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    self.store.set_loot_confirm(String::new(), name);
+                } else {
+                    self.pickup_queue = uids;
+                    self.pump_take_queue(cx);
                 }
             }
-            Click::LootCancel => self.store.clear_loot_confirm(),
+            Click::LootTake => {
+                if self.pickup_confirm_all {
+                    // Подтверждение партии на трупе игрока (ФР-11).
+                    self.pickup_confirm_all = false;
+                    self.store.clear_loot_confirm();
+                    self.pickup_queue = self
+                        .store
+                        .pickup
+                        .as_ref()
+                        .map(pickup::pickup_uids)
+                        .unwrap_or_default();
+                    self.pump_take_queue(cx);
+                } else if let Some((uid, _)) = self.store.loot_confirm.clone() {
+                    if !uid.is_empty() {
+                        self.on_click(Click::UseItem(uid), cx);
+                    }
+                }
+            }
+            Click::LootCancel => {
+                self.pickup_confirm_all = false;
+                self.store.clear_loot_confirm();
+            }
+            Click::Gather(id) => {
+                let cmd = ld2_protocol::cmd::ResourceGather { entity_id: id };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::Gather),
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::Harvest(id, action) => {
+                // Имя животного — из трупа снапшота (без «Труп:»).
+                let name = self
+                    .store
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.location.entities.iter().find(|e| e.id == id))
+                    .map(|e| e.name.strip_prefix("Труп: ").unwrap_or(&e.name).to_string())
+                    .unwrap_or_default();
+                let cmd = ld2_protocol::cmd::CorpseHarvest {
+                    entity_id: id.clone(),
+                    action: action.clone(),
+                };
+                match self.transport.send(&cmd) {
+                    Ok(_) => {
+                        self.store.on_world_sent(Act::Harvest);
+                        // Прогресс-бар — с момента отправки (5 с);
+                        // отказ сервера чистит Act::Harvest (ошибка).
+                        // entity_id (M24): итог другого трупа бар не гасит.
+                        let label = format!(
+                            "{} · {}",
+                            if action == "skin" {
+                                t(self.lang, Key::SkinBtn)
+                            } else {
+                                t(self.lang, Key::GutBtn)
+                            },
+                            name
+                        );
+                        self.store.harvest = Some(ld2_core::store::HarvestProgress {
+                            started_ms: self.now_ms(),
+                            action,
+                            name,
+                            entity_id: id,
+                        });
+                        // M24: единый прогресс-бар (сервер-джоб5 с).
+                        self.start_progress(ProgressSource::Harvest, label, 5_000);
+                    }
+                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                }
+            }
+            // M24: админ-панель — роль гейтит сервер; кнопка в шапке
+            // рисуется только для admin.
+            Click::AdminOpen => {
+                self.open_popup(PopupKind::AdminPanel);
+                self.admin_catalog_request = true;
+                self.pump_admin_catalog(cx);
+            }
+            Click::AdminGive(def_id) => {
+                let cmd = ld2_protocol::cmd::AdminGiveAsk {
+                    target: self.admin_target.clone(),
+                    def_id,
+                };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::AdminAsk),
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::AdminRemove(item_ref) => {
+                let cmd = ld2_protocol::cmd::AdminRemoveAsk {
+                    target: self.admin_target.clone(),
+                    item_ref,
+                };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::AdminAsk),
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::AdminTarget(target) => {
+                self.admin_target = target;
+                self.store.admin_target_items = None;
+                self.admin_target_request = true;
+                self.pump_admin_target(cx);
+            }
+            // M24: очистка цели — свои предметы уходят событиями
+            // снапшота, чужие (не-self) перечитываем после ack.
+            Click::AdminClear(target) => {
+                let cmd = ld2_protocol::cmd::AdminClear { target };
+                match self.transport.send(&cmd) {
+                    Ok(_) => {
+                        self.store.on_world_sent(Act::AdminClear);
+                        if self.admin_target != "self" {
+                            self.admin_target_request = true;
+                        }
+                    }
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+            }
+            Click::AdminGod(enabled) => {
+                let cmd = ld2_protocol::cmd::AdminGodMode { enabled };
+                match self.transport.send(&cmd) {
+                    Ok(_) => self.store.on_world_sent(Act::AdminGod),
+                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                }
+            }
             Click::CloseDetail => self.store.entity_detail = None,
             Click::SwitchChar => self.open_exit(ExitKind::SwitchChar, cx),
         }
@@ -1909,6 +2704,26 @@ impl Root {
                         window.start_window_move();
                         acx.new(|_| EmptyView)
                     }),
+            )
+            // M24: админ-панель — только role=admin и в мире
+            // (сервер гейтит повторно).
+            .when(
+                in_world
+                    && self
+                        .store
+                        .session
+                        .as_ref()
+                        .is_some_and(|s| s.role == "admin"),
+                |d| {
+                    d.child(
+                        IconButton::new("ld2-titlebar-admin", IconName::Shield)
+                            .tooltip(t(lang, Key::AdminPanelTitle))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.on_click(Click::AdminOpen, cx);
+                                cx.notify();
+                            })),
+                    )
+                },
             )
             // Настройки (перенесены из шапки).
             .child(
@@ -2049,6 +2864,16 @@ impl Root {
                             pal.panel,
                             pal.text,
                             Click::ToggleQuests,
+                        )
+                    }))
+                    // M21: кнопка профессий рядом с «Квесты».
+                    .children(self.store.snapshot.as_ref().map(|_| {
+                        btn(
+                            cx,
+                            t(lang, Key::ProfessionsTab),
+                            pal.panel,
+                            pal.text,
+                            Click::ToggleProfessions,
                         )
                     })),
             )
@@ -2746,7 +3571,7 @@ struct HotkeyRowSpec {
 
 /// Все ремаппингуемые действия: навигация/цикл (ФР-19) + боевые
 /// панели (M14/F4, цифры 1–6 — Esc занят диалогами).
-const HOTKEY_ROWS: [HotkeyRowSpec; 14] = [
+const HOTKEY_ROWS: [HotkeyRowSpec; 15] = [
     HotkeyRowSpec {
         id: "ld2-hk-nav-up",
         label: Key::HkNavUp,
@@ -2830,6 +3655,12 @@ const HOTKEY_ROWS: [HotkeyRowSpec; 14] = [
         label: Key::HkOpenQuests,
         get: |hk| hk.open_quests.as_str(),
         set: |hk, v| hk.open_quests = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-professions",
+        label: Key::HkOpenProfessions,
+        get: |hk| hk.open_professions.as_str(),
+        set: |hk, v| hk.open_professions = v,
     },
 ];
 
@@ -3561,6 +4392,28 @@ impl Render for Root {
             .when_some(self.socket_window(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
+            // M20: окно выбора количества — поверх окна сокетов.
+            .when_some(self.quantity_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M24: админ-панель — под окном диалога (execute-диалог
+            // количества должен открываться поверх).
+            .when_some(self.admin_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M20: окно игрового диалога (заготовка) — поверх окна
+            // количества.
+            .when_some(self.dialog_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M21: окно профессий — поверх окна диалога.
+            .when_some(self.professions_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
+            // M23: окно подятия предмета — верхний слой группы попапов.
+            .when_some(self.pickup_window(window, cx, &pal), |d, layer| {
+                d.child(layer)
+            })
             .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
@@ -3614,19 +4467,20 @@ mod tests {
 
     /// иначе меню, открытое в момент закрытия, появлялось бы само
     /// при следующем открытии (stale-запрос `.manual` + гаснущий
-    /// keyed state). Каждое окно сбрасывает только своё меню.
+    /// keyed state). M24 (заказчик): окно подятия рисует общий
+    /// `backpack_grid` — при открытии ЛЮБОГО окна сбрасываются ОБА
+    /// меню, иначе в луте самооткрывалось меню рюкзака.
     #[test]
-    fn opening_popup_clears_its_context_menu() {
+    fn opening_popup_clears_both_context_menus() {
         let mut bp = Some("bp".to_string());
         let mut eq = Some("eq".to_string());
-        clear_popup_menu(PopupKind::Backpack, &mut bp, &mut eq);
+        clear_popup_menu(&mut bp, &mut eq);
         assert!(bp.is_none(), "меню рюкзака сброшено при открытии");
-        assert_eq!(eq.as_deref(), Some("eq"), "меню персонажа не тронуто");
-        clear_popup_menu(PopupKind::Character, &mut bp, &mut eq);
         assert!(eq.is_none(), "меню персонажа сброшено при открытии");
-        assert!(bp.is_none(), "меню рюкзака уже пусто");
         // Повторное открытие — без паники и без лишних эффектов.
-        clear_popup_menu(PopupKind::Backpack, &mut bp, &mut eq);
+        bp = Some("bp".to_string());
+        eq = Some("eq".to_string());
+        clear_popup_menu(&mut bp, &mut eq);
         assert!(bp.is_none() && eq.is_none());
     }
 
@@ -3654,8 +4508,8 @@ mod tests {
     fn hotkey_rows_cover_nav_and_six_actions() {
         assert_eq!(
             HOTKEY_ROWS.len(),
-            14,
-            "навигация/цикл + 6 действий + окна персонажа/рюкзака/квестов"
+            15,
+            "навигация/цикл + 6 действий + окна персонажа/рюкзака/квестов/профессий"
         );
         let ids: std::collections::HashSet<_> = HOTKEY_ROWS.iter().map(|r| r.id).collect();
         assert_eq!(ids.len(), HOTKEY_ROWS.len(), "id строк уникальны");
@@ -3672,6 +4526,7 @@ mod tests {
         assert_eq!((HOTKEY_ROWS[11].get)(&hk), "c", "окно персонажа (M15/F25)");
         assert_eq!((HOTKEY_ROWS[12].get)(&hk), "i", "окно рюкзака (M16/F29b)");
         assert_eq!((HOTKEY_ROWS[13].get)(&hk), "j", "окно квестов (M18/F36)");
+        assert_eq!((HOTKEY_ROWS[14].get)(&hk), "p", "окно профессий (M21)");
 
         // Сеттер переписывает только своё поле.
         let mut hk = Hotkeys::default();
@@ -3766,7 +4621,7 @@ mod tests {
     /// Login → Game не блокирует хоткеи.
     #[test]
     fn typing_fields_cover_every_input_and_gate_game() {
-        const ALL: [&str; 13] = [
+        const ALL: [&str; 16] = [
             "login",
             "password",
             "reg_login",
@@ -3780,6 +4635,9 @@ mod tests {
             "chat_filter",
             "delete_name",
             "create_name",
+            "admin_search",
+            "admin_inv_search",
+            "admin_player",
         ];
         for field in TYPING_FIELDS {
             assert!(
@@ -3802,7 +4660,16 @@ mod tests {
             .collect();
         assert_eq!(
             game,
-            ["chat", "chat_filter", "guild", "host", "domain"],
+            [
+                "chat",
+                "chat_filter",
+                "guild",
+                "host",
+                "domain",
+                "admin_search",
+                "admin_inv_search",
+                "admin_player",
+            ],
             "игровой экран проверяет только свои поля"
         );
     }

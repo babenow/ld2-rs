@@ -68,6 +68,9 @@ pub enum ErrorCode {
     Permission,
     XpPool,
     RankCap,
+    /// M21: уровень профессии не набран до границы ранга
+    /// (`craft.rank_up`, награда квеста с `rank_up`).
+    LevelRequired,
     /// M18/F44: шкала навыка не заполнена на 100 % (ADR-009).
     SkillNotReady,
     ProfessionLimit,
@@ -81,6 +84,13 @@ pub enum ErrorCode {
     RateLimited,
     PvpForbidden,
     TooLarge,
+    /// M24: количество в админ-диалоге вне 1..=999 (`E_BAD_QTY`).
+    BadQuantity,
+    /// M24: персонаж занят разделкой — действия блокированы (`E_BUSY`).
+    Busy,
+    /// M25: дебафф контроля (стан/немота/ослепление) — действия
+    /// блокированы (`E_STUNNED`).
+    Stunned,
     Internal,
     /// Код, неизвестный этой версии клиента (новее контракта / расширение сервера).
     Unknown(String),
@@ -126,6 +136,7 @@ impl ErrorCode {
             Self::Permission => "E_PERMISSION",
             Self::XpPool => "E_XP_POOL",
             Self::RankCap => "E_RANK_CAP",
+            Self::LevelRequired => "E_LEVEL_REQUIRED",
             Self::SkillNotReady => "E_SKILL_NOT_READY",
             Self::ProfessionLimit => "E_PROFESSION_LIMIT",
             Self::QuestLimit => "E_QUEST_LIMIT",
@@ -136,6 +147,10 @@ impl ErrorCode {
             Self::RateLimited => "E_RATE_LIMITED",
             Self::PvpForbidden => "E_PVP_FORBIDDEN",
             Self::TooLarge => "E_TOO_LARGE",
+            Self::BadQuantity => "E_BAD_QTY",
+            Self::Busy => "E_BUSY",
+            Self::Stunned => "E_STUNNED",
+
             Self::Internal => "E_INTERNAL",
             Self::Unknown(raw) => raw,
         }
@@ -183,6 +198,7 @@ impl FromStr for ErrorCode {
             "E_PERMISSION" => Self::Permission,
             "E_XP_POOL" => Self::XpPool,
             "E_RANK_CAP" => Self::RankCap,
+            "E_LEVEL_REQUIRED" => Self::LevelRequired,
             "E_PROFESSION_LIMIT" => Self::ProfessionLimit,
             "E_QUEST_LIMIT" => Self::QuestLimit,
             "E_NOT_ENOUGH_MONEY" => Self::NotEnoughMoney,
@@ -192,6 +208,10 @@ impl FromStr for ErrorCode {
             "E_RATE_LIMITED" => Self::RateLimited,
             "E_PVP_FORBIDDEN" => Self::PvpForbidden,
             "E_TOO_LARGE" => Self::TooLarge,
+            "E_BAD_QTY" => Self::BadQuantity,
+            "E_BUSY" => Self::Busy,
+            "E_STUNNED" => Self::Stunned,
+
             "E_INTERNAL" => Self::Internal,
             other => Self::Unknown(other.to_string()),
         })

@@ -28,6 +28,10 @@ pub struct SessionConfig {
     pub inventory: InventoryConfig,
     pub upgrade: UpgradeConfig,
     pub magic: MagicConfig,
+    /// M25: время жизни строки журнала (Лог), с; `0` — не удаляются;
+    /// старый сервер без поля → 30 (§11).
+    #[serde(default = "default_journal_ttl_s")]
+    pub journal_ttl_s: i64,
     /// M18/F36: лимит текущих квестов (§5, DoD: конфиг, не код).
     #[serde(default = "default_quest_max_active")]
     pub quests: QuestsConfig,
@@ -124,8 +128,18 @@ pub struct MagicConfig {
     /// `time` — тикер по серверному `rune_recharge_s`, `item` — только
     /// извлечением. Клиенту — только для отображения/логики окон.
     pub rune_recharge: String,
+    /// M24: секунд на восстановление одного заряда — клиент рисует
+    /// прогрессбар заполнения рун; аддитивно §11: старый сервер
+    /// поля не шлёт → фолбэк 30 с (server.example.toml).
+    #[serde(default = "default_rune_recharge_s")]
+    pub rune_recharge_s: f64,
     pub scroll_requires_target: bool,
     pub mana: ManaConfig,
+}
+
+/// Фолбэк `rune_recharge_s` для сервера без поля (§11).
+fn default_rune_recharge_s() -> f64 {
+    30.0
 }
 
 /// M18/F36: квесты §5 — лимит текущих (взятых: active/turn_in) квестов;
@@ -136,6 +150,11 @@ pub struct QuestsConfig {
 }
 
 /// Фолбэк лимита квестов для клиентов со старым сервером (§11).
+/// Фолбэк `journal_ttl_s` для сервера без поля (§11).
+fn default_journal_ttl_s() -> i64 {
+    30
+}
+
 fn default_quest_max_active() -> QuestsConfig {
     QuestsConfig { max_active: 10 }
 }
@@ -162,5 +181,28 @@ impl SessionConfig {
     /// Фича-булево (`features["loot.roll"] = false` → `Some(false)`).
     pub fn feature_bool(&self, key: &str) -> Option<bool> {
         self.feature(key).and_then(serde_json::Value::as_bool)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M24/§11: старый сервер без `rune_recharge_s` → фолбэк 30 с.
+    #[test]
+    fn magic_config_defaults_rune_recharge_s() {
+        let v: MagicConfig = serde_json::from_value(serde_json::json!({
+            "rune_recharge": "time",
+            "scroll_requires_target": true,
+            "mana": { "regen_out_s": 5, "regen_in_pct_s": 1.0, "rune_cost": 10 }
+        }))
+        .expect("deserialize");
+        assert_eq!(v.rune_recharge_s, 30.0, "фолбэк для старого сервера");
+    }
+
+    /// M25/§11: старый сервер без journal_ttl_s → 30 с.
+    #[test]
+    fn journal_ttl_defaults_to_thirty() {
+        assert_eq!(default_journal_ttl_s(), 30);
     }
 }

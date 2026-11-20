@@ -265,20 +265,20 @@ fn deploy_config_matches_example_except_db_url() {
         .filter(|(e, d)| e != d)
         .map(|(e, d)| (*e, *d))
         .collect();
-    assert_eq!(
-        diffs.len(),
-        1,
-        "расхождение только в database.url: {diffs:?}"
+    // M24: допустимы расхождения только в окружение-зависимых
+    // значениях (состав ключей уже проверен выше): url БД и флаг
+    // dev-сценариев (шаблон/тесты — true, прод — false).
+    let env_diff = |e: &str, d: &str| {
+        (e.starts_with("url = ") && d.starts_with("url = "))
+            || (e.starts_with("allow_scenario = ") && d.starts_with("allow_scenario = "))
+    };
+    assert!(
+        !diffs.is_empty() && diffs.iter().all(|(e, d)| env_diff(e, d)),
+        "расхождения только в url/allow_scenario: {diffs:?}"
     );
     assert!(
-        diffs[0].0.starts_with("url = "),
-        "в шаблоне это url: {:?}",
-        diffs[0].0
-    );
-    assert!(
-        diffs[0].1.starts_with("url = "),
-        "в deploy это url: {:?}",
-        diffs[0].1
+        diffs.iter().any(|(e, _)| e.starts_with("url = ")),
+        "url должен отличаться: {diffs:?}"
     );
 }
 

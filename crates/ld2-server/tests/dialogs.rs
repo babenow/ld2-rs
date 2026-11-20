@@ -342,3 +342,33 @@ async fn npc_dialog_shows_gender_branch_for_female_char() {
     let text = ack["payload"]["node"]["text"].as_str().unwrap_or_default();
     assert!(!text.contains('{'), "текст отрендерен: {text}");
 }
+
+/// M21: `npc.talk` отдаёт профессии NPC с ценой (`price_profession`) —
+/// панель «Обучение» в диалоге учит и профессиям (изучение —
+/// `cmd/craft.learn`, клиент фильтрует уже изученные).
+#[tokio::test]
+async fn npc_talk_lists_professions_with_price() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await; // l_village, Старины
+
+    let ack = talk(&mut c, "npc_elder").await;
+    assert_eq!(ack["result"], "ok", "диалог: {ack}");
+    let profs = ack["payload"]["professions"]
+        .as_array()
+        .expect("professions в ack");
+    assert_eq!(profs.len(), 14, "Старины учит всех14: {profs:?}");
+    let alch = profs
+        .iter()
+        .find(|p| p["id"] == "alchemist")
+        .expect("alchemist в списке");
+    assert_eq!(alch["gold"], 500, "цена price_profession: {alch}");
+    let jeweler = profs
+        .iter()
+        .find(|p| p["id"] == "jeweler")
+        .expect("jeweler в списке");
+    assert_eq!(jeweler["gold"], 500, "единая цена профессии: {jeweler}");
+}

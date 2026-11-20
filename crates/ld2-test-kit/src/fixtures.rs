@@ -178,8 +178,10 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
             shows_chance: true,
             duration_s: 3.0,
         },
+        journal_ttl_s: 30,
         magic: MagicConfig {
             rune_recharge: "item".into(),
+            rune_recharge_s: 30.0,
             scroll_requires_target: true,
             mana: ManaConfig {
                 regen_out_s: 45,
@@ -244,6 +246,10 @@ pub fn village() -> LocationSnapshot {
             tags: None,
             was_player: None,
             aggro: None,
+            boss: None,
+            next_attack_at: None,
+            attack_interval: None,
+            attacking: None,
             extra: Default::default(),
         }],
         extra: Default::default(),
@@ -270,6 +276,10 @@ pub fn forest() -> LocationSnapshot {
                 tags: Some(vec!["aggro".into()]),
                 was_player: None,
                 aggro: Some(true),
+                boss: None,
+                next_attack_at: None,
+                attack_interval: None,
+                attacking: None,
                 extra: Default::default(),
             },
             Entity {
@@ -280,6 +290,10 @@ pub fn forest() -> LocationSnapshot {
                 tags: Some(vec!["marauder".into()]),
                 was_player: None,
                 aggro: None,
+                boss: None,
+                next_attack_at: None,
+                attack_interval: None,
+                attacking: None,
                 extra: Default::default(),
             },
             Entity {
@@ -290,6 +304,10 @@ pub fn forest() -> LocationSnapshot {
                 tags: None,
                 was_player: Some(true),
                 aggro: None,
+                boss: None,
+                next_attack_at: None,
+                attack_interval: None,
+                attacking: None,
                 extra: Default::default(),
             },
         ],
@@ -327,6 +345,7 @@ pub fn staff_item() -> ItemSnapshot {
             Socket {
                 index: 0,
                 rune: Some(ld2_protocol::types::RuneInfo {
+                    class: None,
                     name: "Руна огня".into(),
                     spell: "fire_dart".into(),
                     charges: 7,
@@ -463,6 +482,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
         professions: vec![ProfessionSnapshot {
             id: "scribe".into(),
             rank: 2,
+            level: 0,
             xp: 140,
             xp_to_next: 200,
             extra: Default::default(),

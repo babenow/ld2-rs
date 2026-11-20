@@ -116,7 +116,8 @@ async fn learn_and_invest_are_paid_and_fail_without_gold() {
     let (mut c, _login, char_id) = in_world(&ws).await;
     set_pool(&db_url, &char_id, 1000).await;
 
-    // Нет золота → E_INGREDIENTS (цена ранга 0 = gold_base = 100).
+    // Нет золота → E_INGREDIENTS (M21: обучение профессии —
+    // price_profession, gold_base = 500).
     let seq = c
         .send("cmd/craft.learn", json!({ "profession_id": "alchemist" }))
         .await;
@@ -140,11 +141,11 @@ async fn learn_and_invest_are_paid_and_fail_without_gold() {
     );
 
     // Ровно базовая цена → learn проходит, золото уходит полностью.
-    give_gold(&mut c, 100).await;
+    give_gold(&mut c, 500).await;
     let seq = c
         .send("cmd/craft.learn", json!({ "profession_id": "alchemist" }))
         .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "learn за 100");
+    assert_eq!(c.ack(seq).await["result"], "ok", "learn за 500");
     assert_eq!(gold_of(&db_url, &char_id).await, 0, "золото списано");
 
     // Повторное изучение — идемпотентный ack без повторной оплаты:

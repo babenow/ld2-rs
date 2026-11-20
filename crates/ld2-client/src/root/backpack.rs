@@ -18,7 +18,7 @@ use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
-use super::sheet::{rarity_color, rarity_label};
+use super::sheet::rarity_label;
 use super::{scrollable_tab, PopupKind, Root};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
@@ -126,13 +126,16 @@ impl BackpackTab {
 /// M16/F29b: тип предмета → группа-вкладка — маппинг в одном месте;
 /// новые типы контента попадают в «Прочее» (тест покрывает
 /// `content/items.json`).
-fn tab_for_type(item_type: &str) -> BackpackTab {
+pub(crate) fn tab_for_type(item_type: &str) -> BackpackTab {
     match item_type {
         "weapon" | "staff" => BackpackTab::Weapon,
         "potion" => BackpackTab::Potion,
         "rune" | "scroll" => BackpackTab::Magic,
-        "herb" | "wood_oak" | "parchment" | "ink" => BackpackTab::Material,
-        "flask" | "chisel" | "quill" | "upgrade_stone" => BackpackTab::Tool,
+        "herb" | "wood_oak" | "parchment" | "ink" | "ore_copper" | "branches" | "hide_scraps"
+        | "hide" | "meat" | "offal" => BackpackTab::Material,
+        // M20/F20b: инструменты добычи (топор/кирка/серп) — к инструментам.
+        "flask" | "chisel" | "quill" | "upgrade_stone" | "axe" | "pickaxe" | "sickle"
+        | "skinning_knife" => BackpackTab::Tool,
         "money" => BackpackTab::Currencies,
         "armor" | "shield" => BackpackTab::Armor,
         "artifact" => BackpackTab::Artifact,
@@ -193,7 +196,7 @@ impl Root {
 
         // Тело: сетка активной группы в прокрутке + строка валюты
         // (всегда видна, независимо от вкладки).
-        let grid = self.backpack_grid(cx, pal);
+        let grid = self.backpack_grid(cx, pal, "ld2-bp");
         let body = div()
             .flex()
             .flex_col()
@@ -279,7 +282,15 @@ impl Root {
     /// Сетка предметов активной вкладки: плитка + контекстное меню
     /// (ЛКМ и ПКМ), перетаскивание меняет предметы местами (Reorder →
     /// `cmd/item.move`). Надетое сюда не попадает (M16/F29f).
-    fn backpack_grid(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+    /// `id_prefix` — вставка в id виджетов (сетка/строки): окно
+    /// подятия (M23) рисует СВОЙ экземпляр рюкзака одновременно с
+    /// этим окном — id в кадре обязаны различаться.
+    pub(crate) fn backpack_grid(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        id_prefix: &str,
+    ) -> Div {
         let lang = self.lang;
         let tab = self.backpack_tab;
         let Some(snap) = self.store.snapshot.clone() else {
@@ -314,11 +325,11 @@ impl Root {
         // drag меняет предметы местами (порядок строк = порядок сетки).
         let this = cx.entity();
         let order: Vec<String> = items.iter().map(|i| i.uid.clone()).collect();
-        let mut list = Reorder::new("ld2-backpack-rows");
+        let mut list = Reorder::new(format!("{id_prefix}-rows"));
         for item in items {
             let uid = item.uid.clone();
             let tile = div()
-                .id(format!("ld2-bp-item-{uid}"))
+                .id(format!("{id_prefix}-item-{uid}"))
                 .tooltip(Tooltip::text(format!(
                     "{} · {} · +{}",
                     item.name,
@@ -342,7 +353,7 @@ impl Root {
                 // (указание заказчика); слоты рун — их глифы.
                 .child(super::sheet::item_label_stack(
                     item,
-                    rarity_color(&item.rarity, pal),
+                    super::sheet::item_color(item, pal),
                 ));
             // ЛКМ — меню (после перетаскивания gpui подавляет клик; на
             // всякий случай — guard по активному drag), ПКМ — меню.

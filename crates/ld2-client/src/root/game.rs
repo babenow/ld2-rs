@@ -10,23 +10,25 @@ use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stateful, Window};
 use ld2_core::l10n::{format_duration, t, tf, Key};
 use ld2_core::store::{
-    crime_kind_title, filter_active_statuses, local_epoch, Act, AppStore, LogKind, NpcDialogView,
+    crime_kind_title, filter_active_buffs, filter_active_statuses, local_epoch, Act, AppStore,
+    LogKind, NpcDialogView, NpcProfession,
 };
 use ld2_protocol::evt::StateSnapshot;
-use ld2_protocol::types::{Entity, EntityKind, LocationSnapshot, Severity};
+use ld2_protocol::types::{Entity, EntityKind, ItemSnapshot, LocationSnapshot, Severity};
 
+use crate::fa::fa_icon;
 use crate::palette::Palette;
 use ely::buttons::IconButton;
 use ely::forms::Choice;
 use ely::layout::ScrollArea;
 use ely::menus::{ContextMenu, Menu, MenuItem};
 use ely::navigation::Tabs;
-use ely::primitives::{IconName, Tooltip};
+use ely::primitives::{Divider, IconName, Tooltip};
 
 use super::quests::goals_summary;
 use super::sheet::rarity_label;
 use super::social::show_party;
-use super::{act_btn, act_btn_hover, btn, hex_to_u32, Click, LogTab, PopupKind, Root, INSCRIBE_MS};
+use super::{act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, Click, PopupKind, Root};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -41,7 +43,11 @@ pub(crate) fn power_strike_open(skills: &[ld2_protocol::types::SkillSnapshot]) -
 
 /// M17/F30b: uid надетого посоха — слот `staff` удалён (посох теперь
 /// двуручное оружие правой руки), ищем по типу среди надетого.
-fn equipped_staff_uid(snap: &StateSnapshot) -> Option<String> {
+/// M24: надетая экипировка с вставленными рунами — кнопки каста на
+/// панели и хоткей «руна». Раньше брался только посох (`item_type ==
+/// "staff"`): руны в мече/броне (ADR-012) кнопки не получали —
+/// активная руна «не активировалась» (указание заказчика).
+fn equipped_rune_items(snap: &StateSnapshot) -> Vec<&ItemSnapshot> {
     let equipped: std::collections::HashSet<&str> = snap
         .char
         .equip
@@ -52,8 +58,16 @@ fn equipped_staff_uid(snap: &StateSnapshot) -> Option<String> {
     snap.char
         .inventory
         .iter()
-        .find(|i| i.item_type == "staff" && equipped.contains(i.uid.as_str()))
-        .map(|i| i.uid.clone())
+        .filter(|i| equipped.contains(i.uid.as_str()))
+        .filter(|i| {
+            i.sockets
+                .iter()
+                .flatten()
+                // M24: самоцветы живут в том же поле `rune`, но
+                // заклинания не имеют — на панель каста не идут.
+                .any(|s| s.rune.as_ref().is_some_and(|r| !r.spell.is_empty()))
+        })
+        .collect()
 }
 
 impl Root {
@@ -67,20 +81,26 @@ impl Root {
             .as_ref()
             .map(|s| s.magic.mana.rune_cost)
             .unwrap_or(0);
-        let staff_uid = equipped_staff_uid(snap)?;
-        let staff = snap.char.inventory.iter().find(|i| i.uid == staff_uid)?;
-        staff
-            .sockets
-            .iter()
-            .flatten()
-            .find(|socket| {
-                socket.rune.as_ref().is_some_and(|r| r.charges > 0)
-                    && (rune_cost <= 0 || snap.char.mp.cur >= rune_cost)
-            })
-            .map(|socket| Click::RuneCast {
-                staff_uid: staff_uid.clone(),
-                socket_index: socket.index,
-            })
+        for staff in equipped_rune_items(snap) {
+            if let Some(socket) = staff.sockets.iter().flatten().find(|socket| {
+                socket.rune.as_ref().is_some_and(|r| {
+                    r.charges > 0
+                        // M24: самоцвет — не руна, каст не из него.
+                        && !r.spell.is_empty()
+                        && (rune_cost <= 0 || snap.char.mp.cur >= rune_cost)
+                        // M24: класс руны — каст только своему классу.
+                        && r.class
+                            .as_deref()
+                            .is_none_or(|c| snap.char.profile.as_deref() == Some(c))
+                })
+            }) {
+                return Some(Click::RuneCast {
+                    staff_uid: staff.uid.clone(),
+                    socket_index: socket.index,
+                });
+            }
+        }
+        None
     }
 
     /// M14/F4: первый расходник боя (свиток/зелье) — хоткей «6».
@@ -109,6 +129,44 @@ impl Root {
             // клик по скриму ничего не делают: on_close пуст.
             return Some(
                 Dialog::new("ld2-death", title, |_window, _cx| {})
+                    .child(body)
+                    .into_any_element(),
+            );
+        }
+        // M25: стан — всплывающее окно с прогрессбаром времени
+        // (закрывается само по истечении — tick чистит store.stun).
+        if let Some(stun) = self.store.stun.clone() {
+            let total = (stun.until_ms - stun.started_ms).max(1);
+            let left = (stun.until_ms - self.now_ms()).max(0);
+            let frac = (1.0 - left as f32 / total as f32).clamp(0.0, 1.0);
+            let body = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .w(px(240.0))
+                        .h(px(10.0))
+                        .rounded_md()
+                        .bg(rgb(pal.border))
+                        .child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(frac))
+                                .rounded_md()
+                                .bg(rgb(pal.danger)),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(pal.muted))
+                        .child(format_duration(self.lang, left / 1000)),
+                )
+                .into_any_element();
+            return Some(
+                Dialog::new("ld2-stun", stun.title.clone(), |_window, _cx| {})
                     .child(body)
                     .into_any_element(),
             );
@@ -398,6 +456,63 @@ impl Root {
                     )),
             );
         }
+        // M21: профессии этого NPC (изучение — cmd/craft.learn); уже
+        // изученные не показываем — снапшот обновляется по ack.
+        let learned: Vec<String> = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| s.char.professions.iter().map(|p| p.id.clone()).collect())
+            .unwrap_or_default();
+        let teachable: Vec<&NpcProfession> = dialog
+            .professions
+            .iter()
+            .filter(|p| !learned.contains(&p.id))
+            .collect();
+        if !teachable.is_empty() {
+            col = col.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::ProfessionsTab)),
+            );
+            for entry in teachable {
+                let name = super::professions::prof_label(lang, &entry.id);
+                let cost = t(lang, Key::TrainingGold).replace("{n}", &entry.gold.to_string());
+                let profession_id = entry.id.clone();
+                col = col.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .items_center()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(pal.panel))
+                        .child(div().flex_grow_1().min_w_0().child(name))
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(pal.muted))
+                                .child(cost),
+                        )
+                        .child(act_btn(
+                            cx,
+                            t(lang, Key::LearnLabel),
+                            pal.accent,
+                            pal.accent_text,
+                            move |this, cx| {
+                                let cmd = ld2_protocol::cmd::CraftLearn {
+                                    profession_id: profession_id.clone(),
+                                };
+                                this.send_cmd(&cmd, Act::Learn);
+                                let _ = cx;
+                            },
+                        )),
+                );
+            }
+        }
         // «К диалогу» — внизу слева (паритет панели магазина F41).
         col = col.child(div().flex_grow_1().min_h_0());
         col = col.child(
@@ -420,7 +535,9 @@ impl Root {
                     },
                 )),
         );
-        col
+        // M22: прокрутка контента панели обучения (навыки +
+        // профессии) — кнопка «К диалогу» остаётся под скроллом.
+        scrollable_tab("ld2-training-scroll", &self.training_scroll, col)
     }
 
     /// M18/F38: **окно диалога NPC как окно персонажа** — попап-шелл
@@ -446,6 +563,9 @@ impl Root {
             self.shop_view(cx, pal, &dialog)
         } else if dialog.training_open {
             self.training_view(cx, pal, &dialog)
+        } else if dialog.history_open {
+            // M22: полная лента — по кнопке «История» в статусбаре.
+            self.dialog_history_view(pal, &dialog)
         } else {
             self.npc_dialog_view(cx, pal, &dialog)
         };
@@ -454,6 +574,18 @@ impl Root {
         // окна (статус-бар убран; «Квесты»/«Обучение» убраны по решению
         // пользователя). Тултипы — тексты l10n, что и были у кнопок.
         let mut leading = div().flex().flex_row().gap_1().items_center();
+        // M22: история диалога — кнопка в статусбаре окна; в самом
+        // диалоге показывается только текущая реплика.
+        leading = leading.child(
+            IconButton::new("ld2-npc-history", IconName::BookOpen)
+                .tooltip(t(lang, Key::DialogHistory))
+                .on_click(cx.listener(|root, _, _, cx| {
+                    if let Some(view) = root.store.npc_dialog.as_mut() {
+                        view.history_open = !view.history_open;
+                    }
+                    cx.notify();
+                })),
+        );
         if dialog.shop.is_some() || dialog.training_open {
             // Открыт магазин/обучение — возврат к транскрипту (иконка
             // «назад»); чистим обе панели (M18/F44).
@@ -465,6 +597,7 @@ impl Root {
                             view.shop = None;
                             view.shop_currency = None;
                             view.training_open = false;
+                            view.history_open = false;
                         }
                         cx.notify();
                     })),
@@ -521,6 +654,11 @@ impl Root {
                     .flex()
                     .flex_col()
                     .min_w_0()
+                    // M25: левая колонка — 20 % ширины экрана
+                    // (резиновая; пол 240 — не схлопывается на узких
+                    // окнах), центр — гибкий, правая —20 %.
+                    .w(gpui::relative(0.2))
+                    .min_w(px(240.0))
                     .child(self.left_column(cx, pal, &snap)),
             )
             .child(
@@ -533,17 +671,12 @@ impl Root {
                     // Не выше остатка экрана: журнальный блок сжимается
                     // до своего min_h, а не выдавливает колонку наружу.
                     .min_h_0()
-                    // M15/F25: трекер квестов переехал из листа в центр —
-                    // остаётся видимым поверх игры (окно персонажа закрыто).
-                    .children(self.tracker_block(pal))
                     // M14/F2: описание локации — всегда первая строка.
                     .child(self.location_block(pal, &snap.location))
                     // Таргет — под описанием (перенос из левой колонки).
                     .child(self.target_block(cx, pal, &snap))
                     .children(self.notice_line(pal))
                     .child(self.entities_block(cx, pal, &snap.location))
-                    // M17/F30a: каст-бар инкрустации — внизу, над панелью.
-                    .children(self.inscribe_bar(pal, &snap))
                     .child(self.hotbar(cx, pal, &snap))
                     .child(self.exits_row(cx, pal, &snap.location))
                     .children((self.store.target.is_some()).then(|| {
@@ -553,7 +686,23 @@ impl Root {
                             .child(t(self.lang, Key::AltNavHint))
                     }))
                     // Журнал/чат — последним (M14/F2/F7).
+                    // M25: журнал приклеен к низу центра (заказчик).
+                    .child(div().flex_grow_1().min_h_0())
                     .child(self.journal_block(cx, pal)),
+            )
+            // M25: правая колонка —20 %: история посещений (верх)
+            // и трекер квестов (указание заказчика).
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .min_w_0()
+                    .min_h_0()
+                    .w(gpui::relative(0.2))
+                    .min_w(px(180.0))
+                    .child(self.history_block(pal))
+                    .children(self.tracker_block(pal)),
             )
     }
 
@@ -566,7 +715,9 @@ impl Root {
         snap: &StateSnapshot,
     ) -> Div {
         let lang = self.lang;
-        let mut col = div().flex().flex_col().gap_2().w(px(210.0));
+        // M24: ширина задаётся контейнером в game_screen (30 %,
+        // резиновая); колонка тянется на всю его ширину.
+        let mut col = div().flex().flex_col().gap_2().w_full();
 
         // Имя + бейджи статусов (ФР-11): серверные сроки, now = лок + offset.
         let mut name_row = div().flex().flex_row().items_center().gap_2().child(
@@ -589,15 +740,15 @@ impl Root {
         col = col.child(name_row);
 
         // Ресурсы (ФР-04/09).
-        col = col.child(bar(
-            snap.char.hp.cur as f32 / snap.char.hp.max.max(1) as f32,
-            format!(
-                "{} {}/{}",
-                t(lang, Key::HpLabel),
-                snap.char.hp.cur,
-                snap.char.hp.max
-            ),
+        // M25: шкала ХП — виджет stat_bar (выше/шире — параметры,
+        // цифры поверх бара, зелёная заливка).
+        col = col.child(stat_bar(
             pal.success,
+            snap.char.hp.max,
+            snap.char.hp.cur,
+            t(lang, Key::HpLabel),
+            BAR_WIDTH,
+            16.0,
             pal,
         ));
         // M18: ресурс по профилю — адреналин (красный), энергия
@@ -608,15 +759,27 @@ impl Root {
             Some("archer") => (t(lang, Key::EnergyLabel), 0xb8_96_1e),
             _ => (t(lang, Key::MpLabel), pal.accent),
         };
-        col = col.child(bar(
-            snap.char.mp.cur as f32 / snap.char.mp.max.max(1) as f32,
-            format!(
-                "{} {}/{}",
-                resource_label, snap.char.mp.cur, snap.char.mp.max
-            ),
+        // M25: шкала ресурса — тот же виджет (цвет по профилю).
+        col = col.child(stat_bar(
             resource_color,
+            snap.char.mp.max,
+            snap.char.mp.cur,
+            resource_label,
+            BAR_WIDTH,
+            16.0,
             pal,
         ));
+        // M24: индикаторы вставленных рун (указание заказчика) —
+        // под индикатором ресурса: глиф · прогрессбар заполнения ·
+        // N/M (правее глифа бар, правее бара — заряды).
+        for row in self.rune_indicator_rows(snap, pal) {
+            col = col.child(row);
+        }
+        // M24: индикаторы бафов рун (указание заказчика): активные
+        // баффы рун; за3 с до конца — моргание раз в секунду.
+        for row in self.rune_buff_rows(snap, pal) {
+            col = col.child(row);
+        }
         col = col.child(
             div()
                 .text_size(px(12.0))
@@ -627,6 +790,9 @@ impl Root {
                     snap.char.xp_pool
                 )),
         );
+        // M24: единый прогресс-бар (разделка/инкрустация/заточка) —
+        // под панелью персонажа (ХП/ресурс; плавность — быстрый тик).
+        col = col.when_some(self.progress_bar(pal), |d, b| d.child(b));
 
         // M14/F1: «Сменить персонажа»/«Выйти» переехали в меню шапки.
 
@@ -641,10 +807,17 @@ impl Root {
             col = col.child(self.party_widget(cx, pal));
         }
 
-        // История посещений (ФР-03). Растягивается на остаток высоты и
-        // срезается по ней (overflow_hidden): при группе ≥2 и 10 пунктах
-        // на минимуме окна (960×640) список не должен выталкивать чат
-        // за нижнюю границу окна.
+        // M14/F7: чат переехал в блок журнала (вкладка «Чат»);
+        // история посещений — M25 в правой колонке.
+        col
+    }
+
+    /// M25: история посещений (ФР-03) — правая колонка20 % (верх);
+    /// растягивается на остаток высоты и срезается по ней
+    /// (overflow_hidden) — на минимуме окна не выталкивает трекер.
+    fn history_block(&self, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let mut col = div().flex().flex_col().gap_2().min_h_0();
         col = col.child(
             div()
                 .font_weight(gpui::FontWeight::BOLD)
@@ -667,9 +840,6 @@ impl Root {
                 .overflow_hidden()
                 .child(visited_list),
         );
-
-        // M14/F7: чат переехал в блок журнала (вкладка «Чат»); место
-        // под него занимает история посещений (flex_grow_1 выше).
         col
     }
 
@@ -740,48 +910,26 @@ impl Root {
     // ── центр: локация, выходы, сущности ──────────────────────────────────
 
     fn location_block(&mut self, pal: &Palette, loc: &LocationSnapshot) -> Div {
-        // M14/F15: название локации — зелёное, если безопасная,
-        // красное, если небезопасная (pvp) — как в шапке.
-        let pvp = loc.flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
-        let name_color = if pvp { pal.danger } else { pal.success };
-        let mut head = div().flex().flex_row().gap_2().items_center().child(
-            div()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_size(px(16.0))
-                .text_color(rgb(name_color))
-                .child(loc.name.clone()),
-        );
-        for flag in &loc.flags {
-            let (text, color) = match flag.as_str() {
-                "pvp" => ("PvP", pal.warn),
-                "safe" => ("safe", pal.success),
-                other => (other, pal.muted),
-            };
-            head = head.child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(rgb(color))
-                    .child(text.to_string()),
-            );
-        }
-        head.child(
+        // M25: без названия и флагов (заказчик): описание, дивидер
+        // Ely и сразу лог — приклеен к низу описания.
+        let mut col = div().flex().flex_col();
+        col = col.child(
             div()
                 .id("location_text")
-                .flex_grow_1()
-                .h(px(110.0))
+                // M25 (заказчик): журнал ровно под текстом описания —
+                // бокс по содержимому (без пустоты фиксированных 110px);
+                // сверх max_h — прокрутка.
+                .max_h(px(200.0))
                 .overflow_y_scroll()
-                .px_2()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.border))
                 .child(
                     div()
                         .text_size(px(13.0))
                         .text_color(rgb(pal.text))
                         .child(loc.text.clone()),
                 ),
-        )
+        );
+        col = col.child(Divider::horizontal());
+        col.child(self.location_log(pal))
     }
 
     /// Тосты мира (world_error/notice) — как в egui-панели локации.
@@ -802,19 +950,17 @@ impl Root {
         loc: &LocationSnapshot,
     ) -> Div {
         let lang = self.lang;
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .gap_2()
-            .items_center()
-            .flex_wrap()
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(format!("{}:", t(lang, Key::ExitsLabel))),
-            );
+        // M25: вид по образцу заказчика — заголовок, разделитель
+        // «---» и вертикальный список; стрелка — направление выхода
+        // ИЗ локации (`dir`).
+        let mut col = div().flex().flex_col().gap_1().child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(format!("{}:", t(lang, Key::ExitsLabel))),
+        );
+        col = col.child(Divider::horizontal());
         if loc.exits.is_empty() {
-            row = row.child(
+            col = col.child(
                 div()
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::NoExits)),
@@ -822,15 +968,21 @@ impl Root {
         }
         for exit in &loc.exits {
             let id = exit.id.clone();
-            row = row.child(btn(
-                cx,
-                format!("→ {}", exit.label),
-                pal.panel,
-                pal.accent,
-                Click::MoveExit(id),
-            ));
+            let arrow = match exit.dir.as_deref() {
+                Some("north") => "↑",
+                Some("south") => "↓",
+                Some("east") => "→",
+                Some("west") => "←",
+                _ => "",
+            };
+            let label = if arrow.is_empty() {
+                exit.label.clone()
+            } else {
+                format!("{} {arrow}", exit.label)
+            };
+            col = col.child(btn(cx, label, pal.panel, pal.accent, Click::MoveExit(id)));
         }
-        row
+        col
     }
 
     fn entities_block(
@@ -846,6 +998,11 @@ impl Root {
             (Key::MonstersLabel, EntityKind::Monster),
             (Key::NpcsLabel, EntityKind::Npc),
             (Key::CorpsesLabel, EntityKind::Corpse),
+            // M20/F20b: объекты-ресурсы и предметы на земле.
+            (Key::ResourcesLabel, EntityKind::Resource),
+            (Key::ObjectsLabel, EntityKind::Object),
+            // M20/F20c: контейнеры (сундуки) — лут осмотром.
+            (Key::ContainersLabel, EntityKind::Container),
         ] {
             let group: Vec<Entity> = loc
                 .entities
@@ -903,12 +1060,16 @@ impl Root {
                 cx.listener({
                     let id = id.clone();
                     move |this, _, _, cx| {
-                        let kind = this
+                        let found = this
                             .store
                             .snapshot
                             .as_ref()
-                            .and_then(|s| s.location.entities.iter().find(|e| e.id == id))
-                            .map(|e| e.kind);
+                            .and_then(|s| s.location.entities.iter().find(|e| e.id == id));
+                        let kind = found.map(|e| e.kind);
+                        // M20/F20c: предмет на земле (extra.ground).
+                        let ground = found.is_some_and(|e| {
+                            e.extra.get("ground").and_then(|v| v.as_bool()) == Some(true)
+                        });
                         match kind {
                             Some(EntityKind::Monster) | Some(EntityKind::Player) => {
                                 this.store.select_target(id.clone());
@@ -916,6 +1077,21 @@ impl Root {
                             // M18/F35: клик по NPC → диалог (поговорить/квесты).
                             Some(EntityKind::Npc) => {
                                 this.on_click(Click::NpcTalk(id.clone()), cx);
+                            }
+                            // M20/F20c: левый клик по предмету на земле —
+                            // подобрать (как «Подобрать» в меню).
+                            Some(EntityKind::Object) if ground => {
+                                this.on_click(Click::UseItem(id.clone()), cx);
+                            }
+                            // M23: сундук — то же окно подятия, что и
+                            // труп (лут + рюкзак); ПКМ — меню.
+                            Some(EntityKind::Container) => {
+                                this.on_click(Click::LootOpen(id.clone()), cx);
+                            }
+                            // M23: ЛКМ по трупу — окно подятия предмета
+                            // (лут слева, рюкзак справа); ПКМ — меню.
+                            Some(EntityKind::Corpse) => {
+                                this.on_click(Click::LootOpen(id.clone()), cx);
                             }
                             _ => {}
                         }
@@ -927,7 +1103,46 @@ impl Root {
         if player_corpse {
             row = row.child(div().text_color(rgb(pal.warn)).child("⚠"));
         }
-        row = row.child(div().flex_grow_1().child(entity.name.clone()));
+        // M25: босс — особая строка: череп перед именем (цвет
+        // опасности), глиф/имя текущей фазы и каст (подготовка).
+        if entity.boss.is_some() {
+            row = row.child(fa_icon("solid/skull", px(13.0), rgb(pal.danger)));
+            row = row.child(
+                div()
+                    .flex_grow_1()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(rgb(pal.danger))
+                    .child(entity.name.clone()),
+            );
+        } else {
+            row = row.child(div().flex_grow_1().child(entity.name.clone()));
+        }
+        if let Some(boss) = &entity.boss {
+            row = row.child(
+                div()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(crate::rune_glyph::glyph_div_for(
+                        boss.glyph.as_deref(),
+                        &boss.name,
+                    ))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.muted))
+                            .child(boss.name.clone()),
+                    ),
+            );
+            if let Some(casting) = &boss.casting {
+                row = row.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(pal.warn))
+                        .child(tf(lang, Key::MobCasting, &[("{name}", casting.as_str())])),
+                );
+            }
+        }
         if let Some(hp) = &entity.hp {
             row = row.child(bar(
                 hp.cur as f32 / hp.max.max(1) as f32,
@@ -935,6 +1150,51 @@ impl Root {
                 pal.danger,
                 pal,
             ));
+        }
+        // M25: кого монстр атакует — «атакует вас» / «атакует {имя}».
+        if entity.kind == EntityKind::Monster {
+            if let Some(target_id) = entity.attacking.clone() {
+                let my_id = self.store.snapshot.as_ref().map(|s| s.char.id.clone());
+                if Some(target_id.as_str()) == my_id.as_deref() {
+                    row = row.child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.danger))
+                            .child(t(lang, Key::MobAttacksYou)),
+                    );
+                } else {
+                    let name = self.store.snapshot.as_ref().and_then(|s| {
+                        s.location
+                            .entities
+                            .iter()
+                            .find(|e| e.id == target_id && e.kind == EntityKind::Player)
+                            .map(|e| e.name.clone())
+                    });
+                    if let Some(name) = name {
+                        row = row.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(rgb(pal.warn))
+                                .child(tf(lang, Key::MobAttacks, &[("{name}", name.as_str())])),
+                        );
+                    }
+                }
+            }
+        }
+        // M25: прогресс-бар атаки монстра — по заполнении атака
+        // (сервер шлёт evt/mob/attack с новым сроком).
+        if entity.kind == EntityKind::Monster {
+            if let (Some(next), Some(interval)) = (entity.next_attack_at, entity.attack_interval) {
+                if interval > 0 {
+                    let now = self.now_ms();
+                    let frac = if next <= now {
+                        1.0
+                    } else {
+                        1.0 - (next - now) as f32 / interval as f32
+                    };
+                    row = row.child(bar(frac.clamp(0.0, 1.0), String::new(), pal.accent, pal));
+                }
+            }
         }
         for tag in entity.tags.iter().flatten() {
             row = row.child(
@@ -955,6 +1215,13 @@ impl Root {
                 this.update(acx, |root, cx| root.on_click(click.clone(), cx));
             })
         };
+        // Готовый пункт меню + действие (для иконок/отключения M22).
+        let mk_item = |item: MenuItem, click: Click| {
+            let this = this.clone();
+            item.on_click(move |_window, acx| {
+                this.update(acx, |root, cx| root.on_click(click.clone(), cx));
+            })
+        };
         let mut menu = Menu::new();
         if entity.kind == EntityKind::Npc {
             // M18/F35: диалог NPC — поговорить/квесты.
@@ -963,10 +1230,107 @@ impl Root {
                 Click::NpcTalk(id.clone()),
             ));
         }
+        // M23: на трупе и сундуке «Осмотреть» открывает то же окно
+        // подятия, что и ЛКМ по строке (лут + рюкзак); у прочих
+        // сущностей — прежняя модалка осмотра.
         menu = menu.item(mk(
             t(lang, Key::Examine).to_string(),
-            Click::Examine(id.clone()),
+            if matches!(entity.kind, EntityKind::Corpse | EntityKind::Container) {
+                Click::LootOpen(id.clone())
+            } else {
+                Click::Examine(id.clone())
+            },
         ));
+        // M20/F20b: добыча ресурса (инструмент/ранг — на сервере).
+        if entity.kind == EntityKind::Resource {
+            menu = menu.item(mk(
+                t(lang, Key::GatherBtn).to_string(),
+                Click::Gather(id.clone()),
+            ));
+        }
+        // M20/F20c: подбор предмета с земли (extra.ground).
+        if entity.kind == EntityKind::Object
+            && entity.extra.get("ground").and_then(|v| v.as_bool()) == Some(true)
+        {
+            menu = menu.item(mk(
+                t(lang, Key::PickUpBtn).to_string(),
+                Click::UseItem(id.clone()),
+            ));
+        }
+        // Снятие шкур (M22): пункты — при изученной профессии, ноже
+        // и флагах трупа; сделанные действия скрываются (флаги
+        // skin_done/gut_done приходят в extra трупа). Иконка пункта
+        // «Снять шкуру» — ожидаемый опыт (согласовано заказчиком):
+        // недостаточный уровень (гейт25+) → Lock + отключение;
+        // 0 XP → EyeOff, <15 → Star, <30 → Sparkles, ≥30 → Zap.
+        if entity.kind == EntityKind::Corpse {
+            if let Some(harv) = entity.extra.get("harvest") {
+                let snap = self.store.snapshot.as_ref();
+                let learned =
+                    snap.is_some_and(|s| s.char.professions.iter().any(|p| p.id == "skinning"));
+                let knife = snap.is_some_and(|s| {
+                    s.char
+                        .inventory
+                        .iter()
+                        .any(|i| i.item_type == "skinning_knife")
+                });
+                if learned && knife {
+                    let level = snap
+                        .and_then(|s| s.char.professions.iter().find(|p| p.id == "skinning"))
+                        .map(|p| p.level as i64)
+                        .unwrap_or(0);
+                    let required = harv.get("level").and_then(|v| v.as_i64()).unwrap_or(1);
+                    let diff = level - required;
+                    let blocked = required - level >= 25;
+                    if harv.get("skin").and_then(|v| v.as_bool()) == Some(true)
+                        && harv.get("skin_done").and_then(|v| v.as_bool()) != Some(true)
+                    {
+                        // Ожидаемый опыт — формула сервера (дубль на
+                        // клиенте): min(40, round((10 + треб×1.5) ×
+                        // множитель по разнице уровней)).
+                        let base = 10.0 + f64::from(required as u32) * 1.5;
+                        let mult = if diff <= -10 {
+                            1.5
+                        } else if diff <= 9 {
+                            1.0
+                        } else if diff <= 24 {
+                            0.5
+                        } else {
+                            0.0
+                        };
+                        let xp = ((base * mult).round() as i64).min(40);
+                        let icon = if blocked {
+                            IconName::Lock
+                        } else if xp <= 0 {
+                            IconName::EyeOff // опыта нет
+                        } else if xp < 15 {
+                            IconName::Star // мало
+                        } else if xp < 30 {
+                            IconName::Sparkles // средне
+                        } else {
+                            IconName::Zap // много (у потолка40)
+                        };
+                        let item = MenuItem::new(t(lang, Key::SkinBtn)).icon(icon);
+                        menu = menu.item(if blocked {
+                            item.disabled(true)
+                        } else {
+                            mk_item(item, Click::Harvest(id.clone(), "skin".to_string()))
+                        });
+                    }
+                    if harv.get("gut").and_then(|v| v.as_bool()) == Some(true)
+                        && harv.get("gut_done").and_then(|v| v.as_bool()) != Some(true)
+                    {
+                        let item = MenuItem::new(t(lang, Key::GutBtn));
+                        menu = menu.item(if blocked {
+                            item.icon(IconName::Lock).disabled(true)
+                        } else {
+                            mk_item(item, Click::Harvest(id.clone(), "gut".to_string()))
+                        });
+                    }
+                }
+            }
+        }
+
         if attackable {
             menu = menu.item(mk(
                 t(lang, Key::Attack).to_string(),
@@ -997,6 +1361,243 @@ impl Root {
     /// побег → руны → свитки/зелья. Каждая кнопка учитывает собственный
     /// кулдаун и глобальный (приоритет — max) и показывает причину
     /// недоступности в тултипе.
+    /// M24: строки индикаторов вставленных рун — под индикатором
+    /// ресурса персонажа (указание заказчика): глиф руны, правее —
+    /// прогрессбар заполнения заряда, правее бара — `N/M`. Только
+    /// РУНЫ из НАДЕТОЙ экипировки (боевой ресурс); самоцветы не
+    /// показываются — у них нет заклинания (`spell` пустой) и бар
+    /// зарядов бессмыслен. Бар — время до следующего такта тикера
+    /// (`time`), при `item`-режиме — доля зарядов; максимум — бар
+    /// заполнен. Тултип (указание заказчика): имя · редкость,
+    /// серверные подписи (§8) и заряды.
+    fn rune_indicator_rows(&self, snap: &StateSnapshot, pal: &Palette) -> Vec<Stateful<Div>> {
+        let lang = self.lang;
+        let equipped: std::collections::HashSet<&str> = snap
+            .char
+            .equip
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        let now = self.now_ms();
+        let phase = self.store.rune_recharge_phase_ms.unwrap_or(now);
+        let (mode, interval_ms) = self
+            .store
+            .session
+            .as_ref()
+            .map(|s| {
+                (
+                    s.magic.rune_recharge.clone(),
+                    (s.magic.rune_recharge_s * 1000.0).round() as i64,
+                )
+            })
+            .unwrap_or_else(|| ("time".to_string(), 30_000));
+        // Доля прошедшего такта (время до следующего заряда).
+        let tick_fill = ((now - phase) as f32 / (interval_ms.max(1) as f32)).clamp(0.0, 1.0);
+        let mut rows = Vec::new();
+        for item in &snap.char.inventory {
+            if !equipped.contains(item.uid.as_str()) {
+                continue;
+            }
+            let Some(sockets) = item.sockets.as_ref() else {
+                continue;
+            };
+            for socket in sockets {
+                let Some(rune) = socket.rune.as_ref() else {
+                    continue;
+                };
+                // M24: только руны — у самоцветов spell пустой
+                // (заклинания нет), бар зарядов для них бессмыслен.
+                if rune.spell.is_empty() {
+                    continue;
+                }
+                let fill = if rune.charges >= rune.max {
+                    1.0
+                } else if mode == "time" {
+                    tick_fill
+                } else {
+                    rune.charges as f32 / rune.max.max(1) as f32
+                };
+                // Тултип: имя · редкость, серверные подписи (§8)
+                // и заряды (указание заказчика).
+                let mut tip = vec![format!(
+                    "{} · {}",
+                    rune.name,
+                    rarity_label(lang, rune.rarity.as_deref().unwrap_or("common"))
+                )];
+                tip.extend(rune.detail.iter().flatten().cloned());
+                tip.push(format!(
+                    "{}: {}/{}",
+                    t(lang, Key::StatCharges),
+                    rune.charges,
+                    rune.max
+                ));
+                let (head_c, body_c) = (pal.text, pal.muted);
+                let row = div()
+                    .id(format!("ld2-rune-ind-{}-{}", item.uid, socket.index))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .child(crate::rune_glyph::glyph_div_for(
+                                rune.glyph.as_deref(),
+                                &rune.name,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .w(px(88.0))
+                            .h(px(8.0))
+                            .rounded_md()
+                            .bg(rgb(pal.border))
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(gpui::relative(fill.clamp(0.0, 1.0)))
+                                    .rounded_md()
+                                    .bg(rgb(pal.accent)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format!("{}/{}", rune.charges, rune.max)),
+                    )
+                    .tooltip(Tooltip::rich(move |_, _| {
+                        let mut col = div().flex().flex_col().gap_1();
+                        for (i, line) in tip.iter().enumerate() {
+                            col = col.child(
+                                div()
+                                    .text_size(if i == 0 { px(12.0) } else { px(11.0) })
+                                    .text_color(if i == 0 { rgb(head_c) } else { rgb(body_c) })
+                                    .child(line.clone()),
+                            );
+                        }
+                        col.into_any_element()
+                    }));
+                rows.push(row);
+            }
+        }
+        rows
+    }
+
+    /// M24: строки активных бафов рун — глиф, название (стак) и
+    /// остаток; когда до конца ≤3 с — строка моргает раз в секунду
+    /// (указание заказчика; полупрозрачность — без прыжков строки).
+    fn rune_buff_rows(&self, snap: &StateSnapshot, pal: &Palette) -> Vec<Stateful<Div>> {
+        let lang = self.lang;
+        let now_ms = self.now_ms();
+        let now = now_ms / 1000; // epoch-секунды (expires_at)
+        let active = filter_active_buffs(&snap.char.buffs, now);
+        if active.is_empty() {
+            return Vec::new();
+        }
+        let equipped: std::collections::HashSet<&str> = snap
+            .char
+            .equip
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        let mut glyphs: std::collections::HashMap<&str, Option<String>> =
+            std::collections::HashMap::new();
+        for item in &snap.char.inventory {
+            if !equipped.contains(item.uid.as_str()) {
+                continue;
+            }
+            for socket in item.sockets.iter().flatten() {
+                if let Some(rune) = &socket.rune {
+                    if let Some(def_id) = rune.def_id.as_deref() {
+                        glyphs.insert(def_id, rune.glyph.clone());
+                    }
+                }
+            }
+        }
+        let mut rows = Vec::new();
+        for buff in active {
+            // Индикаторы — только рунные баффы (kind = def_id руны).
+            if !buff.kind.starts_with("rune_") {
+                continue;
+            }
+            let left = (buff.expires_at - now).max(0);
+            // Моргание раз в секунду на последних3 секундах.
+            let dim = left <= 3 && (now_ms / 500) % 2 == 1;
+            let glyph = glyphs.get(buff.kind.as_str()).cloned().flatten();
+            let title = if buff.stacks > 1 {
+                format!("{} ×{}", buff.title, buff.stacks)
+            } else {
+                buff.title.clone()
+            };
+            rows.push(
+                div()
+                    .id(format!("ld2-rune-buff-{}", buff.kind))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .opacity(if dim { 0.0 } else { 1.0 })
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .child(crate::rune_glyph::glyph_div_for(
+                                glyph.as_deref(),
+                                &buff.kind,
+                            )),
+                    )
+                    .child(div().text_size(px(12.0)).child(title))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(rgb(pal.muted))
+                            .child(format_duration(lang, left)),
+                    ),
+            );
+        }
+        rows
+    }
+
+    /// M24: единый прогресс-бар левой колонки — одна сущность на
+    /// снятие шкур/освежевание, инкрустацию и заточку (подпись
+    /// «Действие · имя», запуск — `Root::start_progress`); гаснет в
+    /// tick по исчезновению источника, плавность — быстрый тик.
+    fn progress_bar(&self, pal: &Palette) -> Option<Div> {
+        let p = self.cast_progress.as_ref()?;
+        let elapsed = (self.now_ms() - p.started_ms).max(0);
+        let frac = elapsed as f32 / p.duration_ms as f32;
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .items_center()
+                .child(
+                    div()
+                        .w(px(BAR_WIDTH))
+                        .h(px(10.0))
+                        .rounded_md()
+                        .bg(rgb(pal.border))
+                        .child(
+                            div()
+                                .h_full()
+                                .w(gpui::relative(frac.clamp(0.0, 1.0)))
+                                .rounded_md()
+                                .bg(rgb(pal.accent)),
+                        ),
+                )
+                // Описание — под прогресс-баром (указание заказчика).
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(pal.muted))
+                        .child(p.label.clone()),
+                ),
+        )
+    }
+
     fn hotbar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette, snap: &StateSnapshot) -> Div {
         let lang = self.lang;
         let rune_cost = self
@@ -1075,83 +1676,94 @@ impl Root {
             row = row.child(cd_disabled("ld2-act-flee", flee_label, left, lang, pal));
         }
 
-        // ── 4) Руны экипированного посоха: ×N зарядов (ФР-09) ──
-        if let Some(staff_uid) = equipped_staff_uid(snap) {
-            if let Some(staff) = snap.char.inventory.iter().find(|i| i.uid == staff_uid) {
-                for socket in staff.sockets.iter().flatten() {
-                    let Some(rune) = &socket.rune else { continue };
-                    let charges_ok = rune.charges > 0;
-                    let mp_ok = rune_cost <= 0 || snap.char.mp.cur >= rune_cost;
-                    let label = format!("{} ×{}", rune.name, rune.charges);
-                    // Причина недоступности: сначала требования
-                    // (заряды/мана), потом кулдаун (у кулдауна — таймер
-                    // и в label, как у остальных кнопок панели).
-                    let off: Option<OffReason> = if !charges_ok {
-                        Some(OffReason::Req(t(lang, Key::NoCharge).to_string()))
-                    } else if !mp_ok {
-                        Some(OffReason::Req(t(lang, Key::NotEnoughMp).to_string()))
+        // ── 4) Руны надетой экипировки: ×N зарядов (ФР-09; M24 —
+        // не только посох: мечи/броня с рунными слотами, ADR-012) ──
+        for staff in equipped_rune_items(snap) {
+            let staff_uid = staff.uid.clone();
+            for socket in staff.sockets.iter().flatten() {
+                let Some(rune) = &socket.rune else { continue };
+                // M24: самоцвет в сокете — не руна, на панель не идёт.
+                if rune.spell.is_empty() {
+                    continue;
+                }
+                let charges_ok = rune.charges > 0;
+                let mp_ok = rune_cost <= 0 || snap.char.mp.cur >= rune_cost;
+                // M24: класс руны — каст только своему классу.
+                let wrong_class = rune
+                    .class
+                    .as_deref()
+                    .is_some_and(|c| snap.char.profile.as_deref() != Some(c));
+                let label = format!("{} ×{}", rune.name, rune.charges);
+                // Причина недоступности: сначала требования
+                // (заряды/мана), потом кулдаун (у кулдауна — таймер
+                // и в label, как у остальных кнопок панели).
+                let off: Option<OffReason> = if wrong_class {
+                    Some(OffReason::Req(t(lang, Key::RuneWrongClass).to_string()))
+                } else if !charges_ok {
+                    Some(OffReason::Req(t(lang, Key::NoCharge).to_string()))
+                } else if !mp_ok {
+                    Some(OffReason::Req(t(lang, Key::NotEnoughMp).to_string()))
+                } else {
+                    // M17/F30g: кулдаун самой руны (cooldown_s) +
+                    // глобальный — бар по полной длительности.
+                    let cd = rune
+                        .def_id
+                        .as_deref()
+                        .and_then(|d| self.store.item_cd_bar(d, now_ms));
+                    let own = cd.map(|(l, _)| l).unwrap_or(0);
+                    let (ok, left) = ready(own);
+                    if ok {
+                        None
                     } else {
-                        // M17/F30g: кулдаун самой руны (cooldown_s) +
-                        // глобальный — бар по полной длительности.
-                        let cd = rune
+                        Some(OffReason::Cd(left))
+                    }
+                };
+                match off {
+                    None => {
+                        let slot = btn(
+                            cx,
+                            label,
+                            pal.accent,
+                            pal.accent_text,
+                            Click::RuneCast {
+                                staff_uid: staff_uid.clone(),
+                                socket_index: socket.index,
+                            },
+                        );
+                        // M11.4: стоимость каста — тултип (egui-паритет).
+                        row = row.child(if rune_cost > 0 {
+                            slot.id(format!("ld2-rune-{staff_uid}-{}", socket.index))
+                                .tooltip(Tooltip::text(format!("{rune_cost} MP")))
+                                .into_any_element()
+                        } else {
+                            slot.into_any_element()
+                        });
+                    }
+                    Some(OffReason::Req(reason)) => {
+                        row = row.child(action_disabled(
+                            &format!("ld2-rune-off-{staff_uid}-{}", socket.index),
+                            label,
+                            reason,
+                            pal,
+                        ));
+                    }
+                    Some(OffReason::Cd(left)) => {
+                        // M17/F30g: бар по полной длительности
+                        // предметного кулдауна (GCD — дефолт 1 с).
+                        let total = rune
                             .def_id
                             .as_deref()
-                            .and_then(|d| self.store.item_cd_bar(d, now_ms));
-                        let own = cd.map(|(l, _)| l).unwrap_or(0);
-                        let (ok, left) = ready(own);
-                        if ok {
-                            None
-                        } else {
-                            Some(OffReason::Cd(left))
-                        }
-                    };
-                    match off {
-                        None => {
-                            let slot = btn(
-                                cx,
-                                label,
-                                pal.accent,
-                                pal.accent_text,
-                                Click::RuneCast {
-                                    staff_uid: staff_uid.clone(),
-                                    socket_index: socket.index,
-                                },
-                            );
-                            // M11.4: стоимость каста — тултип (egui-паритет).
-                            row = row.child(if rune_cost > 0 {
-                                slot.id(format!("ld2-rune-{}", socket.index))
-                                    .tooltip(Tooltip::text(format!("{rune_cost} MP")))
-                                    .into_any_element()
-                            } else {
-                                slot.into_any_element()
-                            });
-                        }
-                        Some(OffReason::Req(reason)) => {
-                            row = row.child(action_disabled(
-                                &format!("ld2-rune-off-{}", socket.index),
-                                label,
-                                reason,
-                                pal,
-                            ));
-                        }
-                        Some(OffReason::Cd(left)) => {
-                            // M17/F30g: бар по полной длительности
-                            // предметного кулдауна (GCD — дефолт 1 с).
-                            let total = rune
-                                .def_id
-                                .as_deref()
-                                .and_then(|d| self.store.item_cd_bar(d, now_ms))
-                                .map(|(_, t)| t)
-                                .unwrap_or(1000);
-                            row = row.child(cd_bar_button(
-                                &format!("ld2-rune-off-{}", socket.index),
-                                label,
-                                left,
-                                total,
-                                lang,
-                                pal,
-                            ));
-                        }
+                            .and_then(|d| self.store.item_cd_bar(d, now_ms))
+                            .map(|(_, t)| t)
+                            .unwrap_or(1000);
+                        row = row.child(cd_bar_button(
+                            &format!("ld2-rune-off-{staff_uid}-{}", socket.index),
+                            label,
+                            left,
+                            total,
+                            lang,
+                            pal,
+                        ));
                     }
                 }
             }
@@ -1200,179 +1812,80 @@ impl Root {
 
     // ── журнал мира (ФР-17) ───────────────────────────────────────────────
 
-    /// M14/F7: блок журнала внизу центра — две вкладки **Лог | Чат**.
-    /// Лог прокручивается свободно: приклеивание вниз только когда
-    /// пользователь и так внизу ([`scroll_at_bottom`]); иначе новые
-    /// строки копятся и показываются кнопкой «▼ N новых» в шапке.
-    /// M17/F30a: каст-бар инкрустации (3 с без отмены) — полоса над
-    /// панелью действий; анимация идёт по тику root (50 мс), исчезает
-    /// по завершении (отправка socket.insert — root::finish_inscribe).
-    fn inscribe_bar(&self, pal: &Palette, snap: &StateSnapshot) -> Option<Div> {
-        let (_, target_uid, ends) = self.cast_inscribe.as_ref()?;
-        let left = (ends - self.now_ms()).max(0);
-        let frac = 1.0 - left as f32 / INSCRIBE_MS as f32;
-        let target = snap
-            .char
-            .inventory
-            .iter()
-            .find(|i| i.uid == *target_uid)
-            .map(|i| i.name.clone())
-            .unwrap_or_default();
-        Some(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .items_center()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .bg(rgb(pal.panel))
-                .border_1()
-                .border_color(rgb(pal.accent))
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(format!(
-                            "{} — {}",
-                            t(self.lang, Key::InscribeCasting),
-                            target
-                        )),
-                )
-                .child(
-                    div()
-                        .flex_grow_1()
-                        .h(px(10.0))
-                        .rounded_md()
-                        .bg(rgb(pal.border))
-                        .child(
-                            div()
-                                .h_full()
-                                .w(gpui::relative(frac.clamp(0.0, 1.0)))
-                                .rounded_md()
-                                .bg(rgb(pal.accent)),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.muted))
-                        .child(format!("{:.1} с", left as f32 / 1000.0)),
-                ),
-        )
-    }
-
-    fn journal_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let lang = self.lang;
-        let dark = pal.bg == crate::palette::palette("dark").bg;
+    /// M25: лог локации — внутри карточки описания (указание
+    /// заказчика); автопрокрутка вниз (M14/F13).
+    fn location_log(&mut self, pal: &Palette) -> Div {
         let len = self.store.log.len();
-
-        // M14/F13: лог **всегда промотан вниз** (замена свободной
-        // прокрутки F7): новая строка возвращает вниз; вручную
-        // поднять можно до прихода следующей строки.
-        // Фикс: весь контент — ОДИН ребёнок ScrollArea, поэтому
-        // scroll_to_item(len-1) бил в несуществующий индекс
-        // (child_bounds.get() = None → no-op). У gpui есть
-        // прямой scroll_to_bottom().
+        // M14/F13: лог всегда промотан вниз — новая строка возвращает
+        // вниз; вручную поднять можно до прихода следующей строки.
         if len != self.journal_seen && len > 0 {
             self.journal_scroll.scroll_to_bottom();
         }
         self.journal_seen = len;
-
-        // Шапка: вкладки «Журнал»/«Чат» + счётчик строк.
-        let active = match self.log_tab {
-            LogTab::Log => "log",
-            LogTab::Chat => "chat",
-        };
-        // M14/F12: иконки вкладок (метки без изменений).
-        let choices = vec![
-            Choice::new("log", t(lang, Key::LogLabel)).icon(IconName::BookOpen),
-            Choice::new("chat", t(lang, Key::ChLabel)).icon(IconName::MessageSquare),
-        ];
-        let this = cx.entity();
-        let mut head = div().flex().flex_row().items_center().gap_2();
-        head = head.child(Tabs::new("ld2-journal-tabs", choices, active).on_change(
-            move |value, _window, acx| {
-                let value = value.to_string();
-                this.update(acx, |root, cx| {
-                    root.log_tab = if value == "chat" {
-                        LogTab::Chat
-                    } else {
-                        LogTab::Log
-                    };
-                    cx.notify();
-                });
-            },
-        ));
-        head = head.child(div().flex_grow_1());
-        head = head.child(
-            div()
-                .text_size(px(12.0))
-                .text_color(rgb(pal.muted))
-                .child(len.to_string()),
-        );
-        // Тело активной вкладки.
-        // Тело: flex-колонка, где сам ScrollArea — flex-элемент
-        // (flex_grow_1 + min_h_0): его высота тогда определяется
-        // layout'ом, а не процентом от auto-родителя — иначе
-        // `size_full()` у Ely превращается в auto, контейнер растёт
-        // по контенту и сообщения выходят за границы без прокрутки.
+        let dark = pal.bg == crate::palette::palette("dark").bg;
         // M14/F8: размер шрифта лога из настроек (10…20 px).
         let log_font = self.config.log_font_px;
         // M14/F13: цвета/жирность строк боя — из настроек.
         let damage_color = self.config.log_damage_color.clone();
         let attack_color = self.config.log_attack_color.clone();
         let damage_bold = self.config.log_damage_bold;
-        let body =
-            match self.log_tab {
-                LogTab::Log => div().flex().flex_col().flex_grow_1().min_h_0().child(
-                    ScrollArea::new("ld2-log-scroll")
-                        .vertical()
-                        .track_scroll(&self.journal_scroll)
-                        .flex_grow_1()
-                        .min_h_0()
-                        .child(div().flex().flex_col().gap_1().children(
-                            self.store.log.iter().map(|entry| {
-                                // M14/F13: урон персонажу — цвет из
-                                // настроек (+жирный), его атаки — свой
-                                // цвет; прочие kinds — прежняя палитра.
-                                let (color, bold) = match entry.kind {
-                                    LogKind::CombatIn => (
-                                        hex_to_u32(&damage_color).unwrap_or(0xe0_6c_75),
-                                        damage_bold,
-                                    ),
-                                    LogKind::CombatOut => {
-                                        (hex_to_u32(&attack_color).unwrap_or(0x61_af_ef), false)
-                                    }
-                                    kind => (log_color(kind, dark), false),
-                                };
-                                // M17/F30f: **...** — жирные сегменты
-                                // (слова заклинания и урон), §8.
-                                let text = entry.text.clone();
-                                let line = div()
-                                    .text_size(px(log_font))
-                                    .text_color(rgb(color))
-                                    .when(bold, |line| line.font_weight(gpui::FontWeight::BOLD));
-                                if text.contains("**") {
-                                    line.flex().flex_row().children(
-                                        split_bold(&text).into_iter().map(|(seg, is_bold)| {
+        div().flex().flex_col().min_h_0().h(px(96.0)).child(
+            ScrollArea::new("ld2-log-scroll")
+                .vertical()
+                .track_scroll(&self.journal_scroll)
+                .flex_grow_1()
+                .min_h_0()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .children(self.store.log.iter().map(|entry| {
+                            let (color, bold) = match entry.kind {
+                                LogKind::CombatIn => {
+                                    (hex_to_u32(&damage_color).unwrap_or(0xe0_6c_75), damage_bold)
+                                }
+                                LogKind::CombatOut => {
+                                    (hex_to_u32(&attack_color).unwrap_or(0x61_af_ef), false)
+                                }
+                                kind => (log_color(kind, dark), false),
+                            };
+                            // M17/F30f: **...** — жирные сегменты
+                            // (слова заклинания и урон), §8.
+                            let text = entry.text.clone();
+                            let line = div()
+                                .text_size(px(log_font))
+                                .text_color(rgb(color))
+                                .when(bold, |line| line.font_weight(gpui::FontWeight::BOLD));
+                            if text.contains("**") {
+                                line.flex()
+                                    .flex_row()
+                                    .children(split_bold(&text).into_iter().map(
+                                        |(seg, is_bold)| {
                                             div()
                                                 .when(is_bold, |d| {
                                                     d.font_weight(gpui::FontWeight::BOLD)
                                                 })
                                                 .child(seg.to_string())
-                                        }),
-                                    )
-                                } else {
-                                    line.child(text)
-                                }
-                            }),
-                        )),
+                                        },
+                                    ))
+                            } else {
+                                line.child(text)
+                            }
+                        })),
                 ),
-                LogTab::Chat => self.chat_body(cx, pal),
-            };
+        )
+    }
 
+    /// M25: чат — внизу центра (лог переехал в карточку локации);
+    /// высота фиксированная —20 % игрового поля (заказчик).
+    fn journal_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let head = div().flex().flex_row().items_center().gap_2().child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(t(lang, Key::ChLabel)),
+        );
         div()
             .flex()
             .flex_col()
@@ -1383,11 +1896,20 @@ impl Root {
             .bg(rgb(pal.panel))
             .border_1()
             .border_color(rgb(pal.border))
-            // Блок занимает остаток высоты центра (M14/F7).
-            .flex_grow_1()
-            .min_h(px(180.0))
+            // M25: фиксированная высота —20 % игрового поля; к низу
+            // центра приклеивает spacer выше.
+            .h(gpui::relative(0.2))
+            .min_h(px(120.0))
+            .flex_shrink_0()
             .child(head)
-            .child(body)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_grow_1()
+                    .min_h_0()
+                    .child(self.chat_body(cx, pal)),
+            )
     }
 
     // ── модалки (паритет egui-окон) ───────────────────────────────────────
@@ -1454,43 +1976,33 @@ impl Root {
         let lang = self.lang;
         let now_ms = self.now_ms();
 
-        // M18/F46: stick-to-bottom — новая строка возвращает ленту вниз
-        // (паттерн журнала/чата): последнее сообщение всегда снизу.
-        let len = dialog.transcript.len();
-        if len != self.npc_seen {
-            self.npc_seen = len;
-            if len > 0 {
-                self.npc_scroll.scroll_to_bottom();
-            }
-        }
-
-        // ── Зона 1: история диалога — растёт снизу вверх, шрифт крупнее ──
-        let mut history = div().flex().flex_col().gap_2().justify_start();
-        for line in &dialog.transcript {
-            let text = if line.me {
-                format!("{}: {}", t(lang, Key::DialogYou), line.text)
-            } else {
-                line.text.clone()
-            };
-            history = history.child(
-                div()
-                    .text_size(px(15.0))
-                    .font_weight(if line.me {
-                        gpui::FontWeight::BOLD
+        // M22: верхняя строка (30 %) — только ТЕКУЩАЯ реплика
+        // (полная лента — кнопка «История» в статусбаре); контент
+        // длиннее рамки — прокрутка.
+        let top = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .min_h_0()
+            .child(match dialog.transcript.last() {
+                Some(line) => {
+                    let text = if line.me {
+                        format!("{}: {}", t(lang, Key::DialogYou), line.text)
                     } else {
-                        gpui::FontWeight::NORMAL
-                    })
-                    .text_color(rgb(if line.me { pal.accent } else { pal.text }))
-                    .child(text),
-            );
-        }
-        let history_zone = div().flex_grow_1().min_h_0().child(
-            ScrollArea::new("ld2-npc-history")
-                .vertical()
-                .flex_grow_1()
-                .min_h_0()
-                .child(history),
-        );
+                        line.text.clone()
+                    };
+                    div()
+                        .text_size(px(15.0))
+                        .font_weight(if line.me {
+                            gpui::FontWeight::BOLD
+                        } else {
+                            gpui::FontWeight::NORMAL
+                        })
+                        .text_color(rgb(if line.me { pal.accent } else { pal.text }))
+                        .child(text)
+                }
+                None => div(),
+            });
 
         // ── Зона 2: реплики персонажа и предложения NPC (внизу) ──
         let mut actions = div().flex().flex_col().gap_1();
@@ -1656,16 +2168,72 @@ impl Root {
             }
         }
 
-        // M18/F46: две горизонтальные зоны — история сверху (на весь
-        // остаток окна), реплики персонажа внизу у разделителя.
+        // M22: две горизонтальные строки —30 % текущая реплика
+        // сверху,70 % реплики персонажа/контент внизу; каждая с
+        // прокруткой при выходе за рамки (указание заказчика).
         div()
             .flex()
             .flex_col()
             .gap_2()
             .size_full()
-            .child(history_zone)
+            .child(
+                div().h(gpui::relative(0.3)).min_h_0().child(
+                    ScrollArea::new("ld2-npc-current")
+                        .vertical()
+                        .flex_grow_1()
+                        .min_h_0()
+                        .child(top),
+                ),
+            )
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
-            .child(actions)
+            .child(
+                div().h(gpui::relative(0.7)).min_h_0().child(
+                    ScrollArea::new("ld2-npc-replies")
+                        .vertical()
+                        .flex_grow_1()
+                        .min_h_0()
+                        .child(actions),
+                ),
+            )
+    }
+
+    /// M22: история диалога — полная лента (кнопка «История» в
+    /// статусбаре окна); stick-to-bottom как была у ленты.
+    fn dialog_history_view(&mut self, pal: &Palette, dialog: &NpcDialogView) -> Div {
+        let lang = self.lang;
+        let len = dialog.transcript.len();
+        if len != self.npc_seen {
+            self.npc_seen = len;
+            if len > 0 {
+                self.npc_scroll.scroll_to_bottom();
+            }
+        }
+        let mut history = div().flex().flex_col().gap_2().justify_start();
+        for line in &dialog.transcript {
+            let text = if line.me {
+                format!("{}: {}", t(lang, Key::DialogYou), line.text)
+            } else {
+                line.text.clone()
+            };
+            history = history.child(
+                div()
+                    .text_size(px(15.0))
+                    .font_weight(if line.me {
+                        gpui::FontWeight::BOLD
+                    } else {
+                        gpui::FontWeight::NORMAL
+                    })
+                    .text_color(rgb(if line.me { pal.accent } else { pal.text }))
+                    .child(text),
+            );
+        }
+        div().flex().flex_col().gap_2().size_full().child(
+            ScrollArea::new("ld2-npc-history")
+                .vertical()
+                .flex_grow_1()
+                .min_h_0()
+                .child(history),
+        )
     }
 
     fn examine_view(
@@ -1729,6 +2297,41 @@ impl Root {
                             } else {
                                 Click::UseItem(uid2)
                             },
+                        ));
+                    }
+                    col = col.child(line);
+                }
+            }
+        }
+        // Снятие шкур (M22): лут освежевания — отдельный блок
+        // «Внутри» (мясо/потроха), взятие как у обычного лута.
+        if let Some(inner) = detail["inner"].as_array() {
+            if !inner.is_empty() {
+                col = col.child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(t(lang, Key::InnerLabel)),
+                );
+                for item in inner {
+                    let uid = item["uid"].as_str().unwrap_or_default().to_string();
+                    let iname = item["name"].as_str().unwrap_or("?").to_string();
+                    let itype = item["type"].as_str().unwrap_or("?");
+                    let color = super::sheet::quality_color(item["def_id"].as_str())
+                        .map(rgb)
+                        .unwrap_or_else(|| rgb(pal.text));
+                    let mut line = div().flex().flex_row().gap_2().items_center().child(
+                        div()
+                            .text_color(color)
+                            .child(format!("• {iname} ({itype})")),
+                    );
+                    if !looted {
+                        let uid2 = uid.clone();
+                        line = line.child(btn(
+                            cx,
+                            t(lang, Key::TakeLoot).to_string(),
+                            pal.panel,
+                            pal.accent,
+                            Click::UseItem(uid2),
                         ));
                     }
                     col = col.child(line);
@@ -1841,6 +2444,62 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
                 .text_size(px(12.0))
                 .text_color(rgb(pal.muted))
                 .child(label),
+        )
+}
+
+/// M25: виджет шкалы (заказчик): цифры ПОВЕРХ бара (внутри), заливка
+/// — `color` (ХП остаётся зелёным), текст белый с тёмным контуром —
+/// контраст и к заливке, и к фону трека. Параметры: цвет, максимум,
+/// текущее, надпись, ширина, высота.
+fn stat_bar(
+    color: u32,
+    max: i64,
+    cur: i64,
+    label: &str,
+    width: f32,
+    height: f32,
+    pal: &Palette,
+) -> Div {
+    let frac = (cur as f32 / max.max(1) as f32).clamp(0.0, 1.0);
+    let text = format!("{label} {cur}/{max}");
+    let text_size = (height - 6.0).max(9.0);
+    div()
+        .relative()
+        .w(px(width))
+        .h(px(height))
+        .child(
+            div()
+                .absolute()
+                .size_full()
+                .rounded_md()
+                .bg(rgb(pal.border))
+                .child(
+                    div()
+                        .h_full()
+                        .w(gpui::relative(frac))
+                        .rounded_md()
+                        .bg(rgb(color)),
+                ),
+        )
+        // Тёмная полупрозрачная плашка + белый жирный — читается
+        // и на заливке, и на треке (выбор заказчика).
+        .child(
+            div()
+                .absolute()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .px_1()
+                        .rounded_md()
+                        .bg(gpui::rgba(0x00_00_00_99))
+                        .text_size(px(text_size))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(0xff_ff_ff))
+                        .child(text),
+                ),
         )
 }
 

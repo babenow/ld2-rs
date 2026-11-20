@@ -176,9 +176,10 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "chat": { "server_history": 200,
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
+  "journal_ttl_s": 30,        // M25: жизнь строки журнала (Лог), с; 0 — не удаляются
   "inventory": { "slots": 100, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
-  "magic": { "rune_recharge": "time", "scroll_requires_target": true,  // time|item (M18/F58c)
+  "magic": { "rune_recharge": "time", "rune_recharge_s": 30, "scroll_requires_target": true,  // time|item (M18/F58c); с на один заряд (M24, без поля — 30)
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
   "quests": { "max_active": 10 },             // M18/F36: лимит текущих квестов
   "characters": [
@@ -215,7 +216,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 { "cur": 45, "max": 60 }
 
 // Entity (строка в location.entities)
-{ "id": "p_77", "kind": "player",           // player | monster | npc | corpse | object
+{ "id": "p_77", "kind": "player",           // player | monster | npc | corpse | object | resource
   "name": "Марк",
   "hp": { "cur": 30, "max": 55 },           // у npc/corpse может отсутствовать
   "tags": ["marauder"],                     // любые игровые теги-статусы
@@ -241,7 +242,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
                               "glyph": "f",                   // M18/F58f: знак руны (контент stats.glyph); аддитивно
                               "detail": ["+12 к урону"],       // подпись слота (что даёт); сервер-строки §8
                               "rarity": "uncommon" } },      // M18/F58f: раритет вставленного — знак самоцвета
-               { "index": 1, "accepts": "rune", "rune": null } ],   // старый сервер поля не шлёт → клиент фолбэчит
+               { "index": 1, "accepts": "rune", "rune": null } ],   // старый сервер поля не шлёт → клиент фолбэчит; у руны может быть "class" (M24)
   "slot": "main_hand", "hands": 2,         // M17/F30b: слот предмета (ring/artifact —
                                             // псевдослоты пар) и руки (2 — двуручник)
   "def_id": "dagger_knife",              // M17/F30g: ключ кулдауна использования
@@ -253,7 +254,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 
 // SkillSnapshot
 { "id": "sword", "name": "Владение мечом", "description": "+2% физ. урона мечом",
-  "rank": 3, "xp": 612, "xp_to_next": 480 }      // description опционально (M14/F17)
+  "rank": 3, "level": 120, "xp": 300, "xp_to_next": 436 }  // M21: level — вторая шкала (границы рангов кратно 50)
 
 // BuffState (M18/F58d, ADR-012 §6): активный бафф руны в char.buffs
 { "kind": "rune_marksman", "title": "Меткость",     // kind — ключ, title — для UI
@@ -289,8 +290,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `skill.train` | `{entity_id, skill_id}` | `{rank, xp, xp_to_next, pool_left}` | − | повышение ранга навыка **у тренера в диалоге** (M18/F44, ADR-009): гейты — тренер в локации (`E_NO_TRAINER`), **шкала 100 %** (`E_SKILL_NOT_READY`), очки опыта (`E_XP_POOL`), плата из контента диалога (`E_INGREDIENTS`), потолок/атрибут (`E_RANK_CAP`/`E_REQUIREMENT_ATTR`); списывает очки пула, шкала обнуляется; заменяет `char.xp_invest` |
 | `location.look` | `{}` | `{location}` | + | перерисовать локацию |
 | `location.move` | `{exit_id}` | `{location}` | − | переход |
-| `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа |
-| `npc.talk` | `{entity_id}` | `{dialog: {id, name}, node, quests[], actions[], training[]}` | + | диалог NPC: **корень ветки** (`node`: `{id, text, quest?, replies: [{id, text, wait_s?, action?}]}`; `wait_s` — секунды до конца кулдауна целевой строки: ответ показывается **неактивным** с таймером, без поля — активен; `action` — действие вместо перехода (`"shop"` → панель магазина, `"train"` → панель обучения; клиент шлёт `shop.list`/`skill.train`); ответы с не выполненными условиями скрыты; `node: null` — нет записи), доступные квесты, `actions`, `training: [{skill, points, gold, items?}]` — чему NPC учит и по какой цене (M18/F35, ветки F37/F42/F43/F44; `greeting` убран — ADR-008, обучение — ADR-009) |
+| `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа; M22: у динамического трупа поле `inner[]` — лут освежевания (отдельный блок «Внутри», uid `inner:<corpse>:<idx>`) |
+| `npc.talk` | `{entity_id}` | `{dialog: {id, name}, node, quests[], actions[], training[]}` | + | диалог NPC: **корень ветки** (`node`: `{id, text, quest?, replies: [{id, text, wait_s?, action?}]}`; `wait_s` — секунды до конца кулдауна целевой строки: ответ показывается **неактивным** с таймером, без поля — активен; `action` — действие вместо перехода (`"shop"` → панель магазина, `"train"` → панель обучения; клиент шлёт `shop.list`/`skill.train`); ответы с не выполненными условиями скрыты; `node: null` — нет записи), доступные квесты, `actions`, `training: [{skill, points, gold, items?}]` — чему NPC учит и по какой цене; `professions: [{id, gold}]` — профессии NPC с ценой (M21, изучение — `craft.learn`) (M18/F35, ветки F37/F42/F43/F44; `greeting` убран — ADR-008, обучение — ADR-009) |
 | `npc.reply` | `{entity_id, node_id, reply_id}` | `{node: {...}\|null, quests[]}` | − | ответ персонажа — переход по ветке (`node` — форма из `npc.talk`, включая `wait_s`); `node: null` — конец диалога (M18/F37, ADR-008) |
 | `shop.list` | `{entity_id}` | `{shop: {tabs: [{currency, currency_name, items[]}]}}` | + | товары NPC с ценами (база `gold_value` × наценка сервера × наценка торговца × скидка; `actions` в `npc.talk` содержит `shop`) (M18/F39) |
 | `shop.buy` | `{entity_id, currency, def_id}` | `{}` | − | покупка: списание валюты (события) + выдача предмета; `E_NOT_ENOUGH_MONEY` / `E_INVENTORY_FULL` (M18/F39) |
@@ -305,14 +306,16 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
 | `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
-| `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны посоха |
-| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие) |
+| `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны предмета с сокетами (M25 — не только посох); **M24**: `stats.class` руны (warrior\|archer\|mage) — каст только своему классу, иначе `E_REQUIREMENT_ATTR` (нет поля — любому классу) |
+| `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие); **M24**: инкрустация в **один** предмет — стак (qty>1) не заполняется целиком: целевая штука становится отдельной строкой (`evt/item/added`), старый стак −1 (`evt/item/state`), ack несёт `staff` уже новой строки |
 | `socket.extract` | `{staff_uid, socket_index}` | `{staff, rune, char?}` | − | извлечение (цель надета — ack несёт `char`, M18/F32) |
 | `upgrade.preview` | `{item_uid}` | `{preview_id, delta{}, cost{}, chance?}` | + | превью «сейчас→после»; **M18/F54:** без активного камня → `E_INGREDIENTS`; `chance` уже включает бонус камня × рейты сервера |
 | `upgrade.start` | `{item_uid, preview_id}` | `{}` (→ `evt/upgrade/result`) | − | улучшение; **M18/F54:** тратит 1 шт. активного камня (`evt/item/state` qty−1 либо `evt/item/removed`), камень сбрасывается |
-| `craft.list` | `{}` | `{professions[]}` | + | мои профессии: id/ранг/xp |
+| `craft.list` | `{}` | `{professions[]}` | + | мои профессии: id/ранг/уровень/xp (+ `extra`: `rank_span`, `rank_up_gold`) |
 | `craft.recipes` | `{profession?}` | `{recipes[]}` | + | список рецептов |
 | `craft.learn` | `{profession_id}` | `{profession}` | − | изучить профессию у NPC |
+| `craft.reset` | `{profession_id}` | `{profession_id}` | − | забыть профессию (окно профессий): прогресс теряется, слот основной освобождается; `E_PROFESSION` — не изучена |
+| `craft.rank_up` | `{profession_id}` | `{profession}` | − | M21: повысить ранг **у тренера** (уровень ≥ границы → `E_LEVEL_REQUIRED`, без тренера → `E_NO_TRAINER`, без золота → `E_INGREDIENTS`; цена `round(base × growth^ранг)`) |
 | `craft.start` | `{recipe_id, qty}` | `{}` (→ `evt/craft/result`) | − | крафт |
 | `quest.list` | `{}` | `{quests[]}` | + | журнал квестов |
 | `quest.accept` / `quest.turn_in` / `quest.abandon` | `{quest_id}` | `{quest}` | − | взаимодействие; `accept` ограничен `quests.max_active` (§5, M18/F36 → `E_QUEST_LIMIT`) |
@@ -337,6 +340,16 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `state.resync` | `{last_state_version}` | `{}` (→ snapshot/delta) | + | восстановление |
 | `ping` | `{}` | `{}` (→ `evt/pong`) | + | RTT |
 | `time.sync` | `{}` | `{}` (→ `evt/time.sync`) | + | калибровка времени |
+| `corpse.harvest` | `{ entity_id, action: "skin"\|"gut" }` | `{ action, name }` | − | снятие шкур: разделка трупа животного — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result`); ошибки: `E_PROFESSION` (не изучена), `E_TOOL_MISSING` (нет ножа), `E_LEVEL_REQUIRED` (требуемый уровень выше на25+), `E_TARGET_GONE` (нет флагов/уже разделано/нет трупа), `E_COOLDOWN` (повторный старт на том же трупе; на другом — переключение: текущая разделка прерывается, шкура брошенного трупа портится) |
+| `resource.gather` | `{ entity_id }` | `{}` | − | M20/F20b: добыча 1 единицы ресурса (инструмент + ранг профессии на сервере; отказы: `E_TOOL_MISSING`/`E_PROFESSION`/`E_TARGET_GONE`) |
+| `dialog.choice` | `{ dialog_id, page_id, action_id }` | `{}` | − | M20: выбор действия в игровом многостраничном диалоге (**заготовка**) |
+| `dialog.submit` | `{ dialog_id, values {id → значение} }` | `{ values }` | − | M20: ввод execute-диалога; **M24**: ветка `admin.*` в `dialog_id` — выдача/удаление предмета (роль проверяется повторно; qty ≥ 1, верхняя граница 999 — **кроме валюты** `type=money` (без потолка, до INTEGER-стака) → `E_BAD_QTY`) |
+| `admin.items` | `{}` | `{ items: [{id, name, type, rarity, qty, upgrade, gold_value}] }` | + | M24: каталог всех предметов для админ-окна (одним запросом); только `role=admin` → `E_PERMISSION` |
+| `admin.give.ask` | `{ target, def_id }` | `{}` + `evt/dialog/open` | − | M24: открыть execute-диалог количества выдачи; id `admin.give:<target>#<def_id>` (разделитель `#`); `E_ITEM_GONE` (нет def), `E_TARGET_GONE` (цель не поддерживается) |
+| `admin.remove.ask` | `{ target, ref }` | `{}` + `evt/dialog/open` | − | M24: execute-диалог количества удаления; id `admin.remove:<target>#<ref>`; F24a — `self` (ref = uid) |
+| `admin.clear` | `{ target }` | `{}` | − | M24: удалить ВСЕ предметы цели (кнопка «Удалить все»): инвентарь — все записи (события `evt/item/removed` себе/онлайн-цели), труп — все слоты + `evt/corpse/created`, сундук/магазин — база/контент tombstone-ами + надстройка, монстр — весь лут (респавн восстановит); `E_TARGET_GONE` |
+| `admin.god_mode` | `{ enabled }` | `{ enabled }` | − | M24: toggle «режим бога» (неуязвимость: урон не применяется вовсе); только `role=admin`, состояние сессионное (в мире) |
+| `admin.target.info` | `{ target }` | `{ items: [{ref, id, name, type, rarity, qty}] }` | + | M24: содержимое цели правой колонки — инвентарь (`self`/`char:<имя>`, оффлайн тоже), слоты трупа (`corpse:<id>`, ref `loot:`/`inner:`), админ-лут монстра (`monster:<id>`, ref `bonus:<idx>`), сундук (`container:<id>`, ref `cont:`/`contx:` — база/надстройка), магазин (`shop:<npc>`, ref `shop:<tab>:<idx>`/`xshop:<idx>`); `E_TARGET_GONE` |
 
 **Ограничения текста чата:** `chat.max_len`, `chat.cooldown_s` из §5; превышение → `E_RATE_LIMITED` c `retry_after_s`.
 
@@ -364,7 +377,12 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/entity/spawn` | `{ entity: Entity, location_id }` | появление сущности |
 | `evt/entity/move` | `{ entity_id, patch }` | перемещение/изменение внутри локации |
 | `evt/entity/hp` | `{ entity_id, hp }` | смена HP |
-| `evt/entity/despawn` | `{ entity_id, location_id }` | исчезновение (смерть/уход) |
+| `evt/entity/despawn` | `{ entity_id, location_id, kind? }` | исчезновение (смерть/уход/TTL); `kind` M20 — «{name} исчез» для предмета |
+| `evt/mob/attack` | `{ entity_id, next_attack_at, interval_ms }` | M25: моб атаковал — бар атаки у монстра в списке (заполнение → атака); `interval_ms` = (конфиг-интервал + `attack_speed` моба) × множитель фазы босса, но не ниже настройки `min_attack_interval_s` (0.5 с) |
+| `evt/mob/phase` | `{ entity_id, phase, name, glyph? }` | M25: босс перешёл в фазу по времени боя — глиф/имя в списке монстров + журнал |
+| `evt/mob/skill` | `{ entity_id, source_name, name, glyph? }` | M25: босс использовал навык — журнал |
+| `evt/mob/cast` | `{ entity_id, source_name, name, glyph?, ends_at }` | M25: босс начал каст (подготовка — не атакует) — «готовит: …» в списке/журнале |
+| `evt/char/afflict` | `{ kind: stun\|silence\|blind, title, until_ms }` | M25: наложен эффект приёма босса — стан: всплывающее окно с прогрессбаром; прочие — журнал |
 | `evt/corpse/created` | `{ entity: Entity, loot_count }` | труп (`was_player` различает игрока) |
 | `evt/corpse/looted` | `{ corpse_id, by, by_name, was_player }` | лут собран; если `was_player` — клиент показывает предупреждение о статусе |
 
@@ -382,9 +400,14 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/item/added` | `{ item: ItemSnapshot }` | предмет получен |
 | `evt/item/removed` | `{ uid, reason }` | потерян/израсходован (`reason` = consumed\|traded\|dropped\|lost_on_death) |
 | `evt/item/state` | `{ uid, patch }` | патч предмета (upgrade, sockets, qty) |
+| `evt/item/dropped` | `{ char_id, by_name, gender, qty, item_name }` | M20: выброс — журнал «{by} выбросил(а)…» / «Вы выбросили…» (всем в локации) |
+| `evt/item/expired` | `{ uid, name }` | M20: предмет в локации исчез по TTL — «{name} исчез» |
+| `evt/char/level_up` | `{ char_id, name, gender, level }` | M22: новый уровень персонажа — журнал «Вы получили новый уровень!…» (своему) / «{имя} получил(а) новый уровень!» (в локации) |
+| `evt/harvest/result` | `{ entity_id, name, action, ok, ruined? }` | снятие шкур: итог разделки — журнал «Вы освежевали труп …»/«Вы сняли шкуру с трупа …» (при `ok`), прогресс-бар чистится; лут добавляется в труп (`evt/corpse/created` — обновление); `ruined=true` — разделка прервана: взаимодействием с предметом/уроном (skin → «Шкура испорчена», повтор невозможен; gut → отмена, повтор можно) либо переключением на другой труп (M24: шкура брошенного трупа портится всегда); при переключении итог шлётся до ack нового старта |
+| `evt/dialog/open` | `{ id, kind: "page"\|"execute", title, pages: [{id, text, actions: [{id, label}]}], inputs: [{id, label, kind, default}] }` | M20: игровой диалог — многостраничный (кнопки действий + «Назад» на клиенте) или execute (поля ввода → `cmd/dialog.submit`) — **заготовка** |
 | `evt/upgrade/result` | `{ uid, ok, new_upgrade?, item_destroyed?, cost {} }` | итог улучшения |
 | `evt/craft/result` | `{ recipe_id, ok, made: [{uid, qty}], consumed [] }` | итог крафта |
-| `evt/craft/profession` | `{ profession: { id, rank, xp, xp_to_next } }` | профессия изучена/ранг повышен |
+| `evt/craft/profession` | `{ profession: { id, rank, level, xp, xp_to_next }, name?, gain? }` | профессия изучена / уровень растёт / ранг повышен (M21: `level` — вторая шкала; M22: `name` — рус. имя и `gain` — полученный опыт → журнал «{name}: опыт +{n}»/«Уровень профессии {name}: {level}») |
 | `evt/quest/progress` | `{ quest: QuestState }` | прогресс цели |
 | `evt/quest/updated` | `{ quest: QuestState }` | смена состояния (взят/сдан/доступен) |
 
@@ -442,6 +465,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_REQUIREMENT_ATTR` | не хватает атрибута/уровня |
 | `E_PROFESSION` | нет требуемой профессии |
 | `E_INVENTORY_FULL` | инвентарь заполнен |
+| `E_STUNNED` | M25: дебафф контроля (стан/немота/ослепление от приёмов босса) — команды заблокированы до `until_ms` |
+| `E_BUSY` | M24: персонаж занят разделкой — действия мира/развития отклоняются, пока идёт таймер (`item.*` — исключение, прерывает по M23) |
+| `E_BAD_QTY` | M24: количество в админ-диалоге вне допустимого диапазона (1..=999; для валюты `type=money` верхней границы нет — до INTEGER-стака) |
 | `E_ITEM_GONE` | предмета уже нет (двойное действие/обмен) |
 | `E_UPGRADE_PREVIEW_STALE` | `preview_id` устарел (пересоздать превью) |
 | `E_UPGRADE_MAX` | достигнут максимум улучшения |
@@ -452,6 +478,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_PERMISSION` | нет прав роли аккаунта (модерация чата, M14/F19) |
 | `E_XP_POOL` | не хватает очков опыта (`skill.train`) |
 | `E_RANK_CAP` | достигнут потолок ранга навыка/профессии |
+| `E_LEVEL_REQUIRED` | M21: уровень профессии не набран до границы ранга (`craft.rank_up`/награда квеста) |
 | `E_SKILL_NOT_READY` | шкала навыка не заполнена на 100 % — повышение ранга недоступно (`skill.train`, M18/F44) |
 | `E_PROFESSION_LIMIT` | превышен `profession_limit` первичных профессий |
 | `E_STATION_REQUIRED` | для рецепта нет станка в локации |

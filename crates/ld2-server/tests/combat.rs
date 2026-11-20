@@ -398,3 +398,39 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
         "оружие не экипировано"
     );
 }
+
+/// M17/F30e: ярость воина копится за нанесённый урон — первый удар
+/// даёт патч `evt/char/stats` с `mp.cur > 0` (указание заказчика:
+/// «накопление ресурса у воина не происходит» — проверяем на живом
+/// бое; hp-патчи от моба отфильтровываются).
+#[tokio::test]
+async fn warrior_rage_accumulates_on_melee() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await; // профиль warrior
+
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "атака");
+
+    let patch = c
+        .wait(|v| {
+            v["type"] == "evt/char/stats"
+                && v["payload"]["patch"]["mp"]["cur"]
+                    .as_i64()
+                    .is_some_and(|n| n > 0)
+        })
+        .await;
+    assert!(
+        patch["payload"]["patch"]["mp"]["cur"].as_i64().unwrap_or(0) > 0,
+        "ярость пришла: {patch}"
+    );
+}

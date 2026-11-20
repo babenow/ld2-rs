@@ -16,6 +16,7 @@ name = "ld2-dev"           # → §5 server.name
 region = "ru"              # → §5 server.region
 # min_client = "0.11.0"    # опционально (§5): если задан — клиенты старше блокируются
 log_level = "info"         # EnvFilter-директива: "info", "info,sqlx=warn"
+allow_scenario = true      # M24: /scenario разрешён всем (dev/тесты)
 
 [database]
 # Секрет: не коммитить (server.toml в .gitignore), chmod 600.
@@ -49,6 +50,7 @@ haggle = 0.02
 
 [gameplay.combat]           # M12.5: тик-луп атак (D25)
 attack_interval_s = 1.0     # период атак в бою, с
+min_attack_interval_s = 0.5 # M25: минимальная скорость атаки моба, с (пол интервала)
 base_damage = 6             # базовый урон персонажа (v1)
 flee_chance = 0.5           # шанс cmd/combat.flee, 0..=1
 
@@ -116,12 +118,17 @@ duration_s = 3          # длительность анимации улучше
 chance = 1.0
 
 [gameplay.professions]  # skills.md §8 (D25)
-rank_max = 7            # предел ранга профессии
 xp_per_craft_base = 40  # XP за крафт: 40 + per_rank × ранг рецепта
 xp_per_craft_per_rank = 25
-xp_to_next_base = 80    # порог ранга: round(base × growth^rank)
-xp_growth = 1.5
 fail_xp_ratio = 0.2     # XP при неудаче
+# M21: две шкалы — уровень (0..max_level, порог растёт) и ранг
+# (границы кратно rank_span; повышение — у тренера за золото/награда)
+level_xp_base = 40      # порог уровня: round(base × growth^L)
+level_xp_growth = 1.02  # каждый уровень дороже на 2 %
+max_level = 250         # потолок уровня (верхний ранг «Мастер»)
+rank_span = 50          # уровней в ранге (границы: 50/100/150/200)
+rank_up_gold_base = 200 # ранг у тренера: round(base × growth^ранг)
+rank_up_gold_growth = 1.5
 
 [gameplay.magic]
 rune_recharge = "time"         # M18/F58c (ADR-012 §4): тикер зарядов; "item" — только извлечением
@@ -137,6 +144,12 @@ rune_cost = 10
 content_dir = "content"    # статический контент (JSON) → сид в PostgreSQL (D26)
 tick_hz = 10               # тик-луп мира (D31), 1..=100
 autosave_interval_s = 30   # периодический флаш онлайн-состояния (D27)
+journal_ttl_s = 30          # M25: время жизни строки журнала (Лог), с; 0 — не удаляются
+# M20: TTL (с; 0 — не удалять) и дефолтный респавн мобов без
+# `respawn` в контенте (нет поля и дефолта — не возрождаются)
+#corpse_ttl_s = 60         # трупы — вместе с неразобранным лутом
+#drop_ttl_s = 60           # выброшенные предметы
+#respawn_default = { min_s = 60, max_s = 120 }
 
 [skills]                   # skills.md §8: xp_to_next = round(base_xp × growth^rank)
 base_xp = 120

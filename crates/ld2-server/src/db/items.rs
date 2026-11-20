@@ -127,6 +127,44 @@ pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx
     .await
 }
 
+/// M24: инвентарь персонажа с данными определений (правая колонка
+/// админ-окна): uid/деф/количество + имя/тип/редкость одним запросом.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminInvRow {
+    pub uid: String,
+    pub def_id: String,
+    pub qty: i32,
+    pub name: String,
+    pub item_type: String,
+    pub rarity: String,
+}
+
+pub async fn admin_inventory(
+    pool: &PgPool,
+    char_id: &str,
+) -> Result<Vec<AdminInvRow>, sqlx::Error> {
+    sqlx::query_as::<_, AdminInvRow>(
+        "SELECT i.uid, i.def_id, i.qty, d.name, d.item_type, d.rarity \
+         FROM items i JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 ORDER BY i.created_at, i.uid",
+    )
+    .bind(char_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// M24: каталог всех определений (админ-панель, вариант A — одним
+/// запросом); порядок — по типу и имени.
+pub async fn defs_all(pool: &PgPool) -> Result<Vec<ItemDefRow>, sqlx::Error> {
+    sqlx::query_as::<_, ItemDefRow>(
+        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
+                rune_sockets, slot, hands, skill, cooldown_s, bonuses \
+         FROM item_defs ORDER BY item_type, name",
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// Инстанс в инвентаре конкретного персонажа; `None` — чужой/несуществующий.
 pub async fn find(pool: &PgPool, uid: &str, char_id: &str) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
@@ -247,6 +285,35 @@ pub async fn loot_taken_exists(
     .bind(char_id)
     .fetch_one(pool)
     .await
+}
+
+/// M20/F20b: есть ли у персонажа предмет с этим `item_type`
+/// (паритет проверки инструмента крафта).
+pub async fn has_item_type(
+    pool: &PgPool,
+    char_id: &str,
+    item_type: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM items i JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = $2)",
+    )
+    .bind(char_id)
+    .bind(item_type)
+    .fetch_one(pool)
+    .await
+}
+
+/// M20: сброс статического лута сущности (респавн) — все персонажи
+/// могут взять лут заново. Сравнение по префиксу `loot:<entity>:`
+/// (без LIKE — `_` в id не должен быть wildcard).
+pub async fn loot_taken_reset(pool: &PgPool, entity_id: &str) -> Result<u64, sqlx::Error> {
+    let prefix = format!("loot:{entity_id}:");
+    let res = sqlx::query("DELETE FROM loot_taken WHERE left(uid, length($1)) = $1")
+        .bind(&prefix)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
 }
 
 /// Взять лут одной транзакцией (D27): журнал взятого + инвентарь.

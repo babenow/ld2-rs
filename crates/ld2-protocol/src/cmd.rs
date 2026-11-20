@@ -219,6 +219,53 @@ pub struct SocketExtract {
     pub socket_index: u32,
 }
 
+/// M21: повышение ранга профессии **у тренера** — уровень набран до
+/// границы ранга, золото по прогрессии; ack несёт `{profession}`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CraftRankUp {
+    pub profession_id: String,
+}
+
+/// Окно профессий: сброс изученной профессии — прогресс теряется,
+/// слот основной профессии освобождается; ack несёт `profession_id`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CraftReset {
+    pub profession_id: String,
+}
+
+/// Снятие шкур: начать разделку трупа — сервер-джоб на5 с
+/// (`action`: `skin` — снять шкуру, `gut` — освежевать); результат —
+/// `evt/harvest/result`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CorpseHarvest {
+    pub entity_id: String,
+    pub action: String,
+}
+
+/// M20/F20b: добыча ресурса — взять 1 единицу из объекта-ресурса
+/// (инструмент и ранг профессии проверяет сервер).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ResourceGather {
+    pub entity_id: String,
+}
+
+/// M20: выбор действия в многостраничном игровом диалоге (заготовка).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DialogChoice {
+    pub dialog_id: String,
+    pub page_id: String,
+    pub action_id: String,
+}
+
+/// M20: отправка ввода execute-диалога — набор значений полей
+/// (id поля → значение); сервер возвращает ввод обработчику диалога.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DialogSubmit {
+    pub dialog_id: String,
+    #[serde(default)]
+    pub values: serde_json::Map<String, serde_json::Value>,
+}
+
 // ─── улучшение предметов (ФР-10) ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -423,6 +470,59 @@ pub struct TimeSync {}
 
 // ─── wire-типы (protocol.md §7: «Идемп.» = +) ────────────────────────────────
 
+// ─── M24: админ-панель предметов (только роль admin, §9 E_PERMISSION) ───────
+
+/// Каталог всех предметов для окна выдачи — один запрос при открытии
+/// окна (вариант A): ack `{items:[{id,name,type,rarity,qty,upgrade,
+/// gold_value}]}`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AdminItems {}
+
+/// Начать выдачу: сервер открывает execute-диалог количества
+/// (`evt/dialog/open`, id `admin.give:<target>#<def_id>` → submit
+/// stateless; разделитель `#`, т.к. цель и def могут содержать `:`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminGiveAsk {
+    /// Цель: `self` | `char:<имя>` | `monster:<id>` | `corpse:<id>` |
+    /// `container:<id>` | `shop:<npc_id>` (F24a — `self`).
+    pub target: String,
+    pub def_id: String,
+}
+
+/// Начать удаление: execute-диалог количества (§7), id
+/// `admin.remove:<target>#<ref>`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminRemoveAsk {
+    pub target: String,
+    /// Ссылка: uid в инвентаре / `loot:<corpse>:<idx>` / слот цели.
+    #[serde(rename = "ref")]
+    pub item_ref: String,
+}
+
+/// M24: «режим бога» — toggle неуязвимости (только admin); состояние
+/// сессионное, живёт в мире (tick смотрит оттуда).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminGodMode {
+    pub enabled: bool,
+}
+
+/// M24: удалить ВСЕ предметы выбранной цели (кнопка в админ-окне):
+/// инвентарь — все записи, труп — все слоты, сундук — база (tombstone)
+/// + надстройка, магазин — контент + надстройка, монстр — весь лут.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminClear {
+    pub target: String,
+}
+
+/// M24: содержимое выбранной цели правой колонки (кроме self —
+/// ack `{items: [{ref, id, name, type, rarity, qty}]}` — рюкзак
+/// (`self`/`char:<имя>`), лут трупа (`corpse:<id>`), будущий лут
+/// монстра (`monster:<id>`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdminTargetInfo {
+    pub target: String,
+}
+
 impl_commands!(
     (AuthLogin, "cmd/auth.login", true),
     (AuthRegister, "cmd/auth.register", true),
@@ -454,11 +554,23 @@ impl_commands!(
     (MagicRuneCast, "cmd/magic.rune_cast", false),
     (SocketInsert, "cmd/socket.insert", false),
     (SocketExtract, "cmd/socket.extract", false),
+    (ResourceGather, "cmd/resource.gather", false),
+    (CorpseHarvest, "cmd/corpse.harvest", false),
+    (DialogChoice, "cmd/dialog.choice", false),
+    (DialogSubmit, "cmd/dialog.submit", false),
+    (AdminItems, "cmd/admin.items", true),
+    (AdminGiveAsk, "cmd/admin.give.ask", false),
+    (AdminRemoveAsk, "cmd/admin.remove.ask", false),
+    (AdminGodMode, "cmd/admin.god_mode", false),
+    (AdminTargetInfo, "cmd/admin.target.info", true),
+    (AdminClear, "cmd/admin.clear", false),
     (UpgradePreview, "cmd/upgrade.preview", true),
     (UpgradeStart, "cmd/upgrade.start", false),
     (CraftList, "cmd/craft.list", true),
     (CraftRecipes, "cmd/craft.recipes", true),
     (CraftLearn, "cmd/craft.learn", false),
+    (CraftReset, "cmd/craft.reset", false),
+    (CraftRankUp, "cmd/craft.rank_up", false),
     (CraftStart, "cmd/craft.start", false),
     (QuestList, "cmd/quest.list", true),
     (QuestAccept, "cmd/quest.accept", false),

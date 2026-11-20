@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, VecDeque};
 use ld2_protocol::evt::{
     CharDeath, CharStats, CharXp, ChatMessage, CombatCooldown, CombatHit, CorpseCreated,
     CorpseLooted, CrimeAdded, CrimeRemoved, CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove,
-    EntitySpawn, GuildLogEntry, ItemAdded, ItemRemoved, LocationChanged, MagicCast, StateSnapshot,
-    TimeSync as TimeSyncEvent,
+    EntitySpawn, GuildLogEntry, ItemAdded, ItemDropped, ItemExpired, ItemRemovalReason,
+    ItemRemoved, LocationChanged, MagicCast, StateSnapshot, TimeSync as TimeSyncEvent,
 };
 use ld2_protocol::types::{
     CharacterSummary, CrimeLogEntry, CrimeStatus, GuildState, Hp, LocationSnapshot, PartyState,
@@ -45,6 +45,9 @@ pub enum Act {
     Attack,
     /// `entity.info` → `entity_detail`.
     Examine,
+    /// M23: `entity.info` → `pickup` (окно подятия предмета — лут
+    /// трупа отдельно от модалки осмотра).
+    PickupInfo,
     /// `npc.talk` → `npc_dialog` (M18/F35).
     NpcTalk,
     /// `npc.reply` → новый узел в `npc_dialog` (M18/F37).
@@ -90,6 +93,30 @@ pub enum Act {
     GuildBrowse,
     /// `guild.*` — ack несёт `{guild}` на create/join, остальное — события.
     Guild,
+    /// `cmd/dialog.choice`/`cmd/dialog.submit` — игровые диалоги
+    /// (M20, заготовка): ack — только ошибки.
+    DialogChoice,
+    DialogSubmit,
+    /// `cmd/resource.gather` (M20/F20b) — ошибки (нет ресурса/ранг/
+    /// инструмент) → world_error.
+    Gather,
+    /// `cmd/craft.rank_up` (M21) — ack {profession}; ошибки тостом.
+    CraftRankUp,
+    /// `cmd/craft.reset` (M21) — сброс профессии: убрать из снапшота.
+    ProfessionReset,
+    /// `cmd/corpse.harvest` (M22) — старт разделки; ошибки тостом.
+    Harvest,
+    /// M24: `cmd/admin.items` → `admin_catalog` (каталог админ-окна).
+    AdminCatalog,
+    /// M24: `cmd/admin.give.ask`/`admin.remove.ask` — ack только
+    /// ошибки (откроется execute-диалог количества).
+    AdminAsk,
+    /// M24: `cmd/admin.god_mode` → ack `{enabled}` → `admin_god`.
+    AdminGod,
+    /// M24: `cmd/admin.target.info` → `admin_target_items`.
+    AdminTarget,
+    /// M24: `cmd/admin.clear` — очистка цели (ack только ошибки).
+    AdminClear,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -135,6 +162,8 @@ pub enum LogKind {
 pub struct LogEntry {
     pub kind: LogKind,
     pub text: String,
+    /// M25: момент добавления (epoch, мс) — истечение журнала.
+    pub at: i64,
 }
 
 /// Посещённая локация (ФР-03: кэш для истории; граф — v1.1, D9).
@@ -179,6 +208,16 @@ pub enum NotifyKind {
     Upgrade,
 }
 
+/// M25: активный стан — всплывающее окно с прогрессбаром времени.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StunView {
+    pub title: String,
+    /// Срок стана (epoch, мс).
+    pub until_ms: i64,
+    /// Момент наложения (для прогрессбара).
+    pub started_ms: i64,
+}
+
 #[derive(Debug)]
 pub struct AppStore {
     pub screen: Screen,
@@ -210,10 +249,21 @@ pub struct AppStore {
     pub sharpen_list: bool,
     /// Открытая инкрустация (ФР-09): uid посоха.
     pub socketing: Option<String>,
+    /// M20: открытый игровой диалог (заготовка: страницы/ввод из
+    /// `evt/dialog/open`; окно — `PopupKind::Dialog`).
+    pub dialog: Option<ld2_protocol::evt::DialogOpen>,
+    /// Снятие шкур (M22): прогресс активной разделки (5 с) для
+    /// прогресс-бара; ставится клиентом при отправке, чистится по
+    /// `evt/harvest/result` или ошибке.
+    pub harvest: Option<HarvestProgress>,
     /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
     pub inscribe: Option<String>,
     /// Смещение часов сервера (evt/time.sync): server = local + offset.
     pub time_offset: i64,
+    /// M24: фаза тикера зарядов рун (шкала `now_ms`) — прогрессбар
+    /// заполнения рун; ставится по снапшоту и по приросту зарядов
+    /// в `evt/item/state` (тикер шлёт патч сокетов — такт виден).
+    pub rune_recharge_phase_ms: Option<i64>,
     /// Выбранная цель (ФР-05): клик по строке / Tab.
     pub target: Option<String>,
     /// Кулдауны активных навыков: skill_id → until epoch (ФР-05).
@@ -273,6 +323,22 @@ pub struct AppStore {
     pub visited: Vec<VisitedLocation>,
     /// Результат `entity.info` — модалка осмотра (включая лут трупа).
     pub entity_detail: Option<serde_json::Value>,
+    /// M23: данные окна подятия предмета (payload `entity.info`:
+    /// лут трупа + блок «Внутри»); гейт рендера — `Root::pickup_popup`.
+    pub pickup: Option<serde_json::Value>,
+    /// M23: лут трупа обновился на сервере (разделка/новый труп) —
+    /// клиент перечитает `pickup`, пока открыто окно подятия.
+    pub pickup_dirty: bool,
+    /// M24: каталог предметов админ-окна (вариант A — один запрос,
+    /// кэш на сессию, фильтрация на клиенте).
+    pub admin_catalog: Option<Vec<serde_json::Value>>,
+    /// M24: состояние «режим бога» (эхо `cmd/admin.god_mode`).
+    pub admin_god: bool,
+    /// M25: активный стан (окно с прогрессбаром; истекает в tick).
+    pub stun: Option<StunView>,
+    /// M24: содержимое выбранной цели правой колонки (кроме self —
+    /// тот приходит снапшотом).
+    pub admin_target_items: Option<Vec<serde_json::Value>>,
     /// M18/F35: открытое окно диалога NPC (реплики + квесты).
     pub npc_dialog: Option<NpcDialogView>,
     /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
@@ -392,6 +458,20 @@ pub struct NpcShopView {
     pub tabs: Vec<NpcShopTab>,
 }
 
+/// Снятие шкур (M22): прогресс-бар разделки на клиенте — старт
+/// (epoch-мс отправки команды), действие и имя животного.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HarvestProgress {
+    pub started_ms: i64,
+    /// `skin` | `gut`.
+    pub action: String,
+    pub name: String,
+    /// Труп-источник (M24): `evt/harvest/result` гасит бар только при
+    /// совпадении — итог прерванного переключением действия чужого
+    /// трупа новый бар не трогает.
+    pub entity_id: String,
+}
+
 /// M18/F35/F37/F42: открытое окно диалога NPC — payload ack
 /// `cmd/npc.talk` `{dialog: {id, name}, node, quests, actions}`
 /// (`greeting` убран — ADR-008); транскрипт накапливает ленту
@@ -420,10 +500,17 @@ pub struct NpcDialogView {
     /// M18/F44: обучение у этого NPC (ADR-009) — навыки с ценой.
     #[serde(default)]
     pub training: Vec<NpcTraining>,
+    /// M21: профессии этого NPC с ценой (изучение — craft.learn).
+    #[serde(default)]
+    pub professions: Vec<NpcProfession>,
     /// M18/F44: открыта ли панель обучения (реплика `action=train`,
     /// паритет магазина); чистится вместе с окном диалога.
     #[serde(default)]
     pub training_open: bool,
+    /// M22: открыта ли ИСТОРИЯ диалога (полная лента по кнопке в
+    /// статусбаре окна); в самом диалоге — только текущая реплика.
+    #[serde(default)]
+    pub history_open: bool,
 }
 
 /// M18/F44: обучение навыку у NPC в диалоге (ADR-009) — повышение ранга
@@ -439,6 +526,16 @@ pub struct NpcTraining {
     /// Плата предметами.
     #[serde(default)]
     pub items: Vec<NpcTrainingItem>,
+}
+
+/// M21: профессия, которой обучает NPC в диалоге — цена золотом
+/// (`price_profession`); изучение — `cmd/craft.learn`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcProfession {
+    pub id: String,
+    /// Цена обучения золотом; старый сервер без поля →0.
+    #[serde(default)]
+    pub gold: i64,
 }
 
 /// M18/F44: предмет платы за обучение.
@@ -482,8 +579,14 @@ impl NpcDialogView {
             shop_currency: None,
             training: serde_json::from_value(payload.get("training").cloned().unwrap_or_default())
                 .unwrap_or_default(),
+            professions: serde_json::from_value(
+                payload.get("professions").cloned().unwrap_or_default(),
+            )
+            .unwrap_or_default(),
             // M18/F44: панель обучения закрыта — открывает реплика.
             training_open: false,
+            // M22: история закрыта — открывает кнопка в статусбаре.
+            history_open: false,
         })
     }
 }
@@ -599,9 +702,12 @@ impl AppStore {
             sharpen_stone: None,
             sharpen_list: false,
             socketing: None,
+            dialog: None,
+            harvest: None,
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
             time_offset: 0,
+            rune_recharge_phase_ms: None,
             target: None,
             combat_cooldowns: BTreeMap::new(),
             global_cooldown_until: 0,
@@ -629,6 +735,12 @@ impl AppStore {
             log: VecDeque::new(),
             visited: Vec::new(),
             entity_detail: None,
+            pickup: None,
+            pickup_dirty: false,
+            admin_catalog: None,
+            admin_god: false,
+            stun: None,
+            admin_target_items: None,
             npc_dialog: None,
             pending_delete: None,
             deleting_char: None,
@@ -742,6 +854,7 @@ impl AppStore {
                 Act::Move
                 | Act::Attack
                 | Act::Examine
+                | Act::PickupInfo
                 | Act::NpcTalk
                 | Act::NpcReply
                 | Act::ShopList
@@ -766,6 +879,25 @@ impl AppStore {
                 Act::Chat | Act::ChatDelete => self.notice = Some(msg),
                 // Соцдомен: ошибки (E_TRADE_STALE, E_PARTY_FULL §9) — тостом.
                 Act::Party | Act::Trade | Act::GuildBrowse | Act::Guild => self.notice = Some(msg),
+                // Игровые диалоги (M20, заготовка) — ошибки тостом.
+                Act::DialogChoice | Act::DialogSubmit => self.notice = Some(msg),
+                // Добыча (M20/F20b): отказы — в мир (как Examine/Move).
+                Act::Gather => self.world_error = Some(msg),
+                // Профессии (M21): ранг/сброс — тосты (у тренера/граница).
+                Act::CraftRankUp | Act::ProfessionReset => self.notice = Some(msg),
+                // Админ-панель (M24): отказы — тост (каталог/ask/god/цель).
+                Act::AdminCatalog
+                | Act::AdminAsk
+                | Act::AdminGod
+                | Act::AdminTarget
+                | Act::AdminClear => {
+                    self.notice = Some(msg);
+                }
+                // Снятие шкур (M22): отказ до старта — чистим бар.
+                Act::Harvest => {
+                    self.harvest = None;
+                    self.world_error = Some(msg);
+                }
             }
             return vec![];
         }
@@ -821,6 +953,7 @@ impl AppStore {
             }
             Act::Attack
             | Act::Examine
+            | Act::PickupInfo
             | Act::NpcTalk
             | Act::NpcReply
             | Act::ShopList
@@ -831,9 +964,19 @@ impl AppStore {
             | Act::Quest
             | Act::Chat
             | Act::ChatDelete
-            | Act::Trade => {
+            | Act::Trade
+            | Act::DialogChoice
+            | Act::DialogSubmit
+            | Act::Gather
+            | Act::Harvest
+            | Act::AdminAsk
+            | Act::AdminGod
+            | Act::AdminCatalog
+            | Act::AdminTarget
+            | Act::AdminClear => {
                 // результат событиями (§8); npc.talk/npc.reply
-                // обрабатываются ниже отдельными блоками (M18/F35/F37)
+                // обрабатываются ниже отдельными блоками (M18/F35/F37);
+                // диалоги (M20) — ack только подтверждает выбор/ввод.
             }
             Act::Party => {
                 // §7: party.create/accept несут {party}.
@@ -863,6 +1006,16 @@ impl AppStore {
                     }
                 }
             }
+            Act::ProfessionReset => {
+                // M21: после сброса — убрать профессию из снапшота
+                // (слот основной освобождается).
+                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
+                {
+                    if let Some(id) = payload["profession_id"].as_str() {
+                        snap.char.professions.retain(|p| p.id != id);
+                    }
+                }
+            }
             Act::Craft => {
                 // §7: ack несёт список рецептов.
                 if let Some(payload) = ack.payload.as_ref() {
@@ -883,7 +1036,7 @@ impl AppStore {
                     }
                 }
             }
-            Act::Learn => {
+            Act::Learn | Act::CraftRankUp => {
                 // §7: ack {profession} — добавляем/обновляем в снапшоте.
                 if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
                 {
@@ -961,6 +1114,19 @@ impl AppStore {
                         snap.char = ch;
                     } else {
                         apply_item_patch(&mut snap.char, payload);
+                    }
+                }
+                // M24 фикс: инкрустация стака — сервер разбил стак и
+                // прислал НОВЫЙ uid целевой штуки; окно следует за
+                // целью (иначе следующая вставка снова шла бы в стак
+                // и каждый сокет попадал бы на свою штуку).
+                if self.socketing.is_some() {
+                    if let Some(staff_uid) = ack
+                        .payload
+                        .as_ref()
+                        .and_then(|p| p["staff"]["uid"].as_str())
+                    {
+                        self.socketing = Some(staff_uid.to_string());
                     }
                 }
             }
@@ -1041,6 +1207,28 @@ impl AppStore {
         // Осмотр: payload ack'а — детали сущности (включая лут трупа, ФР-03/ФР-11).
         if act == Act::Examine {
             self.entity_detail = ack.payload;
+        } else if act == Act::PickupInfo {
+            // M23: окно подятия — тот же `entity.info`, но в отдельное
+            // поле (окно не перетирает модалку осмотра и наоборот).
+            self.pickup = ack.payload;
+        } else if act == Act::AdminCatalog {
+            // M24: каталог админ-окна — `{items:[…]}` → массив.
+            self.admin_catalog = ack
+                .payload
+                .and_then(|p| p.get("items").cloned())
+                .and_then(|v| v.as_array().cloned());
+        } else if act == Act::AdminGod {
+            // M24: эхо состояния тумблера (админ мог переключить
+            // в другом окне — сервер истина).
+            if let Some(enabled) = ack.payload.as_ref().and_then(|p| p["enabled"].as_bool()) {
+                self.admin_god = enabled;
+            }
+        } else if act == Act::AdminTarget {
+            // M24: содержимое цели правой колонки — `{items:[…]}`.
+            self.admin_target_items = ack
+                .payload
+                .and_then(|p| p.get("items").cloned())
+                .and_then(|v| v.as_array().cloned());
         }
         vec![]
     }
@@ -1121,6 +1309,9 @@ impl AppStore {
                 ]
             }
             "evt/state/snapshot" => {
+                // M24: снапшот — новая фаза такта зарядов (серверную
+                // фазу клиент не знает; по патчу тикера самокоррекция).
+                self.rune_recharge_phase_ms = Some(local_epoch_ms() + self.time_offset * 1000);
                 let Ok(snap) = serde_json::from_value::<StateSnapshot>(payload) else {
                     tracing::warn!("некорректный evt/state/snapshot — игнор");
                     return vec![];
@@ -1142,6 +1333,7 @@ impl AppStore {
                 self.select_error = None;
                 self.world_error = None;
                 self.entity_detail = None;
+                self.pickup = None;
                 self.notice = None;
                 vec![]
             }
@@ -1176,6 +1368,7 @@ impl AppStore {
                     snap.location = changed.location;
                 }
                 self.entity_detail = None;
+                self.pickup = None;
                 self.world_error = None;
                 self.push_log(LogKind::Location, format!("Вы вошли в {name}"));
                 vec![]
@@ -1280,20 +1473,123 @@ impl AppStore {
                 );
                 vec![]
             }
+            // M25: моб атаковал — бар атаки (следующая атака/интервал).
+            "evt/mob/attack" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobAttack>(payload) else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == ev.entity_id)
+                    {
+                        entity.next_attack_at = Some(ev.next_attack_at);
+                        entity.attack_interval = Some(ev.interval_ms);
+                    }
+                }
+                vec![]
+            }
+            // M25: босс сменил фазу — глиф/имя в списке + журнал.
+            "evt/mob/phase" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobPhase>(payload) else {
+                    return vec![];
+                };
+                let mut mob_name = ev.entity_id.clone();
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == ev.entity_id)
+                    {
+                        mob_name = entity.name.clone();
+                        let casting = entity.boss.as_ref().and_then(|b| b.casting.clone());
+                        entity.boss = Some(ld2_protocol::types::BossState {
+                            phase: ev.phase,
+                            name: ev.name.clone(),
+                            glyph: ev.glyph.clone(),
+                            casting,
+                        });
+                    }
+                }
+                self.push_log(
+                    LogKind::System,
+                    format!("{mob_name} входит в фазу: {}", ev.name),
+                );
+                vec![]
+            }
+            // M25: босс использовал навык — журнал.
+            // M25: босс начал каст — журнал и «готовит …» в списке.
+            "evt/mob/cast" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobCast>(payload) else {
+                    return vec![];
+                };
+                let mut boss_name = ev.entity_id.clone();
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == ev.entity_id)
+                    {
+                        boss_name = entity.name.clone();
+                        if let Some(boss) = entity.boss.as_mut() {
+                            boss.casting = Some(ev.name.clone());
+                        }
+                    }
+                }
+                self.push_log(
+                    LogKind::CombatIn,
+                    format!("{boss_name} готовит: {}", ev.name),
+                );
+                vec![]
+            }
+            // M25: босс использовал навык — журнал, каст завершён.
+            "evt/mob/skill" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobSkill>(payload) else {
+                    return vec![];
+                };
+                if let Some(snap) = self.snapshot.as_mut() {
+                    if let Some(entity) = snap
+                        .location
+                        .entities
+                        .iter_mut()
+                        .find(|e| e.id == ev.entity_id)
+                    {
+                        if let Some(boss) = entity.boss.as_mut() {
+                            boss.casting = None;
+                        }
+                    }
+                }
+                self.push_log(
+                    LogKind::CombatIn,
+                    format!("{} использует {}", ev.source_name, ev.name),
+                );
+                vec![]
+            }
             "evt/corpse/created" => {
                 let Ok(corpse) = serde_json::from_value::<CorpseCreated>(payload) else {
                     return vec![];
                 };
+                // M23: лут/флаги трупа обновились — освежить окно
+                // подятия, если оно открыто.
+                self.pickup_dirty = true;
                 let mut added = false;
                 if let Some(snap) = self.snapshot.as_mut() {
-                    if !snap
+                    match snap
                         .location
                         .entities
                         .iter()
-                        .any(|e| e.id == corpse.entity.id)
+                        .position(|e| e.id == corpse.entity.id)
                     {
-                        added = true;
-                        snap.location.entities.push(corpse.entity);
+                        // Обновление (M22: лут/флаги разделки) — замена.
+                        Some(pos) => snap.location.entities[pos] = corpse.entity,
+                        None => {
+                            added = true;
+                            snap.location.entities.push(corpse.entity);
+                        }
                     }
                 }
                 if added {
@@ -1319,10 +1615,40 @@ impl AppStore {
                 }
                 vec![]
             }
+            "evt/char/level_up" => {
+                // M22: новый уровень — журнал: себе «Вы получили…»,
+                // остальным в локации «{имя} получил(а)…».
+                let Ok(up) = serde_json::from_value::<ld2_protocol::evt::CharLevelUp>(payload)
+                else {
+                    return vec![];
+                };
+                let mine = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.char.id == up.char_id);
+                if mine {
+                    self.push_log(
+                        LogKind::Xp,
+                        format!("Вы получили новый уровень! Уровень персонажа: {}", up.level),
+                    );
+                } else {
+                    let verb = if up.gender == "female" {
+                        "получила"
+                    } else {
+                        "получил"
+                    };
+                    self.push_log(LogKind::Xp, format!("{} {} новый уровень!", up.name, verb));
+                }
+                vec![]
+            }
             "evt/char/xp" => {
                 let Ok(xp) = serde_json::from_value::<CharXp>(payload) else {
                     return vec![];
                 };
+                // M22: опыт персонажа — отдельная строка в журнале.
+                if xp.amount > 0 {
+                    self.push_log(LogKind::Xp, format!("Опыт +{}", xp.amount));
+                }
                 // Обновляем лист: навык и остаток пула (ФР-04).
                 if let Some(snap) = self.snapshot.as_mut() {
                     if let Some(pool) = xp.pool_left {
@@ -1379,6 +1705,25 @@ impl AppStore {
                             }
                         }
                     }
+                }
+                vec![]
+            }
+            // M25: дебафф контроля — стан открывает окно с
+            // прогрессбаром, остальные эффекты — строка журнала.
+            "evt/char/afflict" => {
+                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::CharAfflict>(payload)
+                else {
+                    return vec![];
+                };
+                if ev.kind == "stun" {
+                    self.stun = Some(StunView {
+                        title: ev.title,
+                        until_ms: ev.until_ms,
+                        started_ms: local_epoch_ms(),
+                    });
+                } else {
+                    let secs = ((ev.until_ms - local_epoch_ms()).max(0) + 999) / 1000;
+                    self.push_log(LogKind::CombatIn, format!("{} — {} с", ev.title, secs));
                 }
                 vec![]
             }
@@ -1454,7 +1799,85 @@ impl AppStore {
                         view.preview = None;
                     }
                 }
-                self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
+                // M20: при выбросе строку даёт `evt/item/dropped`
+                // («Вы выбросили…»), а не «Потеряно».
+                if !matches!(removed.reason, ItemRemovalReason::Dropped) {
+                    self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
+                }
+                vec![]
+            }
+            "evt/item/dropped" => {
+                // M20: выброс предмета — журнал всем в локации; свой
+                // char_id → «Вы выбросили…», иначе по полу «выбросил(а)».
+                let Ok(dropped) = serde_json::from_value::<ItemDropped>(payload) else {
+                    return vec![];
+                };
+                // Строки журнала — по конвенции store (русские
+                // литералы, как «Потеряно:»); свой char_id → «Вы…».
+                let mine = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.char.id == dropped.char_id);
+                let qty = dropped.qty;
+                let text = if mine {
+                    format!("Вы выбросили {qty} {}", dropped.item_name)
+                } else if dropped.gender == "female" {
+                    format!("{} выбросила {qty} {}", dropped.by_name, dropped.item_name)
+                } else {
+                    format!("{} выбросил {qty} {}", dropped.by_name, dropped.item_name)
+                };
+                self.push_log(LogKind::Loot, text);
+                vec![]
+            }
+            "evt/item/expired" => {
+                // M20: предмет в локации исчез по TTL.
+                let Ok(expired) = serde_json::from_value::<ItemExpired>(payload) else {
+                    return vec![];
+                };
+                self.push_log(LogKind::Loot, format!("{} исчез", expired.name));
+                vec![]
+            }
+            "evt/harvest/result" => {
+                // Снятие шкур (M22): чистим бар, пишем в журнал.
+                let Ok(result) =
+                    serde_json::from_value::<ld2_protocol::evt::HarvestResult>(payload)
+                else {
+                    return vec![];
+                };
+                // M24: бар гаснет только по итогу СВОЕГО трупа —
+                // при переключении итог прерванного действия чужого
+                // трупа новый бар не гасит.
+                if self
+                    .harvest
+                    .as_ref()
+                    .is_some_and(|h| h.entity_id == result.entity_id)
+                {
+                    self.harvest = None;
+                }
+                if result.ok {
+                    // M23: в лут трупа добавились шкуры/мясо — окно
+                    // подятия должно увидеть их без переоткрытия.
+                    self.pickup_dirty = true;
+                    let text = if result.action == "skin" {
+                        format!("Вы сняли шкуру с трупа {}", result.name)
+                    } else {
+                        format!("Вы освежевали труп {}", result.name)
+                    };
+                    self.push_log(LogKind::Loot, text);
+                } else if result.ruined {
+                    // M22: разделка прервана взаимодействием с предметом.
+                    self.push_log(LogKind::Loot, "Шкура испорчена".to_string());
+                }
+                vec![]
+            }
+            "evt/dialog/open" => {
+                // M20: игровой диалог (заготовка) — гейт рендера окна
+                // (`PopupKind::Dialog`) — наличие состояния, как у NPC.
+                let Ok(open) = serde_json::from_value::<ld2_protocol::evt::DialogOpen>(payload)
+                else {
+                    return vec![];
+                };
+                self.dialog = Some(open);
                 vec![]
             }
             "evt/item/state" => {
@@ -1486,7 +1909,27 @@ impl AppStore {
                                 Vec<ld2_protocol::types::Socket>,
                             >(sockets.clone())
                             {
+                                // M24: прирост зарядов — такт тикера
+                                // (или новая вставка) — фаза
+                                // прогрессбара рун обновляется.
+                                let old_charges: i32 = item
+                                    .sockets
+                                    .as_ref()
+                                    .map(|old| {
+                                        old.iter()
+                                            .filter_map(|s| s.rune.as_ref().map(|r| r.charges))
+                                            .sum()
+                                    })
+                                    .unwrap_or(0);
+                                let new_charges: i32 = sockets
+                                    .iter()
+                                    .filter_map(|s| s.rune.as_ref().map(|r| r.charges))
+                                    .sum();
                                 item.sockets = Some(sockets);
+                                if new_charges > old_charges {
+                                    self.rune_recharge_phase_ms =
+                                        Some(local_epoch_ms() + self.time_offset * 1000);
+                                }
                             }
                         } else if let Some(qty) = update.patch.get("qty").and_then(|v| v.as_i64()) {
                             item.qty = Some(qty);
@@ -1599,10 +2042,21 @@ impl AppStore {
                 #[derive(serde::Deserialize)]
                 struct WithProfession {
                     profession: ld2_protocol::types::ProfessionSnapshot,
+                    #[serde(default)]
+                    name: Option<String>,
+                    #[serde(default)]
+                    gain: Option<i64>,
                 }
                 let Ok(w) = serde_json::from_value::<WithProfession>(payload) else {
                     return vec![];
                 };
+                let old = self.snapshot.as_ref().and_then(|s| {
+                    s.char
+                        .professions
+                        .iter()
+                        .find(|p| p.id == w.profession.id)
+                        .map(|p| (p.level, p.rank))
+                });
                 if let Some(snap) = self.snapshot.as_mut() {
                     if let Some(p) = snap
                         .char
@@ -1615,13 +2069,28 @@ impl AppStore {
                         snap.char.professions.push(w.profession.clone());
                     }
                 }
-                self.push_log(
-                    LogKind::Loot,
-                    format!(
-                        "Профессия «{}»: ранг {}",
-                        w.profession.id, w.profession.rank
-                    ),
-                );
+                // M22: журнал на русском (имя из контента) — ранг
+                // только при смене, опыт и уровень профессии отдельно.
+                let name = w.name.clone().unwrap_or_else(|| w.profession.id.clone());
+                if old.is_none_or(|(_, rank)| rank != w.profession.rank) {
+                    self.push_log(
+                        LogKind::Loot,
+                        format!("Профессия «{name}»: ранг {}", w.profession.rank),
+                    );
+                }
+                if let Some(gain) = w.gain.filter(|g| *g > 0) {
+                    self.push_log(LogKind::Xp, format!("{name}: опыт +{gain}"));
+                }
+                // Условие устойчиво: если записи в снапшоте ещё не
+                // было (old=None) — сравниваем с0, иначе повышение
+                // терялось (фикс: строка «+N» приходила, а об уровне —
+                // нет).
+                if w.profession.level > old.map(|(level, _)| level).unwrap_or(0) {
+                    self.push_log(
+                        LogKind::Xp,
+                        format!("Уровень профессии {name}: {}", w.profession.level),
+                    );
+                }
                 vec![]
             }
             "evt/party/updated" => {
@@ -1850,7 +2319,27 @@ impl AppStore {
         self.log.push_back(LogEntry {
             kind,
             text: text.into(),
+            at: local_epoch_ms(),
         });
+    }
+
+    /// M25: удалить строки журнала старше TTL (порядок — от старых);
+    /// true — что-то удалено (нужен repaint). `ttl_s <= 0` — ничего
+    /// не удаляется (настройка сервера `journal_ttl_s`).
+    pub fn expire_log(&mut self, now_ms: i64, ttl_s: i64) -> bool {
+        if ttl_s <= 0 {
+            return false;
+        }
+        let limit = ttl_s.saturating_mul(1000);
+        let mut removed = false;
+        while let Some(front) = self.log.front() {
+            if now_ms.saturating_sub(front.at) < limit {
+                break;
+            }
+            self.log.pop_front();
+            removed = true;
+        }
+        removed
     }
 
     fn push_visited(&mut self, location: &LocationSnapshot) {
@@ -1912,10 +2401,12 @@ impl AppStore {
 
     /// Открыть инкрустацию посоха (ФР-09).
     pub fn open_socketing(&mut self, staff_uid: String) {
+        tracing::info!("socketing: открытие окна, staff={staff_uid}");
         self.socketing = Some(staff_uid);
     }
 
     pub fn close_socketing(&mut self) {
+        tracing::info!("socketing: закрытие окна (close_socketing)");
         self.socketing = None;
     }
 
@@ -2030,8 +2521,14 @@ impl AppStore {
         self.death = None;
         self.item_detail = None;
         self.entity_detail = None;
+        self.pickup = None;
+        self.admin_catalog = None;
+        self.admin_god = false;
+        self.stun = None;
+        self.admin_target_items = None;
         self.upgrade = None;
         self.socketing = None;
+        self.dialog = None;
         self.target = None;
         self.loot_confirm = None;
         self.quest_tracker.clear();
@@ -2100,10 +2597,16 @@ impl AppStore {
         self.select_error = None;
         self.world_error = None;
         self.entity_detail = None;
+        self.pickup = None;
+        self.admin_catalog = None;
+        self.admin_god = false;
+        self.stun = None;
+        self.admin_target_items = None;
         self.item_detail = None;
         self.death = None;
         self.upgrade = None;
         self.socketing = None;
+        self.dialog = None;
         self.quest_tracker.clear();
         self.npc_dialog = None;
         // ФР-13: переключение персонажа сбрасывает историю чата.
@@ -2396,6 +2899,56 @@ pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M22: журнал опыта и повышения уровня профессии — обе строки
+    /// приходят (воспроизводство: «+600» было, «Уровень…» — нет,
+    /// когда в снапшоте не было записи профессии).
+    #[test]
+    fn profession_xp_and_level_up_log_lines() {
+        let mut store = in_game();
+        let first = serde_json::json!({
+            "profession": {
+                "id": "skinning", "rank": 1, "level": 14,
+                "xp": 18, "xp_to_next": 53, "extra": {}
+            },
+            "name": "Снятие шкур",
+            "gain": 600
+        });
+        store.apply_event("evt/craft/profession", Some(first));
+        let log = |store: &AppStore| -> Vec<String> {
+            store.log.iter().map(|l| l.text.clone()).collect()
+        };
+        let lines = log(&store);
+        assert!(
+            lines.iter().any(|t| t == "Снятие шкур: опыт +600"),
+            "строка опыта: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|t| t == "Уровень профессии Снятие шкур: 14"),
+            "строка уровня (записи в снапшоте не было): {lines:?}"
+        );
+        // Повторное событие без повышения уровня — новой строки нет.
+        let second = serde_json::json!({
+            "profession": {
+                "id": "skinning", "rank": 1, "level": 14,
+                "xp": 18, "xp_to_next": 53, "extra": {}
+            },
+            "name": "Снятие шкур",
+            "gain": 10
+        });
+        store.apply_event("evt/craft/profession", Some(second));
+        let lines = log(&store);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|t| t.as_str() == "Уровень профессии Снятие шкур: 14")
+                .count(),
+            1,
+            "уровень логируется один раз: {lines:?}"
+        );
+    }
 
     /// M14/F4: глобальный кулдаун — 1 с; повтор не укорачивает окно.
     #[test]
@@ -3432,6 +3985,40 @@ mod tests {
         assert!(store.pending.is_none());
     }
 
+    /// M23: ack `entity.info` для окна подятия кладётся в `pickup` и
+    /// НЕ перетирает модалку осмотра (`entity_detail`) — окна независимы.
+    #[test]
+    fn pickup_ack_sets_pickup_not_examine() {
+        let mut store = in_game();
+        store.entity_detail = Some(serde_json::json!({"entity": {"name": "осмотр"}}));
+        store.on_world_sent(Act::PickupInfo);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            9,
+            None,
+            &serde_json::json!({
+                "entity": {"id": "cor_1", "name": "Волк", "kind": "corpse"},
+                "loot": [ { "uid": "loot:cor_1:0", "type": "hide", "name": "Шкура" } ],
+                "inner": [],
+                "was_player": false,
+                "looted": false
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let pickup = store.pickup.as_ref().expect("окно подятия");
+        assert_eq!(pickup["entity"]["id"], "cor_1", "лут трупа");
+        assert_eq!(
+            store.entity_detail.as_ref().expect("осмотр")["entity"]["name"],
+            "осмотр",
+            "модалка осмотра не тронута"
+        );
+        assert!(store.pending.is_none());
+        // Ошибка (`E_TARGET_GONE`) — в мир, данные очищаются при
+        // смене локации/выходе (как у entity_detail).
+        store.pickup = None;
+        assert!(store.pickup.is_none());
+    }
+
     /// M18/F35: ack `npc.talk` открывает окно диалога (реплики + квесты);
     /// `evt/quest/updated` с невидимой фазой убирает квест из списка окна.
     #[test]
@@ -4091,6 +4678,7 @@ mod tests {
         // Патч целым предметом (сокеты после инкрустации).
         let mut full = fixtures::staff_item();
         full.sockets.as_mut().unwrap()[1].rune = Some(ld2_protocol::types::RuneInfo {
+            class: None,
             damage: None,
             def_id: None,
             name: "Руна льда".into(),
@@ -4421,6 +5009,29 @@ mod tests {
         assert!(store.crime_log_loaded);
         assert_eq!(store.crime_log.len(), 1);
         assert_eq!(store.crime_log[0].delta_s, 3471);
+    }
+
+    /// M25: журнал исчезающий — строки старше TTL удаляются, свежие
+    /// остаются; ttl <= 0 — ничего не удаляется.
+    #[test]
+    fn expire_log_removes_old_entries() {
+        let mut store = in_game();
+        store.log.clear(); // истечение — от старого конца
+        let base = store.log.len();
+        store.push_log(LogKind::System, "старая");
+        store.log.back_mut().expect("строка").at = local_epoch_ms() - 31_000;
+        store.push_log(LogKind::System, "свежая");
+        assert!(store.expire_log(local_epoch_ms(), 30), "старая удалена");
+        assert_eq!(store.log.len(), base + 1, "свежая осталась");
+        assert_eq!(store.log.back().expect("строка").text, "свежая");
+        // ttl <= 0 — не удаляем (сервер запретил истечение).
+        store.push_log(LogKind::System, "давняя");
+        store.log.back_mut().expect("строка").at = local_epoch_ms() - 60_000;
+        assert!(
+            !store.expire_log(local_epoch_ms(), 0),
+            "ttl0 — без истечения"
+        );
+        assert_eq!(store.log.len(), base + 2, "ничего не удалено");
     }
 
     #[test]
