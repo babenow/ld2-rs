@@ -42,8 +42,9 @@ pub struct DropEntry {
     pub chance: f64,
 }
 
-/// Бросок шанса (0..1): getrandom уже в графе (auth/tick).
-fn roll_chance(chance: f64) -> bool {
+/// Бросок шанса (0..1) — CSPRNG (getrandom); R7: публичный для
+/// боевых/заточных бросков (wall-clock-хэш позволял угадывать исход).
+pub fn roll_chance(chance: f64) -> bool {
     if chance >= 1.0 {
         return true;
     }

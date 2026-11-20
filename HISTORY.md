@@ -5,6 +5,15 @@
 
 ## 2026-11-20
 
+- **Рефакторинг, партия B** (по `plans/REVIEW-M25.md`): **R6** —
+  shop.buy / quest.turn_in / skill.train — одной транзакцией
+  (ядра `consume_by_def_tx`/`consume_money_tx`/`grant_stacking_tx`/
+  `insert_by_type_tx`/`invest_core` в db; обрыв больше не дюпает
+  и не теряет); **R7** — броски заточки и побега — CSPRNG
+  (`world::roll_chance`), wall-clock-хэш угадывался; **R9** — сделка:
+  лок и клон под одним мьютексом + перепроверка version/locked перед
+  исполнением; **R14** — HP атомарно (`damage_hp`/`heal_hp` с
+  RETURNING), зелье — расход до лечения (e2e `potion.rs`).
 - **Рефакторинг, партия A** (по `plans/REVIEW-M25.md`): **R1** —
   межгильдейский кик закрыт (`db::guilds::membership`, kick по
   `guild_id`, e2e «кик из чужой гильдии невозможен»); **R2** — guard

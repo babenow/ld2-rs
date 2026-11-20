@@ -741,6 +741,201 @@ pub async fn consume_money(
     Ok(Some(changes))
 }
 
+// ═══ R6 (REVIEW-M25): ядра на переданной транзакции — покупки,
+// награды квестов и обучение исполняются одной транзакцией
+// (эталон — trade_execute); ошибка любого шага откатывает всё. ═══
+
+/// R6: consume_by_def на внешней транзакции (shop.buy, skill.train).
+pub async fn consume_by_def_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    char_id: &str,
+    def_id: &str,
+    need: i64,
+) -> Result<Option<Vec<(String, Option<i64>)>>, sqlx::Error> {
+    if need <= 0 {
+        return Ok(Some(Vec::new()));
+    }
+    let have: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(qty), 0) FROM items WHERE character_id = $1 AND def_id = $2",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if have < need {
+        return Ok(None);
+    }
+    let rows: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT uid, qty FROM items WHERE character_id = $1 AND def_id = $2 \
+         ORDER BY created_at, uid",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut left = need;
+    let mut changes = Vec::new();
+    for (uid, qty) in rows {
+        if left <= 0 {
+            break;
+        }
+        let take = i64::from(qty).min(left);
+        left -= take;
+        let rest = qty - take as i32;
+        if rest <= 0 {
+            sqlx::query("DELETE FROM items WHERE uid = $1")
+                .bind(&uid)
+                .execute(&mut **tx)
+                .await?;
+            changes.push((uid, None));
+        } else {
+            sqlx::query("UPDATE items SET qty = $2 WHERE uid = $1")
+                .bind(&uid)
+                .bind(i64::from(rest))
+                .execute(&mut **tx)
+                .await?;
+            changes.push((uid, Some(i64::from(rest))));
+        }
+    }
+    Ok(Some(changes))
+}
+
+/// R6: consume_money на внешней транзакции (skill.train).
+pub async fn consume_money_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    char_id: &str,
+    need: i64,
+) -> Result<Option<Vec<(String, Option<i64>)>>, sqlx::Error> {
+    if need <= 0 {
+        return Ok(Some(Vec::new()));
+    }
+    let have: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(i.qty), 0) FROM items i \
+         JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = $2",
+    )
+    .bind(char_id)
+    .bind(MONEY_TYPE)
+    .fetch_one(&mut **tx)
+    .await?;
+    if have < need {
+        return Ok(None);
+    }
+    let rows: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT i.uid, i.qty FROM items i \
+         JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.character_id = $1 AND d.item_type = $2 \
+         ORDER BY i.created_at, i.uid",
+    )
+    .bind(char_id)
+    .bind(MONEY_TYPE)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut left = need;
+    let mut changes = Vec::new();
+    for (uid, qty) in rows {
+        if left <= 0 {
+            break;
+        }
+        let take = i64::from(qty).min(left);
+        left -= take;
+        let rest = qty - take as i32;
+        if rest <= 0 {
+            sqlx::query("DELETE FROM items WHERE uid = $1")
+                .bind(&uid)
+                .execute(&mut **tx)
+                .await?;
+            changes.push((uid, None));
+        } else {
+            sqlx::query("UPDATE items SET qty = $2 WHERE uid = $1")
+                .bind(&uid)
+                .bind(i64::from(rest))
+                .execute(&mut **tx)
+                .await?;
+            changes.push((uid, Some(i64::from(rest))));
+        }
+    }
+    Ok(Some(changes))
+}
+
+/// R6: grant_stacking на внешней транзакции (shop.buy).
+pub async fn grant_stacking_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    char_id: &str,
+    def_id: &str,
+    qty: i64,
+) -> Result<(ItemRow, bool), sqlx::Error> {
+    // M18/F58f: складываем только в «простой» стак (без состояния).
+    let existing: Option<(String, i32)> = sqlx::query_as(
+        "SELECT uid, qty FROM items WHERE character_id = $1 AND def_id = $2 \
+         AND upgrade = 0 AND sockets = '[]'::jsonb \
+         AND (bonuses IS NULL OR bonuses::text IN ('[]', 'null', '{}')) \
+         ORDER BY created_at, uid LIMIT 1",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some((uid, cur)) = existing {
+        let new_qty = i64::from(cur) + qty;
+        sqlx::query("UPDATE items SET qty = $2 WHERE uid = $1")
+            .bind(&uid)
+            .bind(new_qty)
+            .execute(&mut **tx)
+            .await?;
+        let row: ItemRow = sqlx::query_as(
+            "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses \
+             FROM items WHERE uid = $1",
+        )
+        .bind(&uid)
+        .fetch_one(&mut **tx)
+        .await?;
+        return Ok((row, true));
+    }
+    let row: ItemRow = sqlx::query_as(
+        "INSERT INTO items (character_id, def_id, qty, sort_order) \
+         VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
+         FROM items WHERE character_id = $1), 0)) \
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .bind(qty)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok((row, false))
+}
+
+/// R6: insert_by_type на внешней транзакции (награды квестов).
+pub async fn insert_by_type_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    char_id: &str,
+    item_type: &str,
+    qty: i64,
+) -> Result<Option<ItemRow>, sqlx::Error> {
+    let by_id: Option<String> = sqlx::query_scalar("SELECT id FROM item_defs WHERE id = $1")
+        .bind(item_type)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let def_id = match by_id {
+        Some(id) => Some(id),
+        None => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM item_defs WHERE item_type = $1 ORDER BY id LIMIT 1",
+            )
+            .bind(item_type)
+            .fetch_optional(&mut **tx)
+            .await?
+        }
+    };
+    let Some(def_id) = def_id else {
+        return Ok(None);
+    };
+    grant_stacking_tx(tx, char_id, &def_id, qty)
+        .await
+        .map(|(row, _)| Some(row))
+}
+
 /// M16/F29g: поменять местами порядок двух предметов (перетаскивание
 /// в рюкзаке); оба должны принадлежать персонажу. `false` — предмета
 /// нет (ничего не изменено).

@@ -953,8 +953,19 @@ async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String
             return Vec::new();
         }
     };
-    let new_hp = (i64::from(row.hp_cur) - hit.amount).max(0);
-    if new_hp == 0 {
+    // R14: атомарный относительный урон — GREATEST(0, hp_cur - урон)
+    // с RETURNING; абсолютная запись (как и зелье) теряла урон/лечение
+    // при параллельном применении.
+    let (hp_cur, hp_max) =
+        match crate::db::characters::damage_hp(pool, &hit.char_id, hit.amount).await {
+            Ok(Some(pair)) => pair,
+            Ok(None) => return Vec::new(), // персонаж исчез (смерть параллельно)
+            Err(e) => {
+                warn!("тик (hp {}): {e}", hit.char_id);
+                return Vec::new();
+            }
+        };
+    if hp_cur == 0 {
         // Смерть: позиция после респауна — источник истины для мира.
         let mut events = crate::death::kill_character(state, &hit.char_id).await;
         if let Ok(Some(row)) = crate::db::characters::get(pool, &hit.char_id).await {
@@ -968,12 +979,8 @@ async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(String, String
         }
         return events;
     }
-    if let Err(e) = crate::db::characters::set_hp(pool, &hit.char_id, new_hp as i32).await {
-        warn!("тик (hp {}): {e}", hit.char_id);
-        return Vec::new();
-    }
     let mut patch = serde_json::Map::new();
-    patch.insert("hp".into(), json!({ "cur": new_hp, "max": row.hp_max }));
+    patch.insert("hp".into(), json!({ "cur": hp_cur, "max": hp_max }));
     // M17/F30e: ярость воина за полученный урон — в тот же патч mp.
     if row.profile == "warrior" {
         let res = &state.config.gameplay.resource;

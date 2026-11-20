@@ -1760,9 +1760,9 @@ impl Session {
             return vec![Self::err(seq, ErrorCode::NotInLocation, "вы не в бою")];
         }
         let cfg = &self.state.config.gameplay.combat;
-        // Детерминированный «случай» по времени (без rand-зависимости).
-        let roll = (crate::time::now_ms() % 100) as f64 / 100.0;
-        let fled = roll < cfg.flee_chance;
+        // R7: CSPRNG — две последние цифры времени полностью обходили
+        // шанс побега (спам побегом каждый мс).
+        let fled = crate::world::roll_chance(cfg.flee_chance);
         {
             let mut world = self.state.world.lock().expect("мир");
             if fled {
@@ -2196,22 +2196,77 @@ impl Session {
             )];
         }
         // Плата тренеру (золото + предметы из диалога) — проверки до
-        // списаний (паттерн M14/F5).
-        let money_events = match self
-            .pay_dialog_fee(seq, &char_id, entry.gold, &entry.items)
-            .await
-        {
-            Ok(events) => events,
-            Err(e) => return vec![e],
-        };
-        let pool_left = pool_now - entry.points;
-        // Ранг +1, шкала обнуляется (заполняется использованием заново).
-        if let Err(e) =
-            db::skills::invest_tx(pool, &char_id, &cmd.skill_id, 0, next, pool_left).await
-        {
-            warn!("skill.train (транзакция): {e}");
-            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        // транзакции (паттерн M14/F5).
+        if entry.gold > 0 {
+            match db::items::count_by_type(pool, &char_id, db::items::MONEY_TYPE).await {
+                Ok(have) if have >= entry.gold => {}
+                Ok(have) => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("не хватает золота: {} (есть {have})", entry.gold),
+                    )];
+                }
+                Err(e) => {
+                    warn!("skill.train (монеты): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
         }
+        if !entry.items.is_empty() {
+            let inventory = match db::items::inventory(pool, &char_id).await {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!("skill.train (инвентарь): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            for item in &entry.items {
+                let have: i64 = inventory
+                    .iter()
+                    .filter(|row| row.def_id == item.def_id)
+                    .map(|row| i64::from(row.qty))
+                    .sum();
+                if have < item.qty {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::Ingredients,
+                        format!("нужен предмет: {} ×{} (есть {have})", item.def_id, item.qty),
+                    )];
+                }
+            }
+        }
+        // R6: списание платы и вклад очков — одной транзакцией; обрыв
+        // списания больше не теряет уже списанное (откат всего).
+        let (money_events, pool_left) = {
+            let mut tx = match pool.begin().await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    warn!("skill.train (tx): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            };
+            let events = match self
+                .pay_dialog_fee(&mut tx, seq, &char_id, entry.gold, &entry.items)
+                .await
+            {
+                Ok(events) => events,
+                Err(e) => return vec![e],
+            };
+            let pool_left = pool_now - entry.points;
+            // Ранг +1, шкала обнуляется (заполняется использованием заново).
+            if let Err(e) =
+                db::skills::invest_core(&mut tx, &char_id, &cmd.skill_id, 0, next, pool_left).await
+            {
+                warn!("skill.train (вклад): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            if let Err(e) = tx.commit().await {
+                warn!("skill.train (commit): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            (events, pool_left)
+        };
         let mut outs = vec![
             Self::ack_payload(
                 seq,
@@ -2242,58 +2297,20 @@ impl Session {
     }
 
     /// M18/F44: плата за обучение из контента диалога (ADR-009) — золото
-    /// монетами, предметы по `def_id`; все проверки до списаний
-    /// (паттерн `pay_trainer` M14/F5).
+    /// монетами, предметы по `def_id`. R6: списания — на внешней
+    /// транзакции (проверки сделаны в skill_train до begin; паттерн
+    /// `pay_trainer` M14/F5).
     async fn pay_dialog_fee(
         &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         seq: u32,
         char_id: &str,
         gold: i64,
         items: &[crate::dialogs::TrainingItem],
     ) -> Result<Vec<Out>, Out> {
-        let pool = &self.state.pool;
-        if gold > 0 {
-            match db::items::count_by_type(pool, char_id, db::items::MONEY_TYPE).await {
-                Ok(have) if have >= gold => {}
-                Ok(have) => {
-                    return Err(Self::err(
-                        seq,
-                        ErrorCode::Ingredients,
-                        format!("не хватает золота: {gold} (есть {have})"),
-                    ));
-                }
-                Err(e) => {
-                    warn!("skill.train (монеты): {e}");
-                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
-                }
-            }
-        }
-        if !items.is_empty() {
-            let inventory = match db::items::inventory(pool, char_id).await {
-                Ok(rows) => rows,
-                Err(e) => {
-                    warn!("skill.train (инвентарь): {e}");
-                    return Err(Self::err(seq, ErrorCode::Internal, "внутренняя ошибка"));
-                }
-            };
-            for item in items {
-                let have: i64 = inventory
-                    .iter()
-                    .filter(|row| row.def_id == item.def_id)
-                    .map(|row| i64::from(row.qty))
-                    .sum();
-                if have < item.qty {
-                    return Err(Self::err(
-                        seq,
-                        ErrorCode::Ingredients,
-                        format!("нужен предмет: {} ×{} (есть {have})", item.def_id, item.qty),
-                    ));
-                }
-            }
-        }
         let mut events = Vec::new();
         if gold > 0 {
-            match db::items::consume_money(pool, char_id, gold).await {
+            match db::items::consume_money_tx(tx, char_id, gold).await {
                 Ok(Some(changes)) => events.extend(Self::money_events(changes)),
                 Ok(None) => {
                     return Err(Self::err(
@@ -2309,7 +2326,7 @@ impl Session {
             }
         }
         for item in items {
-            match db::items::consume_by_def(pool, char_id, &item.def_id, item.qty).await {
+            match db::items::consume_by_def_tx(tx, char_id, &item.def_id, item.qty).await {
                 Ok(Some(changes)) => events.extend(Self::money_events(changes)),
                 Ok(None) => {
                     return Err(Self::err(
@@ -2431,22 +2448,10 @@ impl Session {
         // Зелье: heal из stats (открытый объект §6).
         if def.item_type == "potion" {
             if let Some(heal) = def.stats.get("heal").and_then(|v| v.as_i64()) {
-                let row = match db::characters::get(pool, &char_id).await {
-                    Ok(Some(row)) => row,
-                    Ok(None) => {
-                        return vec![Self::err(seq, ErrorCode::NameTaken, "персонаж не найден")];
-                    }
-                    Err(e) => {
-                        warn!("item.use (персонаж): {e}");
-                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                    }
-                };
-                let max = i64::from(row.hp_max);
-                let new_cur = (i64::from(row.hp_cur).min(max) + heal).min(max);
-                if let Err(e) = db::characters::set_hp(pool, &char_id, new_cur as i32).await {
-                    warn!("item.use (hp): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                }
+                // R14: сначала расходуем зелье (ошибка списания — лечения
+                // нет, повторное лечение исключено), затем атомарное
+                // относительное лечение LEAST(hp_max, hp_cur + heal) —
+                // гонка с тик-уроном не теряет ни урон, ни лечение.
                 let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
                 if item.qty > 1 {
                     let new_qty = i64::from(item.qty) - 1;
@@ -2480,10 +2485,18 @@ impl Session {
                         .unwrap_or_default(),
                     ));
                 }
+                let Some((hp_cur, hp_max)) = db::characters::heal_hp(pool, &char_id, heal)
+                    .await
+                    .ok()
+                    .flatten()
+                else {
+                    warn!("item.use (hp): персонаж не найден");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                };
                 let mut patch = serde_json::Map::new();
                 patch.insert(
                     "hp".into(),
-                    serde_json::json!({ "cur": new_cur, "max": max }),
+                    serde_json::json!({ "cur": hp_cur, "max": hp_max }),
                 );
                 outs.push(out_event(
                     "evt/char/stats",
@@ -7285,7 +7298,9 @@ impl Session {
         // камня × рейты сервера).
         let base = crate::systems::upgrade_chance(i64::from(level), &cfg);
         let chance = self.sharpen_chance(base, preview.stone_quality, level);
-        let success = crate::systems::upgrade_roll(crate::time::now_ms()) < chance;
+        // R7: CSPRNG — wall-clock-хэш позволял угадывать «удачные» мс
+        // и обходить провалы (камень/золото/поломка предмета).
+        let success = crate::world::roll_chance(chance);
         let rule = crate::systems::UpgradeFailRule::parse(
             self.state
                 .config
@@ -7957,9 +7972,11 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
-        let both_locked = {
+        // R9: лок и клон сделки — под одним локом мьютекса (между
+        // двумя скоупами партнёр успевал изменить состав/версию).
+        let (both_locked, trade) = {
             let mut social = self.state.social.lock().expect("соц");
-            match social.trade_lock(&char_id, &cmd.offer_id, cmd.version) {
+            let both_locked = match social.trade_lock(&char_id, &cmd.offer_id, cmd.version) {
                 Ok(locked) => locked,
                 Err(e) => {
                     drop(social);
@@ -7969,11 +7986,8 @@ impl Session {
                     };
                     return vec![Self::err(seq, code, e.message())];
                 }
-            }
-        };
-        let trade = {
-            let social = self.state.social.lock().expect("соц");
-            social.trade(&cmd.offer_id).cloned()
+            };
+            (both_locked, social.trade(&cmd.offer_id).cloned())
         };
         let Some(trade) = trade else {
             return vec![Self::err(
@@ -7986,6 +8000,25 @@ impl Session {
             self.trade_broadcast_state(&trade).await;
             return vec![Self::ack_payload(seq, &serde_json::json!({}))];
         }
+        // R9: исполнение — только если обе стороны всё ещё заблокированы
+        // и версия не изменилась (изменение состава бампает version и
+        // снимает блокировки; исполнение неподтверждённого клона =
+        // обход партнёра).
+        let confirmed = {
+            let social = self.state.social.lock().expect("соц");
+            social
+                .trade(&trade.id)
+                .filter(|t| t.version == trade.version && t.side_a.locked && t.side_b.locked)
+                .cloned()
+        };
+        let Some(trade) = confirmed else {
+            self.trade_broadcast_state(&trade).await;
+            return vec![Self::err(
+                seq,
+                ErrorCode::TradeStale,
+                "сделка изменилась — подтвердите заново",
+            )];
+        };
         // Оба заблокированы → исполнение одной транзакцией (предметы+золото).
         match self.trade_execute(&trade).await {
             Ok(result) => {
@@ -10067,32 +10100,51 @@ impl Session {
             )];
         }
 
-        // 1) Списание валюты (все проверки прошли; события — после ack).
-        let money_events =
-            match db::items::consume_by_def(pool, &char_id, &cmd.currency, price).await {
-                Ok(Some(changes)) => Self::money_events(changes),
-                Ok(None) => {
-                    return vec![Self::err(
-                        seq,
-                        ErrorCode::NotEnoughMoney,
-                        format!("не хватает {}: {price}", currency_def.name),
-                    )];
-                }
-                Err(e) => {
-                    warn!("shop.buy (валюта): {e}");
+        // R6: списание валюты и выдача товара — одной транзакцией;
+        // ошибка выдачи откатывает списание (дюп/потеря невозможны).
+        let (money_events, row, stacked) =
+            {
+                let mut tx = match pool.begin().await {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        warn!("shop.buy (tx): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                };
+                let changes =
+                    match db::items::consume_by_def_tx(&mut tx, &char_id, &cmd.currency, price)
+                        .await
+                    {
+                        Ok(Some(changes)) => changes,
+                        Ok(None) => {
+                            return vec![Self::err(
+                                seq,
+                                ErrorCode::NotEnoughMoney,
+                                format!("не хватает {}: {price}", currency_def.name),
+                            )];
+                        }
+                        Err(e) => {
+                            warn!("shop.buy (валюта): {e}");
+                            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                        }
+                    };
+                // Выдача товара (партия = qty стака из контента).
+                let unit_qty = i64::from(item_def.qty).max(1);
+                let (row, stacked) =
+                    match db::items::grant_stacking_tx(&mut tx, &char_id, &cmd.def_id, unit_qty)
+                        .await
+                    {
+                        Ok(pair) => pair,
+                        Err(e) => {
+                            warn!("shop.buy (выдача): {e}");
+                            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                        }
+                    };
+                if let Err(e) = tx.commit().await {
+                    warn!("shop.buy (commit): {e}");
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                 }
-            };
-
-        // 2) Выдача товара (партия = qty стака из контента).
-        let unit_qty = i64::from(item_def.qty).max(1);
-        let (row, stacked) =
-            match db::items::grant_stacking(pool, &char_id, &cmd.def_id, unit_qty).await {
-                Ok(pair) => pair,
-                Err(e) => {
-                    warn!("shop.buy (выдача): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                }
+                (Self::money_events(changes), row, stacked)
             };
 
         let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
@@ -10312,35 +10364,60 @@ impl Session {
                             .collect()
                     })
                     .unwrap_or_default();
-                if reward_xp > 0 {
-                    if let Err(e) = db::characters::add_xp_pool(pool, &char_id, reward_xp).await {
-                        warn!("quest (награда XP): {e}");
-                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                // R6: награда и завершение — одной транзакцией; обрыв
+                // после выдачи награды больше не оставляет квест
+                // «к сдаче» (повторная сдача = дюп XP/предметов).
+                {
+                    let mut tx = match pool.begin().await {
+                        Ok(tx) => tx,
+                        Err(e) => {
+                            warn!("quest (tx): {e}");
+                            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                        }
+                    };
+                    if reward_xp > 0 {
+                        if let Err(e) =
+                            db::characters::add_xp_pool(&mut *tx, &char_id, reward_xp).await
+                        {
+                            warn!("quest (награда XP): {e}");
+                            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                        }
                     }
-                }
-                for (item_type, qty) in &reward_items {
-                    if let Err(e) = db::items::insert_by_type(pool, &char_id, item_type, *qty).await
+                    for (item_type, qty) in &reward_items {
+                        if let Err(e) =
+                            db::items::insert_by_type_tx(&mut tx, &char_id, item_type, *qty).await
+                        {
+                            warn!("quest (награда предмет): {e}");
+                            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                        }
+                    }
+                    if let Err(e) =
+                        db::quests::set_state(&mut *tx, &char_id, &quest_id, "done").await
                     {
-                        warn!("quest (награда предмет): {e}");
+                        warn!("quest (done): {e}");
                         return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                     }
-                }
-                if let Err(e) = db::quests::set_state(pool, &char_id, &quest_id, "done").await {
-                    warn!("quest (done): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                }
-                // M21: применить награду-ранг (граница проверена выше).
-                if let Some((prof_id, xp, new_rank, level)) = self.pending_rank_up.take() {
-                    if let Err(e) = db::professions::grant_progress(
-                        pool, &char_id, &prof_id, xp, new_rank, level,
-                    )
-                    .await
-                    {
-                        warn!("quest (rank_up {prof_id}): {e}");
+                    // M21: применить награду-ранг (граница проверена выше).
+                    if let Some((prof_id, xp, new_rank, level)) = self.pending_rank_up.take() {
+                        if let Err(e) = db::professions::grant_progress(
+                            &mut *tx, &char_id, &prof_id, xp, new_rank, level,
+                        )
+                        .await
+                        {
+                            warn!("quest (rank_up {prof_id}): {e}");
+                            return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                        }
+                        rank_up_evt = Some(self.profession_snapshot(
+                            &prof_id,
+                            xp,
+                            new_rank,
+                            level.max(0) as u32,
+                        ));
+                    }
+                    if let Err(e) = tx.commit().await {
+                        warn!("quest (commit): {e}");
                         return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                     }
-                    rank_up_evt =
-                        Some(self.profession_snapshot(&prof_id, xp, new_rank, level.max(0) as u32));
                 }
             }
             _ => {

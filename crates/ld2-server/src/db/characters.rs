@@ -133,6 +133,41 @@ pub async fn set_hp(pool: &PgPool, char_id: &str, hp_cur: i32) -> Result<(), sql
     Ok(())
 }
 
+/// R14: атомарный относительный урон — `GREATEST(0, hp_cur - $1)`
+/// с RETURNING (гонка тик-урона и лечения больше не теряет урон —
+/// обе стороны писали абсолютное значение). `None` — персонажа нет.
+pub async fn damage_hp(
+    pool: &PgPool,
+    char_id: &str,
+    amount: i64,
+) -> Result<Option<(i32, i32)>, sqlx::Error> {
+    sqlx::query_as::<_, (i32, i32)>(
+        "UPDATE characters SET hp_cur = GREATEST(0, hp_cur - $2) \
+         WHERE id = $1 AND deleted_at IS NULL RETURNING hp_cur, hp_max",
+    )
+    .bind(char_id)
+    .bind(i32::try_from(amount.max(0)).unwrap_or(i32::MAX))
+    .fetch_optional(pool)
+    .await
+}
+
+/// R14: атомарное относительное лечение — `LEAST(hp_max, hp_cur + $1)`
+/// с RETURNING (клампится к максимуму). `None` — персонажа нет.
+pub async fn heal_hp(
+    pool: &PgPool,
+    char_id: &str,
+    amount: i64,
+) -> Result<Option<(i32, i32)>, sqlx::Error> {
+    sqlx::query_as::<_, (i32, i32)>(
+        "UPDATE characters SET hp_cur = LEAST(hp_max, hp_cur + $2) \
+         WHERE id = $1 AND deleted_at IS NULL RETURNING hp_cur, hp_max",
+    )
+    .bind(char_id)
+    .bind(i32::try_from(amount.max(0)).unwrap_or(i32::MAX))
+    .fetch_optional(pool)
+    .await
+}
+
 /// Текущая мана (реген по тику, §2.4; M12.5b).
 pub async fn set_mp(pool: &PgPool, char_id: &str, mp_cur: i32) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE characters SET mp_cur = $2 WHERE id = $1")
@@ -195,13 +230,19 @@ pub async fn soft_delete(
 }
 
 /// Начислить XP в пул (награды квестов, D3/D4) → новый пул.
-pub async fn add_xp_pool(pool: &PgPool, char_id: &str, amount: i64) -> Result<i64, sqlx::Error> {
+/// Начислить XP в пул (награды квестов, D3/D4) → новый пул.
+/// R6: исполнитель — параметр (pool или внешняя транзакция).
+pub async fn add_xp_pool<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    exec: E,
+    char_id: &str,
+    amount: i64,
+) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "UPDATE characters SET xp_pool = xp_pool + $2 WHERE id = $1 RETURNING xp_pool",
     )
     .bind(char_id)
     .bind(amount)
-    .fetch_one(pool)
+    .fetch_one(exec)
     .await
 }
 

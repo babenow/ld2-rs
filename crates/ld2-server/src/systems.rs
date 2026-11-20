@@ -243,8 +243,8 @@ pub fn upgrade_chance_with_stone(
     ((base + stone_bonus) * rates_chance).clamp(0.0, 1.0)
 }
 
-/// Бросок улучшения: `roll ∈ [0,1)` против шанса (v1: источник — время,
-/// детерминизма не обещаем; тесты выставляют шанс 0/1).
+/// Детерминированный бросок улучшения (`roll ∈ [0,1)`) — только для
+/// юнит-тестов; продакшн — `world::roll_chance` (CSPRNG, R7).
 pub fn upgrade_roll(now_ms: i64) -> f64 {
     // Взбитое время — без rand-зависимости (как в combat.flee).
     let mixed = now_ms.wrapping_mul(0x9E37_79B9_7F4A_7C15_u64 as i64);

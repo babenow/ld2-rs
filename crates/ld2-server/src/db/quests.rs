@@ -58,8 +58,10 @@ pub async fn accept(
 }
 
 /// Смена состояния (active → turn_in → done); `false` — квеста нет.
-pub async fn set_state(
-    pool: &PgPool,
+/// Смена состояния (active → turn_in → done); `false` — квеста нет.
+/// R6: исполнитель — параметр (pool или внешняя транзакция).
+pub async fn set_state<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    exec: E,
     char_id: &str,
     quest_id: &str,
     state: &str,
@@ -71,7 +73,7 @@ pub async fn set_state(
     .bind(char_id)
     .bind(quest_id)
     .bind(state)
-    .execute(pool)
+    .execute(exec)
     .await?;
     Ok(result.rows_affected() == 1)
 }
