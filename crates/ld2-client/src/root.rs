@@ -1323,19 +1323,18 @@ impl Root {
                     }),
             );
             // «Все» — мгновенно максимум (заказчик).
-            let all_this = cx.entity();
             body = body.child(div().flex().flex_row().gap_2().child(act_btn(
                 cx,
                 t(lang, Key::QtyAll),
                 pal.panel,
                 pal.text,
-                move |_, _cx| {
-                    all_this.update(_cx, |root, cx| {
-                        if let Some(p) = root.drop_confirm.as_mut() {
-                            p.qty = p.max;
-                        }
-                        cx.notify();
-                    });
+                move |this, cx| {
+                    // this — уже Root в обновлении; реентерантный
+                    // entity.update себя же = краш.
+                    if let Some(p) = this.drop_confirm.as_mut() {
+                        p.qty = p.max;
+                    }
+                    cx.notify();
                 },
             )));
         }
