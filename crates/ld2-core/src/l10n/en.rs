@@ -204,6 +204,8 @@ pub(super) fn t(key: Key) -> &'static str {
         ChNeedGuild => "You are not in a guild — channel unavailable",
         EffectBurn => "Burning",
         PerTick => "/tick",
+        StatCost => "Cost",
+        StatClass => "Class",
         StateActive => "taken",
         StateTurnIn => "ready",
         StateDone => "done",

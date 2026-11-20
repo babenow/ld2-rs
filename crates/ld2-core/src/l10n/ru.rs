@@ -204,6 +204,8 @@ pub(super) fn t(key: Key) -> &'static str {
         ChNeedGuild => "Вы не в гильдии — канал недоступен",
         EffectBurn => "Горение",
         PerTick => "/тик",
+        StatCost => "Цена",
+        StatClass => "Класс",
         StateActive => "взят",
         StateTurnIn => "к сдаче",
         StateDone => "выполнен",

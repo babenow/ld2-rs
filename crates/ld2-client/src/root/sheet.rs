@@ -2233,15 +2233,22 @@ impl Root {
                     ));
                     continue;
                 }
-                if key == "buff" {
+                if key.starts_with("buff") && value.is_object() {
+                    // Баффы рун (buff/buff2/…) — читаемые строки, не JSON:
+                    // «Урон: +10% · 12с · ×2» (pct — знак %).
                     if let Some(b) = value.as_object() {
                         let param = b.get("param").and_then(|v| v.as_str()).unwrap_or("");
                         let val = b.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let pct = b.get("pct").and_then(|v| v.as_bool()).unwrap_or(false);
                         let dur = b.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(0);
                         let stacks = b.get("max_stacks").and_then(|v| v.as_i64()).unwrap_or(1);
                         col = col.child(kv(
                             param_label(lang, param),
-                            format!("+{val} · {} · ×{stacks}", format_duration(lang, dur)),
+                            format!(
+                                "+{val}{} · {} · ×{stacks}",
+                                if pct { "%" } else { "" },
+                                format_duration(lang, dur)
+                            ),
                         ));
                     }
                     continue;
@@ -2272,12 +2279,26 @@ impl Root {
                     }
                     continue;
                 }
+                // Заказчик 2026-11-20: неразобранный JSON в описании
+                // не показываем — незнакомые структурные поля контента
+                // (объекты/массивы) пропускаем, а не сваливаем строкой.
+                if value.is_object() || value.is_array() {
+                    continue;
+                }
                 let raw = value
                     .as_str()
                     .map(str::to_string)
                     .unwrap_or_else(|| value.to_string());
                 let value = if key == "school" {
                     school_label(lang, &raw)
+                } else if key == "class" {
+                    // Класс руны: warrior/mage/archer → метка языка.
+                    match raw.as_str() {
+                        "warrior" => t(lang, Key::ProfileWarrior).to_string(),
+                        "mage" => t(lang, Key::ProfileMage).to_string(),
+                        "archer" => t(lang, Key::ProfileArcher).to_string(),
+                        _ => raw.clone(),
+                    }
                 } else if key == "attr" {
                     // M17/F30c: значение самоцвета — «str» → «Сила».
                     attr_label(lang, &raw)
@@ -3344,6 +3365,9 @@ pub(crate) fn stat_label(lang: Lang, stat: &str) -> String {
         "value" => t(lang, Key::StatValue),
         // M18/F54: качество камня усиления (процентные пункты).
         "quality" => t(lang, Key::StatQuality),
+        // R-контент: метки статов руны.
+        "cost" => t(lang, Key::StatCost),
+        "class" => t(lang, Key::StatClass),
         other => other,
     }
     .to_string()

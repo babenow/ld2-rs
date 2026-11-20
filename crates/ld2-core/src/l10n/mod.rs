@@ -267,6 +267,9 @@ pub enum Key {
     EffectBurn,
     /// R-контент: «за тик» (burn с периодом из контента).
     PerTick,
+    /// R-контент: метки статов руны (описание).
+    StatCost,
+    StatClass,
     RecipesLabel,
     BtnCraft,
     LearnLabel,
@@ -887,6 +890,8 @@ mod tests {
         Key::ChNeedGuild,
         Key::EffectBurn,
         Key::PerTick,
+        Key::StatCost,
+        Key::StatClass,
         Key::RecipesLabel,
         Key::BtnCraft,
         Key::LearnLabel,
