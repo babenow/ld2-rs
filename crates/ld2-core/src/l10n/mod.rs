@@ -270,6 +270,9 @@ pub enum Key {
     /// R-контент: метки статов руны (описание).
     StatCost,
     StatClass,
+    /// R-UI (заказчик 2026-11-20): статус-бар логина/выбора — автор
+    /// и версия клиента в центре.
+    StatusBarAuthor,
     /// R-контент: руны-семейства (Искра/Око/Ярость) — названия.
     SpellFlameWord,
     SpellHawksEye,
@@ -898,6 +901,7 @@ mod tests {
         Key::PerTick,
         Key::StatCost,
         Key::StatClass,
+        Key::StatusBarAuthor,
         Key::SpellFlameWord,
         Key::SpellHawksEye,
         Key::SpellWolvesRage,

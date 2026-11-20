@@ -45,6 +45,9 @@ use ely::navigation::Tabs;
 use ely::overlays::Dialog;
 use ely::primitives::IconName;
 use ely::shell::WindowControls;
+/// Автор клиента (статус-бар логина/выбора персонажа, заказчик).
+pub(crate) const AUTHOR: &str = "M. Babenko";
+
 use ely::theme::{Mode, Theme};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
@@ -1073,6 +1076,37 @@ impl Root {
                 200
             },
         )
+    }
+
+    /// Статус-бар экранов логина/выбора персонажа (заказчик): в центре —
+    /// автор и версия клиента, справа — статус сервера.
+    #[allow(unused_variables)] // cx — паритет сигнатуры статус-баров
+    fn meta_status_bar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let status = self.store.transport.clone();
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .border_t_1()
+            .border_color(rgb(pal.border))
+            .flex_shrink_0()
+            .child(div().flex_grow_1())
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(tf(
+                        lang,
+                        Key::StatusBarAuthor,
+                        &[("{author}", AUTHOR), ("{v}", env!("CARGO_PKG_VERSION"))],
+                    )),
+            )
+            .child(div().flex_grow_1())
+            .child(status_badge(pal, lang, &status, self.store.rtt_ms))
     }
 
     fn exec_effects(&mut self, effects: Vec<Effect>) {
@@ -4431,12 +4465,19 @@ impl Render for Root {
                 // size_full внутри даёт 100 % этого контейнера, а не окна
                 // (иначе низ уходил за границу, баг M11).
                 div()
+                    .flex()
+                    .flex_col()
                     .flex_grow_1()
                     .min_h_0()
                     .child(match self.store.screen {
                         Screen::Login => self.login_screen(window, cx, &pal),
                         Screen::Characters => self.characters_screen(cx, &pal),
                         Screen::Game => self.game_screen(cx, &pal),
+                    })
+                    // Статус-бар логина/выбора: автор+версия в центре,
+                    // статус сервера справа (у игры — свой бар с чатом).
+                    .when(self.store.screen != Screen::Game, |d| {
+                        d.child(self.meta_status_bar(cx, &pal))
                     }),
             )
             // M14/F1: статус сервера живёт в шапке (status_badge).

@@ -758,6 +758,21 @@ impl Root {
             );
         }
         bar = bar.child(div().flex_grow_1());
+        // Автор и версия клиента — в центре бара (заказчик).
+        bar = bar.child(
+            div()
+                .text_size(px(12.0))
+                .text_color(rgb(pal.muted))
+                .child(tf(
+                    lang,
+                    Key::StatusBarAuthor,
+                    &[
+                        ("{author}", super::AUTHOR),
+                        ("{v}", env!("CARGO_PKG_VERSION")),
+                    ],
+                )),
+        );
+        bar = bar.child(div().flex_grow_1());
         let status = self.store.transport.clone();
         bar = bar.child(status_badge(pal, lang, &status, self.store.rtt_ms));
         bar

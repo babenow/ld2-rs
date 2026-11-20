@@ -1421,8 +1421,11 @@ impl Root {
                 // границ панели.
                 .border_1()
                 .border_color(rgb(pal.border))
-                // Эпик/легендарка: свечение — пульс ВНУТРЬ (ниже,
-                // в тройной ветке переливания/пульса).
+                // Эпик/легендарка: статичное внутреннее свечение в
+                // покое (анимация — только по наведению, ниже).
+                .when_some(item, |row, item| {
+                    row.shadow(rarity_glow_inset(&item.rarity, pal))
+                })
                 .cursor_pointer()
                 // Подсветка: пустой слот — общий selection, занятый —
                 // цветом предмета (ветки ниже); клик — контекстное меню.
@@ -1595,26 +1598,6 @@ impl Root {
                                 spread_radius: px(0.0),
                                 inset: true,
                             }])
-                    },
-                )
-                .into_any_element()
-            } else if matches!(item.rarity.as_str(), "epic" | "legendary") {
-                // Та же пульсация, что у тултипа, но ВНУТРЬ (заказчик):
-                // inset-тень дышит alpha 0.10…0.50 (~2.5 с).
-                let base = rarity_color(&item.rarity, pal) & 0xff_ffff;
-                row.with_animation(
-                    SharedString::from(format!("glow-pulse-eq:{slot}")),
-                    Animation::new(std::time::Duration::from_millis(2500)).repeat(),
-                    move |el, t| {
-                        let alpha: f32 = (0.30 + 0.20 * (2.0 * std::f32::consts::PI * t).sin())
-                            .clamp(0.10, 0.50);
-                        el.shadow(vec![gpui::BoxShadow {
-                            color: gpui::rgba((base << 8) | (alpha * 255.0) as u32).into(),
-                            offset: gpui::point(px(0.0), px(0.0)),
-                            blur_radius: px(8.0),
-                            spread_radius: px(0.0),
-                            inset: true,
-                        }])
                     },
                 )
                 .into_any_element()
@@ -3405,6 +3388,23 @@ fn menu_item(
 }
 
 /// Цвет редкости предмета (палитра §7.4).
+/// Статичное внутреннее свечение рамки (inset) для эпика/легендарки —
+/// в покое; анимация (переливание) запускается только по наведению
+/// (заказчик 2026-11-20). Пустой vec — без свечения.
+pub(crate) fn rarity_glow_inset(rarity: &str, pal: &Palette) -> Vec<gpui::BoxShadow> {
+    if !matches!(rarity, "epic" | "legendary") {
+        return vec![];
+    }
+    let base = rarity_color(rarity, pal) & 0xff_ffff;
+    vec![gpui::BoxShadow {
+        color: gpui::rgba((base << 8) | 0x40).into(),
+        offset: gpui::point(px(0.0), px(0.0)),
+        blur_radius: px(8.0),
+        spread_radius: px(0.0),
+        inset: true,
+    }]
+}
+
 pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
     match rarity {
         "common" => pal.muted,

@@ -202,6 +202,7 @@ pub(super) fn t(key: Key) -> &'static str {
         MuteFilterLabel => "Profanity filter",
         ChNeedParty => "You are not in a party — channel unavailable",
         ChNeedGuild => "You are not in a guild — channel unavailable",
+        StatusBarAuthor => "Author: {author} · v{v}",
         EffectBurn => "Burning",
         PerTick => "/tick",
         StatCost => "Cost",

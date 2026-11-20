@@ -202,6 +202,7 @@ pub(super) fn t(key: Key) -> &'static str {
         MuteFilterLabel => "Фильтр мата",
         ChNeedParty => "Вы не в группе — канал недоступен",
         ChNeedGuild => "Вы не в гильдии — канал недоступен",
+        StatusBarAuthor => "Автор: {author} · версия {v}",
         EffectBurn => "Горение",
         PerTick => "/тик",
         StatCost => "Цена",

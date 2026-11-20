@@ -343,6 +343,9 @@ impl Root {
                 .bg(rgb(pal.panel))
                 .border_1()
                 .border_color(rgb(pal.border))
+                // Эпик/легендарка: статичное внутреннее свечение в
+                // покое; анимация — только по наведению (заказчик).
+                .shadow(super::sheet::rarity_glow_inset(&item.rarity, pal))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(pal.selection)))
                 .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
@@ -407,26 +410,6 @@ impl Root {
                                 spread_radius: px(0.0),
                                 inset: true,
                             }])
-                    },
-                )
-                .into_any_element()
-            } else if matches!(item.rarity.as_str(), "epic" | "legendary") {
-                // Та же пульсация, что у тултипа, но ВНУТРЬ (заказчик):
-                // inset-тень дышит alpha 0.10…0.50 (~2.5 с).
-                let base = rarity_color(&item.rarity, pal) & 0xff_ffff;
-                tile.with_animation(
-                    SharedString::from(format!("glow-pulse-{hover_key}")),
-                    Animation::new(std::time::Duration::from_millis(2500)).repeat(),
-                    move |el, t| {
-                        let alpha: f32 = (0.30 + 0.20 * (2.0 * std::f32::consts::PI * t).sin())
-                            .clamp(0.10, 0.50);
-                        el.shadow(vec![gpui::BoxShadow {
-                            color: gpui::rgba((base << 8) | (alpha * 255.0) as u32).into(),
-                            offset: gpui::point(px(0.0), px(0.0)),
-                            blur_radius: px(8.0),
-                            spread_radius: px(0.0),
-                            inset: true,
-                        }])
                     },
                 )
                 .into_any_element()
