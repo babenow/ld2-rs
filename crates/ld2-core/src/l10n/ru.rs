@@ -205,7 +205,6 @@ pub(super) fn t(key: Key) -> &'static str {
         StatusBarAuthor => "Автор: {author} · версия {v}",
         DropConfirmTitle => "Выбросить предмет?",
         DropConfirmHint => "{name} упадёт на землю локации — его сможет поднять любой.",
-        SlotMismatch => "Предмет не для этого слота",
         QtyAll => "Все",
         EffectBurn => "Горение",
         PerTick => "/тик",

@@ -276,7 +276,6 @@ pub enum Key {
     /// R-dnd (заказчик 2026-11-21): подтверждение выброса.
     DropConfirmTitle,
     DropConfirmHint,
-    SlotMismatch,
     /// R-dnd: кнопка «Все» (весь стак на выброс).
     QtyAll,
     /// R-контент: руны-семейства (Искра/Око/Ярость) — названия.
@@ -910,7 +909,6 @@ mod tests {
         Key::StatusBarAuthor,
         Key::DropConfirmTitle,
         Key::DropConfirmHint,
-        Key::SlotMismatch,
         Key::QtyAll,
         Key::SpellFlameWord,
         Key::SpellHawksEye,

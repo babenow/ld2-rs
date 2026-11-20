@@ -356,28 +356,18 @@ impl Root {
                     item,
                     super::sheet::item_color(item, pal),
                 ));
-            // ЛКМ — меню (после перетаскивания gpui подавляет клик; на
-            // всякий случай — guard по активному drag), ПКМ — меню.
-            let tile = tile
-                .on_click(cx.listener({
+            // Контекстное меню — только ПКМ (заказчик: ЛКМ-меню
+            // убрано везде; оно конкурировало с перетаскиванием).
+            let tile = tile.on_mouse_down(
+                MouseButton::Right,
+                cx.listener({
                     let uid = uid.clone();
-                    move |this, event: &gpui::ClickEvent, _window, cx| {
-                        if cx.has_active_drag() {
-                            return;
-                        }
-                        this.bump_bp_menu(uid.clone(), event.position(), cx);
+                    move |this, event: &gpui::MouseDownEvent, window, cx| {
+                        window.prevent_default();
+                        this.bump_bp_menu(uid.clone(), event.position, cx);
                     }
-                }))
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener({
-                        let uid = uid.clone();
-                        move |this, event: &gpui::MouseDownEvent, window, cx| {
-                            window.prevent_default();
-                            this.bump_bp_menu(uid.clone(), event.position, cx);
-                        }
-                    }),
-                );
+                }),
+            );
             // Переливание (заказчик 2026-11-20): эпик/легендарка — на
             // наведении оттенок рамки и свечения циклится (~4 с).
             let hover_key = format!("bp:{uid}");

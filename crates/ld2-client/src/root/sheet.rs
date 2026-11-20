@@ -1441,7 +1441,13 @@ impl Root {
                 // R-dnd: подсветка зоны при перетаскивании из рюкзака —
                 // подходящий слот зелёным, неподходящий красным.
                 .when(drop_here, |row| {
-                    row.border_color(rgb(if drop_fits { pal.success } else { pal.danger }))
+                    if drop_fits {
+                        row.border_color(rgb(pal.success))
+                    } else {
+                        // Неверный слот: красная рамка 2px (заказчик),
+                        // без предупреждения — перемещение блокируется.
+                        row.border(px(2.0)).border_color(rgb(pal.danger))
+                    }
                 })
                 // Подсветка: пустой слот — общий selection, занятый —
                 // цветом предмета (ветки ниже); клик — контекстное меню.
@@ -1475,17 +1481,38 @@ impl Root {
                 })
                 .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
                     zone_drop.update(cx, |root, cx| {
-                        if matches!(&drag.from, DragSource::Bp) {
-                            let fits = drag.slot_req.as_deref() == Some(zone_slot_drop.as_str());
-                            if fits {
-                                let cmd = ItemEquip {
-                                    item_uid: drag.uid.clone(),
-                                    slot: zone_slot_drop.clone(),
-                                };
-                                root.send_cmd(&cmd, Act::Equip);
-                            } else {
-                                root.store.notice =
-                                    Some(t(root.lang, Key::SlotMismatch).to_string());
+                        let fits = drag.slot_req.as_deref() == Some(zone_slot_drop.as_str());
+                        match &drag.from {
+                            // Из рюкзака: подходящий слот → надеть;
+                            // неподходящий — блок без предупреждения
+                            // (предмет остаётся в рюкзаке, заказчик).
+                            DragSource::Bp => {
+                                if fits {
+                                    let cmd = ItemEquip {
+                                        item_uid: drag.uid.clone(),
+                                        slot: zone_slot_drop.clone(),
+                                    };
+                                    root.send_cmd(&cmd, Act::Equip);
+                                }
+                            }
+                            // Из экипировки: неверный слот — вернуть
+                            // предмет в рюкзак (НЕ выбрасывать, заказчик);
+                            // верный другой слот — перенести.
+                            DragSource::Equip(from_slot) => {
+                                if *from_slot == zone_slot_drop {
+                                    // уже на этом слоте — ничего.
+                                } else if fits {
+                                    let cmd = ItemEquip {
+                                        item_uid: drag.uid.clone(),
+                                        slot: zone_slot_drop.clone(),
+                                    };
+                                    root.send_cmd(&cmd, Act::Equip);
+                                } else {
+                                    let cmd = ItemUnequip {
+                                        slot: from_slot.clone(),
+                                    };
+                                    root.send_cmd(&cmd, Act::Unequip);
+                                }
                             }
                         }
                         root.drop_hit = None;
@@ -1567,44 +1594,6 @@ impl Root {
             // цветом предмета при наведении; фон и тексты не меняются
             // (контрастный текст отменён — баг при скролле).
             row = row.hover(move |st| st.border_color(rgb(color)));
-            // R-dnd: зона приёма для предметов из рюкзака.
-            let zone_slot = slot.clone();
-            let zone_this = cx.entity();
-            let zone_move = zone_this.clone();
-            let zone_drop = zone_this.clone();
-            let zone_slot_move = zone_slot.clone();
-            let zone_slot_drop = zone_slot.clone();
-            row = row
-                .on_drag_move::<ItemDrag>(move |_, _, cx| {
-                    zone_move.update(cx, |root, cx| {
-                        if matches!(
-                            root.drag_item.as_ref().map(|d| &d.from),
-                            Some(DragSource::Bp)
-                        ) {
-                            root.drop_hit = Some(DropHit::EqSlot(zone_slot_move.clone()));
-                            cx.notify();
-                        }
-                    });
-                })
-                .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
-                    zone_drop.update(cx, |root, cx| {
-                        if matches!(&drag.from, DragSource::Bp) {
-                            let fits = drag.slot_req.as_deref() == Some(zone_slot_drop.as_str());
-                            if fits {
-                                let cmd = ItemEquip {
-                                    item_uid: drag.uid.clone(),
-                                    slot: zone_slot_drop.clone(),
-                                };
-                                root.send_cmd(&cmd, Act::Equip);
-                            } else {
-                                root.store.notice =
-                                    Some(t(root.lang, Key::SlotMismatch).to_string());
-                            }
-                        }
-                        root.drop_hit = None;
-                        cx.notify();
-                    });
-                });
             // Заказчик 2026-11-20: описание предмета — в тултипе (тот же
             // виджет, что и окно описания; появляется плавно).
             let tip_detail = serde_json::to_value(item).unwrap_or_default();
@@ -1661,22 +1650,14 @@ impl Root {
                 _ => None,
             };
             let slot_right = slot.clone();
-            let slot_left = slot.clone();
-            let row = row
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                        window.prevent_default();
-                        this.bump_equip_menu(slot_right.clone(), event.position, cx);
-                    }),
-                )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                        window.prevent_default();
-                        this.bump_equip_menu(slot_left.clone(), event.position, cx);
-                    }),
-                );
+            // Контекстное меню — только ПКМ (заказчик: ЛКМ-меню убрано).
+            let row = row.on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                    window.prevent_default();
+                    this.bump_equip_menu(slot_right.clone(), event.position, cx);
+                }),
+            );
             // Переливание (заказчик 2026-11-20): эпик/легендарка — на
             // наведении играет ЯРКОСТЬ цвета редкости (бриллиант);
             // без наведения — статичное внутреннее свечение.
