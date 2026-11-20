@@ -37,8 +37,8 @@ use crate::palette::{palette, Palette};
 use ely::buttons::IconButton;
 use ely::feedback::{Toast, Toaster};
 use ely::forms::{
-    hex, parse_hex, Checkbox, Choice, ColorPicker, HotkeyInput, Input, InputEvent, PasswordInput,
-    Slider, Switch, TextInput,
+    hex, parse_hex, Checkbox, Choice, ColorPicker, HotkeyInput, Input, InputEvent, NumberInput,
+    PasswordInput, Slider, Switch, TextInput,
 };
 use ely::layout::ScrollArea;
 use ely::navigation::Tabs;
@@ -80,6 +80,40 @@ pub(crate) struct DropPending {
     pub uid: String,
     pub name: String,
     pub from: DragSource,
+    /// Размер стака (1 — одиночный предмет).
+    pub max: i64,
+    /// Сколько выбрасываем (1..=max; ввод/ползунок/«Все»).
+    pub qty: i64,
+}
+
+/// R-dnd: «карточка» предмета под курсором при перетаскивании
+/// (ghost-вид on_drag — следует за мышью).
+pub(crate) struct ItemDragGhost {
+    pub name: String,
+    /// Цвет рамки/текста — цвет редкости.
+    pub color: u32,
+    pub theme: String,
+}
+
+impl gpui::Render for ItemDragGhost {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let pal = crate::palette::palette(&self.theme);
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .border_1()
+            .border_color(rgb(self.color))
+            .text_size(px(13.0))
+            .text_color(rgb(self.color))
+            .child(self.name.clone())
+            .opacity(0.9)
+    }
 }
 
 /// R-dnd: состояние удерживаемой строки списка рюкзака.
@@ -893,13 +927,20 @@ impl Root {
         if let Some(drag) = self.drag_item.take() {
             if !cx.has_active_drag() {
                 if self.drop_hit.is_none() {
-                    let name = self
-                        .item_name_of(&drag.uid)
-                        .unwrap_or_else(|| drag.uid.clone());
+                    // Стак: max — сколько в стаке (1 — одиночный).
+                    let found = self
+                        .store
+                        .snapshot
+                        .as_ref()
+                        .and_then(|s| s.char.inventory.iter().find(|i| i.uid == drag.uid))
+                        .map(|i| (i.name.clone(), i.qty.unwrap_or(1).max(1)));
+                    let (name, max) = found.unwrap_or_else(|| (drag.uid.clone(), 1));
                     self.drop_confirm = Some(DropPending {
-                        uid: drag.uid,
+                        uid: drag.uid.clone(),
                         name,
                         from: drag.from,
+                        max,
+                        qty: max,
                     });
                 }
                 self.bp_hold = None;
@@ -1192,15 +1233,6 @@ impl Root {
             .child(status_badge(pal, lang, &status, self.store.rtt_ms))
     }
 
-    /// R-dnd: имя предмета по uid (инвентарь/экипировка).
-    pub(crate) fn item_name_of(&self, uid: &str) -> Option<String> {
-        self.store
-            .snapshot
-            .as_ref()
-            .and_then(|s| s.char.inventory.iter().find(|i| i.uid == uid))
-            .map(|i| i.name.clone())
-    }
-
     /// R-dnd: слот dragged-предмета (для подсветки зон).
     pub(crate) fn drag_slot_of(&self) -> Option<String> {
         let uid = &self.drag_item.as_ref()?.uid;
@@ -1248,24 +1280,74 @@ impl Root {
                 this.drop_confirm = None;
             },
         );
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(div().child(tf(
-                lang,
-                Key::DropConfirmHint,
-                &[("{name}", pending.name.as_str())],
-            )))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .justify_end()
-                    .gap_2()
-                    .child(cancel)
-                    .child(drop_btn),
+        // Стак >1: ввод количества (цифры), ползунок, «Все»,
+        // подтверждение шлёт ItemDrop с выбранным qty (заказчик).
+        let mut body = div().flex().flex_col().gap_3();
+        body = body.child(div().child(tf(
+            lang,
+            Key::DropConfirmHint,
+            &[("{name}", pending.name.as_str())],
+        )));
+        if pending.max > 1 {
+            let max = pending.max as f64;
+            let qty = pending.qty.clamp(1, pending.max) as f64;
+            let this = cx.entity();
+            body = body.child(
+                div().w(px(220.0)).child(
+                    NumberInput::new("ld2-drop-qty", qty)
+                        .precision(0)
+                        .step(1.0)
+                        .range(1.0, max)
+                        .on_change(move |v, _window, acx| {
+                            this.update(acx, |root, cx| {
+                                if let Some(p) = root.drop_confirm.as_mut() {
+                                    p.qty = (v.round() as i64).clamp(1, p.max);
+                                }
+                                cx.notify();
+                            });
+                        }),
+                ),
             );
+            let this = cx.entity();
+            body = body.child(
+                Slider::new("ld2-drop-qty-slider", qty)
+                    .range(1.0, max)
+                    .step(1.0)
+                    .on_change(move |v, _window, acx| {
+                        this.update(acx, |root, cx| {
+                            if let Some(p) = root.drop_confirm.as_mut() {
+                                p.qty = (v.round() as i64).clamp(1, p.max);
+                            }
+                            cx.notify();
+                        });
+                    }),
+            );
+            // «Все» — мгновенно максимум (заказчик).
+            let all_this = cx.entity();
+            body = body.child(div().flex().flex_row().gap_2().child(act_btn(
+                cx,
+                t(lang, Key::QtyAll),
+                pal.panel,
+                pal.text,
+                move |_, _cx| {
+                    all_this.update(_cx, |root, cx| {
+                        if let Some(p) = root.drop_confirm.as_mut() {
+                            p.qty = p.max;
+                        }
+                        cx.notify();
+                    });
+                },
+            )));
+        }
+        body = body.child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_end()
+                .gap_2()
+                .child(cancel)
+                .child(drop_btn),
+        );
         Some(
             Dialog::new("ld2-drop-confirm", title, close)
                 .child(body)

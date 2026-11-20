@@ -1519,13 +1519,20 @@ impl Root {
                 slot_req: item.slot.clone(),
             };
             let drag_this = cx.entity();
+            let ghost_name = item.name.clone();
+            let ghost_color = rarity_color(&item.rarity, pal);
+            let ghost_theme = self.config.theme.clone();
             row = row.on_drag(drag_payload, move |drag, _, _, cx| {
                 drag_this.update(cx, |root, cx| {
                     root.drag_item = Some(drag.clone());
                     root.drop_hit = None;
                     cx.notify();
                 });
-                cx.new(|_| EmptyView)
+                // Карточка предмета под курсором (заказчик).
+                let name = ghost_name.clone();
+                let color = ghost_color;
+                let theme = ghost_theme.clone();
+                cx.new(move |_| crate::root::ItemDragGhost { name, color, theme })
             });
             let color = item_color(item, pal);
             // Отступ-заполнитель прижимает предмет к правому краю.

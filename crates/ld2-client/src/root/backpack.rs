@@ -11,8 +11,8 @@ use ely::motion::Flip;
 use ely::navigation::Tabs;
 use ely::primitives::{Icon, IconName, TooltipTrigger};
 use gpui::{
-    div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, EmptyView,
-    MouseButton, SharedString, Window,
+    div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, MouseButton,
+    SharedString, Window,
 };
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::Screen;
@@ -391,6 +391,9 @@ impl Root {
             };
             let drag_this = cx.entity();
             let bp_index = ix;
+            let ghost_name = item.name.clone();
+            let ghost_color = rarity_color(&item.rarity, pal);
+            let ghost_theme = self.config.theme.clone();
             let tile = tile.on_drag(drag_payload, move |drag, offset, _, cx| {
                 drag_this.update(cx, |root, cx| {
                     root.drag_item = Some(ItemDrag {
@@ -408,7 +411,11 @@ impl Root {
                     });
                     cx.notify();
                 });
-                cx.new(|_| EmptyView)
+                // Карточка предмета под курсором (заказчик).
+                let name = ghost_name.clone();
+                let color = ghost_color;
+                let theme = ghost_theme.clone();
+                cx.new(move |_| crate::root::ItemDragGhost { name, color, theme })
             });
             let hover_this = cx.entity();
             let hover_key_hover = hover_key.clone();
