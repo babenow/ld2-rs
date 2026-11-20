@@ -28,7 +28,9 @@ use ely::primitives::{Divider, IconName, Tooltip};
 use super::quests::goals_summary;
 use super::sheet::rarity_label;
 use super::social::show_party;
-use super::{act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, Click, PopupKind, Root};
+use super::{
+    act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, status_badge, Click, PopupKind, Root,
+};
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
 /// серверный гейт — конфиг `skills.active.power_strike` → `E_REQUIREMENT_ATTR`).
@@ -639,11 +641,12 @@ impl Root {
                 .child(t(self.lang, Key::Loading));
         };
 
-        div()
+        let row = div()
             .flex()
             .flex_row()
             .gap_3()
-            .size_full()
+            .flex_grow_1()
+            .min_h_0()
             .p(px(12.0))
             // M14/F18: резиновая вёрстка — min_w_0 позволяет колонкам
             // сжиматься ниже min-content (иначе правая колонка
@@ -659,7 +662,19 @@ impl Root {
                     // окнах), центр — гибкий, правая —20 %.
                     .w(gpui::relative(0.2))
                     .min_w(px(240.0))
-                    .child(self.left_column(cx, pal, &snap)),
+                    .child(self.left_column(cx, pal, &snap))
+                    // Заказчик 2026-11-20: чат — в левой колонке, к низу;
+                    // высота 30 % (после разворачивания — 50 %), сворачивание
+                    // из шапки чата, открытие — кнопкой в статус-баре.
+                    .children((!self.config.chat_collapsed).then(|| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_grow_1()
+                            .min_h_0()
+                            .child(div().flex_grow_1().min_h_0())
+                            .child(self.journal_block(cx, pal))
+                    })),
             )
             .child(
                 div()
@@ -684,11 +699,7 @@ impl Root {
                             .text_size(px(12.0))
                             .text_color(rgb(pal.muted))
                             .child(t(self.lang, Key::AltNavHint))
-                    }))
-                    // Журнал/чат — последним (M14/F2/F7).
-                    // M25: журнал приклеен к низу центра (заказчик).
-                    .child(div().flex_grow_1().min_h_0())
-                    .child(self.journal_block(cx, pal)),
+                    })),
             )
             // M25: правая колонка —20 %: история посещений (верх)
             // и трекер квестов (указание заказчика).
@@ -703,7 +714,51 @@ impl Root {
                     .min_w(px(180.0))
                     .child(self.history_block(pal))
                     .children(self.tracker_block(pal)),
-            )
+            );
+        // Статус-бар (заказчик 2026-11-20): слева — кнопка «Чат» (видна,
+        // когда чат свёрнут — разворачивает его на 50 %); справа — статус
+        // сервера (переехал из шапки).
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(row)
+            .child(self.status_bar(cx, pal))
+    }
+
+    /// Статус-бар игрового экрана: слева — кнопка «Чат» (когда чат
+    /// свёрнут), справа — бейдж статуса сервера (+ RTT).
+    fn status_bar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let mut bar = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .border_t_1()
+            .border_color(rgb(pal.border))
+            .flex_shrink_0();
+        if self.config.chat_collapsed {
+            bar = bar.child(act_btn(
+                cx,
+                t(lang, Key::ChLabel),
+                pal.panel,
+                pal.text,
+                |this, cx| {
+                    // Разворачивание из статус-бара — высота 50 %.
+                    this.config.chat_collapsed = false;
+                    this.config.chat_height_pct = 0.5;
+                    this.save_config();
+                    let _ = cx;
+                },
+            ));
+        }
+        bar = bar.child(div().flex_grow_1());
+        let status = self.store.transport.clone();
+        bar = bar.child(status_badge(pal, lang, &status, self.store.rtt_ms));
+        bar
     }
 
     // ── левая колонка: цель, ресурсы, история ─────────────────────────────
@@ -1881,24 +1936,38 @@ impl Root {
     /// высота фиксированная —20 % игрового поля (заказчик).
     fn journal_block(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
-        let head = div().flex().flex_row().items_center().gap_2().child(
-            div()
-                .font_weight(gpui::FontWeight::BOLD)
-                .child(t(lang, Key::ChLabel)),
-        );
+        // Шапка: заголовок + «свернуть» (заказчик 2026-11-20): чат
+        // уходит целиком, открыть — кнопкой в статус-баре (высота 50 %).
+        let head = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(t(lang, Key::ChLabel)),
+            )
+            .child(
+                div()
+                    .id("ld2-chat-collapse")
+                    .px_1()
+                    .cursor_pointer()
+                    .tooltip(Tooltip::text(t(lang, Key::ChCollapse)))
+                    .child(fa_icon("solid/chevron-down", px(12.0), rgb(pal.muted)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.config.chat_collapsed = true;
+                        this.save_config();
+                        cx.notify();
+                    })),
+            );
+        // Прозрачный чат (заказчик): без панели и рамки; высота — доля
+        // колонки из конфига (30 % исходно, 50 % после разворачивания).
         div()
             .flex()
             .flex_col()
             .gap_1()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(pal.panel))
-            .border_1()
-            .border_color(rgb(pal.border))
-            // M25: фиксированная высота —20 % игрового поля; к низу
-            // центра приклеивает spacer выше.
-            .h(gpui::relative(0.2))
+            .h(gpui::relative(self.config.chat_height_pct.clamp(0.15, 0.9)))
             .min_h(px(120.0))
             .flex_shrink_0()
             .child(head)

@@ -8,6 +8,7 @@ use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::{parse_chat_input, Act, ChatDraft, CHAT_CHANNELS};
 use ld2_protocol::cmd::{ChatDelete, ChatSend};
 
+use crate::fa::fa_icon;
 use crate::palette::{palette, Palette};
 use ely::buttons::IconButton;
 use ely::forms::{Choice, Input, SearchInput};
@@ -166,13 +167,30 @@ impl Root {
         // ── ввод: Enter/кнопка, слэш-команды (ФР-13) ──
         // M14/F20: min_w_0 на строке и обёртке — поле сжимается вместе
         // с колонкой и не вылезает за рамку (в т.ч. с кнопкой «Ответить»).
-        let mut input_row = div().flex().flex_row().gap_1().items_center().min_w_0();
+        // Заказчик 2026-11-20: кнопка «отправить» — иконкой, высота
+        // равна высоте поля ввода (items_stretch); таймаут отправки.
+        let cooldown_left = self
+            .chat_cooldown_until
+            .map(|t| t.saturating_duration_since(std::time::Instant::now()))
+            .unwrap_or_default();
+        let cooling = !cooldown_left.is_zero();
+        let mut input_row = div().flex().flex_row().gap_1().items_stretch().min_w_0();
         input_row = input_row.child(
             div()
                 .flex_grow_1()
                 .min_w_0()
                 .child(Input::new(self.ti(&self.chat_input))),
         );
+        if cooling {
+            input_row = input_row.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .text_size(px(11.0))
+                    .text_color(rgb(pal.muted))
+                    .child(format!("{:.0}с", cooldown_left.as_secs_f32().ceil())),
+            );
+        }
         if reply_to.is_some() {
             input_row = input_row.child(act_btn(
                 cx,
@@ -189,13 +207,27 @@ impl Root {
                 },
             ));
         }
-        input_row = input_row.child(act_btn(
-            cx,
-            t(lang, Key::ChSend),
-            pal.accent,
-            pal.accent_text,
-            |this, cx| this.send_chat(cx),
-        ));
+        // Кнопка «отправить» — иконка (Lucide Send); при кулдауне —
+        // приглушённая. Высота равна полю ввода (items_stretch).
+        let send_btn = div()
+            .px_2()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .cursor_pointer()
+            .bg(rgb(if cooling { pal.panel } else { pal.accent }))
+            .text_color(rgb(if cooling { pal.muted } else { pal.accent_text }))
+            .child(fa_icon(
+                "solid/paper-plane",
+                px(14.0),
+                rgb(if cooling { pal.muted } else { pal.accent_text }),
+            ))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.send_chat(cx)),
+            );
+        input_row = input_row.child(send_btn);
         panel = panel.child(input_row);
         panel
     }
@@ -217,14 +249,33 @@ impl Root {
     /// — иначе гейт `typing_focused` глушит хоткеи окон. При ошибке
     /// отправки/неизвестной команде фокус остаётся: можно исправить.
     pub(crate) fn send_chat(&mut self, cx: &mut Context<'_, Self>) {
-        let text = self.ti(&self.chat_input).read(cx).text().to_string();
-        if text.trim().is_empty() {
+        // Таймаут отправки (анти-спам, заказчик): сервер своё окно
+        // тоже проверяет; здесь — не отправляем и не очищаем поле.
+        if self
+            .chat_cooldown_until
+            .is_some_and(|t| t > std::time::Instant::now())
+        {
+            return;
+        }
+        let typed = self.ti(&self.chat_input).read(cx).text().to_string();
+        if typed.trim().is_empty() {
             Self::blur_typing(cx);
             return;
         }
-        if let Some(input) = self.chat_input.clone() {
-            input.update(cx, |i, cx| i.set_text(String::new(), cx));
-        }
+        // Мат-фильтр (вкл. в настройках): маскируем до отправки и
+        // показываем в поле отфильтрованный вариант.
+        let text = if self.config.chat_mute_filter {
+            let filtered = filter_profanity(&typed);
+            if filtered != typed {
+                if let Some(input) = self.chat_input.clone() {
+                    let filtered = filtered.clone();
+                    input.update(cx, |i, cx| i.set_text(filtered, cx));
+                }
+            }
+            filtered
+        } else {
+            typed.clone()
+        };
         let channel = self.chat_channel.clone();
         let reply = self.store.last_whisper_from.clone();
         match parse_chat_input(&text, &channel, reply.as_deref()) {
@@ -233,6 +284,28 @@ impl Root {
                 match self.transport.send(&cmd) {
                     Ok(_) => {
                         self.store.on_sheet_sent(Act::Chat);
+                        // Ревью R-мелочь: очищаем ПОСЛЕ успешной
+                        // отправки — при Err набранный текст сохранён.
+                        if let Some(input) = self.chat_input.clone() {
+                            input.update(cx, |i, cx| i.set_text(String::new(), cx));
+                        }
+                        // История ввода (↑/↓ — заказчик).
+                        self.chat_history.push(typed);
+                        while self.chat_history.len() > 50 {
+                            self.chat_history.remove(0);
+                        }
+                        self.chat_history_pos = None;
+                        // Таймаут отправки: окно из §5 (chat.cooldown_s).
+                        let cd = self
+                            .store
+                            .session
+                            .as_ref()
+                            .map(|s| s.chat.cooldown_s)
+                            .unwrap_or(1.0);
+                        self.chat_cooldown_until = Some(
+                            std::time::Instant::now()
+                                + std::time::Duration::from_secs_f64(cd.max(0.0)),
+                        );
                         Self::blur_typing(cx);
                     }
                     Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
@@ -242,6 +315,46 @@ impl Root {
                 self.store.notice =
                     Some(tf(self.lang, Key::ChUnknownCmd, &[("{cmd}", cmd.as_str())]));
             }
+        }
+    }
+
+    /// Заказчик 2026-11-20: ↑/↓ в поле чата — листать историю ввода:
+    /// ↑ — к более старым, ↓ — к более новым (ниже последней — пустое
+    /// поле). Работает, пока фокус в поле чата (root.handle_keystroke).
+    pub(crate) fn chat_history_nav(&mut self, older: bool, cx: &mut Context<'_, Self>) {
+        if self.chat_history.is_empty() {
+            return;
+        }
+        let new_pos = match self.chat_history_pos {
+            None => {
+                if !older {
+                    return;
+                }
+                self.chat_history.len() - 1
+            }
+            Some(pos) => {
+                if older {
+                    if pos == 0 {
+                        return;
+                    }
+                    pos - 1
+                } else {
+                    pos + 1
+                }
+            }
+        };
+        if new_pos >= self.chat_history.len() {
+            self.chat_history_pos = None;
+        } else {
+            self.chat_history_pos = Some(new_pos);
+        }
+        let text = self
+            .chat_history_pos
+            .and_then(|pos| self.chat_history.get(pos))
+            .cloned()
+            .unwrap_or_default();
+        if let Some(input) = self.chat_input.clone() {
+            input.update(cx, |i, cx| i.set_text(text, cx));
         }
     }
 }
@@ -274,5 +387,129 @@ fn channel_color(channel: &str, dark: bool) -> u32 {
         "guild" => 0xc6_78_dd,
         "whisper" => 0xe0_6c_75,
         _ => 0xab_b2_bf, // location
+    }
+}
+
+// ── мат-фильтр (заказчик 2026-11-20; вкл/выкл в настройках) ──────────
+
+/// Стемы нецензурных слов (нормализация: lowercase, ё→е). Стемы
+/// отбирались так, чтобы не задевать обычные слова («небо», «сучок»,
+/// «гондола», «хребет» — безопасны).
+const PROFANITY_STEMS: &[&str] = &[
+    // ru
+    "хуй",
+    "хуе",
+    "хуя",
+    "хуи",
+    "наху",
+    "поху",
+    "охуе",
+    "охуи",
+    "ахуе",
+    "ахуи",
+    "заеб",
+    "выеб",
+    "уеб",
+    "ъеб",
+    "приеб",
+    "перееб",
+    "доеб",
+    "отъеб",
+    "ебал",
+    "ебан",
+    "ебат",
+    "ебут",
+    "ебищ",
+    "хуеп",
+    "хуес",
+    "пизд",
+    "спизд",
+    "распиз",
+    "запиз",
+    "опиз",
+    "бля",
+    "сука",
+    "суки",
+    "суку",
+    "суке",
+    "мудак",
+    "мудил",
+    "гондон",
+    "пидор",
+    "пидар",
+    "пидр",
+    "шлюх",
+    "мраз",
+    // en
+    "fuck",
+    "fuk",
+    "shit",
+    "bitch",
+    "cunt",
+    "asshole",
+    "bastard",
+    "dickhead",
+    "motherfuc",
+];
+
+/// Маскирует слово, если нормализованная форма содержит стем:
+/// «*» вместо каждой буквы (длина сохраняется).
+fn mask_word(word: &str) -> String {
+    let norm: String = word.to_lowercase().replace('ё', "е");
+    if PROFANITY_STEMS.iter().any(|stem| norm.contains(stem)) {
+        "*".repeat(word.chars().count())
+    } else {
+        word.to_string()
+    }
+}
+
+/// Мат-фильтр исходящего текста: слова из букв проверяются по стемам,
+/// небуквенные символы (пробелы/знаки) копируются как есть.
+pub(crate) fn filter_profanity(text: &str) -> String {
+    let mut out = String::new();
+    let mut word = String::new();
+    for ch in text.chars() {
+        if ch.is_alphabetic() {
+            word.push(ch);
+        } else {
+            if !word.is_empty() {
+                out.push_str(&mask_word(&word));
+                word.clear();
+            }
+            out.push(ch);
+        }
+    }
+    if !word.is_empty() {
+        out.push_str(&mask_word(&word));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_masks_by_stem_any_case() {
+        assert_eq!(filter_profanity("привет ХУЙ"), "привет ***");
+        assert_eq!(filter_profanity("Сука блин"), "**** блин");
+        assert_eq!(filter_profanity("ПИЗДЕЦ"), "******");
+        assert_eq!(filter_profanity("fuck you"), "**** you");
+    }
+
+    #[test]
+    fn filter_normalizes_yo_and_keeps_innocent() {
+        assert_eq!(filter_profanity("сушёная хурма"), "сушёная хурма");
+        assert_eq!(
+            filter_profanity("небо, сучок и гондола"),
+            "небо, сучок и гондола"
+        );
+        assert_eq!(filter_profanity("хрEBет"), "хрEBет");
+    }
+
+    #[test]
+    fn filter_keeps_punctuation_and_length() {
+        assert_eq!(filter_profanity("привет, пидар!!"), "привет, *****!!");
+        assert_eq!(filter_profanity(""), "");
     }
 }

@@ -198,6 +198,8 @@ pub(super) fn t(key: Key) -> &'static str {
         BtnAbandon => "Abandon",
         StateAvailable => "available",
         StateUnknown => "unknown",
+        ChCollapse => "collapse",
+        MuteFilterLabel => "Profanity filter",
         StateActive => "taken",
         StateTurnIn => "ready",
         StateDone => "done",

@@ -255,6 +255,10 @@ pub enum Key {
     StateDone,
     /// R12: незнакомая фаза квеста (сервер новее клиента).
     StateUnknown,
+    /// R-чат (заказчик 2026-11-20): сворачивание чата (кнопка в шапке).
+    ChCollapse,
+    /// R-чат (заказчик 2026-11-20): мат-фильтр исходящих (настройки).
+    MuteFilterLabel,
     RecipesLabel,
     BtnCraft,
     LearnLabel,
@@ -869,6 +873,8 @@ mod tests {
         Key::StateTurnIn,
         Key::StateDone,
         Key::StateUnknown,
+        Key::ChCollapse,
+        Key::MuteFilterLabel,
         Key::RecipesLabel,
         Key::BtnCraft,
         Key::LearnLabel,

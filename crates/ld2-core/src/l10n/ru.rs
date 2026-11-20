@@ -198,6 +198,8 @@ pub(super) fn t(key: Key) -> &'static str {
         BtnAbandon => "Отказаться",
         StateAvailable => "доступен",
         StateUnknown => "неизвестно",
+        ChCollapse => "свернуть",
+        MuteFilterLabel => "Фильтр мата",
         StateActive => "взят",
         StateTurnIn => "к сдаче",
         StateDone => "выполнен",

@@ -194,6 +194,8 @@ pub(crate) enum Click {
     ChatLimit(i64),
     /// M14/F14: флаг «системные уведомления» (слайдер-переключатель).
     SetNotify(bool),
+    /// Мат-фильтр исходящих (заказчик 2026-11-20).
+    SetMuteFilter(bool),
     ApplyHost,
     /// M14/F11: раскрыть ввод нового адреса сервера.
     EditHost,
@@ -465,6 +467,12 @@ pub struct Root {
     /// M10.5: чат — ввод, фильтр, активный канал.
     chat_input: Option<Entity<TextInput>>,
     chat_filter: Option<Entity<TextInput>>,
+    /// История ввода чата (↑/↓ — заказчик 2026-11-20).
+    chat_history: Vec<String>,
+    /// Позиция в истории (None — текущий ввод).
+    chat_history_pos: Option<usize>,
+    /// Окно таймаута отправки чата (анти-спам; §5 chat.cooldown_s).
+    chat_cooldown_until: Option<std::time::Instant>,
     chat_channel: String,
     /// M10.5: окно сделки — поле золота.
     /// M11.3: золото сделки (NumberInput Ely; фиксируется операцией).
@@ -766,6 +774,9 @@ impl Root {
             bp_menu: None,
             chat_input: None,
             chat_filter: None,
+            chat_history: Vec::new(),
+            chat_history_pos: None,
+            chat_cooldown_until: None,
             chat_channel: "location".into(),
             trade_gold_value: 0.0,
             trade_pick: None,
@@ -1537,6 +1548,19 @@ impl Root {
             window.blur(cx);
             cx.notify();
             return;
+        }
+        // Заказчик 2026-11-20: ↑/↓ в поле чата — листать историю ввода
+        // (до гейта typing: фокус именно в поле чата).
+        if ks.key == "up" || ks.key == "down" {
+            let chat_focus = self
+                .chat_input
+                .as_ref()
+                .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window));
+            if chat_focus {
+                self.chat_history_nav(ks.key == "up", cx);
+                cx.notify();
+                return;
+            }
         }
         let typing = self.typing_focused(window, cx);
         if self.store.screen != Screen::Game || typing {
@@ -2346,6 +2370,10 @@ impl Root {
                 self.config.notify = notify;
                 self.save_config();
             }
+            Click::SetMuteFilter(on) => {
+                self.config.chat_mute_filter = on;
+                self.save_config();
+            }
             Click::EditHost => {
                 // Предзаполнение текущим адресом (как при открытии
                 // настроек) и раскрытие ввода.
@@ -2814,8 +2842,6 @@ impl Root {
         let update = self.update_available.clone();
         let lang = self.lang;
         // M14/F1: статус сервера и текущая локация — прямо в шапке.
-        let status = self.store.transport.clone();
-        let rtt = self.store.rtt_ms;
         let location = self
             .store
             .snapshot
@@ -2919,8 +2945,9 @@ impl Root {
                     })),
             )
             .child(
-                // Правая группа: обновление, статус сервера, язык,
-                // настройки и меню шапки (M14/F1).
+                // Правая группа: обновление, язык, настройки и меню
+                // шапки (M14/F1). Статус сервера — в статус-баре игры
+                // (заказчик 2026-11-20); отметка роли убрана совсем.
                 div()
                     .flex()
                     .flex_row()
@@ -2934,16 +2961,6 @@ impl Root {
                             pal.accent_text,
                             Click::OpenReleases,
                         )
-                    }))
-                    .child(status_badge(pal, lang, &status, rtt))
-                    // M14/F19: отметка роли аккаунта (модерация чата).
-                    .children(self.store.session.as_ref().map(|sess| {
-                        let (text, color) = match sess.role.as_str() {
-                            "admin" => (t(lang, Key::RoleAdmin), pal.danger),
-                            "moderator" => (t(lang, Key::RoleModerator), pal.warn),
-                            _ => (t(lang, Key::RolePlayer), pal.muted),
-                        };
-                        badge(text.to_string(), color, pal)
                     })),
             )
     }
@@ -3222,6 +3239,23 @@ impl Root {
                                     cx.notify();
                                 });
                             })
+                        })],
+                    ));
+
+                    // Мат-фильтр исходящих (заказчик 2026-11-20).
+                    body = body.child(row(
+                        pal,
+                        t(lang, Key::MuteFilterLabel).to_string(),
+                        vec![div().child({
+                            let this = cx.entity();
+                            Switch::new("ld2-mute-filter", self.config.chat_mute_filter).on_change(
+                                move |on, _window, acx| {
+                                    this.update(acx, |root, cx| {
+                                        root.on_click(Click::SetMuteFilter(on), cx);
+                                        cx.notify();
+                                    });
+                                },
+                            )
                         })],
                     ));
 
@@ -4126,7 +4160,12 @@ fn badge(label: String, color: u32, pal: &Palette) -> Div {
 
 /// Бейдж статуса сервера в шапке (M14/F1): цветная точка + текст + RTT
 /// (раньше жил в нижнем status_bar, из render убран).
-fn status_badge(pal: &Palette, lang: Lang, status: &TransportStatus, rtt: Option<u64>) -> Div {
+pub(crate) fn status_badge(
+    pal: &Palette,
+    lang: Lang,
+    status: &TransportStatus,
+    rtt: Option<u64>,
+) -> Div {
     let (color, _) = status_color(pal, status);
     div()
         .flex()

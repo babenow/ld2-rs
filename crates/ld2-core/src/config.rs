@@ -77,6 +77,17 @@ pub struct Config {
     /// (заказчик 2026-11-20): иды `skills.skill_group`.
     #[serde(default)]
     pub sheet_collapsed: Vec<String>,
+    /// Состояние UI: свёрнут ли чат (заказчик 2026-11-20) — открывается
+    /// кнопкой в статус-баре; после разворачивания высота 50 %.
+    #[serde(default)]
+    pub chat_collapsed: bool,
+    /// Доля высоты колонки под чат: 0.30 исходно, 0.50 после
+    /// разворачивания из статус-бара (заказчик).
+    #[serde(default = "default_chat_height_pct")]
+    pub chat_height_pct: f32,
+    /// Мат-фильтр исходящих сообщений (заказчик; вкл/выкл в настройках).
+    #[serde(default)]
+    pub chat_mute_filter: bool,
     /// Горячие клавиши — ремаппинг (ФР-19): см. [`Hotkeys`].
     #[serde(default)]
     pub hotkeys: Hotkeys,
@@ -346,11 +357,18 @@ impl Config {
         if !(100..=10_000).contains(&self.chat_limit) {
             self.chat_limit = default_chat_limit();
         }
+        // Высота чата — доля колонки (заказчик): разумные границы.
+        self.chat_height_pct = self.chat_height_pct.clamp(0.15, 0.9);
         if self.theme != "light" {
             self.theme = default_theme();
         }
         self
     }
+}
+
+/// Дефолт высоты чата (30 % колонки — заказчик 2026-11-20).
+fn default_chat_height_pct() -> f32 {
+    0.30
 }
 
 impl Default for Config {
@@ -374,6 +392,9 @@ impl Default for Config {
             remember_password: false,
             party_collapsed: false,
             sheet_collapsed: Vec::new(),
+            chat_collapsed: false,
+            chat_height_pct: default_chat_height_pct(),
+            chat_mute_filter: false,
             hotkeys: Hotkeys::default(),
         }
     }
