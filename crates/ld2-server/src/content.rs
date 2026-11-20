@@ -964,22 +964,20 @@ mod tests {
                 }
             }
 
-            // M18/F58f: знак руны — поле `glyph` (одна латинская буква
-            // — глиф шрифта Dwarven Runes); без него клиент фолбэчит
-            // хешем имени, но контент рун обязан задавать знак явно.
+            // M18/F58f: знак руны — поле `glyph` (латинские буквы —
+            // глифы шрифта Dwarven Runes; заказчик 2026-11-20: допускается
+            // несколько символов — рендерятся рядом); без него клиент
+            // фолбэчит хешем имени, но контент рун обязан задавать знак
+            // явно.
             if item.item_type == "rune" {
                 let glyph = item
                     .stats
                     .get("glyph")
                     .and_then(|v| v.as_str())
                     .unwrap_or_else(|| panic!("нет stats.glyph у руны {}", item.id));
-                let mut chars = glyph.chars();
-                let c = chars
-                    .next()
-                    .unwrap_or_else(|| panic!("пустой stats.glyph у руны {}", item.id));
                 assert!(
-                    c.is_ascii_alphabetic() && chars.next().is_none(),
-                    "stats.glyph должен быть одной латинской буквой (получено {glyph:?}) у {}",
+                    !glyph.is_empty() && glyph.chars().all(|c| c.is_ascii_alphabetic()),
+                    "stats.glyph — латинские буквы (1..N, шрифт Dwarven Runes), получено {glyph:?} у {}",
                     item.id
                 );
             }

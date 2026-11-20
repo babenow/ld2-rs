@@ -15,15 +15,20 @@ pub(crate) const RUNE_FONT: &str = "Dwarven Runes";
 /// `stats.glyph` → wire `RuneInfo.glyph`) — если это латинская буква
 /// (глиф шрифта `a..=z`/`A..=Z`); иначе/нет поля — стабильный хеш
 /// имени (старые руны/сервер без поля, §11).
-pub(crate) fn resolve_glyph(glyph: Option<&str>, key: &str) -> char {
-    glyph
-        .and_then(|g| g.chars().find(|c| c.is_ascii_alphabetic()))
-        .unwrap_or_else(|| rune_glyph(key))
+pub(crate) fn resolve_glyph(glyph: Option<&str>, key: &str) -> String {
+    // Заказчик 2026-11-20: глиф может содержать **несколько** символов
+    // (например «Fy») — рендерится целиком, буквы рядом. Принимаем
+    // только строки целиком из латинских букв (покрытие шрифта
+    // Dwarven Runes); мусор/пусто/не-латиница → фолбэк на хеш имени.
+    match glyph {
+        Some(g) if !g.is_empty() && g.chars().all(|c| c.is_ascii_alphabetic()) => g.to_string(),
+        _ => rune_glyph(key).to_string(),
+    }
 }
 
 /// Div со знаком руны из контента (с фолбэком на хеш имени).
 pub(crate) fn glyph_div_for(glyph: Option<&str>, key: &str) -> Div {
-    glyph_div(resolve_glyph(glyph, key))
+    glyph_div(&resolve_glyph(glyph, key))
 }
 
 /// Стабильный рунный глиф по ключу (def_id/имя руны): djb2 → `a..=z`.
@@ -37,11 +42,12 @@ pub(crate) fn rune_glyph(key: &str) -> char {
     (b'a' + (h % 26) as u8) as char
 }
 
-/// Div с рунным глифом (шрифт Dwarven Runes) — знак руны/слота.
-pub(crate) fn glyph_div(glyph: char) -> Div {
+/// Div с рунным глифом (шрифт Dwarven Runes) — знак руны/слота;
+/// многосимвольный глиф рендерится целиком (буквы рядом).
+pub(crate) fn glyph_div(glyph: &str) -> Div {
     div()
         .font_family(RUNE_FONT)
-        .child(SharedString::from(format!("{glyph}")))
+        .child(SharedString::from(glyph.to_string()))
 }
 
 /// Пустой руна-слот — **пустой квадрат** (указание заказчика).
@@ -69,18 +75,28 @@ mod tests {
     /// (не латинская буква) и отсутствие поля → фолбэк на хеш имени.
     #[test]
     fn resolve_glyph_prefers_content_field() {
-        assert_eq!(resolve_glyph(Some("x"), "Руна огня"), 'x');
-        assert_eq!(resolve_glyph(Some("F"), "Руна огня"), 'F');
-        // Не буква (кириллица/символ) — хеш имени.
+        assert_eq!(resolve_glyph(Some("x"), "Руна огня"), "x");
+        assert_eq!(resolve_glyph(Some("F"), "Руна огня"), "F");
+        // Заказчик 2026-11-20: глиф из нескольких букв — целиком.
+        assert_eq!(resolve_glyph(Some("Fy"), "Руна огня"), "Fy");
+        assert_eq!(resolve_glyph(Some("abc"), "Руна огня"), "abc");
+        // Не буквы (кириллица/символ/пробел) — хеш имени.
         assert_eq!(
             resolve_glyph(Some("ф"), "rune_fire"),
-            rune_glyph("rune_fire")
+            rune_glyph("rune_fire").to_string()
+        );
+        assert_eq!(
+            resolve_glyph(Some("a b"), "rune_fire"),
+            rune_glyph("rune_fire").to_string()
         );
         assert_eq!(
             resolve_glyph(Some(""), "rune_fire"),
-            rune_glyph("rune_fire")
+            rune_glyph("rune_fire").to_string()
         );
-        assert_eq!(resolve_glyph(None, "rune_fire"), rune_glyph("rune_fire"));
+        assert_eq!(
+            resolve_glyph(None, "rune_fire"),
+            rune_glyph("rune_fire").to_string()
+        );
     }
 
     /// Разные руны, как правило, получают разные знаки (для ключей из

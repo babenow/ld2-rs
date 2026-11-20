@@ -3044,8 +3044,9 @@ fn xp_kv_row(pal: &Palette, label: &str, value: &str) -> Div {
 /// отличим от пустого слота самоцвета (требование заказчика).
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SlotIcon {
-    /// Рунный слот: `Some(glyph)` — заполнен (глиф руны), `None` — пуст.
-    Rune(Option<char>),
+    /// Рунный слот: `Some(glyph)` — заполнен (глиф руны — латинские
+    /// буквы, может быть несколько; заказчик 2026-11-20), `None` — пуст.
+    Rune(Option<String>),
     /// Слот самоцвета: `filled` — заполнен; `rarity` — раритет
     /// вставленного (wire `RuneInfo.rarity`): есть → знак раритета
     /// (Symbola), нет (старый сервер/запись, §11) → прежний ◈;
@@ -3104,7 +3105,7 @@ pub(crate) fn socket_icons_row(item_type: &str, sockets: &[ld2_protocol::types::
 /// M18/F58f: одна иконка слота (глиф руны шрифтом Dwarven Runes либо ◈/○).
 fn slot_icon_div(item_type: &str, socket: &ld2_protocol::types::Socket) -> Div {
     match slot_icon(item_type, socket) {
-        SlotIcon::Rune(Some(glyph)) => crate::rune_glyph::glyph_div(glyph),
+        SlotIcon::Rune(Some(glyph)) => crate::rune_glyph::glyph_div(&glyph),
         SlotIcon::Rune(None) => crate::rune_glyph::empty_slot_glyph_div(),
         // Занятый самоцвет — знак его раритета (Symbola); у старого
         // сервера без поля rarity — прежний ◈ (§11).
@@ -3575,7 +3576,7 @@ mod tests {
         // Рунный слот: заполненный — глиф из контента (f), пустой — None.
         assert_eq!(
             slot_icon("weapon", &sock(Some("rune"), true)),
-            SlotIcon::Rune(Some('f')),
+            SlotIcon::Rune(Some("f".into())),
             "заполненный рунный — глиф поля glyph"
         );
         assert_eq!(
@@ -3628,7 +3629,7 @@ mod tests {
         );
         assert_eq!(
             slot_icon("weapon", &sock(None, true)),
-            SlotIcon::Rune(Some('f')),
+            SlotIcon::Rune(Some("f".into())),
             "фолбэк: оружие — рунные слоты"
         );
         // Неизвестное значение accepts — как отсутствующее (§11).
@@ -3643,7 +3644,7 @@ mod tests {
         // пустой (□) и занятый (глиф руны) различимы.
         let occupied = slot_icon("weapon", &sock(Some("rune"), true));
         let empty = slot_icon("weapon", &sock(Some("rune"), false));
-        assert_eq!(occupied, SlotIcon::Rune(Some('f')));
+        assert_eq!(occupied, SlotIcon::Rune(Some("f".into())));
         assert_ne!(
             format!("{occupied:?}"),
             format!("{empty:?}"),

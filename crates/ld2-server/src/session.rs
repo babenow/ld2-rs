@@ -6118,8 +6118,8 @@ impl Session {
         // оружия (stats::derive) и попадает в снапшот.
         let damage = rune_def.stats.get("damage").and_then(|v| v.as_i64());
         // M18/F58f: настраиваемый знак руны — поле `glyph` её параметров
-        // (одна латинская буква — глиф Dwarven Runes); без поля клиент
-        // фолбэчит хешем имени.
+        // (латинские буквы, можно несколько — глифы Dwarven Runes);
+        // без поля клиент фолбэчит хешем имени.
         let glyph = rune_def
             .stats
             .get("glyph")
