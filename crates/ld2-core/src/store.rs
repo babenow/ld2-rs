@@ -1831,6 +1831,15 @@ impl AppStore {
                 let Ok(removed) = serde_json::from_value::<ItemRemoved>(payload) else {
                     return vec![];
                 };
+                // Название — из инвентаря ДО удаления (заказчик: в
+                // журнале имя предмета, не id); надетые тоже в
+                // инвентаре — один lookup покрывает оба случая.
+                let removed_name = self
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.char.inventory.iter().find(|i| i.uid == removed.uid))
+                    .map(|i| i.name.clone())
+                    .unwrap_or_else(|| removed.uid.clone());
                 // ФР-06/ФР-07: убыль из инвентаря и из слотов экипировки.
                 if let Some(snap) = self.snapshot.as_mut() {
                     snap.char.inventory.retain(|i| i.uid != removed.uid);
@@ -1855,7 +1864,7 @@ impl AppStore {
                 // M20: при выбросе строку даёт `evt/item/dropped`
                 // («Вы выбросили…»), а не «Потеряно».
                 if !matches!(removed.reason, ItemRemovalReason::Dropped) {
-                    self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
+                    self.push_log(LogKind::Loot, format!("Потеряно: {removed_name}"));
                 }
                 vec![]
             }
@@ -4579,6 +4588,18 @@ mod tests {
         assert!(
             snap.char.equip.get("main_hand").is_none_or(|v| v.is_none()),
             "слот экипировки освобождён"
+        );
+        // Заказчик: в журнале — ИМЯ предмета, не id.
+        let last = store.log.back().expect("строка журнала");
+        assert!(
+            last.text.contains("Потеряно: Ясеневый посох"),
+            "имя предмета в журнале: {}",
+            last.text
+        );
+        assert!(
+            !last.text.contains("i_17"),
+            "id не должен попадать в журнал: {}",
+            last.text
         );
     }
 
