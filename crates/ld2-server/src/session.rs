@@ -3326,12 +3326,21 @@ impl Session {
                 }
             };
         // Снять с земли — всем в локации (объект исчезает).
+        // R-dnd: подбор — в despawn имя/пол подобрал(а) для журнала
+        // («Вы подняли…» / «{имя} подобрал(а)…»).
+        let (picked_name, picked_gender) = self
+            .char
+            .as_ref()
+            .map(|c| (c.name.clone(), c.gender.clone()))
+            .unwrap_or_else(|| ("Игрок".into(), "male".into()));
         let despawn_text = event_payload_text(
             "evt/entity/despawn",
             &EntityDespawn {
                 entity_id: taken.id.clone(),
                 location_id: taken.location_id.clone(),
                 kind: Some(ld2_protocol::types::EntityKind::Object),
+                picked_by: Some(picked_name),
+                picked_gender: Some(picked_gender),
             },
         );
         {
@@ -3343,7 +3352,7 @@ impl Session {
             }
         }
         // Выдача себе — стак → патч qty, иначе added (паритет take_loot).
-        let item = item_snapshot(&row, &def);
+        let mut item = item_snapshot(&row, &def);
         let ev = if stacked {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(row.qty));
@@ -3357,6 +3366,10 @@ impl Session {
                 .unwrap_or_default(),
             )
         } else {
+            // Унификация журнала (заказчик): подбор — строку даёт
+            // despawn («Вы подняли…»); added с маркером picked стор
+            // не дублирует.
+            item.extra.insert("picked".into(), serde_json::json!(true));
             out_event(
                 "evt/item/added",
                 None,
@@ -3545,6 +3558,8 @@ impl Session {
                     entity_id: after.id.clone(),
                     location_id: after.location_id.clone(),
                     kind: Some(ld2_protocol::types::EntityKind::Resource),
+                    picked_by: None,
+                    picked_gender: None,
                 },
             )
         } else {
@@ -5110,6 +5125,7 @@ impl Session {
                     &def.name,
                     &item.def_id,
                     qty,
+                    i64::from(item.upgrade),
                     &char_id,
                     expires_at,
                 )

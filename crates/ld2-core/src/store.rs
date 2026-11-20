@@ -1489,6 +1489,8 @@ impl AppStore {
                     return vec![];
                 };
                 let mut name = None;
+                let mut qty = 1;
+                let mut upgrade = 0;
                 if let Some(snap) = self.snapshot.as_mut() {
                     if let Some(idx) = snap
                         .location
@@ -1496,11 +1498,54 @@ impl AppStore {
                         .iter()
                         .position(|e| e.id == gone.entity_id)
                     {
-                        name = Some(snap.location.entities.remove(idx).name);
+                        let ent = snap.location.entities.remove(idx);
+                        name = Some(ent.name);
+                        qty = ent
+                            .extra
+                            .get("qty")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(1)
+                            .max(1);
+                        upgrade = ent
+                            .extra
+                            .get("upgrade")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
                     }
                 }
+                let upg = if upgrade > 0 {
+                    format!(" +{upgrade}")
+                } else {
+                    String::new()
+                };
                 if let Some(name) = name {
-                    self.push_log(LogKind::System, format!("{name} исчезает"));
+                    // R-dnd (заказчик 2026-11-21): подбор с земли —
+                    // своя строка «Вы подняли…», чужая — «{имя}
+                    // подобрал(а)…»; без picked_by — TTL «исчезает».
+                    match gone.picked_by.as_deref() {
+                        Some(by) => {
+                            let mine = self.snapshot.as_ref().is_some_and(|s| s.char.name == by);
+                            if mine {
+                                self.push_log(
+                                    LogKind::Loot,
+                                    format!("Вы подняли {qty} {name}{upg}"),
+                                );
+                            } else {
+                                let verb = if gone.picked_gender.as_deref() == Some("female") {
+                                    "подобрала"
+                                } else {
+                                    "подобрал"
+                                };
+                                self.push_log(
+                                    LogKind::Loot,
+                                    format!("{by} {verb} {qty} {name}{upg}"),
+                                );
+                            }
+                        }
+                        None => {
+                            self.push_log(LogKind::System, format!("{name} исчезает"));
+                        }
+                    }
                 }
                 // ФР-05: авто-сброс цели при исчезновении.
                 if self.target.as_deref() == Some(gone.entity_id.as_str()) {
@@ -1824,22 +1869,35 @@ impl AppStore {
                         snap.char.inventory.push(added.item.clone());
                     }
                 }
-                self.push_log(LogKind::Loot, format!("Получено: {}", added.item.name));
+                // Унификация (заказчик): «Вы получили {qty} {имя}[+N]»;
+                // подбор (extra.picked) строку даёт despawn — без дубля.
+                if added.item.extra.get("picked").and_then(|v| v.as_bool()) != Some(true) {
+                    let qty = added.item.qty.unwrap_or(1).max(1);
+                    let upg = if added.item.upgrade > 0 {
+                        format!(" +{}", added.item.upgrade)
+                    } else {
+                        String::new()
+                    };
+                    self.push_log(
+                        LogKind::Loot,
+                        format!("Вы получили {qty} {}{upg}", added.item.name),
+                    );
+                }
                 vec![]
             }
             "evt/item/removed" => {
                 let Ok(removed) = serde_json::from_value::<ItemRemoved>(payload) else {
                     return vec![];
                 };
-                // Название — из инвентаря ДО удаления (заказчик: в
-                // журнале имя предмета, не id); надетые тоже в
-                // инвентаре — один lookup покрывает оба случая.
-                let removed_name = self
+                // Название/qty/заточка — из инвентаря ДО удаления
+                // (унификация журнала, заказчик 2026-11-21); надетые
+                // тоже в инвентаре — один lookup покрывает всё.
+                let removed_item = self
                     .snapshot
                     .as_ref()
                     .and_then(|s| s.char.inventory.iter().find(|i| i.uid == removed.uid))
-                    .map(|i| i.name.clone())
-                    .unwrap_or_else(|| removed.uid.clone());
+                    .map(|i| (i.name.clone(), i.qty.unwrap_or(1).max(1), i.upgrade))
+                    .unwrap_or_else(|| (removed.uid.clone(), 1, 0));
                 // ФР-06/ФР-07: убыль из инвентаря и из слотов экипировки.
                 if let Some(snap) = self.snapshot.as_mut() {
                     snap.char.inventory.retain(|i| i.uid != removed.uid);
@@ -1861,10 +1919,22 @@ impl AppStore {
                         view.preview = None;
                     }
                 }
-                // M20: при выбросе строку даёт `evt/item/dropped`
-                // («Вы выбросили…»), а не «Потеряно».
+                // M20: при выбросе строку даёт `evt/item/dropped`.
+                // Унификация (заказчик): «Вы {действие} {qty} {имя}[+N]» —
+                // действие зависит от причины убыли.
                 if !matches!(removed.reason, ItemRemovalReason::Dropped) {
-                    self.push_log(LogKind::Loot, format!("Потеряно: {removed_name}"));
+                    let (rname, rqty, rupg) = removed_item;
+                    let verb = match removed.reason {
+                        ItemRemovalReason::Consumed => "использовали",
+                        ItemRemovalReason::Traded => "обменяли",
+                        _ => "потеряли",
+                    };
+                    let upg = if rupg > 0 {
+                        format!(" +{rupg}")
+                    } else {
+                        String::new()
+                    };
+                    self.push_log(LogKind::Loot, format!("Вы {verb} {rqty} {rname}{upg}"));
                 }
                 vec![]
             }
@@ -4592,7 +4662,7 @@ mod tests {
         // Заказчик: в журнале — ИМЯ предмета, не id.
         let last = store.log.back().expect("строка журнала");
         assert!(
-            last.text.contains("Потеряно: Ясеневый посох"),
+            last.text.contains("Вы потеряли 1 Ясеневый посох +2"),
             "имя предмета в журнале: {}",
             last.text
         );
@@ -4601,6 +4671,78 @@ mod tests {
             "id не должен попадать в журнал: {}",
             last.text
         );
+    }
+
+    fn ground_entity(id: &str) -> ld2_protocol::types::Entity {
+        let mut extra = serde_json::Map::new();
+        extra.insert("ground".into(), serde_json::json!(true));
+        extra.insert("def_id".into(), serde_json::json!("potion_heal"));
+        extra.insert("qty".into(), serde_json::json!(5));
+        ld2_protocol::types::Entity {
+            id: id.into(),
+            kind: ld2_protocol::types::EntityKind::Object,
+            name: "Зелье лечения".into(),
+            hp: None,
+            tags: None,
+            was_player: None,
+            aggro: None,
+            boss: None,
+            next_attack_at: None,
+            attack_interval: None,
+            attacking: None,
+            extra,
+        }
+    }
+
+    fn spawn_ground(id: &str) -> IngressEvent {
+        evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": ground_entity(id),
+                "location_id": "l_village"
+            }),
+        )
+    }
+
+    #[test]
+    fn pickup_logs_pickup_lines() {
+        let mut store = in_game(); // персонаж «Ким»
+        store.apply(spawn_ground("g_test"));
+
+        // Свой подбор → «Вы подняли N имя» (заказчик).
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "g_test", "location_id": "l_village",
+                "kind": "object", "picked_by": "Ким", "picked_gender": "male"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Вы подняли 5 Зелье лечения", "{}", last.text);
+
+        // Чужой подбор, female → «{имя} подобрала N имя».
+        store.apply(spawn_ground("g_test2"));
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "g_test2", "location_id": "l_village",
+                "kind": "object", "picked_by": "Аня", "picked_gender": "female"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Аня подобрала 5 Зелье лечения", "{}", last.text);
+
+        // Без picked_by (TTL) → «{name} исчезает».
+        store.apply(spawn_ground("g_test3"));
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "g_test3", "location_id": "l_village",
+                "kind": "object"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Зелье лечения исчезает", "{}", last.text);
     }
 
     #[test]

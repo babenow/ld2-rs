@@ -402,6 +402,8 @@ pub struct GroundItem {
     pub name: String,
     pub def_id: String,
     pub qty: i64,
+    /// Уровень заточки на момент выброса — строка журнала «+N».
+    pub upgrade: i64,
     /// Кто бросил (char_id) — для журнала.
     pub dropped_by: String,
     /// Epoch-секунда исчезновения.
@@ -1484,6 +1486,7 @@ impl World {
             extra.insert("ground".into(), serde_json::json!(true));
             extra.insert("def_id".into(), serde_json::json!(item.def_id));
             extra.insert("qty".into(), serde_json::json!(item.qty));
+            extra.insert("upgrade".into(), serde_json::json!(item.upgrade));
             snapshot.entities.push(Entity {
                 id: item.id.clone(),
                 kind: EntityKind::Object,
@@ -1576,12 +1579,14 @@ impl World {
     // ─── M20: предметы в локациях (выбросы) и TTL трупов ────────────
 
     /// Бросить предмет в локацию (item.drop); id наземного предмета.
+    #[allow(clippy::too_many_arguments)] // (location, name, def, qty, upgrade, by, ttl)
     pub fn drop_ground(
         &mut self,
         location_id: &str,
         name: &str,
         def_id: &str,
         qty: i64,
+        upgrade: i64,
         dropped_by: &str,
         expires_at: i64,
     ) -> String {
@@ -1595,6 +1600,7 @@ impl World {
                 name: name.to_string(),
                 def_id: def_id.to_string(),
                 qty,
+                upgrade,
                 dropped_by: dropped_by.to_string(),
                 expires_at,
             },

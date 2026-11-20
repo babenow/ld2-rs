@@ -542,7 +542,12 @@ impl Root {
             .flex_col()
             .relative()
             .child(flip)
-            .on_drag_move::<ItemDrag>(move |event, _, cx| {
+            .on_drag_move::<ItemDrag>(move |event, _window, cx| {
+                // Пересчёт reorder — только когда курсор над списком
+                // (слушает все перемещения при активном drag).
+                if !event.bounds.contains(&event.event.position) {
+                    return;
+                }
                 this.update(cx, |root, cx| {
                     let Some(drag) = root.drag_item.clone() else {
                         return;

@@ -1468,7 +1468,13 @@ impl Root {
             let zone_slot_move = zone_slot.clone();
             let zone_slot_drop = zone_slot.clone();
             row = row
-                .on_drag_move::<ItemDrag>(move |_, _, cx| {
+                .on_drag_move::<ItemDrag>(move |event, _window, cx| {
+                    // Слушает ВСЕ перемещения при активном drag —
+                    // засчитываем только карточку под курсором (иначе
+                    // все слоты перетирают drop_hit).
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
                     zone_move.update(cx, |root, cx| {
                         if matches!(
                             root.drag_item.as_ref().map(|d| &d.from),
@@ -1593,7 +1599,22 @@ impl Root {
             // M18 (указание заказчика): выделение — **только рамка**
             // цветом предмета при наведении; фон и тексты не меняются
             // (контрастный текст отменён — баг при скролле).
-            row = row.hover(move |st| st.border_color(rgb(color)));
+            // Подсветка зоны при перетаскивании (заказчик): hover-стиль
+            // должен уступать drop-состоянию, иначе рамка слота
+            // перекрывается цветом предмета.
+            row = row.hover(move |st| {
+                if drop_here {
+                    let st = st.border_color(rgb(if drop_fits { pal.success } else { pal.danger }));
+                    if drop_fits {
+                        st
+                    } else {
+                        // Неверный слот: красная рамка 2px.
+                        st.border(px(2.0))
+                    }
+                } else {
+                    st.border_color(rgb(color))
+                }
+            });
             // Заказчик 2026-11-20: описание предмета — в тултипе (тот же
             // виджет, что и окно описания; появляется плавно).
             let tip_detail = serde_json::to_value(item).unwrap_or_default();
