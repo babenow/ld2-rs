@@ -1493,12 +1493,25 @@ impl Root {
             let tip_theme = self.config.theme.clone();
             let tip_name = item.name.clone();
             let tip_lang = lang;
+            let tip_rarity = item.rarity.clone();
             row = row.tooltip(Tooltip::rich(move |_, _| {
                 let pal = crate::palette::palette(&tip_theme);
+                // Фон и вид — как у окна описания: карточка pal.panel
+                // с рамкой цвета редкости (заказчик); отрицательные
+                // поля гасят паддинг сурфейса.
                 div()
                     .flex()
                     .flex_col()
                     .gap_1()
+                    .mx(px(-8.0))
+                    .my(px(-4.0))
+                    .p(px(10.0))
+                    .rounded_md()
+                    .bg(rgb(pal.panel))
+                    .border_1()
+                    .border_color(rgb(rarity_color(&tip_rarity, &pal)))
+                    .text_color(rgb(pal.text))
+                    .text_size(px(13.0))
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::BOLD)

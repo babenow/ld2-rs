@@ -18,7 +18,7 @@ use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
-use super::sheet::rarity_label;
+use super::sheet::{rarity_color, rarity_label};
 use super::{scrollable_tab, PopupKind, Root};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
@@ -343,12 +343,25 @@ impl Root {
                         rarity_label(lang, &item.rarity),
                         item.upgrade
                     );
+                    let rarity = item.rarity.clone();
                     Tooltip::rich(move |_, _| {
                         let pal = crate::palette::palette(&theme);
+                        // Фон и вид — как у окна описания: карточка
+                        // pal.panel с рамкой цвета редкости (заказчик);
+                        // отрицательные поля гасят паддинг сурфейса.
                         div()
                             .flex()
                             .flex_col()
                             .gap_1()
+                            .mx(px(-8.0))
+                            .my(px(-4.0))
+                            .p(px(10.0))
+                            .rounded_md()
+                            .bg(rgb(pal.panel))
+                            .border_1()
+                            .border_color(rgb(rarity_color(&rarity, &pal)))
+                            .text_color(rgb(pal.text))
+                            .text_size(px(13.0))
                             .child(
                                 div()
                                     .font_weight(gpui::FontWeight::BOLD)
