@@ -7,22 +7,22 @@
 
 use ely::forms::Choice;
 use ely::menus::ContextMenu;
-use ely::motion::Reorder;
+use ely::motion::Flip;
 use ely::navigation::Tabs;
 use ely::primitives::{Icon, IconName, TooltipTrigger};
 use gpui::{
-    div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, MouseButton,
-    SharedString, Window,
+    div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, EmptyView,
+    MouseButton, SharedString, Window,
 };
 use ld2_core::l10n::{t, tf, Key};
-use ld2_core::store::{Act, Screen};
-use ld2_protocol::cmd::ItemMove;
+use ld2_core::store::Screen;
+use ld2_protocol::cmd::{ItemMove, ItemUnequip};
 use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
 use super::sheet::{rarity_color, rarity_label};
-use super::{scrollable_tab, PopupKind, Root};
+use super::{scrollable_tab, BpHold, DragSource, DropHit, ItemDrag, PopupKind, Root};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
 /// всегда последняя (спека пользователя), остальные — по маппингу
@@ -324,12 +324,13 @@ impl Root {
                 .child(t(lang, Key::InventoryEmpty));
         }
 
-        // M16/F29g: перетаскиваемый список — ЛКМ/ПКМ открывают меню,
-        // drag меняет предметы местами (порядок строк = порядок сетки).
+        // M16/F29g + R-dnd: ЛКМ/ПКМ открывают меню; drag — свой
+        // (ItemDrag): внутри списка меняет порядок (ItemMove), на
+        // зоны — экипировка/снятие, вне зон — подтверждение выброса.
         let this = cx.entity();
         let order: Vec<String> = items.iter().map(|i| i.uid.clone()).collect();
-        let mut list = Reorder::new(format!("{id_prefix}-rows"));
-        for item in items {
+        let mut flip = Flip::new(format!("{id_prefix}-flip"));
+        for (ix, item) in items.into_iter().enumerate() {
             let uid = item.uid.clone();
             let tile = div()
                 .id(format!("{id_prefix}-item-{uid}"))
@@ -382,6 +383,33 @@ impl Root {
             let hover_key = format!("bp:{uid}");
             let shimmering = matches!(item.rarity.as_str(), "epic" | "legendary")
                 && self.hovered_item.as_deref() == Some(hover_key.as_str());
+            // R-dnd: старт перетаскивания (payload — предмет).
+            let drag_payload = ItemDrag {
+                uid: uid.clone(),
+                from: DragSource::Bp,
+                slot_req: item.slot.clone(),
+            };
+            let drag_this = cx.entity();
+            let bp_index = ix;
+            let tile = tile.on_drag(drag_payload, move |drag, offset, _, cx| {
+                drag_this.update(cx, |root, cx| {
+                    root.drag_item = Some(ItemDrag {
+                        uid: drag.uid.clone(),
+                        from: DragSource::Bp,
+                        slot_req: drag.slot_req.clone(),
+                    });
+                    root.drop_hit = None;
+                    root.bp_hold = Some(BpHold {
+                        uid: drag.uid.clone(),
+                        index: bp_index,
+                        target: bp_index,
+                        top: 0.0,
+                        grab: offset.y.as_f32(),
+                    });
+                    cx.notify();
+                });
+                cx.new(|_| EmptyView)
+            });
             let hover_this = cx.entity();
             let hover_key_hover = hover_key.clone();
             let tile = tile.on_hover(move |hovered, _, cx| {
@@ -495,37 +523,84 @@ impl Root {
                     .into_any_element()
             })
             .delay(std::time::Duration::from_secs(1));
-            // Отступ между строками списка (у Reorder нет gap).
-            list = list.row(uid, div().pb(px(8.0)).child(ctx));
+            // R-dnd: строка в список Flip (подъём при перетаскивании).
+            let row_uid = uid.clone();
+            flip = flip.row(row_uid, div().pb(px(8.0)).child(ctx));
         }
-        // Горизонтальный простор внешней ауре свечения (кромка
-        // скролл-области иначе срезает её слева/справа).
-        div()
-            .px(px(10.0))
-            .child(list.on_reorder(move |from, to, _window, cx| {
-                let Some(a) = order.get(from).cloned() else {
-                    return;
-                };
-                let Some(b) = order.get(to).cloned() else {
-                    return;
-                };
-                if a == b {
-                    return;
-                }
+        // R-dnd: список на ItemDrag — drag внутри списка меняет порядок
+        // (ItemMove), на зоны — экипировка/снятие, вне зон —
+        // подтверждение выброса (заказчик 2026-11-21).
+        let order_len = order.len();
+        let order_drop = order.clone();
+        let this_drop = this.clone();
+        let list = div()
+            .id("ld2-bp-list")
+            .flex()
+            .flex_col()
+            .relative()
+            .child(flip)
+            .on_drag_move::<ItemDrag>(move |event, _, cx| {
                 this.update(cx, |root, cx| {
-                    // Локально — сразу (сетка), порядок сервера
-                    // подхватится при resync.
-                    root.store.swap_inventory(&a, &b);
-                    root.send_cmd(
-                        &ItemMove {
-                            item_uid: a.clone(),
-                            target_uid: b.clone(),
-                        },
-                        Act::Drop,
-                    );
+                    let Some(drag) = root.drag_item.clone() else {
+                        return;
+                    };
+                    match drag.from {
+                        DragSource::Bp => {
+                            let Some(mut hold) = root.bp_hold.clone() else {
+                                return;
+                            };
+                            let pointer = (event.event.position.y - event.bounds.top()).as_f32();
+                            let row_h = (event.bounds.size.height.as_f32()
+                                / order_len.max(1) as f32)
+                                .max(1.0);
+                            hold.target = ((pointer / row_h) as usize).min(order_len - 1);
+                            hold.top = (pointer - hold.grab).max(0.0);
+                            root.bp_hold = Some(hold);
+                        }
+                        DragSource::Equip(_) => {
+                            root.drop_hit = Some(DropHit::BpList);
+                        }
+                    }
                     cx.notify();
                 });
-            }))
+            })
+            .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
+                this_drop.update(cx, |root, cx| {
+                    // Маркер «зона обработала» — отпускание вне зон
+                    // не откроет подтверждение.
+                    root.drop_hit = Some(DropHit::BpList);
+                    match &drag.from {
+                        DragSource::Bp => {
+                            if let Some(hold) = root.bp_hold.take() {
+                                if hold.index != hold.target {
+                                    if let Some(target_uid) = order_drop.get(hold.target) {
+                                        let cmd = ItemMove {
+                                            item_uid: hold.uid.clone(),
+                                            target_uid: target_uid.clone(),
+                                        };
+                                        if let Err(e) = root.transport.send(&cmd) {
+                                            root.store.notice = Some(format!("нет связи: {e}"));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        DragSource::Equip(slot) => {
+                            // Снятие предмета в рюкзак (заказчик).
+                            let cmd = ItemUnequip { slot: slot.clone() };
+                            if let Err(e) = root.transport.send(&cmd) {
+                                root.store.notice = Some(format!("нет связи: {e}"));
+                            }
+                            root.drop_hit = None;
+                        }
+                    }
+                    root.bp_hold = None;
+                    cx.notify();
+                });
+            });
+        // Горизонтальный простор внешней ауре свечения (кромка
+        // скролл-области иначе срезает её слева/справа).
+        div().px(px(10.0)).child(list)
     }
 }
 

@@ -48,6 +48,54 @@ use ely::shell::WindowControls;
 /// Автор клиента (статус-бар логина/выбора персонажа, заказчик).
 pub(crate) const AUTHOR: &str = "M. Babenko";
 
+/// R-dnd (заказчик 2026-11-21): payload перетаскивания предмета.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ItemDrag {
+    pub uid: String,
+    pub from: DragSource,
+    /// Родной слот предмета (для подсветки/проверки зон).
+    pub slot_req: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DragSource {
+    /// Из рюкзака.
+    Bp,
+    /// Из слота экипировки (ид слота).
+    Equip(String),
+}
+
+/// Куда указывает курсор при перетаскивании (зоны сброса).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DropHit {
+    /// Список рюкзака (снятие из экипировки / порядок на месте).
+    BpList,
+    /// Карточка слота экипировки.
+    EqSlot(String),
+}
+
+/// Подтверждение выброса (перетащили вне зон).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DropPending {
+    pub uid: String,
+    pub name: String,
+    pub from: DragSource,
+}
+
+/// R-dnd: состояние удерживаемой строки списка рюкзака.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BpHold {
+    pub uid: String,
+    /// Индекс удерживаемой строки в исходном порядке.
+    pub index: usize,
+    /// Целевой индекс (landing).
+    pub target: usize,
+    /// Смещение строки под курсором, px.
+    pub top: f32,
+    /// Захват внутри строки (offset.y при старте), px.
+    pub grab: f32,
+}
+
 use ely::theme::{Mode, Theme};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
@@ -478,6 +526,15 @@ pub struct Root {
     chat_cooldown_until: Option<std::time::Instant>,
     /// hovered-предмет (переливание рамки): `bp:<uid>` / `eq:<slot>`.
     hovered_item: Option<String>,
+    /// R-dnd: тянущийся предмет (зоны/подтверждение выброса).
+    drag_item: Option<ItemDrag>,
+    /// R-dnd: зона под курсором (None — вне зон).
+    drop_hit: Option<DropHit>,
+    /// R-dnd: подтверждение выброса (окно).
+    drop_confirm: Option<DropPending>,
+    /// R-dnd: reorder-состояние списка рюкзака (held-строка).
+    bp_hold: Option<BpHold>,
+
     chat_channel: String,
     /// M10.5: окно сделки — поле золота.
     /// M11.3: золото сделки (NumberInput Ely; фиксируется операцией).
@@ -786,6 +843,11 @@ impl Root {
             chat_history_pos: None,
             chat_cooldown_until: None,
             hovered_item: None,
+            drag_item: None,
+            drop_hit: None,
+            drop_confirm: None,
+            bp_hold: None,
+
             chat_channel: "location".into(),
             trade_gold_value: 0.0,
             trade_pick: None,
@@ -826,6 +888,27 @@ impl Root {
     /// Enter в полях входа, бейдж обновлений. Возвращает задержку до
     /// следующего шага (НФР §8: события → 50 мс, idle → 200 мс ≤ 5 fps).
     pub fn tick(&mut self, cx: &mut Context<'_, Self>) -> Duration {
+        // R-dnd: перетаскивание закончилось ВНЕ зон — подтверждение
+        // выброса (заказчик). Внутри зон — on_drop отработал сам.
+        if let Some(drag) = self.drag_item.take() {
+            if !cx.has_active_drag() {
+                if self.drop_hit.is_none() {
+                    let name = self
+                        .item_name_of(&drag.uid)
+                        .unwrap_or_else(|| drag.uid.clone());
+                    self.drop_confirm = Some(DropPending {
+                        uid: drag.uid,
+                        name,
+                        from: drag.from,
+                    });
+                }
+                self.bp_hold = None;
+                self.drop_hit = None;
+                cx.notify();
+            } else {
+                self.drag_item = Some(drag);
+            }
+        }
         let mut had_events = false;
         for _ in 0..64 {
             match self.ingress.try_recv() {
@@ -1107,6 +1190,87 @@ impl Root {
             )
             .child(div().flex_grow_1())
             .child(status_badge(pal, lang, &status, self.store.rtt_ms))
+    }
+
+    /// R-dnd: имя предмета по uid (инвентарь/экипировка).
+    pub(crate) fn item_name_of(&self, uid: &str) -> Option<String> {
+        self.store
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.char.inventory.iter().find(|i| i.uid == uid))
+            .map(|i| i.name.clone())
+    }
+
+    /// R-dnd: слот dragged-предмета (для подсветки зон).
+    pub(crate) fn drag_slot_of(&self) -> Option<String> {
+        let uid = &self.drag_item.as_ref()?.uid;
+        self.store
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.char.inventory.iter().find(|i| &i.uid == uid))
+            .and_then(|i| i.slot.clone())
+    }
+
+    /// R-dnd: окно подтверждения выброса (Dialog, как выход).
+    pub(crate) fn drop_confirm_dialog(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        let pending = self.drop_confirm.clone()?;
+        let lang = self.lang;
+        let title = t(lang, Key::DropConfirmTitle).to_string();
+        let close = self.dismiss(cx, |root| root.drop_confirm = None);
+        let drop_btn = act_btn(
+            cx,
+            t(lang, Key::MenuDrop),
+            pal.danger,
+            0xffffff,
+            |this, _cx| {
+                if let Some(p) = this.drop_confirm.take() {
+                    let cmd = ld2_protocol::cmd::ItemDrop {
+                        item_uid: p.uid,
+                        qty: None,
+                    };
+                    match this.transport.send(&cmd) {
+                        Ok(_) => this.store.on_sheet_sent(Act::Drop),
+                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    }
+                }
+            },
+        );
+        let cancel = act_btn(
+            cx,
+            t(lang, Key::CancelBtn),
+            pal.panel,
+            pal.text,
+            |this, _cx| {
+                this.drop_confirm = None;
+            },
+        );
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().child(tf(
+                lang,
+                Key::DropConfirmHint,
+                &[("{name}", pending.name.as_str())],
+            )))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap_2()
+                    .child(cancel)
+                    .child(drop_btn),
+            );
+        Some(
+            Dialog::new("ld2-drop-confirm", title, close)
+                .child(body)
+                .into_any_element(),
+        )
     }
 
     fn exec_effects(&mut self, effects: Vec<Effect>) {
@@ -4547,6 +4711,10 @@ impl Render for Root {
             // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
             .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
             .when_some(self.exit_dialog(cx, &pal), |d, dialog| d.child(dialog))
+            // R-dnd: подтверждение выброса (поверх всего).
+            .when_some(self.drop_confirm_dialog(cx, &pal), |d, dialog| {
+                d.child(dialog)
+            })
             // M16/F29h: системные уведомления — вверху по центру
             // (ely ToastViewport показывает внизу справа и не
             // позиционируется — заменён; тайминг у Toaster).

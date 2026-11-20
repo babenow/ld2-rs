@@ -273,6 +273,10 @@ pub enum Key {
     /// R-UI (заказчик 2026-11-20): статус-бар логина/выбора — автор
     /// и версия клиента в центре.
     StatusBarAuthor,
+    /// R-dnd (заказчик 2026-11-21): подтверждение выброса.
+    DropConfirmTitle,
+    DropConfirmHint,
+    SlotMismatch,
     /// R-контент: руны-семейства (Искра/Око/Ярость) — названия.
     SpellFlameWord,
     SpellHawksEye,
@@ -902,6 +906,9 @@ mod tests {
         Key::StatCost,
         Key::StatClass,
         Key::StatusBarAuthor,
+        Key::DropConfirmTitle,
+        Key::DropConfirmHint,
+        Key::SlotMismatch,
         Key::SpellFlameWord,
         Key::SpellHawksEye,
         Key::SpellWolvesRage,

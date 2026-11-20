@@ -40,8 +40,8 @@ use ely::primitives::{IconName, Tooltip, TooltipTrigger};
 
 use super::quests::goals_summary;
 use super::{
-    act_btn, char_card_origin, clamp_char_size, scrollable_tab, PopupDrag, PopupKind, PopupResize,
-    Root,
+    act_btn, char_card_origin, clamp_char_size, scrollable_tab, DragSource, DropHit, ItemDrag,
+    PopupDrag, PopupKind, PopupResize, Root,
 };
 
 /// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
@@ -1387,6 +1387,8 @@ impl Root {
         // M18 (фича): строки собираем — ниже раскладываем в две
         // колонки одинаковой высоты; слоты рук — отдельным блоком
         // внизу (указание заказчика).
+        // R-dnd: тянется ли предмет (для подсветки зон).
+        let drag_active = self.drag_item.is_some();
         let mut rows: Vec<AnyElement> = Vec::new();
         let mut hand_rows: Vec<AnyElement> = Vec::new();
         for slot in &equip_slots {
@@ -1394,6 +1396,15 @@ impl Root {
             let item = uid
                 .as_ref()
                 .and_then(|u| snap.char.inventory.iter().find(|i| i.uid == *u));
+            // R-dnd: подсветка зоны при перетаскивании из рюкзака —
+            // подходящий слот зелёным, неподходящий красным.
+            let drop_here =
+                drag_active && matches!(&self.drop_hit, Some(DropHit::EqSlot(s)) if s == slot);
+            let drop_fits = drop_here
+                && self
+                    .drag_slot_of()
+                    .as_deref()
+                    .is_some_and(|ds| ds == slot.as_str());
             // M18 (указание заказчика): карточка слота — вертикально:
             // **название слота в верхней строке**, предмет ниже (правым
             // краем); кнопки «Снять»/«Описание» — в контекстном меню.
@@ -1427,6 +1438,11 @@ impl Root {
                     row.shadow(rarity_glow_inset(&item.rarity, pal))
                 })
                 .cursor_pointer()
+                // R-dnd: подсветка зоны при перетаскивании из рюкзака —
+                // подходящий слот зелёным, неподходящий красным.
+                .when(drop_here, |row| {
+                    row.border_color(rgb(if drop_fits { pal.success } else { pal.danger }))
+                })
                 // Подсветка: пустой слот — общий selection, занятый —
                 // цветом предмета (ветки ниже); клик — контекстное меню.
                 ;
@@ -1438,6 +1454,44 @@ impl Root {
                     .text_color(rgb(pal.muted))
                     .child(slot_label(lang, slot)),
             );
+            // R-dnd: зона приёма для предметов из рюкзака.
+            let zone_slot = slot.clone();
+            let zone_this = cx.entity();
+            let zone_move = zone_this.clone();
+            let zone_drop = zone_this.clone();
+            let zone_slot_move = zone_slot.clone();
+            let zone_slot_drop = zone_slot.clone();
+            row = row
+                .on_drag_move::<ItemDrag>(move |_, _, cx| {
+                    zone_move.update(cx, |root, cx| {
+                        if matches!(
+                            root.drag_item.as_ref().map(|d| &d.from),
+                            Some(DragSource::Bp)
+                        ) {
+                            root.drop_hit = Some(DropHit::EqSlot(zone_slot_move.clone()));
+                            cx.notify();
+                        }
+                    });
+                })
+                .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
+                    zone_drop.update(cx, |root, cx| {
+                        if matches!(&drag.from, DragSource::Bp) {
+                            let fits = drag.slot_req.as_deref() == Some(zone_slot_drop.as_str());
+                            if fits {
+                                let cmd = ItemEquip {
+                                    item_uid: drag.uid.clone(),
+                                    slot: zone_slot_drop.clone(),
+                                };
+                                root.send_cmd(&cmd, Act::Equip);
+                            } else {
+                                root.store.notice =
+                                    Some(t(root.lang, Key::SlotMismatch).to_string());
+                            }
+                        }
+                        root.drop_hit = None;
+                        cx.notify();
+                    });
+                });
             let Some(item) = item else {
                 // M18 (указание заказчика): пустые слоты — **не
                 // подсвечиваются** и выглядят disabled (приглушены);
@@ -1458,6 +1512,21 @@ impl Root {
                 }
                 continue;
             };
+            // R-dnd: тянем предмет ИЗ слота (выброс/снятие).
+            let drag_payload = ItemDrag {
+                uid: item.uid.clone(),
+                from: DragSource::Equip(slot.clone()),
+                slot_req: item.slot.clone(),
+            };
+            let drag_this = cx.entity();
+            row = row.on_drag(drag_payload, move |drag, _, _, cx| {
+                drag_this.update(cx, |root, cx| {
+                    root.drag_item = Some(drag.clone());
+                    root.drop_hit = None;
+                    cx.notify();
+                });
+                cx.new(|_| EmptyView)
+            });
             let color = item_color(item, pal);
             // Отступ-заполнитель прижимает предмет к правому краю.
             // M18/F58f: подпись как в рюкзаке (указание заказчика) —
@@ -1491,6 +1560,59 @@ impl Root {
             // цветом предмета при наведении; фон и тексты не меняются
             // (контрастный текст отменён — баг при скролле).
             row = row.hover(move |st| st.border_color(rgb(color)));
+            // R-dnd: тянем предмет ИЗ слота (выброс/снятие).
+            let drag_payload = ItemDrag {
+                uid: item.uid.clone(),
+                from: DragSource::Equip(slot.clone()),
+                slot_req: item.slot.clone(),
+            };
+            let drag_this = cx.entity();
+            row = row.on_drag(drag_payload, move |drag, _, _, cx| {
+                drag_this.update(cx, |root, cx| {
+                    root.drag_item = Some(drag.clone());
+                    root.drop_hit = None;
+                    cx.notify();
+                });
+                cx.new(|_| EmptyView)
+            });
+            // R-dnd: зона приёма для предметов из рюкзака.
+            let zone_slot = slot.clone();
+            let zone_this = cx.entity();
+            let zone_move = zone_this.clone();
+            let zone_drop = zone_this.clone();
+            let zone_slot_move = zone_slot.clone();
+            let zone_slot_drop = zone_slot.clone();
+            row = row
+                .on_drag_move::<ItemDrag>(move |_, _, cx| {
+                    zone_move.update(cx, |root, cx| {
+                        if matches!(
+                            root.drag_item.as_ref().map(|d| &d.from),
+                            Some(DragSource::Bp)
+                        ) {
+                            root.drop_hit = Some(DropHit::EqSlot(zone_slot_move.clone()));
+                            cx.notify();
+                        }
+                    });
+                })
+                .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
+                    zone_drop.update(cx, |root, cx| {
+                        if matches!(&drag.from, DragSource::Bp) {
+                            let fits = drag.slot_req.as_deref() == Some(zone_slot_drop.as_str());
+                            if fits {
+                                let cmd = ItemEquip {
+                                    item_uid: drag.uid.clone(),
+                                    slot: zone_slot_drop.clone(),
+                                };
+                                root.send_cmd(&cmd, Act::Equip);
+                            } else {
+                                root.store.notice =
+                                    Some(t(root.lang, Key::SlotMismatch).to_string());
+                            }
+                        }
+                        root.drop_hit = None;
+                        cx.notify();
+                    });
+                });
             // Заказчик 2026-11-20: описание предмета — в тултипе (тот же
             // виджет, что и окно описания; появляется плавно).
             let tip_detail = serde_json::to_value(item).unwrap_or_default();
