@@ -230,3 +230,67 @@ async fn drop_epic_item_works() {
         .any(|e| e["ground"] == true);
     assert!(ground, "эпик лежит на земле: {snap}");
 }
+
+#[tokio::test]
+async fn drop_money_partial_100_of_100000() {
+    // R-dnd (заказчик): выброс100 монет из 100000 — на землю ровно
+    // 100, стак уменьшается до 99900 (частичный выброс стака).
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, _, _) = in_world(&ws).await;
+
+    let seq = a
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "system", "text": "/scenario gold 100000" }),
+        )
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "gold");
+    // /scenario gold не шлёт evt/item/added — uid монет из снапшота.
+    let seq = a
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok");
+    let snap = a.wait_event("evt/state/snapshot").await;
+    let uid = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь")
+        .iter()
+        .find(|i| i["type"] == "money")
+        .and_then(|i| i["uid"].as_str())
+        .expect("стак монет")
+        .to_string();
+
+    let seq = a
+        .send("cmd/item.drop", json!({ "item_uid": uid, "qty": 100 }))
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "выброс100");
+
+    // События приходят в недетерминированном порядке — собираем все.
+    let mut dropped_evt = None;
+    let mut state_evt = None;
+    for _ in 0..10 {
+        let env = a
+            .wait(|v| v["type"] == "evt/item/dropped" || v["type"] == "evt/item/state")
+            .await;
+        if env["type"] == "evt/item/dropped" && dropped_evt.is_none() {
+            dropped_evt = Some(env.clone());
+        }
+        if env["type"] == "evt/item/state" && state_evt.is_none() {
+            state_evt = Some(env);
+        }
+        if dropped_evt.is_some() && state_evt.is_some() {
+            break;
+        }
+    }
+    let dropped = dropped_evt.expect("evt/item/dropped");
+    assert_eq!(dropped["payload"]["qty"], 100, "на землю ровно 100");
+    let state = state_evt.expect("evt/item/state");
+    assert_eq!(
+        state["payload"]["patch"]["qty"], 99900,
+        "стак уменьшился до 99900"
+    );
+}

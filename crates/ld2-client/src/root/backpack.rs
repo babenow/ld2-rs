@@ -373,40 +373,6 @@ impl Root {
             let hover_key = format!("bp:{uid}");
             let shimmering = matches!(item.rarity.as_str(), "epic" | "legendary")
                 && self.hovered_item.as_deref() == Some(hover_key.as_str());
-            // R-dnd: старт перетаскивания (payload — предмет).
-            let drag_payload = ItemDrag {
-                uid: uid.clone(),
-                from: DragSource::Bp,
-                slot_req: item.slot.clone(),
-            };
-            let drag_this = cx.entity();
-            let bp_index = ix;
-            let ghost_name = item.name.clone();
-            let ghost_color = rarity_color(&item.rarity, pal);
-            let ghost_theme = self.config.theme.clone();
-            let tile = tile.on_drag(drag_payload, move |drag, offset, _, cx| {
-                drag_this.update(cx, |root, cx| {
-                    root.drag_item = Some(ItemDrag {
-                        uid: drag.uid.clone(),
-                        from: DragSource::Bp,
-                        slot_req: drag.slot_req.clone(),
-                    });
-                    root.drop_hit = None;
-                    root.bp_hold = Some(BpHold {
-                        uid: drag.uid.clone(),
-                        index: bp_index,
-                        target: bp_index,
-                        top: 0.0,
-                        grab: offset.y.as_f32(),
-                    });
-                    cx.notify();
-                });
-                // Карточка предмета под курсором (заказчик).
-                let name = ghost_name.clone();
-                let color = ghost_color;
-                let theme = ghost_theme.clone();
-                cx.new(move |_| crate::root::ItemDragGhost { name, color, theme })
-            });
             let hover_this = cx.entity();
             let hover_key_hover = hover_key.clone();
             let tile = tile.on_hover(move |hovered, _, cx| {
@@ -520,9 +486,49 @@ impl Root {
                     .into_any_element()
             })
             .delay(std::time::Duration::from_secs(1));
-            // R-dnd: строка в список Flip (подъём при перетаскивании).
+            // R-dnd: старт перетаскивания — на САМОЙ внешней строке
+            // (Flip-row): единообразно для всех редкостей (заказчик:
+            // у эпиков/легендарок анимация-обёртка плитки ломала
+            // hit-test жеста — drag не стартовал).
+            let drag_payload = ItemDrag {
+                uid: uid.clone(),
+                from: DragSource::Bp,
+                slot_req: item.slot.clone(),
+            };
+            let drag_this = cx.entity();
+            let bp_index = ix;
+            let ghost_name = item.name.clone();
+            let ghost_color = rarity_color(&item.rarity, pal);
+            let ghost_theme = self.config.theme.clone();
             let row_uid = uid.clone();
-            flip = flip.row(row_uid, div().pb(px(8.0)).child(ctx));
+            let row_el = div()
+                .id(format!("{id_prefix}-drag-{uid}"))
+                .pb(px(8.0))
+                .child(ctx)
+                .on_drag(drag_payload, move |drag, offset, _, cx| {
+                    drag_this.update(cx, |root, cx| {
+                        root.drag_item = Some(ItemDrag {
+                            uid: drag.uid.clone(),
+                            from: DragSource::Bp,
+                            slot_req: drag.slot_req.clone(),
+                        });
+                        root.drop_hit = None;
+                        root.bp_hold = Some(BpHold {
+                            uid: drag.uid.clone(),
+                            index: bp_index,
+                            target: bp_index,
+                            top: 0.0,
+                            grab: offset.y.as_f32(),
+                        });
+                        cx.notify();
+                    });
+                    // Карточка предмета под курсором (заказчик).
+                    let name = ghost_name.clone();
+                    let color = ghost_color;
+                    let theme = ghost_theme.clone();
+                    cx.new(move |_| crate::root::ItemDragGhost { name, color, theme })
+                });
+            flip = flip.row(row_uid, row_el);
         }
         // R-dnd: список на ItemDrag — drag внутри списка меняет порядок
         // (ItemMove), на зоны — экипировка/снятие, вне зон —

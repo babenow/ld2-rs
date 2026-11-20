@@ -1874,10 +1874,16 @@ impl AppStore {
                 let Ok(dropped) = serde_json::from_value::<ItemDropped>(payload) else {
                     return vec![];
                 };
-                // Заказчик 2026-11-21: для ВСЕХ игроков рядом — единый
-                // формат «{имя} выбросил(а) {qty} {предмет}» (и для себя).
+                // Заказчик 2026-11-21: свои — «Вы выбросили…», чужие —
+                // «{имя} выбросил(а) {qty} {предмет}».
+                let mine = self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.char.id == dropped.char_id);
                 let qty = dropped.qty;
-                let text = if dropped.gender == "female" {
+                let text = if mine {
+                    format!("Вы выбросили {qty} {}", dropped.item_name)
+                } else if dropped.gender == "female" {
                     format!("{} выбросила {qty} {}", dropped.by_name, dropped.item_name)
                 } else {
                     format!("{} выбросил {qty} {}", dropped.by_name, dropped.item_name)
@@ -4615,7 +4621,7 @@ mod tests {
         let last = store.log.back().expect("строка журнала");
         assert_eq!(last.text, "Ким выбросил 2 Зелье лечения", "{}", last.text);
 
-        // Свой выброс — тот же формат (по имени, заказчик).
+        // Свой выброс — «Вы выбросили…» (заказчик).
         store.apply(evt(
             "evt/item/dropped",
             serde_json::json!({
@@ -4628,7 +4634,7 @@ mod tests {
             }),
         ));
         let last = store.log.back().expect("строка журнала");
-        assert_eq!(last.text, "Ким выбросил 1 Зелье лечения", "{}", last.text);
+        assert_eq!(last.text, "Вы выбросили 1 Зелье лечения", "{}", last.text);
     }
 
     #[test]
