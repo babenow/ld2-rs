@@ -393,6 +393,8 @@ impl Root {
                 .bg(rgb(pal.panel))
                 .border_1()
                 .border_color(rgb(pal.border))
+                // Эпик/легендарка: внутреннее свечение — все стороны.
+                .shadow(super::sheet::rarity_glow_inset(&item.rarity, pal))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(pal.selection)))
                 .on_mouse_move(cx.listener(|_, _, _, cx| cx.notify()))
@@ -440,30 +442,34 @@ impl Root {
             // Отступ между строками списка (у Reorder нет gap).
             list = list.row(uid, div().pb(px(8.0)).child(ctx));
         }
-        div().child(list.on_reorder(move |from, to, _window, cx| {
-            let Some(a) = order.get(from).cloned() else {
-                return;
-            };
-            let Some(b) = order.get(to).cloned() else {
-                return;
-            };
-            if a == b {
-                return;
-            }
-            this.update(cx, |root, cx| {
-                // Локально — сразу (сетка), порядок сервера
-                // подхватится при resync.
-                root.store.swap_inventory(&a, &b);
-                root.send_cmd(
-                    &ItemMove {
-                        item_uid: a.clone(),
-                        target_uid: b.clone(),
-                    },
-                    Act::Drop,
-                );
-                cx.notify();
-            });
-        }))
+        // Горизонтальный простор внешней ауре свечения (кромка
+        // скролл-области иначе срезает её слева/справа).
+        div()
+            .px(px(10.0))
+            .child(list.on_reorder(move |from, to, _window, cx| {
+                let Some(a) = order.get(from).cloned() else {
+                    return;
+                };
+                let Some(b) = order.get(to).cloned() else {
+                    return;
+                };
+                if a == b {
+                    return;
+                }
+                this.update(cx, |root, cx| {
+                    // Локально — сразу (сетка), порядок сервера
+                    // подхватится при resync.
+                    root.store.swap_inventory(&a, &b);
+                    root.send_cmd(
+                        &ItemMove {
+                            item_uid: a.clone(),
+                            target_uid: b.clone(),
+                        },
+                        Act::Drop,
+                    );
+                    cx.notify();
+                });
+            }))
     }
 }
 

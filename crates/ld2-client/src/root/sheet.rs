@@ -1421,6 +1421,11 @@ impl Root {
                 // границ панели.
                 .border_1()
                 .border_color(rgb(pal.border))
+                // Эпик/легендарка: внутреннее свечение — все стороны
+                // (item ещё Option — пустой слот без свечения).
+                .when_some(item, |row, item| {
+                    row.shadow(rarity_glow_inset(&item.rarity, pal))
+                })
                 .cursor_pointer()
                 // Подсветка: пустой слот — общий selection, занятый —
                 // цветом предмета (ветки ниже); клик — контекстное меню.
@@ -3339,6 +3344,23 @@ fn menu_item(
 /// 2026-11-20): пульсирующая цветная тень (BoxShadow) цветом
 /// редкости — alpha дышит 0.25…0.55 по синусу (~2.2 с). Остальным
 /// редкостям элемент возвращается без изменений.
+/// Внутреннее свечение рамки (inset) для эпика/легендарки — видно со
+/// ВСЕХ сторон даже когда соседние карточки/кромка скролла перекрывают
+/// внешнюю ауру. Пустой vec — без свечения.
+pub(crate) fn rarity_glow_inset(rarity: &str, pal: &Palette) -> Vec<gpui::BoxShadow> {
+    if !matches!(rarity, "epic" | "legendary") {
+        return vec![];
+    }
+    let base = rarity_color(rarity, pal) & 0xff_ffff;
+    vec![gpui::BoxShadow {
+        color: gpui::rgba((base << 8) | 0x40).into(),
+        offset: gpui::point(px(0.0), px(0.0)),
+        blur_radius: px(8.0),
+        spread_radius: px(0.0),
+        inset: true,
+    }]
+}
+
 pub(crate) fn rarity_glow<E: gpui::IntoElement + 'static>(
     el: E,
     rarity: &str,
