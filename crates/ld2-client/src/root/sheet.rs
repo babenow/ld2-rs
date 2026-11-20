@@ -3411,7 +3411,9 @@ pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
         "uncommon" => 0x98_c3_79,
         "rare" => 0x61_af_ef,
         "epic" => 0xa0_52_2d,
-        "legendary" => 0x66_06_b2,
+        // Легендарка: яркий фиолетовый (орхидея) — тёмный
+        // 0x6606b2 плохо читался на тёмной теме (заказчик).
+        "legendary" => 0xc0_60_f0,
         _ => pal.text,
     }
 }
