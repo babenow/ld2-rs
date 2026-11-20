@@ -330,12 +330,36 @@ impl Root {
             let uid = item.uid.clone();
             let tile = div()
                 .id(format!("{id_prefix}-item-{uid}"))
-                .tooltip(Tooltip::text(format!(
-                    "{} · {} · +{}",
-                    item.name,
-                    rarity_label(lang, &item.rarity),
-                    item.upgrade
-                )))
+                .tooltip({
+                    // Заказчик 2026-11-20: описание предмета в тултипе —
+                    // тот же виджет, что и окно описания; появляется
+                    // плавно (анимация Ely), исчезает быстро.
+                    let detail = serde_json::to_value(item).unwrap_or_default();
+                    let skills = self.skill_names_for(&detail);
+                    let theme = self.config.theme.clone();
+                    let name_line = format!(
+                        "{} · {} · +{}",
+                        item.name,
+                        rarity_label(lang, &item.rarity),
+                        item.upgrade
+                    );
+                    Tooltip::rich(move |_, _| {
+                        let pal = crate::palette::palette(&theme);
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child(name_line.clone()),
+                            )
+                            .child(super::sheet::item_description_body(
+                                lang, &pal, &detail, &skills,
+                            ))
+                            .into_any_element()
+                    })
+                })
                 .flex()
                 .flex_row()
                 .gap_2()
