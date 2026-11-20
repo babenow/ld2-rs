@@ -15,8 +15,8 @@
 
 use ely::overlays::Dialog;
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, Context, CursorStyle, Div, DragMoveEvent, EmptyView,
-    MouseButton, SharedString, Window,
+    div, prelude::*, px, rgb, AnimationExt, AnyElement, Context, CursorStyle, Div, DragMoveEvent,
+    EmptyView, MouseButton, SharedString, Window,
 };
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{
@@ -1510,6 +1510,19 @@ impl Root {
                     .bg(rgb(pal.panel))
                     .border_1()
                     .border_color(rgb(rarity_color(&tip_rarity, &pal)))
+                    .when(
+                        matches!(tip_rarity.as_str(), "epic" | "legendary"),
+                        |card| {
+                            let base = rarity_color(&tip_rarity, &pal) & 0xff_ffff;
+                            card.shadow(vec![gpui::BoxShadow {
+                                color: gpui::rgba((base << 8) | 0x66).into(),
+                                offset: gpui::point(px(0.0), px(0.0)),
+                                blur_radius: px(12.0),
+                                spread_radius: px(2.0),
+                                inset: false,
+                            }])
+                        },
+                    )
                     .text_color(rgb(pal.text))
                     .text_size(px(13.0))
                     .child(
@@ -1592,6 +1605,8 @@ impl Root {
                         }),
                     ),
                 );
+            // Эпик/легендарка — пульсирующее свечение рамки (заказчик).
+            let row = rarity_glow(row, &item.rarity, pal, format!("ld2-equip-card-{slot}"));
             if matches!(slot.as_str(), "main_hand" | "off_hand") {
                 hand_rows.push(row.into_any_element());
             } else {
@@ -3320,6 +3335,42 @@ fn menu_item(
 }
 
 /// Цвет редкости предмета (палитра §7.4).
+/// Свечение рамки для эпических/легендарных вещей (заказчик
+/// 2026-11-20): пульсирующая цветная тень (BoxShadow) цветом
+/// редкости — alpha дышит 0.25…0.55 по синусу (~2.2 с). Остальным
+/// редкостям элемент возвращается без изменений.
+pub(crate) fn rarity_glow<E: gpui::IntoElement + 'static>(
+    el: E,
+    rarity: &str,
+    pal: &Palette,
+    id: String,
+) -> gpui::AnyElement {
+    if !matches!(rarity, "epic" | "legendary") {
+        return el.into_any_element();
+    }
+    let base = rarity_color(rarity, pal) & 0xff_ffff;
+    div()
+        .flex()
+        .flex_col()
+        .child(el)
+        .with_animation(
+            gpui::SharedString::from(format!("glow-{id}")),
+            gpui::Animation::new(std::time::Duration::from_millis(2200)).repeat(),
+            move |el, t| {
+                let alpha: f32 =
+                    (0.40 + 0.15 * (2.0f32 * std::f32::consts::PI * t).cos()).clamp(0.25, 0.55);
+                el.shadow(vec![gpui::BoxShadow {
+                    color: gpui::rgba((base << 8) | (alpha * 255.0) as u32).into(),
+                    offset: gpui::point(px(0.0), px(0.0)),
+                    blur_radius: px(10.0),
+                    spread_radius: px(1.0),
+                    inset: false,
+                }])
+            },
+        )
+        .into_any_element()
+}
+
 pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
     match rarity {
         "common" => pal.muted,

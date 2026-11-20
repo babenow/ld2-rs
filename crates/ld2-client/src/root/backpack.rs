@@ -360,6 +360,16 @@ impl Root {
                             .bg(rgb(pal.panel))
                             .border_1()
                             .border_color(rgb(rarity_color(&rarity, &pal)))
+                            .when(matches!(rarity.as_str(), "epic" | "legendary"), |card| {
+                                let base = rarity_color(&rarity, &pal) & 0xff_ffff;
+                                card.shadow(vec![gpui::BoxShadow {
+                                    color: gpui::rgba((base << 8) | 0x66).into(),
+                                    offset: gpui::point(px(0.0), px(0.0)),
+                                    blur_radius: px(12.0),
+                                    spread_radius: px(2.0),
+                                    inset: false,
+                                }])
+                            })
                             .text_color(rgb(pal.text))
                             .text_size(px(13.0))
                             .child(
@@ -424,6 +434,9 @@ impl Root {
             )
             .manual(request)
             .child(tile);
+            // Эпик/легендарка — пульсирующее свечение рамки (заказчик).
+            let ctx =
+                super::sheet::rarity_glow(ctx, &item.rarity, pal, format!("ld2-bp-ctx-{uid}"));
             // Отступ между строками списка (у Reorder нет gap).
             list = list.row(uid, div().pb(px(8.0)).child(ctx));
         }
