@@ -655,14 +655,16 @@ fn plan_combat(
             }
         }
         let (damage_mult, interval_mult) = world.boss_phase_mult(&mob_id, now_ms);
-        // M25: интервал — множитель фазы/баффа босса, минимальная
-        // скорость атаки (настройка min_attack_interval_s) и
-        // замедление из контента (`attack_speed`, мс сверху).
+        // M25: интервал — (база конфига + замедление моба
+        // `attack_speed`, мс) × множитель фазы/баффа, но не ниже
+        // настройки сервера min_attack_interval_s («минимальная
+        // скорость атаки») — крупные мобы бьют редко даже в поздних
+        // фазах.
         let interval_ms = crate::systems::mob_attack_interval(
-            attack_interval_ms,
+            attack_interval_ms + world.mob_attack_speed(&mob_id),
             interval_mult,
             (cfg.min_attack_interval_s * 1000.0).round() as i64,
-        ) + world.mob_attack_speed(&mob_id);
+        );
         world.set_mob_next_attack(&mob_id, now_ms + interval_ms);
         world.set_mob_attack_interval(&mob_id, interval_ms);
         // M25: навыки босса — каст (подготовка: босс не атакует) либо

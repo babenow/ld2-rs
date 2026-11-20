@@ -5386,6 +5386,70 @@ impl Session {
             .collect()
     }
 
+    /// `/scenario jump <location_id>` (M25): телепорт в любую
+    /// засеенную локацию — для обхода ад-карты (не связана с миром
+    /// выходами). Персист + мир + события — паритет `location.move`.
+    async fn scenario_jump(&mut self, loc_id: &str, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let char_id = match self.require_char_id(seq) {
+            Ok(id) => id,
+            Err(out) => return vec![out],
+        };
+        if db::locations::get(&self.state.pool, loc_id)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            return vec![Self::err(
+                seq,
+                ErrorCode::TargetGone,
+                format!("локации {loc_id} нет в сиде"),
+            )];
+        }
+        let state_version = match db::locations::move_char(&self.state.pool, &char_id, loc_id).await
+        {
+            Ok(v) => v as u64,
+            Err(e) => {
+                warn!("jump (персонаж): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        self.location_id = Some(loc_id.to_string());
+        {
+            let mut world = self.state.world.lock().expect("мир");
+            world.set_char_location(&char_id, loc_id);
+            world.end_combat(&char_id);
+        }
+        let location = match db::locations::get(&self.state.pool, loc_id).await {
+            Ok(Some(row)) => self.location_with_world(row.snapshot()),
+            Ok(None) => {
+                warn!("jump: целевая локация {loc_id} отсутствует — заглушка");
+                location_snapshot(loc_id)
+            }
+            Err(e) => {
+                warn!("jump (чтение {loc_id}): {e}");
+                location_snapshot(loc_id)
+            }
+        };
+        let ack = match Ack::ok_with_payload(
+            seq,
+            Some(state_version),
+            &serde_json::json!({ "location": location.clone() }),
+        ) {
+            Ok(ack) => out_ack(ack),
+            Err(e) => Self::err(seq, ErrorCode::Internal, format!("encode: {e}")),
+        };
+        let changed = out_event(
+            "evt/location/changed",
+            Some(state_version),
+            serde_json::to_value(LocationChanged { location }).unwrap_or_default(),
+        );
+        vec![ack, changed]
+    }
+
     /// `/scenario death` (ФР-06): общий поток смерти (death.rs) — теряется
     /// **только лут**, опыт/пул сохраняются (skills.md §2.2); респаун в спавне.
     async fn scenario(&mut self, scenario: &str, seq: u32) -> Vec<Out> {
@@ -5636,6 +5700,12 @@ impl Session {
                     .unwrap_or_default(),
                 ),
             ];
+        }
+        // `/scenario jump <location_id>` (M25): телепорт в любую
+        // засеенную локацию — для обхода ад-карты (не связана с миром
+        // выходами). Персист + мир + события — паритет `location.move`.
+        if let Some(loc_id) = scenario.strip_prefix("jump ") {
+            return self.scenario_jump(loc_id.trim(), seq).await;
         }
         if scenario != "death" {
             return vec![Self::err(

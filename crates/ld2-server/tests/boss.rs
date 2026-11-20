@@ -69,8 +69,9 @@ fn temp_content() -> PathBuf {
 }
 
 /// M25: босс — каст (подготовка), фазы по времени боя (глиф), навык
-/// после каста, бар атаки/цель в снапшоте; пол атаки500 мс + замедление
-/// контента500 мс → интервал1000 мс (конфиг в тесте0.1 с).
+/// после каста, бар атаки/цель в снапшоте; интервал = (конфиг0.1 с =
+/// 100 мс + замедление500 мс) × множитель фазы, пол500 мс:
+/// фаза1 = 600, фаза2 = 480 → пол500.
 #[tokio::test]
 async fn boss_cast_phases_skills_and_attack_bar() {
     let Some(db_url) = common::test_url() else {
@@ -155,8 +156,8 @@ async fn boss_cast_phases_skills_and_attack_bar() {
         .wait(|v| v["type"] == "evt/mob/attack" && v["payload"]["entity_id"] == "m_test_boss")
         .await;
     assert_eq!(
-        attack["payload"]["interval_ms"], 1000,
-        "пол500 + замедление500: {attack}"
+        attack["payload"]["interval_ms"], 500,
+        "фаза2: (конфиг100 + замедление500)×0.8=480 → пол500: {attack}"
     );
     assert!(
         attack["payload"]["next_attack_at"].as_i64().unwrap_or(0) > 0,
@@ -180,7 +181,10 @@ async fn boss_cast_phases_skills_and_attack_bar() {
         boss["boss"]["phase"].as_u64().unwrap_or(0) >= 1,
         "фаза в снапшоте: {boss}"
     );
-    assert_eq!(boss["attack_interval"], 1000, "интервал: {boss}");
+    assert_eq!(
+        boss["attack_interval"], 500,
+        "фаза2: (100+500)×0.8=480 → пол500: {boss}"
+    );
     assert!(
         boss["next_attack_at"].as_i64().unwrap_or(0) > 0,
         "бар: {boss}"

@@ -378,7 +378,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/entity/move` | `{ entity_id, patch }` | перемещение/изменение внутри локации |
 | `evt/entity/hp` | `{ entity_id, hp }` | смена HP |
 | `evt/entity/despawn` | `{ entity_id, location_id, kind? }` | исчезновение (смерть/уход/TTL); `kind` M20 — «{name} исчез» для предмета |
-| `evt/mob/attack` | `{ entity_id, next_attack_at, interval_ms }` | M25: моб атаковал — бар атаки у монстра в списке (заполнение → атака); `interval_ms` — пол = настройка `min_attack_interval_s` (0.5 с), сверху `attack_speed` моба |
+| `evt/mob/attack` | `{ entity_id, next_attack_at, interval_ms }` | M25: моб атаковал — бар атаки у монстра в списке (заполнение → атака); `interval_ms` = (конфиг-интервал + `attack_speed` моба) × множитель фазы босса, но не ниже настройки `min_attack_interval_s` (0.5 с) |
 | `evt/mob/phase` | `{ entity_id, phase, name, glyph? }` | M25: босс перешёл в фазу по времени боя — глиф/имя в списке монстров + журнал |
 | `evt/mob/skill` | `{ entity_id, source_name, name, glyph? }` | M25: босс использовал навык — журнал |
 | `evt/mob/cast` | `{ entity_id, source_name, name, glyph?, ends_at }` | M25: босс начал каст (подготовка — не атакует) — «готовит: …» в списке/журнале |

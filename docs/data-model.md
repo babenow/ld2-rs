@@ -78,6 +78,84 @@ location: { id, name, spawn, flags[], text,
   `dialogs.json → training` (ADR-009), маркер — только гейт;
 - `was_player` — ключ маркера трупа игрока (статус «Мародёр»).
 
+### 1.6.1 Монстры — модель данных (M20/M25)
+
+**Контент** (`locations.json`, entity c `kind: "monster"`):
+
+| Поле | Тип | Смысл |
+|---|---|---|
+| `id`, `name` | string | Идентификатор (события/труп) и отображаемое имя |
+| `hp: {cur, max}` | int | Стартовый/максимальный HP; при респавне — `hp_start` |
+| `difficulty` | 1..10 | XP убийства = `kill_xp_base + difficulty × kill_xp_per` (skills.md §2.3) |
+| `tags` | []string | Метки строк UI (например `boss`) |
+| `aggro` | bool | Сам атакует игроков, вошедших в локацию |
+| `damage` | int | Урон атаки (дефолт4) |
+| `attack_speed` | int, мс | M25: прибавка к интервалу атаки — **замедление** |
+| `respawn {min_s, max_s}` | — | Возрождение; нет поля → `[world] respawn_default`, нет и его → не возрождается |
+| `harvest {level, skin, gut}` | — | Флаги разделки трупа (M22) |
+| `drops` | [id \| {id, chance}] | Лут в труп: строка = шанс1.0, объект — по `chance` |
+| `boss_ai` | object | M25: босс — фазы и навыки (ниже) |
+
+**Рантайм** (`world::LiveMob` — in-memory; шаблон `mob_seed` создаётся
+из сида при старте, респавн клонирует его → состояние сбрасывается):
+
+| Поле | Смысл |
+|---|---|
+| `hp` / `hp_max` / `hp_start` | Текущее HP; `hp_start` — эталон для респавна |
+| `next_attack_at` | Epoch-мс следующей атаки (заполняет бар атаки у клиента) |
+| `attack_interval` | Запланированный интервал, мс — знаменатель бара |
+| `target` | Id цели последней атаки — строка «атакует вас / атакует {имя}» |
+| `stun_until`, `root_until` | Дебаффы рун (стан блокирует атаки моба; корни пока справочные) |
+| `bleed_dps/until/next_at/src` | Кровотечение (DoT) и его источник (XP за добивание) |
+| `bonus_loot` | Админ-лут (M24) — попадает в труп при смерти |
+| `harvest` | Флаги разделки — переходят в труп |
+| `boss: Option<BossRuntime>` | Состояние босса (ниже) |
+
+**Интервал атаки (M25):**
+
+```
+interval = max((combat.attack_interval_s + attack_speed_монстра_мс)
+                  × множитель_фазы,
+               gameplay.combat.min_attack_interval_s)
+```
+
+`min_attack_interval_s` — настройка сервера `[gameplay.combat]`
+(«минимальная скорость атаки», дефолт 0.5 с,0.1..=60); `attack_speed` —
+контент-замедление в мс. Каждая атака шлёт `evt/mob/attack`
+(`next_attack_at`, `interval_ms`) — клиент рисует бар (заполнение → атака).
+
+**Босс** (`boss_ai` контента → `BossRuntime` in-memory):
+
+- `phases[]: {after_s, name, glyph, damage_mult, interval_mult}` —
+  фазы идут **от первой атаки боя** (`since`); переход →
+  `evt/mob/phase` → глиф/имя в списке монстров + журнал; множители
+  действуют на урон и интервал (поверх баффа).
+- `skills[]: {id, name, glyph, cooldown_s, damage, cast_s?, self_buff?,
+  effect?}` — ротация, кулдаун от конца каста:
+  - `cast_s > 0` — подготовка: босс **не атакует**, `evt/mob/cast`
+    («готовит: …» в списке/журнале); после каста — `evt/mob/skill`;
+  - `self_buff {damage_mult, interval_mult, duration_s}` — бафф на
+    себя (множители к фазе, пока действует);
+  - `effect {kind ∈ stun|silence|blind, duration_s}` — на игроков
+    локации: `world.char_effects` + `evt/char/afflict`. Стан —
+    блок действий `E_STUNNED` **и всплывающее окно с прогрессбаром**
+    (переживает перезаход — пересылается при `char.select`); немота —
+    без кастов рун/свитков; ослепление — без атак/навыков.
+
+**Wire (`Entity`, §6):** `hp{cur,max}`, `tags`, `aggro`,
+`boss?: {phase, name, glyph, casting?}` (фаза/каст босса),
+`next_attack_at?`, `attack_interval?` (бар), `attacking?` (цель) —
+плюс `extra` (прочие поля контента сохраняются, §11).
+
+**События:** `evt/entity/spawn|despawn|hp`, `evt/combat/hit`,
+`evt/mob/attack`, `evt/mob/phase`, `evt/mob/skill`, `evt/mob/cast`,
+`evt/char/afflict`.
+
+**Жизненный цикл:** спавн из сида → бой (агрессия/игроки) → смерть →
+**труп** (`evt/corpse/created`: лут = `drops` по шансу + `bonus_loot`,
+`harvest`-флаги, XP по `difficulty`) → респавн клоном `mob_seed`
+(runtime-состояние босса/дебаффов сбрасывается чистым сидом).
+
 ### 1.7 `dialogs.json` → диалоги NPC (в памяти, M18)
 
 ```

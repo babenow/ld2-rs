@@ -44,11 +44,23 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     }
 
     // Респаун: hp полное + позиция = спавн (иначе текущая) + бамп (D27).
-    let spawn = crate::db::locations::spawn_id(pool)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    // M25: настройка сервера `[world] respawn_location_id` — точка
+    // респавна после смерти (пусто — спавн-локация контента).
+    let override_id = state
+        .config
+        .world
+        .respawn_location_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    let spawn = match override_id {
+        Some(id) => id,
+        None => crate::db::locations::spawn_id(pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+    };
     let current = crate::db::characters::get(pool, char_id)
         .await
         .ok()

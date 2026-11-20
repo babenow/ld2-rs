@@ -363,6 +363,10 @@ pub struct WorldSection {
     /// Запрашивается клиентом через session.start; по умолчанию 30.
     #[serde(default = "default_journal_ttl")]
     pub journal_ttl_s: i64,
+    /// M25: локация респавна после смерти; пусто — спавн-локация
+    /// контента (`meta.spawn_location`).
+    #[serde(default)]
+    pub respawn_location_id: Option<String>,
     /// M20: дефолтный респавн мобов `{min_s, max_s}` — для мобов без
     /// `respawn` в контенте; нет поля и нет дефолта — моб не
     /// возрождается (план M20, решение 5).
