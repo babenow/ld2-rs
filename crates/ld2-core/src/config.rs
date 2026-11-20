@@ -277,13 +277,51 @@ pub fn host_allowed(host: &str, release: bool) -> bool {
     if !host.starts_with("ws://") {
         return true; // wss:// и прочее
     }
-    host.contains("127.0.0.1") || host.contains("localhost") || host.contains("[::1]")
+    // R2: сравнение по hostname целиком (substring пропускал
+    // `localhost.evil.com`); схема → authority (без пути/query) →
+    // userinfo → IPv6-скобки/порт разбираются явно.
+    let rest = &host["ws://".len()..];
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let authority = match authority.rsplit_once('@') {
+        Some((_, a)) => a, // user:pass@host
+        None => authority,
+    };
+    let hostname = if let Some(stripped) = authority.strip_prefix('[') {
+        match stripped.split_once(']') {
+            Some((h, _)) => h,
+            None => return false,
+        }
+    } else if let Some((h, _)) = authority.split_once(':') {
+        h
+    } else {
+        authority
+    };
+    matches!(
+        hostname.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
 }
 
 impl Config {
     /// Защита: пустой логин — не логин (иначе keyring ищет мусорную запись,
     /// а macOS может зависнуть на диалоге доступа — M4-инцидент).
-    pub fn sanitize(mut self) -> Self {
+    pub fn sanitize(self) -> Self {
+        // Release-бинарник — guard действует; dev/тесты — без ограничений
+        // (семантика host_allowed; обе ветки гоняются через sanitize_for).
+        self.sanitize_for(!cfg!(debug_assertions))
+    }
+
+    /// sanitize с явным release-флагом. R2b: host из config.toml идёт в
+    /// транспорт мимо UI-guard (ApplyHost) — валидируем здесь же:
+    /// невалидный `ws://` (release) → сброс на дефолт с предупреждением.
+    pub fn sanitize_for(mut self, release: bool) -> Self {
+        if !host_allowed(&self.host, release) {
+            tracing::warn!(
+                "host '{}' не проходит guard ws:// (release) — сброшен на дефолт",
+                self.host
+            );
+            self.host = DEFAULT_HOST.to_string();
+        }
         if self.last_login.as_deref() == Some("") {
             self.last_login = None;
         }
@@ -539,6 +577,43 @@ mod tests {
         );
         // Dev-сборка — без ограничений (ФР-19).
         assert!(host_allowed("ws://evil.example/ws", false));
+    }
+
+    #[test]
+    fn host_allowed_parses_authority_not_substring() {
+        // R2: substring-проверка пропускала такие адреса.
+        assert!(!host_allowed("ws://localhost.evil.com/ws", true));
+        assert!(!host_allowed("ws://127.0.0.1.evil.com", true));
+        assert!(!host_allowed("ws://fake-localhost:8080", true));
+        // Регистр, порт, путь, userinfo, IPv6.
+        assert!(host_allowed("ws://LOCALHOST:8080/ws", true));
+        assert!(host_allowed("ws://user@127.0.0.1:24817/ws", true));
+        assert!(host_allowed("ws://[::1]:8080/ws", true));
+        assert!(!host_allowed("ws://[fe80::1]:8080/ws", true));
+        // wss:// не ограничивается.
+        assert!(host_allowed(
+            "wsS://evil.example/ws".to_lowercase().as_str(),
+            true
+        ));
+    }
+
+    #[test]
+    fn sanitize_for_resets_blocked_host() {
+        let evil = Config {
+            host: "ws://evil.example/ws".into(),
+            ..Config::default()
+        };
+        assert_eq!(evil.clone().sanitize_for(true).host, DEFAULT_HOST);
+        assert_eq!(
+            evil.sanitize_for(false).host,
+            "ws://evil.example/ws",
+            "dev-сборка не ограничивает (ФР-19)"
+        );
+        let ok = Config {
+            host: "ws://localhost:24817/ws".into(),
+            ..Config::default()
+        };
+        assert_eq!(ok.sanitize_for(true).host, "ws://localhost:24817/ws");
     }
 
     #[test]

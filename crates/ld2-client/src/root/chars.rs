@@ -183,6 +183,16 @@ impl Root {
                     pal.accent_text,
                     move |this, cx| {
                         if this.store.pending.is_none() {
+                            // R3: min_client новее клиента — вход в мир
+                            // заблокирован, команда не отправляется.
+                            if this.store.forced_update {
+                                this.store.select_error = Some(format!(
+                                    "⚠ Сервер требует клиент v{} (у вас v{}) — обновитесь",
+                                    this.store.min_client_required.clone().unwrap_or_default(),
+                                    env!("CARGO_PKG_VERSION")
+                                ));
+                                return;
+                            }
                             let cmd = CharSelect {
                                 char_id: cid2.clone(),
                             };

@@ -370,6 +370,15 @@ where
 /// Классификация входящего текста (§2.2, §2.3).
 fn classify(text: &str) -> Result<ServerMsg, serde_json::Error> {
     let env: Envelope = serde_json::from_str(text)?;
+    // §2.3/§11.4 (R3): конверт чужой версии нельзя разбирать типами v1 —
+    // смещение полей молча исказит данные. Отбрасываем с предупреждением.
+    if env.v != 1 {
+        warn!(
+            "конверт v={} не поддерживается (ожидалась v1) — отброшено: {}",
+            env.v, env.msg_type
+        );
+        return Ok(ServerMsg::Unknown(format!("v={} {}", env.v, env.msg_type)));
+    }
     if env.msg_type == ACK_TYPE {
         let ack: Ack = serde_json::from_str(text)?;
         Ok(ServerMsg::Ack(ack))

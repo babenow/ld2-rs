@@ -31,6 +31,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # R18: системные зависимости gpui на Linux (как в ci.yml) — без них
+      # релизная сборка падает на первом же теге v*.
+      - name: system deps (linux)
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libxkbcommon-x11-dev \
+            libfontconfig1-dev libwayland-dev \
+            libx11-dev libxcb1-dev
+
       - name: build (release)
         run: cargo build --release -p ld2-client
 

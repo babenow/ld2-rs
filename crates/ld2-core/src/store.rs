@@ -315,6 +315,11 @@ pub struct AppStore {
     pub recipes_loaded: bool,
     /// Нейтральное сообщение (создан/удалён/транспорт).
     pub notice: Option<String>,
+    /// R3: min_client с последнего session.start (для подписи) и
+    /// жёсткий флаг «обновление обязательно» — вход в мир заблокирован
+    /// (char.select не отправляется, chars.rs).
+    pub min_client_required: Option<String>,
+    pub forced_update: bool,
     /// Логин последней попытки входа — предзаполнение формы.
     pub last_login: Option<String>,
     /// Журнал мира (ФР-17): ring-буфер [`LOG_LIMIT`].
@@ -731,6 +736,8 @@ impl AppStore {
             recipes: Vec::new(),
             recipes_loaded: false,
             notice: None,
+            min_client_required: None,
+            forced_update: false,
             last_login: None,
             log: VecDeque::new(),
             visited: Vec::new(),
@@ -1292,8 +1299,16 @@ impl AppStore {
                 }
                 // После сброса notice: предупреждение о версии не должно
                 // затираться переходом экрана (НФР force-min-version).
+                // R3: не только notice — жёсткий флаг блокирует вход в
+                // мир (chars.rs не отправляет char.select).
+                let forced = required
+                    .as_deref()
+                    .map(|r| crate::update_check::is_newer(r, env!("CARGO_PKG_VERSION")))
+                    .unwrap_or(false);
+                self.min_client_required = required.clone();
+                self.forced_update = forced;
                 if let Some(required) = required {
-                    if crate::update_check::is_newer(&required, env!("CARGO_PKG_VERSION")) {
+                    if forced {
                         self.notice = Some(format!(
                             "⚠ Сервер требует клиент v{required} (у вас v{}) — обновитесь",
                             env!("CARGO_PKG_VERSION")
@@ -3671,6 +3686,39 @@ mod tests {
         assert_eq!(store.screen, Screen::Characters);
         assert_eq!(store.slot_usage(), (1, 8));
         assert!(store.login_error.is_none());
+        assert!(!store.forced_update, "без min_client — вход разрешён");
+    }
+
+    #[test]
+    fn session_start_min_client_forces_update() {
+        let mut store = store_with_session();
+        // Сервер требует более новый клиент → вход в мир блокируется.
+        let mut cfg = serde_json::to_value(fixtures::session_config(8)).unwrap();
+        cfg["server"]["min_client"] = serde_json::json!("99999.0.0");
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(cfg),
+        }));
+        assert!(store.forced_update);
+        assert_eq!(store.min_client_required.as_deref(), Some("99999.0.0"));
+        assert!(store.notice.is_some(), "предупреждение видно");
+
+        // Требование равно версии клиента — вход разрешён.
+        let mut cfg = serde_json::to_value(fixtures::session_config(8)).unwrap();
+        cfg["server"]["min_client"] = serde_json::json!(env!("CARGO_PKG_VERSION"));
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(cfg),
+        }));
+        assert!(!store.forced_update);
     }
 
     #[test]

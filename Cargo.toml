@@ -56,3 +56,10 @@ ely = { package = "ely-gpui-component", version = "=0.1.1" }
 
 [profile.dev]
 debug = 1
+
+# R19: релизные артефакты (Docker-образ, теги v*) — LTO/strip/один
+# codegen-unit.
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1

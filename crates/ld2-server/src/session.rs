@@ -8569,7 +8569,8 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
-        let Some(my_rank) = db::guilds::rank_of(&self.state.pool, &char_id)
+        // R1: гильдия и ранг кикера одной выборкой — кик только в своей.
+        let Some((my_guild_id, my_rank)) = db::guilds::membership(&self.state.pool, &char_id)
             .await
             .ok()
             .flatten()
@@ -8595,26 +8596,36 @@ impl Session {
             )];
         }
         // Нельзя исключить лидера; офицер не исключает офицера.
-        let target_rank = db::guilds::rank_of(&self.state.pool, &cmd.player_id)
-            .await
-            .ok()
-            .flatten();
-        match target_rank.as_deref() {
-            None => {
-                return vec![Self::err(
-                    seq,
-                    ErrorCode::GuildPermission,
-                    "игрок не в гильдии",
-                )];
-            }
-            Some("leader") => {
+        // R1: цель — только участник той же гильдии (раньше офицер A
+        // выкидывал участника B: kick не фильтровал по guild_id).
+        let Some((target_guild_id, target_rank)) =
+            db::guilds::membership(&self.state.pool, &cmd.player_id)
+                .await
+                .ok()
+                .flatten()
+        else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "игрок не в гильдии",
+            )];
+        };
+        if target_guild_id != my_guild_id {
+            return vec![Self::err(
+                seq,
+                ErrorCode::GuildPermission,
+                "игрок не в вашей гильдии",
+            )];
+        }
+        match target_rank.as_str() {
+            "leader" => {
                 return vec![Self::err(
                     seq,
                     ErrorCode::GuildPermission,
                     "нельзя исключить лидера",
                 )];
             }
-            Some("officer") if my_rank == "officer" => {
+            "officer" if my_rank == "officer" => {
                 return vec![Self::err(
                     seq,
                     ErrorCode::GuildPermission,
@@ -8623,7 +8634,7 @@ impl Session {
             }
             _ => {}
         }
-        match db::guilds::kick(&self.state.pool, &cmd.player_id).await {
+        match db::guilds::kick(&self.state.pool, &my_guild_id, &cmd.player_id).await {
             Ok(true) => {}
             Ok(false) => {
                 return vec![Self::err(

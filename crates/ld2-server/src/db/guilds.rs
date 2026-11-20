@@ -69,6 +69,17 @@ pub async fn browse(pool: &PgPool, query: Option<&str>) -> Result<Vec<GuildRow>,
 
 /// Гильдия персонажа (устойчивый индекс: одна на персонажа — уникальный
 /// индекс в схеме).
+/// R1: гильдия и ранг участника одной выборкой (кик, сверка гильдий).
+pub async fn membership(
+    pool: &PgPool,
+    char_id: &str,
+) -> Result<Option<(String, String)>, sqlx::Error> {
+    sqlx::query_as("SELECT guild_id, rank FROM guild_members WHERE character_id = $1")
+        .bind(char_id)
+        .fetch_optional(pool)
+        .await
+}
+
 pub async fn guild_of(pool: &PgPool, char_id: &str) -> Result<Option<GuildRow>, sqlx::Error> {
     sqlx::query_as::<_, GuildRow>(
         "SELECT g.id, g.name FROM guild_members m \
@@ -147,14 +158,18 @@ pub async fn leave(pool: &PgPool, char_id: &str) -> Result<Option<String>, sqlx:
 }
 
 /// Исключить участника (вызывающий уже проверен на права) → false — нет цели.
-pub async fn kick(pool: &PgPool, char_id: &str) -> Result<bool, sqlx::Error> {
+/// R1: только в указанной гильдии — кик из чужой невозможен.
+pub async fn kick(pool: &PgPool, guild_id: &str, char_id: &str) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let guild_id: Option<String> =
-        sqlx::query_scalar("DELETE FROM guild_members WHERE character_id = $1 RETURNING guild_id")
-            .bind(char_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let Some(id) = guild_id else {
+    let deleted: Option<String> = sqlx::query_scalar(
+        "DELETE FROM guild_members \
+         WHERE guild_id = $1 AND character_id = $2 RETURNING guild_id",
+    )
+    .bind(guild_id)
+    .bind(char_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(id) = deleted else {
         return Ok(false);
     };
     log_tx(&mut tx, &id, "kick", "Участник исключён").await?;
