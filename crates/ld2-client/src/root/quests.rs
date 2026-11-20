@@ -59,7 +59,7 @@ pub(crate) fn quest_tab_of(phase: QuestPhase) -> Option<QuestsTab> {
     match phase {
         QuestPhase::Active | QuestPhase::TurnIn => Some(QuestsTab::Current),
         QuestPhase::Done => Some(QuestsTab::Completed),
-        QuestPhase::Available => None,
+        QuestPhase::Available | QuestPhase::Unknown => None,
     }
 }
 
@@ -70,6 +70,8 @@ fn state_badge(phase: QuestPhase) -> (Key, u32) {
         QuestPhase::Active => (Key::StateActive, 0xab_b2_bf),
         QuestPhase::TurnIn => (Key::StateTurnIn, 0xd1_9a_66),
         QuestPhase::Done => (Key::StateDone, 0x61_af_ef),
+        // R12: незнакомая фаза — нейтральный цвет, подпись «неизвестно».
+        QuestPhase::Unknown => (Key::StateUnknown, 0xab_b2_bf),
     }
 }
 

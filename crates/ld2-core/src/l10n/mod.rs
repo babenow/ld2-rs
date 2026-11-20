@@ -253,6 +253,8 @@ pub enum Key {
     StateActive,
     StateTurnIn,
     StateDone,
+    /// R12: незнакомая фаза квеста (сервер новее клиента).
+    StateUnknown,
     RecipesLabel,
     BtnCraft,
     LearnLabel,
@@ -866,6 +868,7 @@ mod tests {
         Key::StateActive,
         Key::StateTurnIn,
         Key::StateDone,
+        Key::StateUnknown,
         Key::RecipesLabel,
         Key::BtnCraft,
         Key::LearnLabel,

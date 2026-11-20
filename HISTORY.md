@@ -5,6 +5,17 @@
 
 ## 2026-11-20
 
+- **Рефакторинг, партия C** (по `plans/REVIEW-M25.md`, протокол
+  клиента): **R11** — `evt/state/delta` применяется JSON-patch'ем к
+  снапшоту (неприменимо → авто-resync, `Effect::ResyncState`),
+  `evt/error` — notice (фатальная → resync); **R12** — `#[serde(other)]`
+  Unknown в `EntityKind`/`QuestPhase` (незнакомое значение не роняет
+  разбор снапшота/квестов) + l10n StateUnknown; **R13** — backoff
+  сбрасывается после сессии длиннее `backoff_max`; **R16** — время:
+  медиана кольца из 5 замеров, перекалибровка `cmd/time.sync` раз
+  в 5 мин; **R17** — конфиг: атомарная запись temp+rename, битый
+  разбор → .bak + дефолт (запуск возможен); **R21** — notice при
+  некорректных обязательных блоках session.start/snapshot.
 - **Рефакторинг, партия B** (по `plans/REVIEW-M25.md`): **R6** —
   shop.buy / quest.turn_in / skill.train — одной транзакцией
   (ядра `consume_by_def_tx`/`consume_money_tx`/`grant_stacking_tx`/

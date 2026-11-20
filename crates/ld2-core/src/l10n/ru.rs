@@ -197,6 +197,7 @@ pub(super) fn t(key: Key) -> &'static str {
         BtnTurnIn => "Сдать",
         BtnAbandon => "Отказаться",
         StateAvailable => "доступен",
+        StateUnknown => "неизвестно",
         StateActive => "взят",
         StateTurnIn => "к сдаче",
         StateDone => "выполнен",

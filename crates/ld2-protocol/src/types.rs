@@ -39,6 +39,10 @@ pub enum EntityKind {
     /// M20/F20c: контейнер (сундук) — лут `loot:<entity>:<idx>`
     /// однократно на персонажа (паритет трупа).
     Container,
+    /// R12 (§6): незнакомое значение kind — не роняем разбор Entity
+    /// (иначе терялся весь снапшот); рендер — как нейтральное.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Строка в `location.entities` (§6). `was_player` — ключевой маркер трупа
@@ -281,6 +285,9 @@ pub enum QuestPhase {
     Active,
     TurnIn,
     Done,
+    /// R12 (§6): незнакомая фаза — не роняем разбор списка квестов.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -10,8 +10,9 @@ use std::collections::{BTreeMap, VecDeque};
 use ld2_protocol::evt::{
     CharDeath, CharStats, CharXp, ChatMessage, CombatCooldown, CombatHit, CorpseCreated,
     CorpseLooted, CrimeAdded, CrimeRemoved, CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove,
-    EntitySpawn, GuildLogEntry, ItemAdded, ItemDropped, ItemExpired, ItemRemovalReason,
-    ItemRemoved, LocationChanged, MagicCast, StateSnapshot, TimeSync as TimeSyncEvent,
+    EntitySpawn, ErrorNotice, GuildLogEntry, ItemAdded, ItemDropped, ItemExpired,
+    ItemRemovalReason, ItemRemoved, LocationChanged, MagicCast, PatchOp, PatchOpKind, StateDelta,
+    StateSnapshot, TimeSync as TimeSyncEvent,
 };
 use ld2_protocol::types::{
     CharacterSummary, CrimeLogEntry, CrimeStatus, GuildState, Hp, LocationSnapshot, PartyState,
@@ -194,6 +195,9 @@ pub enum Effect {
     TransportToken(String),
     /// OS-уведомление (D7, feature-flag `desktop.notify` в настройках).
     Notify(NotifyKind),
+    /// R11: дельта неприменима — запросить полный снапшот (§12.4).
+    /// Исполнитель (root) шлёт `cmd/state.resync` с текущей версией.
+    ResyncState,
 }
 
 /// События для системных уведомлений (D7: смерть, приглашения, whisper,
@@ -260,6 +264,9 @@ pub struct AppStore {
     pub inscribe: Option<String>,
     /// Смещение часов сервера (evt/time.sync): server = local + offset.
     pub time_offset: i64,
+    /// R16 (§1.1): последние замеры смещения — медиана (один сэмпл
+    /// скачет от сетевого джиттера и скачков системных часов).
+    pub time_samples: std::collections::VecDeque<i64>,
     /// M24: фаза тикера зарядов рун (шкала `now_ms`) — прогрессбар
     /// заполнения рун; ставится по снапшоту и по приросту зарядов
     /// в `evt/item/state` (тикер шлёт патч сокетов — такт виден).
@@ -712,6 +719,7 @@ impl AppStore {
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
             time_offset: 0,
+            time_samples: VecDeque::new(),
             rune_recharge_phase_ms: None,
             target: None,
             combat_cooldowns: BTreeMap::new(),
@@ -1254,7 +1262,15 @@ impl AppStore {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0);
-                self.time_offset = sync.server_ts - local;
+                // R16 (§1.1 «КРИЧНО»): медиана последних 5 замеров;
+                // перекалибровка — периодический cmd/time.sync (root).
+                self.time_samples.push_back(sync.server_ts - local);
+                if self.time_samples.len() > 5 {
+                    self.time_samples.pop_front();
+                }
+                let mut sorted: Vec<i64> = self.time_samples.iter().copied().collect();
+                sorted.sort_unstable();
+                self.time_offset = sorted[sorted.len() / 2];
                 vec![]
             }
             "evt/combat/cooldown" => {
@@ -1279,6 +1295,11 @@ impl AppStore {
             "evt/session.start" => {
                 let Ok(cfg) = serde_json::from_value::<SessionConfig>(payload) else {
                     tracing::warn!("некорректный evt/session.start — игнор");
+                    // R21: login-ack уже ok — без notice UI висит молча.
+                    self.notice = Some(
+                        "⚠ Сервер прислал некорректную конфигурацию сессии — переподключитесь"
+                            .into(),
+                    );
                     return vec![];
                 };
                 let refresh = cfg.session.refresh.token.clone();
@@ -1329,6 +1350,11 @@ impl AppStore {
                 self.rune_recharge_phase_ms = Some(local_epoch_ms() + self.time_offset * 1000);
                 let Ok(snap) = serde_json::from_value::<StateSnapshot>(payload) else {
                     tracing::warn!("некорректный evt/state/snapshot — игнор");
+                    // R21: экран мира без снапшота — молчаливое «пустое
+                    // окно»; сообщаем пользователю.
+                    self.notice = Some(
+                        "⚠ Сервер прислал некорректный снапшот мира — переподключитесь".into(),
+                    );
                     return vec![];
                 };
                 self.push_visited(&snap.location);
@@ -2321,8 +2347,65 @@ impl AppStore {
                 }
                 vec![]
             }
+            "evt/state/delta" => {
+                // R11 (§3/§12.4): после state.resync сервер может ответить
+                // дельтой — применяем JSON-patch к снапшоту; база не
+                // совпала, неприменимый путь или битый результат →
+                // полный resync (иначе клиент навсегда на устаревшем
+                // состоянии).
+                let Ok(delta) = serde_json::from_value::<StateDelta>(payload) else {
+                    tracing::warn!("некорректный evt/state/delta → resync");
+                    return self.request_resync();
+                };
+                let Some(snap) = self.snapshot.as_ref() else {
+                    return self.request_resync();
+                };
+                if snap.state_version != delta.from_version {
+                    tracing::warn!(
+                        "delta: база {} ≠ снапшот {} → resync",
+                        delta.from_version,
+                        snap.state_version
+                    );
+                    return self.request_resync();
+                }
+                let mut value = match serde_json::to_value(snap) {
+                    Ok(value) => value,
+                    Err(_) => return self.request_resync(),
+                };
+                if !apply_json_patch(&mut value, &delta.patch) {
+                    tracing::warn!("delta: неприменимый патч → resync");
+                    return self.request_resync();
+                }
+                match serde_json::from_value::<StateSnapshot>(value) {
+                    Ok(snap) => {
+                        self.snapshot = Some(snap);
+                        vec![]
+                    }
+                    Err(_) => {
+                        tracing::warn!("delta: патч дал некорректный снапшот → resync");
+                        self.request_resync()
+                    }
+                }
+            }
+            "evt/error" => {
+                // R11 (§8): не-фатальные ошибки сервера — notice;
+                // фатальная — notice + resync (восстановление состояния).
+                let Ok(err) = serde_json::from_value::<ErrorNotice>(payload) else {
+                    return vec![];
+                };
+                self.notice = Some(format!("⚠ {}: {}", err.code, err.message));
+                if err.fatal == Some(true) {
+                    return vec![Effect::ResyncState];
+                }
+                vec![]
+            }
             _ => vec![], // неизвестные/ненужные события транспорт уже залогировал
         }
+    }
+
+    /// R11: дельта неприменима — полный снапшот (§12.4).
+    fn request_resync(&self) -> Vec<Effect> {
+        vec![Effect::ResyncState]
     }
 
     // ── журнал и история (ФР-17, ФР-03) ────────────────────────────────────
@@ -2909,6 +2992,83 @@ pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
         .and_then(|s| s.crime.kinds.iter().find(|k| k.kind == kind))
         .map(|k| k.title.clone())
         .unwrap_or_else(|| kind.to_string())
+}
+
+/// R11 (§3): применение JSON-patch к снапшоту. Путь — RFC 6901
+/// pointer («/location/entities/0/hp/cur»); `~0`/`~1` — эскейпы.
+/// `false` — путь не существует / битое значение (клиент запрашивает
+/// полный снапшот вместо тихого рассинхрона).
+fn apply_json_patch(value: &mut serde_json::Value, patch: &[PatchOp]) -> bool {
+    patch.iter().all(|op| apply_patch_op(value, op))
+}
+
+fn apply_patch_op(value: &mut serde_json::Value, op: &PatchOp) -> bool {
+    let segments: Vec<String> = op
+        .path
+        .split('/')
+        .skip(1)
+        .map(|s| s.replace("~1", "/").replace("~0", "~"))
+        .collect();
+    if segments.is_empty() {
+        return false;
+    }
+    let mut cur = value;
+    for seg in &segments[..segments.len() - 1] {
+        let next = match cur {
+            serde_json::Value::Object(map) => map.get_mut(seg),
+            serde_json::Value::Array(arr) => {
+                seg.parse::<usize>().ok().and_then(move |i| arr.get_mut(i))
+            }
+            _ => None,
+        };
+        let Some(next) = next else {
+            return false;
+        };
+        cur = next;
+    }
+    let Some(last) = segments.last() else {
+        return false;
+    };
+    match op.op {
+        PatchOpKind::Remove => match cur {
+            serde_json::Value::Object(map) => map.remove(last).is_some(),
+            serde_json::Value::Array(arr) => last
+                .parse::<usize>()
+                .ok()
+                .filter(|i| *i < arr.len())
+                .map(|i| arr.remove(i))
+                .is_some(),
+            _ => false,
+        },
+        PatchOpKind::Add | PatchOpKind::Replace => {
+            let Some(val) = op.value.clone() else {
+                return false;
+            };
+            match cur {
+                serde_json::Value::Object(map) => {
+                    // replace — только существующий ключ (иначе клиент
+                    // промолчал бы о структуре, которой не знал).
+                    if op.op == PatchOpKind::Replace && !map.contains_key(last) {
+                        return false;
+                    }
+                    map.insert(last.clone(), val);
+                    true
+                }
+                serde_json::Value::Array(arr) => match last.parse::<usize>() {
+                    Ok(i) if i < arr.len() => {
+                        arr[i] = val;
+                        true
+                    }
+                    Ok(i) if i == arr.len() && op.op == PatchOpKind::Add => {
+                        arr.push(val);
+                        true
+                    }
+                    _ => false,
+                },
+                _ => false,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -4829,6 +4989,115 @@ mod tests {
     }
 
     // ─── M6: время, цель, кулдауны, статусы ─────────────────────────────────
+
+    fn delta_event(from_version: u64, name: &str) -> IngressEvent {
+        IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/state/delta".into(),
+            seq: None,
+            ts: None,
+            state_version: Some(from_version + 1),
+            payload: Some(serde_json::json!({
+                "from_version": from_version,
+                "to_version": from_version + 1,
+                "patch": [
+                    { "op": "replace", "path": "/location/name", "value": name }
+                ]
+            })),
+        })
+    }
+
+    #[test]
+    fn state_delta_applies_patch() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        assert!(store.snapshot.is_some());
+
+        let effects = store.apply(delta_event(1002, "Тестовое имя"));
+        assert!(effects.is_empty(), "патч применён без resync: {effects:?}");
+        let snap = store.snapshot.as_ref().expect("снапшот");
+        assert_eq!(snap.location.name, "Тестовое имя");
+    }
+
+    #[test]
+    fn state_delta_mismatch_requests_resync() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+
+        // Чужая база (версия снапшота 1002) → авто-resync.
+        let effects = store.apply(delta_event(999, "Чужая"));
+        assert!(effects.iter().any(|e| matches!(e, Effect::ResyncState)));
+
+        // Неприменимый путь (replace на отсутствующий ключ) → авто-resync.
+        let bad = IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/state/delta".into(),
+            seq: None,
+            ts: None,
+            state_version: Some(1003),
+            payload: Some(serde_json::json!({
+                "from_version": 1002,
+                "to_version": 1003,
+                "patch": [
+                    { "op": "replace", "path": "/location/no_such_key", "value": "x" }
+                ]
+            })),
+        });
+        let effects = store.apply(bad);
+        assert!(effects.iter().any(|e| matches!(e, Effect::ResyncState)));
+    }
+
+    #[test]
+    fn evt_error_sets_notice_and_fatal_requests_resync() {
+        let mut store = store_with_session();
+        let err = |fatal: bool| {
+            IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/error".into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({
+                    "code": "E_MAINTENANCE",
+                    "message": "перезагрузка",
+                    "fatal": fatal
+                })),
+            })
+        };
+        let effects = store.apply(err(false));
+        assert!(store.notice.is_some(), "notice показан");
+        assert!(effects.is_empty(), "не-фатальная — без resync");
+
+        let effects = store.apply(err(true));
+        assert!(store.notice.is_some());
+        assert!(effects.iter().any(|e| matches!(e, Effect::ResyncState)));
+    }
+
+    #[test]
+    fn time_sync_takes_median_of_ring() {
+        let mut store = store_with_session();
+        let local = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        // Медиана пяти замеров {1080, 1090, 1100, 1110, 1300} = 1100.
+        for delta in [1100, 1090, 1110, 1080, 1300] {
+            let sync = IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/time.sync".into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({ "server_ts": local + delta })),
+            });
+            store.apply(sync);
+        }
+        assert!(
+            (1095..=1105).contains(&store.time_offset),
+            "медиана кольца: {}",
+            store.time_offset
+        );
+    }
 
     #[test]
     fn time_sync_calibrates_offset() {

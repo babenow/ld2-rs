@@ -16,7 +16,8 @@ use ld2_core::store::{
     filter_active_buffs, local_epoch, local_epoch_ms, Act, AppStore, Effect, Screen,
 };
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
-use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove};
+// R11/R16: StateResync (дельта неприменима), TimeSync (5 мин).
+use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove, StateResync, TimeSync};
 
 mod admin;
 mod backpack;
@@ -506,6 +507,8 @@ pub struct Root {
     /// Длина лога на прошлой отрисовке — чтобы приклеивать вниз только
     /// при изменении (M14/F13: лог всегда промотан вниз).
     journal_seen: usize,
+    /// R16: момент последней перекалибровки часов (раз в 5 мин).
+    last_time_sync: Option<std::time::Instant>,
     last_chat_len: usize,
     /// M10.5: свёрнут ли пати-виджет (ФР-19, из конфига).
     party_collapsed: bool,
@@ -785,6 +788,7 @@ impl Root {
             host_editing: false,
             color_picker_open: None,
             journal_seen: 0,
+            last_time_sync: None,
             last_chat_len: 0,
             party_collapsed,
             create_name: None,
@@ -814,6 +818,16 @@ impl Root {
             }
         }
 
+        // R16 (§1.1): перекалибровка часов каждые 5 мин — сервер
+        // отвечает evt/time.sync; медиану держит стор.
+        let recalibrate = self
+            .last_time_sync
+            .map(|t| t.elapsed() >= std::time::Duration::from_secs(300))
+            .unwrap_or(true);
+        if recalibrate {
+            self.last_time_sync = Some(std::time::Instant::now());
+            let _ = self.transport.send(&TimeSync {});
+        }
         // M23: лут трупа обновился (разделка/создание трупа) —
         // перечитываем, пока окно подятия открыто.
         if self.store.pickup_dirty {
@@ -1095,6 +1109,19 @@ impl Root {
                     if let Err(e) = self.transport.set_refresh_token(Some(token)) {
                         tracing::warn!("транспорт недоступен для ротации токена: {e}");
                     }
+                }
+                Effect::ResyncState => {
+                    // R11: дельта неприменима/фатальная ошибка — полный
+                    // снапшот (§12.4); 0 → сервер отвечает целиком.
+                    let version = self
+                        .store
+                        .snapshot
+                        .as_ref()
+                        .map(|s| s.state_version)
+                        .unwrap_or(0);
+                    let _ = self.transport.send(&StateResync {
+                        last_state_version: version,
+                    });
                 }
                 Effect::Notify(kind) => {
                     // M18/F55: итог заточки рисуется цветом прямо на

@@ -116,6 +116,7 @@ pub(super) async fn run(
         }
 
         attempt += 1;
+        let started = Instant::now();
         match connect_once(
             &mut cfg,
             &ingress,
@@ -133,6 +134,12 @@ pub(super) async fn run(
             }
             Ok(Flow::Reconnect) => debug!("соединение потеряно (попытка {attempt})"),
             Err(e) => warn!("ошибка соединения (попытка {attempt}): {e:#}"),
+        }
+        // R13: сессия прожила дольше backoff_max — счётчик попыток
+        // сбрасывается (иначе после давнего сбоя каждый реконнект ждёт
+        // потолочные 30 с).
+        if started.elapsed() >= cfg.backoff_max {
+            attempt = 0;
         }
     }
 

@@ -396,9 +396,22 @@ impl ConfigStore {
         }
         let text = std::fs::read_to_string(&self.path)
             .with_context(|| format!("чтение конфига {}", self.path.display()))?;
-        let cfg: Config = toml::from_str(&text)
-            .with_context(|| format!("разбор конфига {}", self.path.display()))?;
-        Ok(cfg.sanitize())
+        // R17: сбой разбора не должен делать запуск невозможным
+        // (обрыв питания при записи) — битый файл уходит в .bak,
+        // стартуем с дефолтом.
+        let Ok(parsed) = toml::from_str::<Config>(&text) else {
+            let backup = self.path.with_extension("bak.toml");
+            let _ = std::fs::rename(&self.path, &backup);
+            tracing::warn!(
+                "конфиг {} не разобран — сохранён как {}, старт с дефолтом",
+                self.path.display(),
+                backup.display()
+            );
+            let cfg = Config::default();
+            self.save(&cfg)?;
+            return Ok(cfg);
+        };
+        Ok(parsed.sanitize())
     }
 
     pub fn save(&self, cfg: &Config) -> Result<()> {
@@ -406,8 +419,12 @@ impl ConfigStore {
             std::fs::create_dir_all(parent)?;
         }
         let text = toml::to_string_pretty(cfg).context("сериализация конфига")?;
-        std::fs::write(&self.path, text)
-            .with_context(|| format!("запись конфига {}", self.path.display()))?;
+        // R17: атомарная запись — temp+rename (обрыв питания не оставит
+        // битый config.toml, R17-load подстрахует, если всё же).
+        let tmp = self.path.with_extension("tmp.toml");
+        std::fs::write(&tmp, text).with_context(|| format!("запись конфига {}", tmp.display()))?;
+        std::fs::rename(&tmp, &self.path)
+            .with_context(|| format!("замена конфига {}", self.path.display()))?;
         Ok(())
     }
 }
