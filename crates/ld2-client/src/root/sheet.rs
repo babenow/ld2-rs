@@ -1629,7 +1629,11 @@ impl Root {
                     Animation::new(std::time::Duration::from_secs(4)).repeat(),
                     move |el, t| {
                         let hsla: gpui::Hsla = gpui::rgba((base << 8) | 0xff).into();
-                        let hue = (hsla.h + t) % 1.0;
+                        // Переливание ВОКРУГ цвета редкости: оттенок
+                        // качается ±36° (0.10) и возвращается — цикл
+                        // замкнутый, базовый цвет остаётся доминирующим.
+                        let swing = 0.10 * (2.0 * std::f32::consts::PI * t).sin();
+                        let hue = (hsla.h + swing + 1.0) % 1.0;
                         el.border_color(gpui::hsla(hue, hsla.s, hsla.l, 1.0))
                             .shadow(vec![gpui::BoxShadow {
                                 color: gpui::hsla(hue, hsla.s, hsla.l, 0.35),
