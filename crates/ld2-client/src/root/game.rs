@@ -741,19 +741,21 @@ impl Root {
             .border_color(rgb(pal.border))
             .flex_shrink_0();
         if self.config.chat_collapsed {
-            bar = bar.child(act_btn(
-                cx,
-                t(lang, Key::ChLabel),
-                pal.panel,
-                pal.text,
-                |this, cx| {
-                    // Разворачивание из статус-бара — высота 50 %.
-                    this.config.chat_collapsed = false;
-                    this.config.chat_height_pct = 0.5;
-                    this.save_config();
-                    let _ = cx;
-                },
-            ));
+            bar = bar.child(
+                div()
+                    .id("ld2-statusbar-chat")
+                    .px_1()
+                    .cursor_pointer()
+                    .tooltip(Tooltip::text(t(lang, Key::ChLabel)))
+                    .child(fa_icon("regular/comment-dots", px(14.0), rgb(pal.text)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        // Разворачивание из статус-бара — высота 50 %.
+                        this.config.chat_collapsed = false;
+                        this.config.chat_height_pct = 0.5;
+                        this.save_config();
+                        cx.notify();
+                    })),
+            );
         }
         bar = bar.child(div().flex_grow_1());
         let status = self.store.transport.clone();
