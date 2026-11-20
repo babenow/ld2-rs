@@ -1068,9 +1068,13 @@ impl Root {
                     if login.trim().is_empty() {
                         continue;
                     }
-                    if let Err(e) =
-                        ld2_core::secrets::set_token(&self.config.host, &login, &refresh_token)
-                    {
+                    // R5: запись с таймаутом — диалог macOS не вешает UI.
+                    if let Err(e) = ld2_core::secrets::set_token_with_timeout(
+                        &self.config.host,
+                        &login,
+                        &refresh_token,
+                        std::time::Duration::from_secs(2),
+                    ) {
                         tracing::warn!("keyring: не удалось сохранить токен: {e}");
                     }
                     // M16/F29j: запомненный пароль — только в keyring.
@@ -1079,16 +1083,21 @@ impl Root {
                     let pending = self.pending_password.take();
                     if self.config.remember_password {
                         if let Some(pw) = pending {
-                            if let Err(e) =
-                                ld2_core::secrets::set_password(&self.config.host, &login, &pw)
-                            {
+                            if let Err(e) = ld2_core::secrets::set_password_with_timeout(
+                                &self.config.host,
+                                &login,
+                                &pw,
+                                std::time::Duration::from_secs(2),
+                            ) {
                                 tracing::warn!("keyring: не удалось сохранить пароль: {e}");
                             }
                         }
                     } else if pending.is_some() {
-                        if let Err(e) =
-                            ld2_core::secrets::delete_password(&self.config.host, &login)
-                        {
+                        if let Err(e) = ld2_core::secrets::delete_password_with_timeout(
+                            &self.config.host,
+                            &login,
+                            std::time::Duration::from_secs(2),
+                        ) {
                             tracing::warn!("keyring: не удалось удалить пароль: {e}");
                         }
                     }
@@ -1098,7 +1107,12 @@ impl Root {
                     }
                 }
                 Effect::ForgetSession { login } => {
-                    match ld2_core::secrets::delete_token(&self.config.host, &login) {
+                    // R5: удаление с таймаутом — диалог macOS не вешает UI.
+                    match ld2_core::secrets::delete_token_with_timeout(
+                        &self.config.host,
+                        &login,
+                        std::time::Duration::from_secs(2),
+                    ) {
                         Ok(()) | Err(keyring::Error::NoEntry) => {
                             tracing::info!("keyring: токен удалён ({login})");
                         }

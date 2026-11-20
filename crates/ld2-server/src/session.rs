@@ -63,7 +63,10 @@ pub struct Session {
     /// Текущая локация персонажа (M12.3): разрешается при входе/переходе.
     location_id: Option<String>,
     /// Канал исходящих конвертов соединения (рассылка тика боя, M12.5).
-    out_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// R15: bounded (256) — см. transport.rs.
+    out_tx: tokio::sync::mpsc::Sender<String>,
+    /// R15: окно rate-limit мутирующих команд `(start_epoch, счётчик)`.
+    cmd_rate_window: (i64, u32),
     /// Активное превью улучшения (ФР-10, M12.5c): stale → `E_UPGRADE_PREVIEW_STALE`.
     preview_state: Option<UpgradePreviewState>,
     /// M18/F54: выбранный камень усиления (uid) — активен, пока игрок
@@ -96,7 +99,7 @@ impl Session {
     pub fn new(
         state: SharedState,
         peer: SocketAddr,
-        out_tx: tokio::sync::mpsc::UnboundedSender<String>,
+        out_tx: tokio::sync::mpsc::Sender<String>,
     ) -> Self {
         Self {
             state,
@@ -115,6 +118,7 @@ impl Session {
             sharpen_stone: None,
             pending_rank_up: None,
             last_chat_at: None,
+            cmd_rate_window: (crate::time::now_epoch(), 0),
         }
     }
 
@@ -207,6 +211,14 @@ impl Session {
         // немота — магия, ослепление — атаки/навыки.
         if let Some((code, msg)) = self.char_effect_gate(env.msg_type.as_str()) {
             return vec![Self::err(seq, code, msg)];
+        }
+        // R15: per-session rate-limit на мутирующие команды (D25: лимит
+        // `[gameplay] cmd_rate_per_min`, 0 — выключен). auth/chat — свои
+        // лимиты; каждая итерация берёт mutex мира и ходит в БД.
+        if HARVEST_BLOCKED.contains(&env.msg_type.as_str()) || env.msg_type == "cmd/item.use" {
+            if let Some(out) = self.cmd_rate_gate(seq) {
+                return vec![out];
+            }
         }
 
         match env.msg_type.as_str() {
@@ -543,7 +555,7 @@ impl Session {
         // Сессия выходит из мира: бой и рассылка (M12.5).
         if let Some(char_id) = self.selected_char_id.take() {
             let mut world = self.state.world.lock().expect("мир");
-            world.unbind_char(&char_id);
+            world.unbind_char(&char_id, &self.peer.to_string());
         }
         self.char = None;
         self.location_id = None;
@@ -784,13 +796,31 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
+        // R10: привязка мира — до присвоения состояния сессии; занятый
+        // другой сессией персонаж → `E_BUSY` (две WS-сессии не действуют
+        // одним персонажем).
+        let bound = {
+            let mut world = self.state.world.lock().expect("мир");
+            world.bind_char(
+                &row.id,
+                &row.name,
+                self.out_tx.clone(),
+                &self.peer.to_string(),
+            )
+        };
+        if !bound {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Busy,
+                "персонаж уже в игре в другой сессии",
+            )];
+        }
         self.char = Some(char_state);
         self.location_id = Some(location_id.clone());
         self.selected_char_id = Some(row.id.clone());
         // Реестр мира (M12.5): рассылка тика боя + мишени агрессии.
         {
             let mut world = self.state.world.lock().expect("мир");
-            world.bind_char(&row.id, &row.name, self.out_tx.clone());
             world.set_char_location(&row.id, &location_id);
         }
         // M17/F30f: чем бьёт — по экипированному оружию (кэш мира).
@@ -986,16 +1016,32 @@ impl Session {
                 let (location_id, _) = self.resolve_location(&row.location_id, &row.id).await;
                 match self.character_state(&row).await {
                     Ok(state) => {
-                        self.char = Some(state);
-                        self.location_id = Some(location_id.clone());
-                        self.selected_char_id = Some(row.id.clone());
-                        {
+                        // R10: занят другой живой сессией —
+                        // авто-восстановление пропускаем (клиент останется
+                        // на экране персонажей; повторный select даст
+                        // понятный `E_BUSY`).
+                        let bound = {
                             let mut world = self.state.world.lock().expect("мир");
-                            world.bind_char(&row.id, &row.name, self.out_tx.clone());
-                            world.set_char_location(&row.id, &location_id);
+                            world.bind_char(
+                                &row.id,
+                                &row.name,
+                                self.out_tx.clone(),
+                                &self.peer.to_string(),
+                            )
+                        };
+                        if !bound {
+                            warn!("восстановление: {} уже в игре — пропуск", row.id);
+                        } else {
+                            self.char = Some(state);
+                            self.location_id = Some(location_id.clone());
+                            self.selected_char_id = Some(row.id.clone());
+                            {
+                                let mut world = self.state.world.lock().expect("мир");
+                                world.set_char_location(&row.id, &location_id);
+                            }
+                            // M17/F30f: чем бьёт — по экипированному оружию.
+                            self.refresh_char_hits_as(&row.id).await;
                         }
-                        // M17/F30f: чем бьёт — по экипированному оружию.
-                        self.refresh_char_hits_as(&row.id).await;
                     }
                     Err(e) => warn!("восстановление листа персонажа: {e}"),
                 }
@@ -7884,6 +7930,15 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
         };
+        // R8: надетый предмет в сделку нельзя (перенос сбрасывал бы
+        // `equipped_slot` у получателя — бонусы без экипирования).
+        if item.equipped_slot.is_some() {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Busy,
+                "предмет надет — снимите его перед сделкой",
+            )];
+        }
         let qty = cmd
             .qty
             .unwrap_or(i64::from(item.qty))
@@ -8084,12 +8139,16 @@ impl Session {
                     return Err(format!("предмет {uid}: не хватает стака"));
                 }
                 if i64::from(cur_qty) == *qty {
-                    sqlx::query("UPDATE items SET character_id = $2 WHERE uid = $1")
-                        .bind(uid)
-                        .bind(to)
-                        .execute(&mut *tx)
-                        .await
-                        .map_err(|e| format!("перенос {uid}: {e}"))?;
+                    // R8: перенос сбрасывает «надетость» — получатель
+                    // применяет бонусы только после экипирования.
+                    sqlx::query(
+                        "UPDATE items SET character_id = $2, equipped_slot = NULL WHERE uid = $1",
+                    )
+                    .bind(uid)
+                    .bind(to)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| format!("перенос {uid}: {e}"))?;
                 } else {
                     sqlx::query("UPDATE items SET qty = qty - $2 WHERE uid = $1")
                         .bind(uid)
@@ -10478,6 +10537,26 @@ impl Session {
     /// Окно rate-limit auth-команд по IP (D30); `Some(retry_after_s)` — отклон.
     fn rate_limit(&self) -> Option<u64> {
         self.state.rate.check(self.peer.ip())
+    }
+
+    /// R15: per-session окно на мутирующие команды (§9: `E_RATE_LIMITED`
+    /// + `retry_after_s`). Окно 60 с; лимит — `[gameplay]
+    /// cmd_rate_per_min` (0 — выключен).
+    fn cmd_rate_gate(&mut self, seq: u32) -> Option<Out> {
+        let limit = self.state.config.gameplay.cmd_rate_per_min;
+        if limit == 0 {
+            return None;
+        }
+        let now = crate::time::now_epoch();
+        if now.saturating_sub(self.cmd_rate_window.0) >= 60 {
+            self.cmd_rate_window = (now, 0);
+        }
+        self.cmd_rate_window.1 += 1;
+        if self.cmd_rate_window.1 > limit {
+            let retry = (60 - now.saturating_sub(self.cmd_rate_window.0)).max(1) as u64;
+            return Some(Self::ack_rate_limited(seq, retry));
+        }
+        None
     }
 
     /// M14/F19: может ли аккаунт писать в system-чат и удалять сообщения.

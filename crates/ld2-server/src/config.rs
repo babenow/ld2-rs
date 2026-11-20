@@ -93,6 +93,11 @@ pub struct AuthSection {
 pub struct GameplaySection {
     /// Лимит слотов персонажей → §5 `char_slot_limit` (DoD M2: конфиг, не код).
     pub char_slot_limit: u32,
+    /// R15: per-session лимит мутирующих команд в минуту (§9
+    /// `E_RATE_LIMITED`); `0` — выключен. Атака минимум раз в 0.5 с →
+    /// дефолт 240 покрывает бой с запасом.
+    #[serde(default = "default_cmd_rate_per_min")]
+    pub cmd_rate_per_min: u32,
     pub profession_limit: u32,
     /// Бой (M12.5): тик-луп атак и правила побега.
     pub combat: CombatSection,
@@ -451,6 +456,11 @@ pub struct CombatSection {
     pub flee_chance: f64,
 }
 
+/// R15: дефолт per-session лимита мутирующих команд (в минуту).
+const fn default_cmd_rate_per_min() -> u32 {
+    240
+}
+
 const fn default_min_attack_interval_s() -> f64 {
     0.5
 }
@@ -567,6 +577,9 @@ impl Config {
         // [gameplay]
         if self.gameplay.char_slot_limit == 0 {
             out.push("gameplay.char_slot_limit: должен быть ≥ 1".into());
+        }
+        if self.gameplay.cmd_rate_per_min > 10_000 {
+            out.push("gameplay.cmd_rate_per_min: должен быть в 0..=10_000 (0 — выключен)".into());
         }
         check_features(&self.gameplay.features, &mut out);
         check_crime(&self.gameplay.crime, &mut out);

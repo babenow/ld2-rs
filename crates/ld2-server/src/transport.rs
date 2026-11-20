@@ -30,7 +30,10 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
     info!("ws: подключился {peer}");
     let (mut sink, mut reader) = socket.split();
     // Канал исходящих: тик боя шлёт события в соединение (M12.5, §2.4).
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // R15: bounded — медленный клиент при тик-флуде больше не копит
+    // память без границ (переполнение: world::send_to_char снимает
+    // рассылку, команды через sink работают; resync восстановит).
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(256);
     let mut session = Session::new(state.clone(), peer, out_tx);
 
     'conn: loop {
@@ -119,15 +122,21 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
     // приглашения снимаются, активная сделка отменяется с событием
     // `evt/trade/closed` партнёру.
     if let Some(char_id) = session.selected_char() {
-        {
+        // R10: отвязка и соц-чистка — только если это была наша сессия
+        // (умершая старая сессия позже новой не отменяет сделку новой).
+        let mine = {
             let mut world = state.world.lock().expect("мир");
-            world.unbind_char(&char_id);
-        }
-        let closed = {
-            let mut social = state.social.lock().expect("соц");
-            social.drop_invites_for(&char_id);
-            social.drop_guild_invites_for(&char_id);
-            social.drop_trades_for(&char_id)
+            world.unbind_char(&char_id, &peer.to_string())
+        };
+        let closed = if mine {
+            {
+                let mut social = state.social.lock().expect("соц");
+                social.drop_invites_for(&char_id);
+                social.drop_guild_invites_for(&char_id);
+                social.drop_trades_for(&char_id)
+            }
+        } else {
+            None
         };
         if let Some((participants, offer_id)) = closed {
             let text = crate::session::event_text(

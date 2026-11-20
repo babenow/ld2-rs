@@ -89,6 +89,82 @@ fn get_with_timeout(
     }
 }
 
+/// R5: запись/удаление с таймаутом — зависший диалог доступа macOS не
+/// должен вешать UI-поток (чтение уже с таймаутом, D12). Таймаут —
+/// `Ok(())`: операция, возможно, завершится позже в фоне.
+fn write_with_timeout<F>(what: &str, timeout: std::time::Duration, op: F) -> keyring::Result<()>
+where
+    F: FnOnce() -> keyring::Result<()> + Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(op());
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::warn!("keyring: {what} не завершилась за {timeout:?} — пропущена");
+            Ok(())
+        }
+    }
+}
+
+/// Запись токена с таймаутом (R5).
+pub fn set_token_with_timeout(
+    host: &str,
+    login: &str,
+    token: &str,
+    timeout: std::time::Duration,
+) -> keyring::Result<()> {
+    let host = host.to_string();
+    let login = login.to_string();
+    let token = token.to_string();
+    write_with_timeout("запись токена", timeout, move || {
+        set_token(&host, &login, &token)
+    })
+}
+
+/// Удаление токена с таймаутом (R5).
+pub fn delete_token_with_timeout(
+    host: &str,
+    login: &str,
+    timeout: std::time::Duration,
+) -> keyring::Result<()> {
+    let host = host.to_string();
+    let login = login.to_string();
+    write_with_timeout("удаление токена", timeout, move || {
+        delete_token(&host, &login)
+    })
+}
+
+/// Запись пароля с таймаутом (R5).
+pub fn set_password_with_timeout(
+    host: &str,
+    login: &str,
+    password: &str,
+    timeout: std::time::Duration,
+) -> keyring::Result<()> {
+    let host = host.to_string();
+    let login = login.to_string();
+    let password = password.to_string();
+    write_with_timeout("запись пароля", timeout, move || {
+        set_password(&host, &login, &password)
+    })
+}
+
+/// Удаление пароля с таймаутом (R5).
+pub fn delete_password_with_timeout(
+    host: &str,
+    login: &str,
+    timeout: std::time::Duration,
+) -> keyring::Result<()> {
+    let host = host.to_string();
+    let login = login.to_string();
+    write_with_timeout("удаление пароля", timeout, move || {
+        delete_password(&host, &login)
+    })
+}
+
 /// Чтение токена с таймаутом (D12).
 pub fn get_token_with_timeout(
     host: &str,

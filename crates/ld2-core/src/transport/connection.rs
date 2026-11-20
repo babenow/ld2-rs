@@ -73,7 +73,17 @@ pub(super) async fn run(
                     msg = outbound.recv() => match msg {
                         None | Some(Outbound::Close) => break 'outer,
                         Some(Outbound::UpdateToken(t)) => cfg.refresh_token = t,
-                        Some(env @ Outbound::Envelope { .. }) => deferred.push(env),
+                        Some(env @ Outbound::Envelope { .. }) => {
+                            // R15: офлайн-буфер ограничен — долгий офлайн
+                            // не копит память бесконечно; самая старая
+                            // команда сбрасывается (idempotent-ретраи §2.4.2
+                            // позволят повторить).
+                            if deferred.len() >= 128 {
+                                deferred.remove(0);
+                                warn!("офлайн-буфер полон (128) — самая старая команда сброшена");
+                            }
+                            deferred.push(env);
+                        }
                     }
                 }
             }

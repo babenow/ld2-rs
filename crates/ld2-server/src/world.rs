@@ -6,7 +6,8 @@
 //! Персонажи, инвентарь и лут статических трупов — в БД (D27).
 
 use std::collections::{HashMap, HashSet};
-use tokio::sync::mpsc::UnboundedSender as SyncSender;
+// R15: bounded Sender<String> (канал 256 — см. transport.rs).
+type OutSender = tokio::sync::mpsc::Sender<String>;
 
 use ld2_protocol::types::{Entity, EntityKind, Hp};
 
@@ -495,9 +496,12 @@ pub struct World {
     /// char_id → бой.
     combat: HashMap<String, CombatState>,
     /// char_id → канал текстовых конвертов соединения (рассылка тика §2.4).
-    conns: HashMap<String, SyncSender<String>>,
+    conns: HashMap<String, OutSender>,
     /// char_id → имя (для боевых строк §8).
     char_names: HashMap<String, String>,
+    /// R10: char_id → владелец биндинга (peer сессии) — двойная сессия
+    /// одного персонажа невозможна, отвязка только своя.
+    char_owner: HashMap<String, String>,
     /// M24: «режим бога» — персонажи с неуязвимостью (админ-toggle;
     /// tick::apply_mob_hit не применяет по ним урон вовсе).
     god_chars: HashSet<String>,
@@ -870,18 +874,36 @@ impl World {
     }
 
     /// Регистрация соединения персонажа (рассылка событий тика §2.4).
-    pub fn bind_char(&mut self, char_id: &str, name: &str, tx: SyncSender<String>) {
+    /// R10: персонаж, уже привязанный к другой сессии (peer), — отказ:
+    /// две WS-сессии не должны действовать одним персонажем (отключение
+    /// старой раньше отвязывало мир у новой). Повторный bind той же
+    /// сессии — ок (перевыбор персонажа).
+    pub fn bind_char(&mut self, char_id: &str, name: &str, tx: OutSender, owner: &str) -> bool {
+        if self.char_owner.get(char_id).is_some_and(|cur| cur != owner) {
+            return false;
+        }
         self.conns.insert(char_id.to_string(), tx);
         self.char_names
             .insert(char_id.to_string(), name.to_string());
+        self.char_owner
+            .insert(char_id.to_string(), owner.to_string());
+        true
     }
 
-    pub fn unbind_char(&mut self, char_id: &str) {
+    /// R10: отвязка — только своего биндинга (умершая старая сессия
+    /// позже новой не отвязывает мир у новой). `true` — отвязано
+    /// (тогда соединение чистит и социум).
+    pub fn unbind_char(&mut self, char_id: &str, owner: &str) -> bool {
+        if self.char_owner.get(char_id).map(String::as_str) != Some(owner) {
+            return false;
+        }
         self.conns.remove(char_id);
         self.char_names.remove(char_id);
         self.char_loc.remove(char_id);
         self.combat.remove(char_id);
         self.ability_cd.retain(|(c, _), _| c != char_id);
+        self.char_owner.remove(char_id);
+        true
     }
 
     /// Позиция персонажа в мире (мишени мобов, бой по локации).
@@ -1336,7 +1358,10 @@ impl World {
     /// Отправить конверт соединению персонажа (best-effort).
     pub fn send_to_char(&self, char_id: &str, text: String) {
         if let Some(tx) = self.conns.get(char_id) {
-            let _ = tx.send(text);
+            // R15: bounded-канал — полный буфер = медленный клиент;
+            // рассылка снимается (память ограничена), команды через
+            // sink работают; resync восстановит состояние.
+            let _ = tx.try_send(text);
         }
     }
 
