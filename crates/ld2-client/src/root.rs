@@ -654,8 +654,11 @@ impl Root {
     pub fn new(cx: &mut Context<'_, Self>, shell: Shell) -> Self {
         let sheet_tab = sheet::SheetTab::parse(&shell.config.sheet_tab);
         let party_collapsed = shell.config.party_collapsed;
+        // Заказчик 2026-11-20: журнал переводит каналы чата по языку.
+        let mut store = shell.store;
+        store.lang = shell.lang;
         Self {
-            store: shell.store,
+            store,
             config: shell.config,
             config_store: shell.config_store,
             lang: shell.lang,
@@ -2295,6 +2298,8 @@ impl Root {
             Click::Lang(code) => {
                 self.lang = Lang::from_code(code);
                 self.config.lang = self.lang.code().to_string();
+                // Журнал переводит каналы по языку (заказчик 2026-11-20).
+                self.store.lang = self.lang;
                 self.save_config();
             }
             Click::ToggleSettings => {

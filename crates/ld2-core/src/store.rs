@@ -20,6 +20,7 @@ use ld2_protocol::types::{
 };
 use ld2_protocol::{ErrorCode, SessionConfig};
 
+use crate::l10n::{t, Key, Lang};
 use crate::transport::{IngressEvent, TransportStatus};
 
 /// Экран приложения (ФР-01, ФР-02).
@@ -157,6 +158,13 @@ pub enum LogKind {
     Quest,
     Xp,
     Chat,
+    /// R-чат (заказчик 2026-11-20): журнал — сообщения каналов своим
+    /// цветом; Chat — канал локации (по умолчанию/старый сервер).
+    ChatGlobal,
+    ChatParty,
+    ChatGuild,
+    ChatWhisper,
+    ChatSystem,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -264,6 +272,9 @@ pub struct AppStore {
     pub inscribe: Option<String>,
     /// Смещение часов сервера (evt/time.sync): server = local + offset.
     pub time_offset: i64,
+    /// Язык клиента (заказчик 2026-11-20: журнал — переводы каналов
+    /// чата); меняется настройкой языка.
+    pub lang: Lang,
     /// R16 (§1.1): последние замеры смещения — медиана (один сэмпл
     /// скачет от сетевого джиттера и скачков системных часов).
     pub time_samples: std::collections::VecDeque<i64>,
@@ -720,6 +731,7 @@ impl AppStore {
             item_cooldowns: BTreeMap::new(),
             time_offset: 0,
             time_samples: VecDeque::new(),
+            lang: Lang::Ru,
             rune_recharge_phase_ms: None,
             target: None,
             combat_cooldowns: BTreeMap::new(),
@@ -2329,10 +2341,17 @@ impl AppStore {
                     entry.pop_front();
                 }
                 entry.push_back(msg.clone());
-                self.push_log(
-                    LogKind::Chat,
-                    format!("[{}] {}: {}", msg.channel, msg.name, msg.text),
-                );
+                // Заказчик 2026-11-20: в журнале канал — локализованной
+                // меткой ([Локация], не [location]) и своим цветом.
+                let (kind, label) = match msg.channel.as_str() {
+                    "global" => (LogKind::ChatGlobal, t(self.lang, Key::ChGlobal)),
+                    "party" => (LogKind::ChatParty, t(self.lang, Key::ChParty)),
+                    "guild" => (LogKind::ChatGuild, t(self.lang, Key::ChGuild)),
+                    "whisper" => (LogKind::ChatWhisper, t(self.lang, Key::ChWhisper)),
+                    "system" => (LogKind::ChatSystem, t(self.lang, Key::ChSystem)),
+                    _ => (LogKind::Chat, t(self.lang, Key::ChLocation)),
+                };
+                self.push_log(kind, format!("[{}] {}: {}", label, msg.name, msg.text));
                 effects
             }
             "evt/chat/deleted" => {
@@ -5097,6 +5116,51 @@ mod tests {
             "медиана кольца: {}",
             store.time_offset
         );
+    }
+
+    fn chat_event(channel: &str) -> IngressEvent {
+        IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": channel,
+                "from": "Ким",
+                "name": "Ким",
+                "text": "привет",
+                "sent_at": "2026-11-20T00:00:00Z"
+            })),
+        })
+    }
+
+    #[test]
+    fn chat_log_localizes_channel_and_colors_by_kind() {
+        let mut store = store_with_session();
+        // en: [Location], не [location].
+        store.lang = Lang::En;
+        store.apply(chat_event("location"));
+        let last = store.log.back().expect("строка журнала");
+        assert!(
+            last.text.contains("[Location] Ким: привет"),
+            "{}",
+            last.text
+        );
+        assert!(matches!(last.kind, LogKind::Chat), "{:?}", last.kind);
+
+        // Партнёрский канал — своя метка и свой цвет.
+        store.apply(chat_event("party"));
+        let last = store.log.back().expect("строка журнала");
+        assert!(last.text.contains("[Party]"), "{}", last.text);
+        assert!(matches!(last.kind, LogKind::ChatParty), "{:?}", last.kind);
+
+        // ru: [Гильдия].
+        store.lang = Lang::Ru;
+        store.apply(chat_event("guild"));
+        let last = store.log.back().expect("строка журнала");
+        assert!(last.text.contains("[Гильдия]"), "{}", last.text);
+        assert!(matches!(last.kind, LogKind::ChatGuild), "{:?}", last.kind);
     }
 
     #[test]

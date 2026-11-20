@@ -1034,6 +1034,189 @@
       "gold_value": 80
     },
     {
+      "id": "rune_wolf_rage",
+      "type": "rune",
+      "name": "Руна волка: Ярость",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "wolves_rage",
+        "damage": 8,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "R",
+        "buff": {"param": "crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
+        "class": "warrior"
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_wolf_blood",
+      "type": "rune",
+      "name": "Руна волка: Ярость-Кровь",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "wolves_rage",
+        "damage": 9,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "RB",
+        "buff": {"param": "crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
+        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
+        "class": "warrior"
+      },
+      "gold_value": 130
+    },
+    {
+      "id": "rune_wolf_wail",
+      "type": "rune",
+      "name": "Руна волка: Ярость-Кровь-Воя",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "wolves_rage",
+        "damage": 10,
+        "chance": 0.3,
+        "charges": 4,
+        "max": 8,
+        "glyph": "RBW",
+        "buff": {"param": "crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
+        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
+        "effect": {"kind": "bleed", "value": 4, "duration_s": 6},
+        "class": "warrior"
+      },
+      "gold_value": 260
+    },
+    {
+      "id": "rune_hawk_eye",
+      "type": "rune",
+      "name": "Руна сокола: Око",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hawks_eye",
+        "damage": 8,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "E",
+        "buff": {"param": "accuracy", "value": 6, "duration_s": 12, "max_stacks": 3},
+        "class": "archer"
+      },
+      "gold_value": 55
+    },
+    {
+      "id": "rune_hawk_wind",
+      "type": "rune",
+      "name": "Руна сокола: Око-Ветер",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hawks_eye",
+        "damage": 9,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "EW",
+        "buff": {"param": "accuracy", "value": 6, "duration_s": 12, "max_stacks": 3},
+        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
+        "class": "archer"
+      },
+      "gold_value": 130
+    },
+    {
+      "id": "rune_hawk_sting",
+      "type": "rune",
+      "name": "Руна сокола: Око-Ветер-Жало",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hawks_eye",
+        "damage": 10,
+        "chance": 0.3,
+        "charges": 4,
+        "max": 8,
+        "glyph": "EWS",
+        "buff": {"param": "accuracy", "value": 6, "duration_s": 12, "max_stacks": 3},
+        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
+        "effect": {"kind": "root", "duration_s": 4},
+        "class": "archer"
+      },
+      "gold_value": 260
+    },
+    {
+      "id": "rune_flame_spark",
+      "type": "rune",
+      "name": "Руна пламени: Искра",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "flame_word",
+        "damage": 10,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 10,
+        "glyph": "S",
+        "school": "fire",
+        "buff": {"param": "magic_crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
+        "class": "mage"
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_flame_gust",
+      "type": "rune",
+      "name": "Руна пламени: Искра-Порыв",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "flame_word",
+        "damage": 11,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 10,
+        "glyph": "SG",
+        "school": "fire",
+        "buff": {"param": "magic_crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
+        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
+        "class": "mage"
+      },
+      "gold_value": 130
+    },
+    {
+      "id": "rune_flame_ash",
+      "type": "rune",
+      "name": "Руна пламени: Искра-Порыв-Пепел",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "flame_word",
+        "damage": 12,
+        "chance": 0.3,
+        "charges": 4,
+        "max": 10,
+        "glyph": "SGA",
+        "school": "fire",
+        "buff": {"param": "magic_crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
+        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
+        "effect": {"kind": "burn", "value": 3, "period_s": 2, "duration_s": 6},
+        "class": "mage"
+      },
+      "gold_value": 260
+    },
+    {
       "id": "scroll_frost",
       "type": "scroll",
       "name": "Свиток мороза",

@@ -35,13 +35,18 @@ impl Root {
         let mut panel = div().flex().flex_col().gap_1().flex_grow_1().min_h_0();
 
         // ── вкладки каналов (ФР-13): Tabs Ely + фильтр ──
+        // Заказчик 2026-11-20: в канал группы/гильдии писать нельзя,
+        // если не состоишь — метка 🔒 и отказ при переключении.
         let choices: Vec<Choice> = CHAT_CHANNELS
             .iter()
             .map(|channel| {
                 let count = self.store.chat.get(*channel).map(|h| h.len()).unwrap_or(0);
+                let locked = (*channel == "party" && self.store.party.is_none())
+                    || (*channel == "guild" && self.store.guild.is_none());
+                let lock = if locked { " 🔒" } else { "" };
                 Choice::new(
                     *channel,
-                    format!("{} ({count})", t(lang, channel_key(channel))),
+                    format!("{} ({count}){lock}", t(lang, channel_key(channel))),
                 )
             })
             .collect();
@@ -52,6 +57,20 @@ impl Root {
                 move |value, _window, acx| {
                     let value = value.to_string();
                     this.update(acx, |root, cx| {
+                        let locked = match value.as_str() {
+                            "party" => root.store.party.is_none(),
+                            "guild" => root.store.guild.is_none(),
+                            _ => false,
+                        };
+                        if locked {
+                            root.store.notice = Some(if value == "party" {
+                                t(root.lang, Key::ChNeedParty).to_string()
+                            } else {
+                                t(root.lang, Key::ChNeedGuild).to_string()
+                            });
+                            cx.notify();
+                            return;
+                        }
                         root.chat_channel = value;
                         cx.notify();
                     });
@@ -174,11 +193,13 @@ impl Root {
             .map(|t| t.saturating_duration_since(std::time::Instant::now()))
             .unwrap_or_default();
         let cooling = !cooldown_left.is_zero();
-        let mut input_row = div().flex().flex_row().gap_1().items_stretch().min_w_0();
+        const INPUT_H: f32 = 28.0; // высота поля Ely (ControlSize::Md)
+        let mut input_row = div().flex().flex_row().gap_1().min_w_0();
         input_row = input_row.child(
             div()
                 .flex_grow_1()
                 .min_w_0()
+                .h(px(INPUT_H))
                 .child(Input::new(self.ti(&self.chat_input))),
         );
         if cooling {
@@ -210,6 +231,7 @@ impl Root {
         // Кнопка «отправить» — иконка (Lucide Send); при кулдауне —
         // приглушённая. Высота равна полю ввода (items_stretch).
         let send_btn = div()
+            .h(px(INPUT_H))
             .px_2()
             .flex()
             .items_center()
@@ -277,6 +299,16 @@ impl Root {
             typed.clone()
         };
         let channel = self.chat_channel.clone();
+        // Заказчик 2026-11-20: отправка в канал группы/гильдии — только
+        // при membership (сервер и так отклонит; здесь — UX без обмана).
+        if channel == "party" && self.store.party.is_none() {
+            self.store.notice = Some(t(self.lang, Key::ChNeedParty).to_string());
+            return;
+        }
+        if channel == "guild" && self.store.guild.is_none() {
+            self.store.notice = Some(t(self.lang, Key::ChNeedGuild).to_string());
+            return;
+        }
         let reply = self.store.last_whisper_from.clone();
         match parse_chat_input(&text, &channel, reply.as_deref()) {
             ChatDraft::Send { channel, to, text } => {

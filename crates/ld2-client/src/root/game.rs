@@ -2673,6 +2673,12 @@ fn log_color(kind: LogKind, dark: bool) -> u32 {
             System => 0x5a_5e_66,
             Location => 0x4a_4e_58,
             Chat => 0x2a_2a_2e,
+            // Каналы чата (заказчик): каждая — свой цвет.
+            ChatGlobal => 0x2b_6c_b0,
+            ChatParty => 0x2e_7d32,
+            ChatGuild => 0x8e_44_ad,
+            ChatWhisper => 0xc2_18_5b,
+            ChatSystem => 0xb2_6a_00,
             Xp => 0x2e_7d_91,
             Loot => 0x8a_6d_1f,
             Crime => 0xa5_5a_22,
@@ -2690,6 +2696,11 @@ fn log_color(kind: LogKind, dark: bool) -> u32 {
         Quest => 0xc6_78_dd,
         Xp => 0x56_b6_c2,
         Chat => 0xeb_eb_eb,
+        ChatGlobal => 0x61_af_ef,
+        ChatParty => 0x98_c3_79,
+        ChatGuild => 0xc6_78_dd,
+        ChatWhisper => 0xe8_7a_93,
+        ChatSystem => 0xe5_c0_7b,
     }
 }
 

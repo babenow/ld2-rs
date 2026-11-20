@@ -10928,6 +10928,11 @@ pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_i
                     kind,
                     value: e.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
                     duration_s: e.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(5),
+                    period_s: e
+                        .get("period_s")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(1)
+                        .max(1),
                 })
             });
         runes.push(SocketedRune {

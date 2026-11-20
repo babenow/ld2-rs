@@ -2259,6 +2259,11 @@ impl Root {
                                 t(lang, Key::EffectBleed).to_string(),
                                 format!("{val}{} · {dur}", t(lang, Key::PerSecond)),
                             ),
+                            // R-контент: «горение» — урон за тик с периодом.
+                            "burn" => (
+                                t(lang, Key::EffectBurn).to_string(),
+                                format!("{val}{} · {dur}", t(lang, Key::PerTick),),
+                            ),
                             "stun" => (t(lang, Key::EffectStun).to_string(), dur.clone()),
                             "root" => (t(lang, Key::EffectRoot).to_string(), dur.clone()),
                             other => (other.to_string(), dur),

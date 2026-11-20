@@ -249,6 +249,14 @@ pub struct LiveMob {
     pub bleed_next_at: i64,
     /// Кто наложил кровотечение — XP за добивание от DoT.
     pub bleed_src: Option<String>,
+    /// R-контент: «горение» — DoT рун с настраиваемым периодом
+    /// (`stats.effect: {kind: "burn", value, period_s, duration_s}`).
+    pub burn_dps: i64,
+    pub burn_until: i64,
+    pub burn_next_at: i64,
+    pub burn_period: i64,
+    /// Кто наложил горение — XP за добивание от DoT.
+    pub burn_src: Option<String>,
     /// M20: респавн-диапазон (content `respawn {min_s,max_s}` или
     /// дефолт `[world]`); `None` — не возрождается.
     pub respawn: Option<(i64, i64)>,
@@ -459,18 +467,21 @@ pub struct SocketedRune {
     /// Бафф персонажа при срабатывании (контент `stats.buff`).
     pub buff: Option<RuneBuff>,
     /// Эффект на цель-моба при срабатывании (контент `stats.effect`):
-    /// `stun`/`root`/`bleed` (ADR-012 §5, M18/F58d).
+    /// `stun`/`root`/`bleed`/`burn` (ADR-012 §5, M18/F58d + burn).
     pub effect: Option<RuneEffect>,
 }
 
 /// M18/F58d: эффект руны на моба (контент `stats.effect`).
 #[derive(Debug, Clone)]
 pub struct RuneEffect {
-    /// `stun` | `root` | `bleed`.
+    /// `stun` | `root` | `bleed` | `burn`.
     pub kind: String,
-    /// Для `bleed` — урон/сек; для stun/root не используется.
+    /// Для `bleed` — урон/сек; для `burn` — урон за тик; для stun/root
+    /// не используется.
     pub value: i64,
     pub duration_s: i64,
+    /// Для `burn` — период тика, с (дефолт 1); остальным не используется.
+    pub period_s: i64,
 }
 
 /// M18/F58d: параметры баффа руны (контент `stats.buff`).
@@ -655,12 +666,14 @@ impl World {
     pub fn apply_rune_effect(
         &mut self,
         mob_id: &str,
-        kind: &str,
-        value: i64,
-        duration_s: i64,
+        effect: &RuneEffect,
         src_char_id: &str,
         now_ms: i64,
     ) {
+        let kind = effect.kind.as_str();
+        let value = effect.value;
+        let duration_s = effect.duration_s;
+        let period_s = effect.period_s;
         let Some(mob) = self.mobs.get_mut(mob_id) else {
             return;
         };
@@ -677,6 +690,17 @@ impl World {
                     mob.bleed_src = Some(src_char_id.to_string());
                 }
                 mob.bleed_until = until;
+            }
+            "burn" => {
+                // «Горение» — как кровотечение, но с периодом из контента
+                // (продление не сбрасывает таймер тика).
+                if mob.burn_dps == 0 || mob.burn_until <= now_ms {
+                    mob.burn_dps = value.max(1);
+                    mob.burn_period = (period_s.max(1) * 1000).max(500);
+                    mob.burn_next_at = now_ms + mob.burn_period;
+                    mob.burn_src = Some(src_char_id.to_string());
+                }
+                mob.burn_until = until;
             }
             _ => {}
         }
@@ -702,6 +726,25 @@ impl World {
                 )
             })
             .collect()
+    }
+
+    /// R-контент: горящие мобы, у которых пора тикнуть → `(id, dps, src)`.
+    pub fn burning_mobs(&self, now_ms: i64) -> Vec<(String, i64, Option<String>)> {
+        self.mobs
+            .values()
+            .filter(|m| m.burn_dps > 0 && m.burn_until >= now_ms && m.burn_next_at <= now_ms)
+            .map(|m| (m.id.clone(), m.burn_dps, m.burn_src.clone()))
+            .collect()
+    }
+
+    /// R-контент: продвинуть тик горения (следующий — через период).
+    pub fn advance_burn_tick(&mut self, mob_id: &str, now_ms: i64) {
+        if let Some(mob) = self.mobs.get_mut(mob_id) {
+            mob.burn_next_at = now_ms + mob.burn_period.max(1000);
+            if mob.burn_until <= now_ms {
+                mob.burn_dps = 0;
+            }
+        }
     }
 
     /// M18/F58d: продвинуть тик кровоточащего моба (следующий через 1 с).
@@ -849,6 +892,11 @@ impl World {
                     bleed_until: 0,
                     bleed_next_at: 0,
                     bleed_src: None,
+                    burn_dps: 0,
+                    burn_until: 0,
+                    burn_next_at: 0,
+                    burn_period: 0,
+                    burn_src: None,
                     respawn,
                     hp_start,
                     harvest: extra.get("harvest").and_then(|v| v.as_object()).cloned(),
@@ -2068,13 +2116,33 @@ mod tests {
 
         // Стан: активен ровно duration, потом снимается.
         assert!(!world.mob_stunned("m_w", now), "до эффекта не стан");
-        world.apply_rune_effect("m_w", "stun", 0, 3, "c1", now);
+        world.apply_rune_effect(
+            "m_w",
+            &RuneEffect {
+                kind: "stun".to_string(),
+                value: 0,
+                duration_s: 3,
+                period_s: 1,
+            },
+            "c1",
+            now,
+        );
         assert!(world.mob_stunned("m_w", now + 2_999), "стан активен");
         assert!(!world.mob_stunned("m_w", now + 3_001), "стан истёк");
 
         // Кровотечение: первый тик через секунду, dps из контента,
         // источник сохранён для XP.
-        world.apply_rune_effect("m_w", "bleed", 3, 6, "c1", now);
+        world.apply_rune_effect(
+            "m_w",
+            &RuneEffect {
+                kind: "bleed".to_string(),
+                value: 3,
+                duration_s: 6,
+                period_s: 1,
+            },
+            "c1",
+            now,
+        );
         assert_eq!(world.bleeding_mobs(now), Vec::new(), "тиков ещё не было");
         let due = world.bleeding_mobs(now + 1_000);
         assert_eq!(due.len(), 1, "пора тикнуть");
@@ -2088,25 +2156,75 @@ mod tests {
         );
 
         // Срок истёк — снимаем (bleed_dps обнуляется).
-        world.apply_rune_effect("m_w", "bleed", 3, 2, "c1", now);
+        world.apply_rune_effect(
+            "m_w",
+            &RuneEffect {
+                kind: "bleed".to_string(),
+                value: 3,
+                duration_s: 2,
+                period_s: 1,
+            },
+            "c1",
+            now,
+        );
         world.advance_bleed_tick("m_w", now + 5_000);
         let mobs = world.bleeding_mobs(now + 6_000);
         assert!(mobs.is_empty(), "истёкший DoT не тикает: {mobs:?}");
 
         // Регрессия: частые пере-наложения (шанс 1.0) продлевают срок,
         // но НЕ сбрасывают тик — иначе DoT никогда не дотикает.
-        world.apply_rune_effect("m_w", "bleed", 3, 6, "c1", now);
+        world.apply_rune_effect(
+            "m_w",
+            &RuneEffect {
+                kind: "bleed".to_string(),
+                value: 3,
+                duration_s: 6,
+                period_s: 1,
+            },
+            "c1",
+            now,
+        );
         let next_before = world.bleeding_mobs(now + 1_000);
         assert_eq!(next_before.len(), 1, "тикер назначен");
-        world.apply_rune_effect("m_w", "bleed", 3, 6, "c1", now + 500);
-        world.apply_rune_effect("m_w", "bleed", 3, 6, "c1", now + 900);
+        world.apply_rune_effect(
+            "m_w",
+            &RuneEffect {
+                kind: "bleed".to_string(),
+                value: 3,
+                duration_s: 6,
+                period_s: 1,
+            },
+            "c1",
+            now + 500,
+        );
+        world.apply_rune_effect(
+            "m_w",
+            &RuneEffect {
+                kind: "bleed".to_string(),
+                value: 3,
+                duration_s: 6,
+                period_s: 1,
+            },
+            "c1",
+            now + 900,
+        );
         let due = world.bleeding_mobs(now + 1_000);
         assert_eq!(due.len(), 1, "тик не сброшен пере-наложением");
         world.advance_bleed_tick("m_w", now + 1_000);
 
         // Корни: поле хранится (перемещение мобов появится позже) и не
         // путается со станом — стан к этому моменту уже истёк.
-        world.apply_rune_effect("m_w", "root", 0, 5, "c1", now);
+        world.apply_rune_effect(
+            "m_w",
+            &RuneEffect {
+                kind: "root".to_string(),
+                value: 0,
+                duration_s: 5,
+                period_s: 1,
+            },
+            "c1",
+            now,
+        );
         assert!(
             !world.mob_stunned("m_w", now + 10_000),
             "root не блокирует атаки (≠ стан)"

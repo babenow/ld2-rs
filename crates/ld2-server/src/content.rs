@@ -941,12 +941,12 @@ mod tests {
                 );
             }
             // M18/F58d: эффект на моба — только известные kind
-            // (стан/кровотечение/корни); bleed требует value (урон/сек).
+            // (стан/кровотечение/корни/горение); bleed/burn требуют value.
             if let Some(effect) = item.stats.get("effect") {
                 let e = effect.as_object().expect("stats.effect — объект");
                 let kind = e.get("kind").and_then(|v| v.as_str()).unwrap_or("");
                 assert!(
-                    matches!(kind, "stun" | "root" | "bleed"),
+                    matches!(kind, "stun" | "root" | "bleed" | "burn"),
                     "неизвестный effect.kind {kind:?} у {}",
                     item.id
                 );
@@ -955,10 +955,17 @@ mod tests {
                     "duration_s > 0 в stats.effect у {}",
                     item.id
                 );
-                if kind == "bleed" {
+                if kind == "bleed" || kind == "burn" {
                     assert!(
                         e.get("value").and_then(|v| v.as_i64()).unwrap_or(0) >= 1,
-                        "bleed требует value ≥ 1 (урон/сек) у {}",
+                        "{kind} требует value ≥ 1 (урон за тик) у {}",
+                        item.id
+                    );
+                }
+                if kind == "burn" {
+                    assert!(
+                        e.get("period_s").and_then(|v| v.as_f64()).unwrap_or(0.0) >= 0.5,
+                        "burn требует period_s ≥ 0.5 (период тика) у {}",
                         item.id
                     );
                 }

@@ -259,6 +259,14 @@ pub enum Key {
     ChCollapse,
     /// R-чат (заказчик 2026-11-20): мат-фильтр исходящих (настройки).
     MuteFilterLabel,
+    /// R-чат (заказчик 2026-11-20): канал группы без группы.
+    ChNeedParty,
+    /// R-чат (заказчик 2026-11-20): канал гильдии без гильдии.
+    ChNeedGuild,
+    /// R-контент: эффект «горение» (burn) — метка в описании руны.
+    EffectBurn,
+    /// R-контент: «за тик» (burn с периодом из контента).
+    PerTick,
     RecipesLabel,
     BtnCraft,
     LearnLabel,
@@ -875,6 +883,10 @@ mod tests {
         Key::StateUnknown,
         Key::ChCollapse,
         Key::MuteFilterLabel,
+        Key::ChNeedParty,
+        Key::ChNeedGuild,
+        Key::EffectBurn,
+        Key::PerTick,
         Key::RecipesLabel,
         Key::BtnCraft,
         Key::LearnLabel,
