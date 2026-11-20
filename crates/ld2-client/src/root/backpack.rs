@@ -10,7 +10,10 @@ use ely::menus::ContextMenu;
 use ely::motion::Reorder;
 use ely::navigation::Tabs;
 use ely::primitives::{Icon, IconName, Tooltip};
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Window};
+use gpui::{
+    div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, MouseButton,
+    SharedString, Window,
+};
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::{Act, Screen};
 use ld2_protocol::cmd::ItemMove;
@@ -426,6 +429,42 @@ impl Root {
                         }
                     }),
                 );
+            // Переливание (заказчик 2026-11-20): эпик/легендарка — на
+            // наведении оттенок рамки и свечения циклится (~4 с).
+            let hover_key = format!("bp:{uid}");
+            let shimmering = matches!(item.rarity.as_str(), "epic" | "legendary")
+                && self.hovered_item.as_deref() == Some(hover_key.as_str());
+            let hover_this = cx.entity();
+            let hover_key_hover = hover_key.clone();
+            let tile = tile.on_hover(move |hovered, _, cx| {
+                let key = hover_key_hover.clone();
+                hover_this.update(cx, |root, cx| {
+                    root.hovered_item = hovered.then_some(key);
+                    cx.notify();
+                });
+            });
+            let tile = if shimmering {
+                let base = rarity_color(&item.rarity, pal) & 0xff_ffff;
+                tile.with_animation(
+                    SharedString::from(format!("shimmer-{hover_key}")),
+                    Animation::new(std::time::Duration::from_secs(4)).repeat(),
+                    move |el, t| {
+                        let hsla: gpui::Hsla = gpui::rgba((base << 8) | 0xff).into();
+                        let hue = (hsla.h + t) % 1.0;
+                        el.border_color(gpui::hsla(hue, hsla.s, hsla.l, 1.0))
+                            .shadow(vec![gpui::BoxShadow {
+                                color: gpui::hsla(hue, hsla.s, hsla.l, 0.35),
+                                offset: gpui::point(px(0.0), px(0.0)),
+                                blur_radius: px(8.0),
+                                spread_radius: px(0.0),
+                                inset: true,
+                            }])
+                    },
+                )
+                .into_any_element()
+            } else {
+                tile.into_any_element()
+            };
             let request = match &self.bp_menu {
                 Some((u, n, at)) if *u == uid => Some((*n, *at)),
                 _ => None,
@@ -436,9 +475,6 @@ impl Root {
             )
             .manual(request)
             .child(tile);
-            // Эпик/легендарка — пульсирующее свечение рамки (заказчик).
-            let ctx =
-                super::sheet::rarity_glow(ctx, &item.rarity, pal, format!("ld2-bp-ctx-{uid}"));
             // Отступ между строками списка (у Reorder нет gap).
             list = list.row(uid, div().pb(px(8.0)).child(ctx));
         }

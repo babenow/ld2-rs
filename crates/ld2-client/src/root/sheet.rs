@@ -15,8 +15,8 @@
 
 use ely::overlays::Dialog;
 use gpui::{
-    div, prelude::*, px, rgb, AnimationExt, AnyElement, Context, CursorStyle, Div, DragMoveEvent,
-    EmptyView, MouseButton, SharedString, Window,
+    div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, CursorStyle, Div,
+    DragMoveEvent, EmptyView, MouseButton, SharedString, Window,
 };
 use ld2_core::l10n::{format_duration, t, tf, Key, Lang};
 use ld2_core::store::{
@@ -1592,26 +1592,61 @@ impl Root {
             };
             let slot_right = slot.clone();
             let slot_left = slot.clone();
+            let row = row
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                        window.prevent_default();
+                        this.bump_equip_menu(slot_right.clone(), event.position, cx);
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                        window.prevent_default();
+                        this.bump_equip_menu(slot_left.clone(), event.position, cx);
+                    }),
+                );
+            // Переливание (заказчик 2026-11-20): эпик/легендарка — на
+            // наведении оттенок рамки и свечения циклится (~4 с);
+            // без наведения — статичное внутреннее свечение.
+            let hover_key = format!("eq:{slot}");
+            let shimmering = matches!(item.rarity.as_str(), "epic" | "legendary")
+                && self.hovered_item.as_deref() == Some(hover_key.as_str());
+            let hover_this = cx.entity();
+            let hover_key_hover = hover_key.clone();
+            let row = row.on_hover(move |hovered, _, cx| {
+                let key = hover_key_hover.clone();
+                hover_this.update(cx, |root, cx| {
+                    root.hovered_item = hovered.then_some(key);
+                    cx.notify();
+                });
+            });
+            let row = if shimmering {
+                let base = rarity_color(&item.rarity, pal) & 0xff_ffff;
+                row.with_animation(
+                    SharedString::from(format!("shimmer-{hover_key}")),
+                    Animation::new(std::time::Duration::from_secs(4)).repeat(),
+                    move |el, t| {
+                        let hsla: gpui::Hsla = gpui::rgba((base << 8) | 0xff).into();
+                        let hue = (hsla.h + t) % 1.0;
+                        el.border_color(gpui::hsla(hue, hsla.s, hsla.l, 1.0))
+                            .shadow(vec![gpui::BoxShadow {
+                                color: gpui::hsla(hue, hsla.s, hsla.l, 0.35),
+                                offset: gpui::point(px(0.0), px(0.0)),
+                                blur_radius: px(8.0),
+                                spread_radius: px(0.0),
+                                inset: true,
+                            }])
+                    },
+                )
+                .into_any_element()
+            } else {
+                row.into_any_element()
+            };
             let row = ContextMenu::new(format!("ld2-equip-ctx-{slot}"), menu)
                 .manual(request)
-                .child(
-                    row.on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                            window.prevent_default();
-                            this.bump_equip_menu(slot_right.clone(), event.position, cx);
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                            window.prevent_default();
-                            this.bump_equip_menu(slot_left.clone(), event.position, cx);
-                        }),
-                    ),
-                );
-            // Эпик/легендарка — пульсирующее свечение рамки (заказчик).
-            let row = rarity_glow(row, &item.rarity, pal, format!("ld2-equip-card-{slot}"));
+                .child(row);
             if matches!(slot.as_str(), "main_hand" | "off_hand") {
                 hand_rows.push(row.into_any_element());
             } else {
@@ -3340,10 +3375,6 @@ fn menu_item(
 }
 
 /// Цвет редкости предмета (палитра §7.4).
-/// Свечение рамки для эпических/легендарных вещей (заказчик
-/// 2026-11-20): пульсирующая цветная тень (BoxShadow) цветом
-/// редкости — alpha дышит 0.25…0.55 по синусу (~2.2 с). Остальным
-/// редкостям элемент возвращается без изменений.
 /// Внутреннее свечение рамки (inset) для эпика/легендарки — видно со
 /// ВСЕХ сторон даже когда соседние карточки/кромка скролла перекрывают
 /// внешнюю ауру. Пустой vec — без свечения.
@@ -3359,38 +3390,6 @@ pub(crate) fn rarity_glow_inset(rarity: &str, pal: &Palette) -> Vec<gpui::BoxSha
         spread_radius: px(0.0),
         inset: true,
     }]
-}
-
-pub(crate) fn rarity_glow<E: gpui::IntoElement + 'static>(
-    el: E,
-    rarity: &str,
-    pal: &Palette,
-    id: String,
-) -> gpui::AnyElement {
-    if !matches!(rarity, "epic" | "legendary") {
-        return el.into_any_element();
-    }
-    let base = rarity_color(rarity, pal) & 0xff_ffff;
-    div()
-        .flex()
-        .flex_col()
-        .child(el)
-        .with_animation(
-            gpui::SharedString::from(format!("glow-{id}")),
-            gpui::Animation::new(std::time::Duration::from_millis(2200)).repeat(),
-            move |el, t| {
-                let alpha: f32 =
-                    (0.40 + 0.15 * (2.0f32 * std::f32::consts::PI * t).cos()).clamp(0.25, 0.55);
-                el.shadow(vec![gpui::BoxShadow {
-                    color: gpui::rgba((base << 8) | (alpha * 255.0) as u32).into(),
-                    offset: gpui::point(px(0.0), px(0.0)),
-                    blur_radius: px(10.0),
-                    spread_radius: px(1.0),
-                    inset: false,
-                }])
-            },
-        )
-        .into_any_element()
 }
 
 pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {

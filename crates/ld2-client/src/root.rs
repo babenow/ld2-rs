@@ -473,6 +473,8 @@ pub struct Root {
     chat_history_pos: Option<usize>,
     /// Окно таймаута отправки чата (анти-спам; §5 chat.cooldown_s).
     chat_cooldown_until: Option<std::time::Instant>,
+    /// hovered-предмет (переливание рамки): `bp:<uid>` / `eq:<slot>`.
+    hovered_item: Option<String>,
     chat_channel: String,
     /// M10.5: окно сделки — поле золота.
     /// M11.3: золото сделки (NumberInput Ely; фиксируется операцией).
@@ -780,6 +782,7 @@ impl Root {
             chat_history: Vec::new(),
             chat_history_pos: None,
             chat_cooldown_until: None,
+            hovered_item: None,
             chat_channel: "location".into(),
             trade_gold_value: 0.0,
             trade_pick: None,
