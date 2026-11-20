@@ -270,6 +270,12 @@ pub enum Key {
     /// R-контент: метки статов руны (описание).
     StatCost,
     StatClass,
+    /// R-контент: руны-семейства (Искра/Око/Ярость) — названия.
+    SpellFlameWord,
+    SpellHawksEye,
+    SpellWolvesRage,
+    /// R-контент (заказчик): у воина/лучника это приём, не заклинание.
+    SpellTechnique,
     RecipesLabel,
     BtnCraft,
     LearnLabel,
@@ -892,6 +898,10 @@ mod tests {
         Key::PerTick,
         Key::StatCost,
         Key::StatClass,
+        Key::SpellFlameWord,
+        Key::SpellHawksEye,
+        Key::SpellWolvesRage,
+        Key::SpellTechnique,
         Key::RecipesLabel,
         Key::BtnCraft,
         Key::LearnLabel,

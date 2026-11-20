@@ -2182,6 +2182,12 @@ impl Root {
                     .child(div().text_color(rgb(pal.muted)).child(label))
                     .child(div().font_weight(gpui::FontWeight::BOLD).child(value))
             };
+            // Заказчик 2026-11-20: у воина/лучника заклинание — «приём».
+            let rune_class = stats
+                .get("class")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             for (key, value) in stats {
                 // M16/F29e: ключи и значения — на языке игрока
                 // (школы — свои названия; прочие значения — как есть).
@@ -2319,11 +2325,15 @@ impl Root {
                         .py_1()
                         .rounded_md()
                         .bg(rgb(pal.panel))
-                        .child(
-                            div()
-                                .text_color(rgb(pal.muted))
-                                .child(stat_label(lang, key)),
-                        )
+                        .child(div().text_color(rgb(pal.muted)).child({
+                            if key == "spell" && matches!(rune_class.as_str(), "warrior" | "archer")
+                            {
+                                // У воина/лучника это приём, не заклинание.
+                                t(lang, Key::SpellTechnique).to_string()
+                            } else {
+                                stat_label(lang, key)
+                            }
+                        }))
                         .child(div().font_weight(gpui::FontWeight::BOLD).child(value)),
                 );
             }

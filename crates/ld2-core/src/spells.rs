@@ -17,6 +17,10 @@ pub fn spell_key(id: &str) -> Option<Key> {
         "hemorrhage" => Some(Key::SpellHemorrhage),
         "concussion" => Some(Key::SpellConcussion),
         "entangle" => Some(Key::SpellEntangle),
+        // R-контент: руны-семейства (Искра/Око/Ярость).
+        "flame_word" => Some(Key::SpellFlameWord),
+        "hawks_eye" => Some(Key::SpellHawksEye),
+        "wolves_rage" => Some(Key::SpellWolvesRage),
         _ => None,
     }
 }
@@ -38,6 +42,9 @@ mod tests {
             "hemorrhage",
             "concussion",
             "entangle",
+            "flame_word",
+            "hawks_eye",
+            "wolves_rage",
         ] {
             assert!(spell_key(id).is_some(), "имя: {id}");
         }
