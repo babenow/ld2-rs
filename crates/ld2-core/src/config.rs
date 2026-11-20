@@ -73,6 +73,10 @@ pub struct Config {
     /// Состояние UI: свёрнут ли пати-виджет (ФР-19).
     #[serde(default)]
     pub party_collapsed: bool,
+    /// Состояние UI: свёрнутые группы навыков в окне персонажа
+    /// (заказчик 2026-11-20): иды `skills.skill_group`.
+    #[serde(default)]
+    pub sheet_collapsed: Vec<String>,
     /// Горячие клавиши — ремаппинг (ФР-19): см. [`Hotkeys`].
     #[serde(default)]
     pub hotkeys: Hotkeys,
@@ -369,6 +373,7 @@ impl Default for Config {
             backpack_tab: default_backpack_tab(),
             remember_password: false,
             party_collapsed: false,
+            sheet_collapsed: Vec::new(),
             hotkeys: Hotkeys::default(),
         }
     }

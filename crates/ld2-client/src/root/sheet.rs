@@ -1188,7 +1188,9 @@ impl Root {
                 pool
             )));
         // M15/F28: навыки по группам GDD §3 (A–F) — заголовок группы,
-        // если в снапшоте есть хоть один её навык.
+        // если в снапшоте есть хоть один её навык. Заказчик 2026-11-20:
+        // группы сворачиваемые — кнопка-заголовок (акцент = развёрнута,
+        // панель = свёрнута, как пати-виджет), состояние в конфиге.
         for (gid, key) in SKILL_GROUPS {
             let group: Vec<&SkillSnapshot> = snap
                 .char
@@ -1199,14 +1201,33 @@ impl Root {
             if group.is_empty() {
                 continue;
             }
-            col = col.child(
-                div()
-                    .mt(px(6.0))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(t(lang, key)),
-            );
-            for skill in group {
-                col = col.child(self.skill_row(cx, pal, skill));
+            let collapsed = self.config.sheet_collapsed.iter().any(|id| id == gid);
+            let gid_owned = gid.to_string();
+            let label = format!("{} ({})", t(lang, key), group.len());
+            col = col.child(div().mt(px(6.0)).child(act_btn(
+                cx,
+                label,
+                if collapsed { pal.panel } else { pal.accent },
+                pal.text,
+                move |this, cx| {
+                    if let Some(pos) = this
+                        .config
+                        .sheet_collapsed
+                        .iter()
+                        .position(|id| *id == gid_owned)
+                    {
+                        this.config.sheet_collapsed.remove(pos);
+                    } else {
+                        this.config.sheet_collapsed.push(gid_owned.clone());
+                    }
+                    this.save_config();
+                    let _ = cx;
+                },
+            )));
+            if !collapsed {
+                for skill in group {
+                    col = col.child(self.skill_row(cx, pal, skill));
+                }
             }
         }
         // Строки без известной группы — в конце: старый сервер (group =
