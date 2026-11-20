@@ -206,6 +206,7 @@ pub(super) fn t(key: Key) -> &'static str {
         DropConfirmTitle => "Drop item?",
         DropConfirmHint => "{name} will fall to the ground — anyone can pick it up.",
         SlotMismatch => "Item does not fit this slot",
+        QtyAll => "All",
         EffectBurn => "Burning",
         PerTick => "/tick",
         StatCost => "Cost",

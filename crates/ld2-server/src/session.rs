@@ -5114,6 +5114,24 @@ impl Session {
                     expires_at,
                 )
             };
+            // R-dnd: предмет на земле виден СРАЗУ всем в локации
+            // (evt/entity/spawn — паритет despawn при подборе; раньше
+            // появлялся только после resync).
+            if let Some(entity) = self.ground_entity_for(location_id, &dropped) {
+                let spawn_text = event_payload_text(
+                    "evt/entity/spawn",
+                    &ld2_protocol::evt::EntitySpawn {
+                        entity,
+                        location_id: location_id.clone(),
+                    },
+                );
+                let world = self.state.world.lock().expect("мир");
+                for addr in world.chars_in_location(location_id) {
+                    if let Some(text) = &spawn_text {
+                        world.send_to_char(&addr, text.clone());
+                    }
+                }
+            }
             let payload = ld2_protocol::evt::ItemDropped {
                 char_id: char_id.clone(),
                 by_name,
@@ -5168,6 +5186,35 @@ impl Session {
                 ),
             ]
         }
+    }
+
+    /// R-dnd: Entity наземного предмета для evt/entity/spawn
+    /// (паритет полей World::build_location — extra.ground/def_id/qty).
+    fn ground_entity_for(
+        &self,
+        _location_id: &str,
+        ground_id: &str,
+    ) -> Option<ld2_protocol::types::Entity> {
+        let world = self.state.world.lock().expect("мир");
+        let g = world.ground_item(ground_id)?;
+        let mut extra = serde_json::Map::new();
+        extra.insert("ground".into(), serde_json::json!(true));
+        extra.insert("def_id".into(), serde_json::json!(g.def_id));
+        extra.insert("qty".into(), serde_json::json!(g.qty));
+        Some(ld2_protocol::types::Entity {
+            id: g.id.clone(),
+            kind: ld2_protocol::types::EntityKind::Object,
+            name: g.name.clone(),
+            hp: None,
+            tags: None,
+            was_player: None,
+            aggro: None,
+            boss: None,
+            next_attack_at: None,
+            attack_interval: None,
+            attacking: None,
+            extra,
+        })
     }
 
     /// `cmd/chat.send` (§7): dev-сценарии `/scenario …` (ФР-06/тесты);

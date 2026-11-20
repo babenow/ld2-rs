@@ -277,6 +277,8 @@ pub enum Key {
     DropConfirmTitle,
     DropConfirmHint,
     SlotMismatch,
+    /// R-dnd: кнопка «Все» (весь стак на выброс).
+    QtyAll,
     /// R-контент: руны-семейства (Искра/Око/Ярость) — названия.
     SpellFlameWord,
     SpellHawksEye,
@@ -909,6 +911,7 @@ mod tests {
         Key::DropConfirmTitle,
         Key::DropConfirmHint,
         Key::SlotMismatch,
+        Key::QtyAll,
         Key::SpellFlameWord,
         Key::SpellHawksEye,
         Key::SpellWolvesRage,

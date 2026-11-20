@@ -1874,16 +1874,10 @@ impl AppStore {
                 let Ok(dropped) = serde_json::from_value::<ItemDropped>(payload) else {
                     return vec![];
                 };
-                // Строки журнала — по конвенции store (русские
-                // литералы, как «Потеряно:»); свой char_id → «Вы…».
-                let mine = self
-                    .snapshot
-                    .as_ref()
-                    .is_some_and(|s| s.char.id == dropped.char_id);
+                // Заказчик 2026-11-21: для ВСЕХ игроков рядом — единый
+                // формат «{имя} выбросил(а) {qty} {предмет}» (и для себя).
                 let qty = dropped.qty;
-                let text = if mine {
-                    format!("Вы выбросили {qty} {}", dropped.item_name)
-                } else if dropped.gender == "female" {
+                let text = if dropped.gender == "female" {
                     format!("{} выбросила {qty} {}", dropped.by_name, dropped.item_name)
                 } else {
                     format!("{} выбросил {qty} {}", dropped.by_name, dropped.item_name)
@@ -4601,6 +4595,40 @@ mod tests {
             "id не должен попадать в журнал: {}",
             last.text
         );
+    }
+
+    #[test]
+    fn dropped_log_is_uniform_for_everyone() {
+        let mut store = in_game();
+        // ЧУЖОЙ выброс — «{имя} выбросил …» (не «Вы выбросили»).
+        store.apply(evt(
+            "evt/item/dropped",
+            serde_json::json!({
+                "char_id": "other-char",
+                "by_name": "Ким",
+                "gender": "male",
+                "item_name": "Зелье лечения",
+                "qty": 2,
+                "sent_at": "2026-11-21T00:00:00Z"
+            }),
+        ));
+        let last = store.log.back().expect("строка журнала");
+        assert_eq!(last.text, "Ким выбросил 2 Зелье лечения", "{}", last.text);
+
+        // Свой выброс — тот же формат (по имени, заказчик).
+        store.apply(evt(
+            "evt/item/dropped",
+            serde_json::json!({
+                "char_id": "c1",
+                "by_name": "Ким",
+                "gender": "male",
+                "item_name": "Зелье лечения",
+                "qty": 1,
+                "sent_at": "2026-11-21T00:00:00Z"
+            }),
+        ));
+        let last = store.log.back().expect("строка журнала");
+        assert_eq!(last.text, "Ким выбросил 1 Зелье лечения", "{}", last.text);
     }
 
     #[test]

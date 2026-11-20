@@ -24,7 +24,7 @@ use ld2_core::store::{
     UpgradeView,
 };
 use ld2_protocol::cmd::{
-    CrimeLog, GuildBrowse, GuildLeave, GuildRankSet, ItemDrop, ItemEquip, ItemUnequip, ItemUse,
+    CrimeLog, GuildBrowse, GuildLeave, GuildRankSet, ItemEquip, ItemUnequip, ItemUse,
     SocketExtract, SocketInsert, UpgradePreview,
 };
 use ld2_protocol::types::{CharacterState, ItemSnapshot, Severity, SkillSnapshot};
@@ -1950,23 +1950,16 @@ impl Root {
         let max_qty = item.qty.unwrap_or(1);
         let item_name = item.name.clone();
         menu = menu.item(menu_item(cx, t(lang, Key::MenuDrop), move |this, _cx| {
-            // M20: больше одного — окно выбора количества (поле цифр +
-            // ползунок, переиспользуемое); одна штука — сброс сразу.
-            if max_qty > 1 {
-                this.quantity_pick = Some(super::quantity::QuantityPick {
-                    action: super::quantity::QuantityAction::Drop { uid: uid.clone() },
-                    item_name: item_name.clone(),
-                    max: max_qty,
-                    qty: 1,
-                });
-                this.open_popup(PopupKind::Quantity);
-            } else {
-                let cmd = ItemDrop {
-                    item_uid: uid.clone(),
-                    qty: None,
-                };
-                this.send_cmd(&cmd, Act::Drop);
-            }
+            // R-dnd (заказчик 2026-11-21): подтверждение выброса — окно
+            // «Выбросить предмет?» (для стаков >1: инпут + ползунок +
+            // «Все»; одна штука — сразу кнопка выброса).
+            this.drop_confirm = Some(super::DropPending {
+                uid: uid.clone(),
+                name: item_name.clone(),
+                from: super::DragSource::Bp,
+                max: max_qty,
+                qty: max_qty,
+            });
         }));
         menu
     }
