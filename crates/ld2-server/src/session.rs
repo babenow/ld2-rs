@@ -11,9 +11,10 @@ use ld2_protocol::cmd::{
     CombatAttack, CraftLearn, CraftRankUp, CraftRecipes, CraftReset, CraftStart, CrimeLog,
     EntityInfo, GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet,
     ItemDrop, ItemEquip, ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast,
-    MagicScrollCast, NpcReply, NpcTalk, PartyAccept, PartyInvite, PartyKick, ResourceGather,
-    ShopBuy, ShopList, SkillTrain, SkillUse, SocketExtract, SocketInsert, StateResync,
-    TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview, UpgradeStart,
+    MagicScrollCast, MapWorld, NpcReply, NpcTalk, PartyAccept, PartyInvite, PartyKick,
+    ResourceGather, ShopBuy, ShopList, SkillTrain, SkillUse, SocketExtract, SocketInsert,
+    StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview,
+    UpgradeStart,
 };
 use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
 use ld2_protocol::evt::{
@@ -236,6 +237,7 @@ impl Session {
             // мир (ФР-03, M12.3)
             "cmd/location.look" => self.location_look(seq).await,
             "cmd/location.move" => self.location_move(env, seq).await,
+            "cmd/map.world" => self.map_world(env, seq).await,
             "cmd/entity.info" => self.entity_info(env, seq).await,
             // M18/F35: диалог NPC (поговорить/квесты)
             "cmd/npc.talk" => self.npc_talk(env, seq).await,
@@ -5094,6 +5096,44 @@ impl Session {
         }
         tracing::info!("admin remove shop extra: {npc_id} idx={idx} ×{qty}");
         vec![Self::ack_payload(seq, &serde_json::json!({}))]
+    }
+
+    /// M26: карта-граф мира (§7 аддитивно): чанк статического графа
+    /// локаций — `ack {locations, offset, total}`, повторять с
+    /// `offset` до `offset >= total`. Лимит WS (64 КБ) не позволяет
+    /// отдать граф целиком (~0.5 МБ) — чанки по байтовому бюджету.
+    /// Граф статичен (контент-сид) — кэш один раз на процесс;
+    /// висячие выходы (`to` вне контента) отфильтровываются.
+    async fn map_world(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        let Ok(cmd) = Self::payload_of::<MapWorld>(env, seq) else {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        };
+        let cache = match self
+            .state
+            .map_cache
+            .get_or_try_init(|| crate::map::MapCache::build(&self.state.pool))
+            .await
+        {
+            Ok(cache) => cache,
+            Err(e) => {
+                warn!("map.world (кэш): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        // Бюджет чанка: лимит WS (64 КБ) минус накладные поля ack.
+        const CHUNK_BUDGET: usize = 48 * 1024;
+        let (chunk, next) = cache.chunk(cmd.offset, CHUNK_BUDGET);
+        vec![Self::ack_payload(
+            seq,
+            &serde_json::json!({
+                "locations": chunk,
+                "offset": next,
+                "total": cache.total(),
+            }),
+        )]
     }
 
     async fn item_drop(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {

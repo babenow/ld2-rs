@@ -28,6 +28,9 @@ pub struct AppState {
     pub dialogs: std::collections::HashMap<String, crate::dialogs::DialogNpc>,
     /// M18/F39: магазины NPC в памяти (`content/shops.json`, при старте).
     pub shops: std::collections::HashMap<String, crate::shops::ShopNpc>,
+    /// M26: кэш карты мира (`cmd/map.world`) — локации контента
+    /// (статичный граф), строится один раз при первом запросе.
+    pub map_cache: tokio::sync::OnceCell<crate::map::MapCache>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -53,6 +56,7 @@ impl AppState {
             social: Mutex::new(SocialState::default()),
             dialogs,
             shops,
+            map_cache: tokio::sync::OnceCell::new(),
         }
     }
 

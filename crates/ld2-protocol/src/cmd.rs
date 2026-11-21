@@ -462,6 +462,17 @@ pub struct StateResync {
     pub last_state_version: u64,
 }
 
+/// M26: карта-граф мира (§7 аддитивно): чанк статического графа
+/// локаций. `offset` — индекс первой локации чанка; ack
+/// `{locations, offset, total}` — повторять до `offset >= total`
+/// (MAX_MESSAGE_BYTES = 64 КБ — полный граф в одно сообщение
+/// не влезает). Повтор безопасен (чтение).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct MapWorld {
+    #[serde(default)]
+    pub offset: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Ping {}
 
@@ -536,6 +547,7 @@ impl_commands!(
     (SkillTrain, "cmd/skill.train", false),
     (LocationLook, "cmd/location.look", true),
     (LocationMove, "cmd/location.move", false),
+    (MapWorld, "cmd/map.world", true),
     (EntityInfo, "cmd/entity.info", true),
     (NpcTalk, "cmd/npc.talk", true),
     (NpcReply, "cmd/npc.reply", false),
@@ -615,6 +627,7 @@ mod tests {
             AuthRegister::TYPE,
             CharCreate::TYPE,
             LocationMove::TYPE,
+            MapWorld::TYPE,
             MagicRuneCast::TYPE,
             GuildRankSet::TYPE,
             StateResync::TYPE,
