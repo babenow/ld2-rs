@@ -16,13 +16,12 @@ use gpui::{
 };
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::Screen;
-use ld2_protocol::cmd::{ItemMove, ItemUnequip};
 use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
 use super::sheet::{rarity_color, rarity_label};
-use super::{scrollable_tab, BpHold, DragSource, DropHit, ItemDrag, PopupKind, Root};
+use super::{scrollable_tab, BpHold, DragSource, ItemDrag, PopupKind, Root};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
 /// всегда последняя (спека пользователя), остальные — по маппингу
@@ -121,7 +120,7 @@ impl BackpackTab {
 
     /// Предмет принадлежит вкладке: «Все предметы» — без фильтра,
     /// иначе по типу (валюты — только в «Валюты»).
-    fn matches(self, item: &ItemSnapshot) -> bool {
+    pub(crate) fn matches(self, item: &ItemSnapshot) -> bool {
         self == BackpackTab::All || tab_for_type(&item.item_type) == self
     }
 }
@@ -459,6 +458,7 @@ impl Root {
                 .pb(px(8.0))
                 .child(ctx)
                 .on_drag(drag_payload, move |drag, offset, _, cx| {
+                    tracing::info!("dnd: старт drag {} из рюкзака", drag.uid);
                     drag_this.update(cx, |root, cx| {
                         root.drag_item = Some(ItemDrag {
                             uid: drag.uid.clone(),
@@ -466,6 +466,7 @@ impl Root {
                             slot_req: drag.slot_req.clone(),
                         });
                         root.drop_hit = None;
+                        root.popup_scrim_down = false;
                         root.bp_hold = Some(BpHold {
                             uid: drag.uid.clone(),
                             index: bp_index,
@@ -487,8 +488,6 @@ impl Root {
         // (ItemMove), на зоны — экипировка/снятие, вне зон —
         // подтверждение выброса (заказчик 2026-11-21).
         let order_len = order.len();
-        let order_drop = order.clone();
-        let this_drop = this.clone();
         let list = div()
             .id("ld2-bp-list")
             .flex()
@@ -497,76 +496,29 @@ impl Root {
             .child(flip)
             .on_drag_move::<ItemDrag>(move |event, _window, cx| {
                 // Пересчёт reorder — только когда курсор над списком
-                // (слушает все перемещения при активном drag); уход со
-                // списка снимает маркер зоны — иначе отпускание вне
-                // зон не откроет подтверждение (заказчик).
+                // (слушает все перемещения при активном drag). Маркер
+                // зоны (drop_hit) ведёт КАРТОЧКА окна — здесь не трогаем,
+                // иначе clear-ы спорили с карточкой по порядку (заказчик:
+                // отпускание в окне рюкзака открывало подтверждение).
                 if !event.bounds.contains(&event.event.position) {
-                    this.update(cx, |root, cx| {
-                        if root.drop_hit == Some(DropHit::BpList) {
-                            root.drop_hit = None;
-                            cx.notify();
-                        }
-                    });
                     return;
                 }
                 this.update(cx, |root, cx| {
                     let Some(drag) = root.drag_item.clone() else {
                         return;
                     };
-                    match drag.from {
-                        DragSource::Bp => {
-                            let Some(mut hold) = root.bp_hold.clone() else {
-                                return;
-                            };
-                            let pointer = (event.event.position.y - event.bounds.top()).as_f32();
-                            let row_h = (event.bounds.size.height.as_f32()
-                                / order_len.max(1) as f32)
-                                .max(1.0);
-                            hold.target = ((pointer / row_h) as usize).min(order_len - 1);
-                            hold.top = (pointer - hold.grab).max(0.0);
-                            root.bp_hold = Some(hold);
-                        }
-                        DragSource::Equip(_) => {
-                            root.drop_hit = Some(DropHit::BpList);
-                        }
+                    if matches!(drag.from, DragSource::Bp) {
+                        let Some(mut hold) = root.bp_hold.clone() else {
+                            return;
+                        };
+                        let pointer = (event.event.position.y - event.bounds.top()).as_f32();
+                        let row_h =
+                            (event.bounds.size.height.as_f32() / order_len.max(1) as f32).max(1.0);
+                        hold.target = ((pointer / row_h) as usize).min(order_len - 1);
+                        hold.top = (pointer - hold.grab).max(0.0);
+                        root.bp_hold = Some(hold);
+                        cx.notify();
                     }
-                    cx.notify();
-                });
-            })
-            .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
-                this_drop.update(cx, |root, cx| {
-                    // Маркер «зона обработала» — отпускание вне зон
-                    // не откроет подтверждение.
-                    root.drop_hit = Some(DropHit::BpList);
-                    match &drag.from {
-                        DragSource::Bp => {
-                            if let Some(hold) = root.bp_hold.take() {
-                                if hold.index != hold.target {
-                                    if let Some(target_uid) = order_drop.get(hold.target) {
-                                        let cmd = ItemMove {
-                                            item_uid: hold.uid.clone(),
-                                            target_uid: target_uid.clone(),
-                                        };
-                                        if let Err(e) = root.transport.send(&cmd) {
-                                            root.store.notice = Some(format!("нет связи: {e}"));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        DragSource::Equip(slot) => {
-                            // Снятие предмета в рюкзак (заказчик).
-                            let cmd = ItemUnequip { slot: slot.clone() };
-                            if let Err(e) = root.transport.send(&cmd) {
-                                root.store.notice = Some(format!("нет связи: {e}"));
-                            }
-                        }
-                    }
-                    root.bp_hold = None;
-                    // Drop обработан списком — drag поглощён: tick не
-                    // открывает подтверждение выброса (заказчик).
-                    root.drag_item = None;
-                    cx.notify();
                 });
             });
         // Горизонтальный простор внешней ауре свечения (кромка

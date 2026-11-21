@@ -852,6 +852,31 @@ impl Root {
                     root.popup_scrim_down = false;
                 }),
             )
+            // R-dnd (заказчик): ВСЯ карточка рюкзака — зона приёма drag
+            // предметов (иначе отпускание на подложке/полях окна
+            // открывало подтверждение выброса); маркер ведёт КАРТОЧКА,
+            // список не трогает — иначе clear-ы спорили по порядку.
+            .on_drag_move::<ItemDrag>({
+                let card_this = cx.entity();
+                move |event, _, cx| {
+                    if kind != PopupKind::Backpack {
+                        return;
+                    }
+                    card_this.update(cx, |root, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            if root.drag_item.is_some() && root.drop_hit != Some(DropHit::BpList) {
+                                tracing::info!("dnd: карточка рюкзака — зона приёма");
+                                root.drop_hit = Some(DropHit::BpList);
+                                cx.notify();
+                            }
+                        } else if root.drop_hit == Some(DropHit::BpList) {
+                            tracing::info!("dnd: уход с карточки рюкзака");
+                            root.drop_hit = None;
+                            cx.notify();
+                        }
+                    });
+                }
+            })
             .absolute()
             .left(px(left))
             .top(px(top_xy))
@@ -1464,76 +1489,30 @@ impl Root {
             let zone_slot = slot.clone();
             let zone_this = cx.entity();
             let zone_move = zone_this.clone();
-            let zone_drop = zone_this.clone();
             let zone_slot_move = zone_slot.clone();
-            let zone_slot_drop = zone_slot.clone();
-            row = row
-                .on_drag_move::<ItemDrag>(move |event, _window, cx| {
-                    // Слушает ВСЕ перемещения при активном drag —
-                    // засчитываем только карточку под курсором; уход
-                    // с карточки снимает маркер (иначе отпускание вне
-                    // зон не откроет подтверждение — заказчик).
-                    let over = event.bounds.contains(&event.event.position);
-                    zone_move.update(cx, |root, cx| {
-                        let mine = DropHit::EqSlot(zone_slot_move.clone());
-                        if over {
-                            // Любой источник drag (рюкзак/экипировка) —
-                            // подсветка зоны при наведении.
-                            if root.drag_item.is_some() {
-                                root.drop_hit = Some(mine.clone());
-                                cx.notify();
-                            }
-                        } else if root.drop_hit == Some(mine) {
-                            root.drop_hit = None;
+            row = row.on_drag_move::<ItemDrag>(move |event, _window, cx| {
+                // Слушает ВСЕ перемещения при активном drag —
+                // засчитываем только карточку под курсором; уход
+                // с карточки снимает маркер (иначе отпускание вне
+                // зон не откроет подтверждение — заказчик).
+                let over = event.bounds.contains(&event.event.position);
+                zone_move.update(cx, |root, cx| {
+                    let mine = DropHit::EqSlot(zone_slot_move.clone());
+                    if over {
+                        // Любой источник drag (рюкзак/экипировка) —
+                        // подсветка зоны при наведении.
+                        if root.drag_item.is_some() && root.drop_hit != Some(mine.clone()) {
+                            tracing::info!("dnd: слот {} под курсором", zone_slot_move);
+                            root.drop_hit = Some(mine);
                             cx.notify();
                         }
-                    });
-                })
-                .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
-                    zone_drop.update(cx, |root, cx| {
-                        let fits = drag.slot_req.as_deref() == Some(zone_slot_drop.as_str());
-                        match &drag.from {
-                            // Из рюкзака: подходящий слот → надеть;
-                            // неподходящий — блок без предупреждения
-                            // (предмет остаётся в рюкзаке, заказчик).
-                            DragSource::Bp => {
-                                if fits {
-                                    let cmd = ItemEquip {
-                                        item_uid: drag.uid.clone(),
-                                        slot: zone_slot_drop.clone(),
-                                    };
-                                    root.send_cmd(&cmd, Act::Equip);
-                                }
-                            }
-                            // Из экипировки: неверный слот — вернуть
-                            // предмет в рюкзак (НЕ выбрасывать, заказчик);
-                            // верный другой слот — перенести.
-                            DragSource::Equip(from_slot) => {
-                                if *from_slot == zone_slot_drop {
-                                    // уже на этом слоте — ничего.
-                                } else if fits {
-                                    let cmd = ItemEquip {
-                                        item_uid: drag.uid.clone(),
-                                        slot: zone_slot_drop.clone(),
-                                    };
-                                    root.send_cmd(&cmd, Act::Equip);
-                                } else {
-                                    let cmd = ItemUnequip {
-                                        slot: from_slot.clone(),
-                                    };
-                                    root.send_cmd(&cmd, Act::Unequip);
-                                }
-                            }
-                        }
-                        // Drop обработан зоной — drag поглощён: tick
-                        // не открывает подтверждение выброса (заказчик:
-                        // отпускание НА слоте не предлагает выбросить).
-                        root.drag_item = None;
-                        root.bp_hold = None;
+                    } else if root.drop_hit == Some(mine) {
+                        tracing::info!("dnd: уход со слота {}", zone_slot_move);
                         root.drop_hit = None;
                         cx.notify();
-                    });
+                    }
                 });
+            });
             let Some(item) = item else {
                 // M18 (указание заказчика): пустые слоты — **не
                 // подсвечиваются** и выглядят disabled (приглушены);
@@ -1565,9 +1544,11 @@ impl Root {
             let ghost_color = rarity_color(&item.rarity, pal);
             let ghost_theme = self.config.theme.clone();
             row = row.on_drag(drag_payload, move |drag, _, _, cx| {
+                tracing::info!("dnd: старт drag {} из экипировки", drag.uid);
                 drag_this.update(cx, |root, cx| {
                     root.drag_item = Some(drag.clone());
                     root.drop_hit = None;
+                    root.popup_scrim_down = false;
                     cx.notify();
                 });
                 // Карточка предмета под курсором (заказчик).
@@ -1680,6 +1661,14 @@ impl Root {
                 _ => None,
             };
             let slot_right = slot.clone();
+            // R-dnd: захват предмета — НЕ клик по scrim (иначе
+            // неудачный захват закрывал окно рюкзака под ним).
+            let row = row.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |root, _, _, _| {
+                    root.popup_scrim_down = false;
+                }),
+            );
             // Контекстное меню — только ПКМ (заказчик: ЛКМ-меню убрано).
             let row = row.on_mouse_down(
                 MouseButton::Right,
