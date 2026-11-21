@@ -77,7 +77,7 @@ pub(super) fn t(key: Key) -> &'static str {
         MonstersLabel => "Monsters",
         NpcsLabel => "NPCs",
         CorpsesLabel => "Corpses",
-        HistoryLabel => "History",
+        MapLabel => "Map",
         LogLabel => "World log",
         Examine => "Examine",
         BtnTalk => "Talk",

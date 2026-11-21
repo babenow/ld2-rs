@@ -112,7 +112,7 @@ pub enum Key {
     MonstersLabel,
     NpcsLabel,
     CorpsesLabel,
-    HistoryLabel,
+    MapLabel,
     LogLabel,
     Examine,
     /// M18/F35: пункт контекстного меню NPC — открыть диалог.
@@ -777,7 +777,7 @@ mod tests {
         Key::MonstersLabel,
         Key::NpcsLabel,
         Key::CorpsesLabel,
-        Key::HistoryLabel,
+        Key::MapLabel,
         Key::LogLabel,
         Key::Examine,
         Key::BtnTalk,

@@ -488,7 +488,7 @@ pub struct Root {
     map_started: bool,
     /// M26: позиции узлов карты (компасная раскладка от спавна) —
     /// считаются после полной загрузки чанков.
-    map_pos: std::collections::HashMap<String, crate::map::NodePos>,
+    map_pos: std::collections::HashMap<String, crate::map::MapNode>,
     /// M26: раскладка посчитана.
     map_pos_ready: bool,
     /// M24: цель выдачи (F24b — всегда self; F24c — селект целей).
