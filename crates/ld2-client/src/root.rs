@@ -483,6 +483,14 @@ pub struct Root {
     /// M24: нужен (re)запрос каталога — как `pickup_request` (pending
     /// одиночный); каталог кэшируется на сессию (вариант A).
     admin_catalog_request: bool,
+    /// M26: догрузка карты мира начата (одна попытка на сессию —
+    /// насос чанков `cmd/map.world` в tick).
+    map_started: bool,
+    /// M26: позиции узлов карты (компасная раскладка от спавна) —
+    /// считаются после полной загрузки чанков.
+    map_pos: std::collections::HashMap<String, crate::map::NodePos>,
+    /// M26: раскладка посчитана.
+    map_pos_ready: bool,
     /// M24: цель выдачи (F24b — всегда self; F24c — селект целей).
     admin_target: String,
     /// M24: вкладка-фильтр правой колонки (независима от левой,
@@ -831,6 +839,9 @@ impl Root {
             admin_inv_scroll: ScrollHandle::new(),
             admin_search: None,
             admin_catalog_request: false,
+            map_started: false,
+            map_pos: std::collections::HashMap::new(),
+            map_pos_ready: false,
             admin_target: "self".into(),
             admin_inv_tab: backpack::BackpackTab::default(),
             admin_inv_search: None,
@@ -988,6 +999,25 @@ impl Root {
         // при свободном ack-слоте.
         if self.admin_catalog_request {
             self.pump_admin_catalog(cx);
+        }
+        // M26: карта мира — одна догрузка чанков на сессию (насос;
+        // apply_ack ставит map_request на следующий чанк).
+        if !self.map_started && self.store.screen == Screen::Game {
+            self.map_started = true;
+            self.store.map_request = true;
+        }
+        if self.store.map_request {
+            self.pump_map_world(cx);
+        }
+        // M26: карта загружена целиком → компасная раскладка (один раз).
+        if !self.map_pos_ready
+            && self.store.map_total > 0
+            && self.store.map_offset >= self.store.map_total
+        {
+            self.map_pos = crate::map::layout(&self.store.map_locations, &self.store.map_root);
+            self.map_pos_ready = true;
+            tracing::info!("dnd/карта: раскладка {} узлов", self.map_pos.len());
+            cx.notify();
         }
         if self.admin_target_request {
             self.pump_admin_target(cx);
@@ -2271,6 +2301,32 @@ impl Root {
             Err(e) => {
                 self.pickup_queue.clear();
                 self.store.world_error = Some(format!("нет связи: {e}"));
+            }
+        }
+    }
+
+    /// M26: догрузка карты мира — следующий чанк `cmd/map.world`
+    /// при свободном `pending` (корреляция ack-ов стора одиночная);
+    /// после ack apply_ack ставит map_request на продолжение.
+    fn pump_map_world(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.store.map_request {
+            return;
+        }
+        if self.store.pending.is_some() {
+            return; // ack-слот занят — ждём
+        }
+        let cmd = ld2_protocol::cmd::MapWorld {
+            offset: self.store.map_offset,
+        };
+        match self.transport.send(&cmd) {
+            Ok(_) => {
+                self.store.on_world_sent(Act::MapWorld);
+                self.store.map_request = false;
+                cx.notify();
+            }
+            Err(e) => {
+                self.store.map_request = false;
+                self.store.notice = Some(format!("нет связи: {e}"));
             }
         }
     }

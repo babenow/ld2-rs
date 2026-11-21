@@ -12,6 +12,9 @@ use sqlx::PgPool;
 pub struct MapCache {
     locations: Vec<serde_json::Value>,
     sizes: Vec<usize>,
+    /// Корень раскладки карты (спавн-локация) — клиент ставит
+    /// компасный BFS от него (стабильная карта мира).
+    root: String,
 }
 
 impl MapCache {
@@ -55,7 +58,26 @@ impl MapCache {
         if dropped > 0 {
             tracing::warn!("карта мира: отфильтровано висячих выходов: {dropped}");
         }
-        Ok(Self { locations, sizes })
+        // Корень раскладки — спавн-точка (`meta.spawn_location`);
+        // fallback — первая по id (стабильный порядок).
+        let spawn = crate::db::locations::spawn_id(pool).await?;
+        let root = spawn
+            .filter(|s| ids.contains(s.as_str()))
+            .or_else(|| rows.first().map(|r| r.id.clone()))
+            .unwrap_or_default();
+        if root.is_empty() {
+            tracing::warn!("карта мира: нет спавн-корня (пустой контент?)");
+        }
+        Ok(Self {
+            locations,
+            sizes,
+            root,
+        })
+    }
+
+    /// Корень раскладки (id спавн-локации).
+    pub fn root(&self) -> &str {
+        &self.root
     }
 
     /// Всего локаций в графе.
@@ -96,7 +118,11 @@ mod tests {
             .iter()
             .map(|v| serde_json::to_vec(v).map(|b| b.len()).unwrap_or(0))
             .collect();
-        MapCache { locations, sizes }
+        MapCache {
+            locations,
+            sizes,
+            root: "root".into(),
+        }
     }
 
     /// M26: чанк всегда продвигается (минимум — одна локация) и не

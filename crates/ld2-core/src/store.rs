@@ -119,6 +119,9 @@ pub enum Act {
     AdminTarget,
     /// M24: `cmd/admin.clear` — очистка цели (ack только ошибки).
     AdminClear,
+    /// M26: `cmd/map.world` → ack {locations, offset, total, root} —
+    /// чанки карты мира (насос в tick клиента).
+    MapWorld,
 }
 
 /// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
@@ -355,6 +358,17 @@ pub struct AppStore {
     /// M24: каталог предметов админ-окна (вариант A — один запрос,
     /// кэш на сессию, фильтрация на клиенте).
     pub admin_catalog: Option<Vec<serde_json::Value>>,
+    /// M26: карта-граф мира — накопленные локации (чанки
+    /// `cmd/map.world`; порядок сервера стабилен по id).
+    pub map_locations: Vec<serde_json::Value>,
+    /// M26: прогресс загрузки карты: следующий offset / всего.
+    pub map_offset: usize,
+    pub map_total: usize,
+    /// M26: запрос следующего чанка (насос: apply_ack ставит при
+    /// `offset < total`).
+    pub map_request: bool,
+    /// M26: корень раскладки (id спавн-локации) — из ack.
+    pub map_root: String,
     /// M24: состояние «режим бога» (эхо `cmd/admin.god_mode`).
     pub admin_god: bool,
     /// M25: активный стан (окно с прогрессбаром; истекает в tick).
@@ -765,6 +779,11 @@ impl AppStore {
             pickup: None,
             pickup_dirty: false,
             admin_catalog: None,
+            map_locations: Vec::new(),
+            map_offset: 0,
+            map_total: 0,
+            map_request: false,
+            map_root: String::new(),
             admin_god: false,
             stun: None,
             admin_target_items: None,
@@ -920,6 +939,10 @@ impl AppStore {
                 | Act::AdminClear => {
                     self.notice = Some(msg);
                 }
+                // M26: отказ карты мира — тост (одна попытка на сессию).
+                Act::MapWorld => {
+                    self.notice = Some(msg);
+                }
                 // Снятие шкур (M22): отказ до старта — чистим бар.
                 Act::Harvest => {
                     self.harvest = None;
@@ -976,6 +999,21 @@ impl AppStore {
                     {
                         snap.location = location;
                     }
+                }
+            }
+            Act::MapWorld => {
+                // M26: чанк карты — {locations, offset, total, root};
+                // следующий чанк ставит map_request (насос в tick).
+                if let Some(payload) = ack.payload.as_ref() {
+                    if let Some(list) = payload["locations"].as_array() {
+                        self.map_locations.extend(list.iter().cloned());
+                    }
+                    self.map_offset = payload["offset"].as_u64().unwrap_or(0) as usize;
+                    self.map_total = payload["total"].as_u64().unwrap_or(0) as usize;
+                    if let Some(root) = payload["root"].as_str() {
+                        self.map_root = root.to_string();
+                    }
+                    self.map_request = self.map_offset < self.map_total;
                 }
             }
             Act::Attack
