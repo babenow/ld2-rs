@@ -598,7 +598,7 @@ impl Root {
         kind: PopupKind,
         title: impl Into<SharedString>,
         leading: Option<Div>,
-        body: Div,
+        body: impl IntoElement,
         footer: Option<Div>,
     ) -> AnyElement {
         self.popup_window_full(
@@ -627,7 +627,7 @@ impl Root {
         // M18/F41: кнопки действий слева в шапке (окно диалога NPC —
         // магазин/«К диалогу»); у остальных окон — None.
         leading: Option<AnyElement>,
-        body: Div,
+        body: impl IntoElement,
         // M16/F29g: нижняя панель под телом (по аналогии с шапкой).
         footer: Option<Div>,
         // M24: правая группа в шапке (слева от крестика).

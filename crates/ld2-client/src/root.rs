@@ -139,6 +139,11 @@ struct PopupDrag;
 #[derive(Debug)]
 struct PopupResize;
 
+/// M26: панорама карты мира — перетаскивание внутри окна карты
+/// (левый drag без действия; общий payload как у PopupDrag).
+#[derive(Debug)]
+struct MapPan;
+
 /// M16/F29b: какое всплывающее окно рисуем: оболочка берёт
 /// геометрию/флаги из `PopupState` по этому виду.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +170,8 @@ enum PopupKind {
     LootPickup,
     /// M24: админ-панель — листы по кнопкам шапки («Предметы»).
     AdminPanel,
+    /// M26: окно карты мира (весь мир, зум/панорама) — заказчик.
+    Map,
 }
 
 impl PopupKind {
@@ -183,6 +190,7 @@ impl PopupKind {
             PopupKind::Professions => "ld2-professions",
             PopupKind::LootPickup => "ld2-pickup",
             PopupKind::AdminPanel => "ld2-admin",
+            PopupKind::Map => "ld2-map",
         }
     }
 }
@@ -474,6 +482,8 @@ pub struct Root {
     pickup_confirm_all: bool,
     /// M24: окно админ-панели — popup (листы по кнопкам шапки).
     admin_popup: PopupState,
+    /// M26: окно карты мира — popup (зум/панорама, заказчик).
+    map_popup: PopupState,
     /// M24: прокрутка каталога (uniform_list — виртуализация).
     admin_scroll: UniformListScrollHandle,
     /// M24: прокрутка содержимого цели (правая колонка).
@@ -491,6 +501,13 @@ pub struct Root {
     map_pos: std::collections::HashMap<String, crate::map::MapNode>,
     /// M26: раскладка посчитана.
     map_pos_ready: bool,
+    /// M26: масштаб окна карты (колесо мыши;1.0 — базовый).
+    map_zoom: f32,
+    /// M26: сдвиг окна карты (панорама); `None` — центр на текущей
+    /// (пересчитывается при каждом открытии).
+    map_pan: Option<(f32, f32)>,
+    /// M26: последняя позиция курсора при панораме (дельта).
+    map_drag_last: Option<(f32, f32)>,
     /// M24: цель выдачи (F24b — всегда self; F24c — селект целей).
     admin_target: String,
     /// M24: вкладка-фильтр правой колонки (независима от левой,
@@ -842,6 +859,10 @@ impl Root {
             map_started: false,
             map_pos: std::collections::HashMap::new(),
             map_pos_ready: false,
+            map_zoom: 1.0,
+            map_pan: None,
+            map_drag_last: None,
+            map_popup: PopupState::new((980.0, 660.0)),
             admin_target: "self".into(),
             admin_inv_tab: backpack::BackpackTab::default(),
             admin_inv_search: None,
@@ -2034,6 +2055,16 @@ impl Root {
             cx.notify();
             return;
         }
+        // M26: хоткей окна карты («m» — кнопка в шапке дублирует).
+        if keystroke_matches(&self.config.hotkeys.open_map, ks) {
+            if self.map_popup.open {
+                self.map_popup.open = false;
+            } else {
+                self.open_popup(PopupKind::Map);
+            }
+            cx.notify();
+            return;
+        }
         // M14/F4: боевые действия панели — те же действия, что кнопки
         // (цифры 1–6; Esc занят диалогами → «Побег» = 4).
         if self.action_hotkey(ks, cx) {
@@ -2174,6 +2205,7 @@ impl Root {
             PopupKind::Professions => &mut self.professions_popup,
             PopupKind::LootPickup => &mut self.pickup_popup,
             PopupKind::AdminPanel => &mut self.admin_popup,
+            PopupKind::Map => &mut self.map_popup,
         }
     }
 
@@ -2192,6 +2224,7 @@ impl Root {
             PopupKind::Professions => &self.professions_popup,
             PopupKind::LootPickup => &self.pickup_popup,
             PopupKind::AdminPanel => &self.admin_popup,
+            PopupKind::Map => &self.map_popup,
         }
     }
 
@@ -2220,6 +2253,7 @@ impl Root {
             PopupKind::Professions => (880.0, 620.0),
             PopupKind::LootPickup => (1040.0, 600.0),
             PopupKind::AdminPanel => (1040.0, 640.0),
+            PopupKind::Map => (980.0, 660.0),
         }
     }
 
@@ -2404,6 +2438,7 @@ impl Root {
             PopupKind::Professions => (0.0, -30.0),
             PopupKind::LootPickup => (40.0, -30.0),
             PopupKind::AdminPanel => (0.0, -20.0),
+            PopupKind::Map => (0.0, -30.0),
         };
         let st = self.popup_mut(kind);
         st.open = true;
@@ -2437,6 +2472,9 @@ impl Root {
             // M24: админ-панель — состояние (поиск/каталог) переживает
             // переоткрытия на сессию.
             PopupKind::AdminPanel => {}
+            // M26: карта — при каждом открытии перецентрироваться
+            // на текущей локации (pan сбрасывается).
+            PopupKind::Map => self.map_pan = None,
         }
     }
 
@@ -2510,6 +2548,7 @@ impl Root {
         let professions_open = self.professions_popup.open;
         let admin_open = self.admin_popup.open;
         let pickup_open = self.pickup_popup.open;
+        let map_open = self.map_popup.open;
         if !self.char_popup.open
             && !self.backpack_popup.open
             && !self.quests_popup.open
@@ -2518,6 +2557,7 @@ impl Root {
             && !professions_open
             && !admin_open
             && !pickup_open
+            && !map_open
         {
             return None;
         }
@@ -2587,6 +2627,9 @@ impl Root {
                                         tracing::debug!("закрытие диалога NPC: скрим");
                                         root.store.npc_dialog = None;
                                         root.npc_popup.open = false;
+                                    } else if root.map_popup.open {
+                                        tracing::debug!("закрытие окна карты: скрим");
+                                        root.map_popup.open = false;
                                     } else if root.quests_popup.open {
                                         root.quests_popup.open = false;
                                     } else if root.backpack_popup.open {
@@ -3122,6 +3165,22 @@ impl Root {
                     )
                 },
             )
+            // M26: карта мира (заказчик: кнопка в шапке рядом с
+            // настройками; только в мире — карта привязана к игре).
+            .when(in_world, |d| {
+                d.child(
+                    IconButton::new("ld2-titlebar-map", IconName::Map)
+                        .tooltip(t(lang, Key::MapBtn))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if this.map_popup.open {
+                                this.map_popup.open = false;
+                            } else {
+                                this.open_popup(PopupKind::Map);
+                            }
+                            cx.notify();
+                        })),
+                )
+            })
             // Настройки (перенесены из шапки).
             .child(
                 div()
@@ -3974,7 +4033,7 @@ struct HotkeyRowSpec {
 
 /// Все ремаппингуемые действия: навигация/цикл (ФР-19) + боевые
 /// панели (M14/F4, цифры 1–6 — Esc занят диалогами).
-const HOTKEY_ROWS: [HotkeyRowSpec; 15] = [
+const HOTKEY_ROWS: [HotkeyRowSpec; 16] = [
     HotkeyRowSpec {
         id: "ld2-hk-nav-up",
         label: Key::HkNavUp,
@@ -4064,6 +4123,12 @@ const HOTKEY_ROWS: [HotkeyRowSpec; 15] = [
         label: Key::HkOpenProfessions,
         get: |hk| hk.open_professions.as_str(),
         set: |hk, v| hk.open_professions = v,
+    },
+    HotkeyRowSpec {
+        id: "ld2-hk-map",
+        label: Key::HkOpenMap,
+        get: |hk| hk.open_map.as_str(),
+        set: |hk, v| hk.open_map = v,
     },
 ];
 
@@ -4790,6 +4855,9 @@ impl Render for Root {
             .when_some(self.quests_dialog(window, cx, &pal), |d, layer| {
                 d.child(layer)
             })
+            // M26: окно карты мира — поверх квестов (заказчик: кнопка
+            // в шапке + клавиша «m»).
+            .when_some(self.map_dialog(window, cx, &pal), |d, layer| d.child(layer))
             // M18/F38: окно диалога NPC — верхний слой группы попапов
             // (модалки смерти/осмотра/луута рисуются позже — выше).
             .when_some(self.npc_window(window, cx, &pal), |d, layer| d.child(layer))
@@ -4927,8 +4995,8 @@ mod tests {
     fn hotkey_rows_cover_nav_and_six_actions() {
         assert_eq!(
             HOTKEY_ROWS.len(),
-            15,
-            "навигация/цикл + 6 действий + окна персонажа/рюкзака/квестов/профессий"
+            16,
+            "навигация/цикл + 6 действий + окна персонажа/рюкзака/квестов/профессий/карты"
         );
         let ids: std::collections::HashSet<_> = HOTKEY_ROWS.iter().map(|r| r.id).collect();
         assert_eq!(ids.len(), HOTKEY_ROWS.len(), "id строк уникальны");
@@ -4946,6 +5014,7 @@ mod tests {
         assert_eq!((HOTKEY_ROWS[12].get)(&hk), "i", "окно рюкзака (M16/F29b)");
         assert_eq!((HOTKEY_ROWS[13].get)(&hk), "j", "окно квестов (M18/F36)");
         assert_eq!((HOTKEY_ROWS[14].get)(&hk), "p", "окно профессий (M21)");
+        assert_eq!((HOTKEY_ROWS[15].get)(&hk), "m", "окно карты (M26)");
 
         // Сеттер переписывает только своё поле.
         let mut hk = Hotkeys::default();

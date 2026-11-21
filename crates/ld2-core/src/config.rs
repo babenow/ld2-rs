@@ -189,6 +189,10 @@ pub struct Hotkeys {
     /// Открыть/закрыть окно профессий (дефолт «p» — profession).
     #[serde(default = "hk_professions")]
     pub open_professions: String,
+    // ── M26: окно карты мира ──
+    /// Открыть/закрыть окно карты (дефолт «m» — map).
+    #[serde(default = "hk_map")]
+    pub open_map: String,
 }
 
 fn hk_alt_up() -> String {
@@ -237,6 +241,10 @@ fn hk_professions() -> String {
     "p".into()
 }
 
+fn hk_map() -> String {
+    "m".into()
+}
+
 impl Default for Hotkeys {
     fn default() -> Self {
         Self {
@@ -255,6 +263,7 @@ impl Default for Hotkeys {
             open_backpack: hk_backpack(),
             open_quests: hk_quests(),
             open_professions: hk_professions(),
+            open_map: hk_map(),
         }
     }
 }
@@ -278,6 +287,7 @@ impl Hotkeys {
             ("open_backpack", &mut self.open_backpack),
             ("open_quests", &mut self.open_quests),
             ("open_professions", &mut self.open_professions),
+            ("open_map", &mut self.open_map),
         ]
     }
 }
@@ -517,6 +527,8 @@ mod tests {
         // M18/F36: окно квестов — дефолт старого файла.
         assert_eq!(cfg.hotkeys.open_quests, "j");
         assert_eq!(cfg.hotkeys.open_professions, "p", "окно профессий (M21)");
+        // M26: окно карты мира.
+        assert_eq!(cfg.hotkeys.open_map, "m", "окно карты (M26)");
         assert_eq!(cfg.backpack_tab, "all");
         // M16/F29j: «запомнить пароль» в старом конфиге выключено.
         assert!(!cfg.remember_password);

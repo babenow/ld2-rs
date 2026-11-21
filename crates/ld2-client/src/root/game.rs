@@ -7,11 +7,13 @@
 //! меню — инлайн под строкой (вместо попапа по курсору), тултипы не используются.
 
 use ely::overlays::Dialog;
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, Stateful, Window};
+use gpui::{
+    div, prelude::*, px, rgb, AnyElement, Context, Div, EmptyView, MouseButton, Stateful, Window,
+};
 use ld2_core::l10n::{format_duration, t, tf, Key};
 use ld2_core::store::{
     crime_kind_title, filter_active_buffs, filter_active_statuses, local_epoch, Act, AppStore,
-    LogKind, NpcDialogView, NpcProfession,
+    LogKind, NpcDialogView, NpcProfession, Screen,
 };
 use ld2_protocol::evt::StateSnapshot;
 use ld2_protocol::types::{Entity, EntityKind, ItemSnapshot, LocationSnapshot, Severity};
@@ -29,7 +31,8 @@ use super::quests::goals_summary;
 use super::sheet::rarity_label;
 use super::social::show_party;
 use super::{
-    act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, status_badge, Click, PopupKind, Root,
+    act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, status_badge, Click, MapPan,
+    PopupKind, Root,
 };
 
 /// M14/F4: «Мощный удар» открывается владением мечом 5 (skills.md §4;
@@ -889,11 +892,13 @@ impl Root {
     /// глубина 2), компасная раскладка; узлы — точки с тултипом
     /// «название + описание», плечи — линии с глифом направления
     /// (тултип — имя выхода). Только наведение (заказчик: клик —
-    /// не действие). Растягивается на остаток высоты колонки
-    /// (overflow_hidden — на минимуме окна не выталкивает трекер).
+    /// не действие). Растягивается на остаток высоты колонки.
     fn map_block(&self, pal: &Palette) -> Div {
         let lang = self.lang;
-        let mut col = div().flex().flex_col().gap_2().min_h_0();
+        // flex_grow_1: блок занимает ВСЮ высоту колонки (без него
+        // col по содержимому → тело = min_h → карта обрезалась по
+        // высоте и связи не были видны — заказчик «нет ребер»).
+        let mut col = div().flex().flex_col().gap_2().min_h_0().flex_grow_1();
         col = col.child(
             div()
                 .font_weight(gpui::FontWeight::BOLD)
@@ -920,10 +925,9 @@ impl Root {
         // Пиксели: клетка фиксированная; bbox окрестности сдвигается
         // в PAD — весь участок виден (зум/панорама — F26d, полное
         // окно карты).
-        const CELL: f32 = 30.0;
-        const DOT: f32 = 10.0;
-        const HIT: f32 = 22.0;
-        const PAD: f32 = 8.0;
+        const CELL: f32 = 46.0;
+        const HIT: f32 = 32.0;
+        const PAD: f32 = 10.0;
         let mut min_x = i32::MAX;
         let mut min_y = i32::MAX;
         for id in &nb.nodes {
@@ -939,10 +943,8 @@ impl Root {
         let sy = PAD - min_y as f32 * CELL;
         let hit_xy = |p: crate::map::NodePos| (sx + p.x as f32 * CELL, sy + p.y as f32 * CELL);
 
-        // Линии-плечи: canvas рисует тонкие четырёхугольники (любой
-        // угол, включая диагонали компаса) + глифы направлений.
-        let mut lines: Vec<(gpui::Point<gpui::Pixels>, gpui::Point<gpui::Pixels>)> = Vec::new();
-        let mut glyphs: Vec<(f32, f32, &'static str, String, String)> = Vec::new();
+        // Линии-плечи и узлы — в пиксельные view-модели.
+        let mut edges: Vec<MapEdgeView> = Vec::new();
         for (from, to, label, dir) in &nb.edges {
             let (Some(a), Some(b)) = (
                 self.map_pos.get(from.as_str()),
@@ -952,154 +954,224 @@ impl Root {
             };
             let (ax, ay) = hit_xy(a.pos);
             let (bx, by) = hit_xy(b.pos);
-            // Центры хит-боксов узлов.
-            let (x1, y1) = (ax + HIT / 2.0, ay + HIT / 2.0);
-            let (x2, y2) = (bx + HIT / 2.0, by + HIT / 2.0);
-            lines.push((gpui::point(px(x1), px(y1)), gpui::point(px(x2), px(y2))));
-            glyphs.push((
-                (x1 + x2) / 2.0,
-                (y1 + y2) / 2.0,
-                crate::map::dir_glyph(dir.as_deref()),
-                label.clone(),
-                format!("{from}->{to}"),
-            ));
+            edges.push(MapEdgeView {
+                x1: ax + HIT / 2.0,
+                y1: ay + HIT / 2.0,
+                x2: bx + HIT / 2.0,
+                y2: by + HIT / 2.0,
+                glyph: crate::map::dir_glyph(dir.as_deref()),
+                label: label.clone(),
+            });
         }
-        let line_color: gpui::Hsla = gpui::rgba((pal.muted << 8) | 0xff).into();
-        let canvas = gpui::canvas(
-            move |_bounds, _window, _cx| {},
-            move |_bounds, _state, window, _cx| {
-                for (a, b) in &lines {
-                    let (ax, ay) = (f32::from(a.x), f32::from(a.y));
-                    let (bx, by) = (f32::from(b.x), f32::from(b.y));
-                    let (dx, dy) = (bx - ax, by - ay);
-                    let len = (dx * dx + dy * dy).sqrt();
-                    if len < 1.0 {
-                        continue;
-                    }
-                    // Тонкий четырёхугольник вдоль линии (~2 px).
-                    let (nx, ny) = (-dy / len, dx / len);
-                    let mut path = gpui::Path::new(gpui::point(px(ax + nx), px(ay + ny)));
-                    path.line_to(gpui::point(px(bx + nx), px(by + ny)));
-                    path.line_to(gpui::point(px(bx - nx), px(by - ny)));
-                    path.line_to(gpui::point(px(ax - nx), px(ay - ny)));
-                    window.paint_path(path, line_color);
-                }
-            },
-        );
-
-        // Узлы: точки (хит-бокс больше точки — удобно наводить);
-        // текущая — акцентная + имя рядом; посещённые — ярче.
-        let mut nodes: Vec<AnyElement> = Vec::new();
+        let mut nodes: Vec<MapNodeView> = Vec::new();
         for id in &nb.nodes {
             let Some(node) = self.map_pos.get(id.as_str()) else {
                 continue;
             };
             let (nx, ny) = hit_xy(node.pos);
-            let is_current = *id == current;
-            let is_visited = visited.contains(id.as_str());
-            let (dot_border, dot_bg) = if is_current {
-                (pal.accent, pal.accent)
-            } else if is_visited {
-                (pal.text, pal.text)
-            } else {
-                (pal.muted, pal.panel)
-            };
-            let dot = div()
-                .size(px(DOT))
-                .rounded(px(DOT / 2.0))
-                .border_1()
-                .border_color(rgb(dot_border))
-                .bg(rgb(dot_bg));
-            let tip_name = node.name.clone();
-            let tip_text = node.text.clone();
-            let (tip_panel, tip_border, tip_fg) = (pal.panel, pal.border, pal.text);
-            let node_id = id.clone();
-            let hit = div()
-                .id(format!("ld2-map-node-{node_id}"))
-                .absolute()
-                .left(px(nx))
-                .top(px(ny))
-                .size(px(HIT))
+            nodes.push(MapNodeView {
+                id: id.clone(),
+                x: nx,
+                y: ny,
+                name: node.name.clone(),
+                text: node.text.clone(),
+                current: *id == current,
+                visited: visited.contains(id.as_str()),
+            });
+        }
+
+        let layer = map_graph_layer(
+            pal,
+            nodes,
+            edges,
+            div().id("ld2-map-compact").flex_grow_1().min_h(px(240.0)),
+        );
+        col = col.child(layer);
+        col
+    }
+
+    /// M26/F26d: окно карты мира (заказчик: кнопка в шапке + «m») —
+    /// весь мир, зум колесом (якорь — центр окна), панорама
+    /// перетаскиванием; центр — текущая локация при открытии;
+    /// кулинг — только узлы/плечи видимой области.
+    pub(crate) fn map_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+    ) -> Option<AnyElement> {
+        if !self.map_popup.open || self.store.screen != Screen::Game {
+            return None;
+        }
+        let lang = self.lang;
+        if !self.map_pos_ready {
+            // Чанки карты грузятся — заглушка.
+            let body = div()
                 .flex()
+                .flex_col()
                 .items_center()
                 .justify_center()
-                .rounded(px(4.0))
-                .hover(move |st| st.bg(rgb(pal.selection)))
-                .child(dot);
-            // Тултип узла — «название + описание» (заказчик).
-            let hit = TooltipTrigger::new(format!("ld2-map-tip-{node_id}"), hit, move |_, _| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .mx(px(-8.0))
-                    .my(px(-4.0))
-                    .p(px(10.0))
-                    .w(px(300.0))
-                    .rounded_md()
-                    .bg(rgb(tip_panel))
-                    .border_1()
-                    .border_color(rgb(tip_border))
-                    .text_color(rgb(tip_fg))
-                    .text_size(px(13.0))
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(tip_name.clone()),
-                    )
-                    .child(div().child(tip_text.clone()))
-                    .into_any_element()
-            });
-            nodes.push(hit.into_any_element());
-            if is_current {
-                // Имя текущей локации — всегда на виду.
-                nodes.push(
+                .child(
                     div()
-                        .absolute()
-                        .left(px(nx + HIT + 2.0))
-                        .top(px(ny + 2.0))
-                        .text_size(px(11.0))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(pal.accent))
-                        .child(node.name.clone())
-                        .into_any_element(),
+                        .text_size(px(13.0))
+                        .text_color(rgb(pal.muted))
+                        .child(t(lang, Key::Loading)),
                 );
+            return Some(self.popup_window(
+                window,
+                cx,
+                pal,
+                PopupKind::Map,
+                t(lang, Key::MapLabel),
+                None,
+                body,
+                None,
+            ));
+        }
+
+        let (w, h) = self.popup(PopupKind::Map).size;
+        let current = self.store.snapshot.as_ref().map(|s| s.location.id.clone());
+        // Центр на текущей при первом открытии (pan = None).
+        if self.map_pan.is_none() {
+            if let Some(cur) = current.as_ref().and_then(|c| self.map_pos.get(c)) {
+                let cell = 46.0 * self.map_zoom;
+                self.map_pan = Some((
+                    w / 2.0 - cur.pos.x as f32 * cell - cell / 2.0,
+                    h / 2.0 - cur.pos.y as f32 * cell - cell / 2.0,
+                ));
+            }
+        }
+        let pan = self.map_pan.unwrap_or((0.0, 0.0));
+        let cell = 46.0 * self.map_zoom;
+        let visited: std::collections::HashSet<&str> =
+            self.store.visited.iter().map(|v| v.id.as_str()).collect();
+
+        // Узлы: все + кулинг по вьюпорту (зазор — клетка); порядок
+        // стабильный (по id) — детерминированный z-order.
+        let mut ids: Vec<&String> = self.map_pos.keys().collect();
+        ids.sort();
+        let mut nodes: Vec<MapNodeView> = Vec::new();
+        for id in ids {
+            let node = &self.map_pos[id];
+            let x = node.pos.x as f32 * cell + pan.0;
+            let y = node.pos.y as f32 * cell + pan.1;
+            if x < -cell || y < -cell || x > w || y > h {
+                continue;
+            }
+            nodes.push(MapNodeView {
+                id: id.clone(),
+                x,
+                y,
+                name: node.name.clone(),
+                text: node.text.clone(),
+                current: current.as_deref() == Some(id.as_str()),
+                visited: visited.contains(id.as_str()),
+            });
+        }
+
+        // Плечи: из локаций (конец обязан быть расставлен — иначе
+        // пропуск); кулинг — если оба конца вне вьюпорта.
+        let out = |x: f32, y: f32| x < -cell || y < -cell || x > w || y > h;
+        let mut edges: Vec<MapEdgeView> = Vec::new();
+        for loc in &self.store.map_locations {
+            let Some(from) = loc["id"].as_str() else {
+                continue;
+            };
+            let Some(from_node) = self.map_pos.get(from) else {
+                continue;
+            };
+            let fx = from_node.pos.x as f32 * cell + pan.0;
+            let fy = from_node.pos.y as f32 * cell + pan.1;
+            let Some(exits) = loc["exits"].as_array() else {
+                continue;
+            };
+            for exit in exits {
+                let Some(to) = exit["to"].as_str() else {
+                    continue;
+                };
+                let Some(to_node) = self.map_pos.get(to) else {
+                    continue;
+                };
+                let tx = to_node.pos.x as f32 * cell + pan.0;
+                let ty = to_node.pos.y as f32 * cell + pan.1;
+                if out(fx, fy) && out(tx, ty) {
+                    continue;
+                }
+                edges.push(MapEdgeView {
+                    x1: fx,
+                    y1: fy,
+                    x2: tx,
+                    y2: ty,
+                    glyph: crate::map::dir_glyph(exit["dir"].as_str()),
+                    label: exit["label"].as_str().unwrap_or("").to_string(),
+                });
             }
         }
 
-        // Глифы направлений — в середине плеча (тултип — имя выхода).
-        let mut edge_tips: Vec<AnyElement> = Vec::new();
-        for (gx, gy, glyph, label, key) in glyphs {
-            let tip = label.clone();
-            edge_tips.push(
-                div()
-                    .id(format!("ld2-map-edge-{key}"))
-                    .absolute()
-                    .left(px(gx - 8.0))
-                    .top(px(gy - 8.0))
-                    .w(px(16.0))
-                    .text_size(px(11.0))
-                    .text_color(rgb(pal.muted))
-                    .text_center()
-                    .tooltip(Tooltip::text(tip))
-                    .child(glyph)
-                    .into_any_element(),
-            );
-        }
-
-        col = col.child(
-            div()
-                .flex_grow_1()
-                .min_h(px(120.0))
-                .overflow_hidden()
-                .relative()
-                // Линии под узлами; абсолютные дети позиционируются
-                // отсюда же — координаты совпадают с canvas.
-                .child(canvas.w_full().h_full())
-                .children(nodes)
-                .children(edge_tips),
-        );
-        col
+        // Тело: зум колесом (якорь — центр окна) + панорама drag'ом.
+        let scroll_this = cx.entity();
+        let drag_this = cx.entity();
+        let move_this = cx.entity();
+        let shell = div()
+            .id("ld2-map-body")
+            .flex_grow_1()
+            .min_h_0()
+            .on_scroll(move |event, window, cx| {
+                let delta = event.delta.pixel_delta(window.line_height());
+                if delta.y == gpui::Pixels::ZERO {
+                    return;
+                }
+                scroll_this.update(cx, |root, cx| {
+                    let old = root.map_zoom;
+                    let new = (old * (1.0 - f32::from(delta.y) * 0.003)).clamp(0.2, 3.0);
+                    if (new - old).abs() < f32::EPSILON {
+                        return;
+                    }
+                    // Якорь — центр окна: точка мира в центре не
+                    // двигается при зуме.
+                    let (cw, ch) = root.popup(PopupKind::Map).size;
+                    let pan = root.map_pan.unwrap_or((0.0, 0.0));
+                    let k = new / old;
+                    root.map_pan = Some((
+                        cw / 2.0 - (cw / 2.0 - pan.0) * k,
+                        ch / 2.0 - (ch / 2.0 - pan.1) * k,
+                    ));
+                    root.map_zoom = new;
+                    cx.notify();
+                });
+            })
+            .on_drag(MapPan, move |_, _offset, _, acx| {
+                drag_this.update(acx, |root, cx| {
+                    root.map_drag_last = None;
+                    cx.notify();
+                });
+                acx.new(|_| EmptyView)
+            })
+            .on_drag_move::<MapPan>(move |event, _, cx| {
+                move_this.update(cx, |root, cx| {
+                    let p = (
+                        f32::from(event.event.position.x),
+                        f32::from(event.event.position.y),
+                    );
+                    if let Some(last) = root.map_drag_last {
+                        let pan = root.map_pan.unwrap_or((0.0, 0.0));
+                        root.map_pan = Some((pan.0 + p.0 - last.0, pan.1 + p.1 - last.1));
+                    }
+                    root.map_drag_last = Some(p);
+                    cx.notify();
+                });
+            });
+        let body = map_graph_layer(pal, nodes, edges, shell);
+        Some(self.popup_window(
+            window,
+            cx,
+            pal,
+            PopupKind::Map,
+            t(lang, Key::MapLabel),
+            None,
+            body,
+            None,
+        ))
     }
 
     /// Блок таргета (M14/F2: перенесён из левой колонки — под описание
@@ -2970,6 +3042,187 @@ fn entity_tooltip(entity: &Entity) -> String {
     } else {
         format!("{}{hp} · {tags}", entity.name)
     }
+}
+
+/// M26: узел карты в пиксельных координатах (для рендера слоя).
+pub(crate) struct MapNodeView {
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+    pub name: String,
+    pub text: String,
+    pub current: bool,
+    pub visited: bool,
+}
+
+/// M26: плечо карты в пиксельных координатах.
+pub(crate) struct MapEdgeView {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+    /// Глиф направления (↑↓←→…) — подпись плеча (заказчик).
+    pub glyph: &'static str,
+    /// Имя выхода — тултип плеча (заказчик).
+    pub label: String,
+}
+
+/// M26: общий слой карты (F26c колонка / F26d окно): линии-плечи —
+/// canvas + `paint_path` (тонкие четырёхугольники — любой угол,
+/// включая диагонали компаса); узлы — точки с тултипом «название +
+/// описание»; в середине плеча — глиф направления с тултипом «имя
+/// выхода». Только наведение (заказчик: клик — не действие).
+/// `shell` — контейнер с размером (flex_grow/h_full): сюда же
+/// вешаются жесты зума/панорамы (F26d).
+pub(crate) fn map_graph_layer(
+    pal: &Palette,
+    nodes: Vec<MapNodeView>,
+    edges: Vec<MapEdgeView>,
+    shell: Stateful<Div>,
+) -> Stateful<Div> {
+    // Линии-плечи: тонкий четырёхугольник вдоль линии (~2 px).
+    let lines: Vec<(gpui::Point<gpui::Pixels>, gpui::Point<gpui::Pixels>)> = edges
+        .iter()
+        .map(|e| {
+            (
+                gpui::point(px(e.x1), px(e.y1)),
+                gpui::point(px(e.x2), px(e.y2)),
+            )
+        })
+        .collect();
+    let line_color: gpui::Hsla = gpui::rgba((pal.text << 8) | 0xcc).into();
+    let canvas = gpui::canvas(
+        move |_bounds, _window, _cx| {},
+        move |_bounds, _state, window, _cx| {
+            for (a, b) in &lines {
+                let (ax, ay) = (f32::from(a.x), f32::from(a.y));
+                let (bx, by) = (f32::from(b.x), f32::from(b.y));
+                let (dx, dy) = (bx - ax, by - ay);
+                let len = (dx * dx + dy * dy).sqrt();
+                if len < 1.0 {
+                    continue;
+                }
+                let (nx, ny) = (-dy / len, dx / len);
+                let mut path = gpui::Path::new(gpui::point(px(ax + nx), px(ay + ny)));
+                path.line_to(gpui::point(px(bx + nx), px(by + ny)));
+                path.line_to(gpui::point(px(bx - nx), px(by - ny)));
+                path.line_to(gpui::point(px(ax - nx), px(ay - ny)));
+                window.paint_path(path, line_color);
+            }
+        },
+    );
+
+    // Глифы направлений — в середине плеча (тултип — имя выхода);
+    // id по индексу — стабильный порядок кадров.
+    let glyph_els: Vec<AnyElement> = edges
+        .iter()
+        .enumerate()
+        .map(|(ix, e)| {
+            let tip = e.label.clone();
+            let mx = (e.x1 + e.x2) / 2.0;
+            let my = (e.y1 + e.y2) / 2.0;
+            div()
+                .id(format!("ld2-map-edge-{ix}"))
+                .absolute()
+                .left(px(mx - 10.0))
+                .top(px(my - 10.0))
+                .w(px(20.0))
+                .text_size(px(14.0))
+                .text_color(rgb(pal.text))
+                .text_center()
+                .tooltip(Tooltip::text(tip))
+                .child(e.glyph)
+                .into_any_element()
+        })
+        .collect();
+
+    // Узлы: точки (хит-бокс больше точки); текущая — акцентная + имя;
+    // посещённые — ярче; тултип «название + описание».
+    const DOT: f32 = 14.0;
+    const HIT: f32 = 32.0;
+    let node_els: Vec<AnyElement> = nodes
+        .iter()
+        .flat_map(|n| {
+            let (dot_border, dot_bg) = if n.current {
+                (pal.accent, pal.accent)
+            } else if n.visited {
+                (pal.text, pal.text)
+            } else {
+                (pal.muted, pal.panel)
+            };
+            let dot = div()
+                .size(px(DOT))
+                .rounded(px(DOT / 2.0))
+                .border_1()
+                .border_color(rgb(dot_border))
+                .bg(rgb(dot_bg));
+            let tip_name = n.name.clone();
+            let tip_text = n.text.clone();
+            let (tip_panel, tip_border, tip_fg) = (pal.panel, pal.border, pal.text);
+            let hit = div()
+                .id(format!("ld2-map-node-{}", n.id))
+                .absolute()
+                .left(px(n.x))
+                .top(px(n.y))
+                .size(px(HIT))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.0))
+                .hover(move |st| st.bg(rgb(pal.selection)))
+                .child(dot);
+            let node_id = n.id.clone();
+            let hit = TooltipTrigger::new(format!("ld2-map-tip-{node_id}"), hit, move |_, _| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .mx(px(-8.0))
+                    .my(px(-4.0))
+                    .p(px(10.0))
+                    .w(px(300.0))
+                    .rounded_md()
+                    .bg(rgb(tip_panel))
+                    .border_1()
+                    .border_color(rgb(tip_border))
+                    .text_color(rgb(tip_fg))
+                    .text_size(px(13.0))
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(tip_name.clone()),
+                    )
+                    .child(div().child(tip_text.clone()))
+                    .into_any_element()
+            });
+            let mut els = vec![hit.into_any_element()];
+            if n.current {
+                // Имя текущей локации — всегда на виду (после точки
+                // — выше по z).
+                els.push(
+                    div()
+                        .absolute()
+                        .left(px(n.x + HIT + 2.0))
+                        .top(px(n.y + 2.0))
+                        .text_size(px(13.0))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(pal.accent))
+                        .child(n.name.clone())
+                        .into_any_element(),
+                );
+            }
+            els
+        })
+        .collect();
+
+    shell
+        .overflow_hidden()
+        .relative()
+        // Линии под узлами; абсолютные дети позиционируются отсюда
+        // же — координаты совпадают с canvas.
+        .child(canvas.w_full().h_full())
+        .children(node_els)
+        .children(glyph_els)
 }
 
 #[cfg(test)]
