@@ -1111,9 +1111,17 @@ impl Root {
         let selected = self.store.target.as_deref() == Some(entity.id.as_str());
         let id = entity.id.clone();
 
+        // R-dnd (заказчик): предмет на земле — отображение как в
+        // рюкзаке (extra["item"] = ItemSnapshot; цвет редкости, +N,
+        // ×qty, иконки слотов). Старый сервер поля не шлёт → прежний
+        // вид (аддитивно §11).
+        let ground_snap: Option<ItemSnapshot> = entity
+            .extra
+            .get("item")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
         let mut row = div()
             .id(format!("ld2-ent-{}", entity.id))
-            .tooltip(Tooltip::text(entity_tooltip(&entity)))
             .flex()
             .flex_row()
             .items_center()
@@ -1171,6 +1179,11 @@ impl Root {
                     }
                 }),
             );
+        // Тултип: у предмета на земле — карточка описания (как в
+        // рюкзаке), у прочих сущностей — прежний текстовый.
+        if ground_snap.is_none() {
+            row = row.tooltip(Tooltip::text(entity_tooltip(&entity)));
+        }
 
         if player_corpse {
             row = row.child(div().text_color(rgb(pal.warn)).child("⚠"));
@@ -1186,6 +1199,14 @@ impl Root {
                     .text_color(rgb(pal.danger))
                     .child(entity.name.clone()),
             );
+        } else if let Some(snap) = &ground_snap {
+            // R-dnd (заказчик): подпись как в рюкзаке — цвет редкости,
+            // +N, ×qty, иконки слотов; свечение эпика/легендарки.
+            row = row.shadow(super::sheet::rarity_glow_inset(&snap.rarity, pal));
+            row = row.child(div().flex_grow_1().child(super::sheet::item_label_stack(
+                snap,
+                super::sheet::item_color(snap, pal),
+            )));
         } else {
             row = row.child(div().flex_grow_1().child(entity.name.clone()));
         }
@@ -1422,9 +1443,32 @@ impl Root {
         if player_corpse {
             menu = menu.item(MenuItem::new(t(lang, Key::CorpsePlayerHint)).disabled(true));
         }
-        ContextMenu::new(format!("ld2-ctx-{}", entity.id), menu)
-            .child(row)
+        let menu_el = ContextMenu::new(format!("ld2-ctx-{}", entity.id), menu).child(row);
+        // Тултип описания предмета на земле — тот же виджет, что в
+        // рюкзаке (задержка 1с, пульс наружу — заказчик).
+        if let Some(snap) = ground_snap {
+            let detail = serde_json::to_value(&snap).unwrap_or_default();
+            let skills = self.skill_names_for(&detail);
+            super::sheet::item_tooltip_trigger(
+                format!("ld2-ent-tip-{}", id),
+                menu_el,
+                detail,
+                skills,
+                self.config.theme.clone(),
+                lang,
+                snap.rarity.clone(),
+                format!(
+                    "{} · {} · +{}",
+                    snap.name,
+                    rarity_label(lang, &snap.rarity),
+                    snap.upgrade
+                ),
+                id,
+            )
             .into_any_element()
+        } else {
+            menu_el.into_any_element()
+        }
     }
 
     // ── hotbar (ФР-05/09) ─────────────────────────────────────────────────

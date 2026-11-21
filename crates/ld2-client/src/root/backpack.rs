@@ -9,7 +9,7 @@ use ely::forms::Choice;
 use ely::menus::ContextMenu;
 use ely::motion::Flip;
 use ely::navigation::Tabs;
-use ely::primitives::{Icon, IconName, TooltipTrigger};
+use ely::primitives::{Icon, IconName};
 use gpui::{
     div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, MouseButton,
     SharedString, Window,
@@ -419,73 +419,26 @@ impl Root {
             .child(tile);
             // Тултип описания (заказчик 2026-11-20): тот же виджет, что
             // и окно описания; появляется через 1с наведения курсора;
-            // свечение медленно пульсирует НАРУЖУ (~2.5 с).
+            // свечение медленно пульсирует НАРУЖУ (~2.5 с). Карточка —
+            // общий helper с предметами на земле (R-dnd, дедуп).
             let tip_detail = serde_json::to_value(item).unwrap_or_default();
             let tip_skills = self.skill_names_for(&tip_detail);
-            let tip_theme = self.config.theme.clone();
-            let tip_name_line = format!(
-                "{} · {} · +{}",
-                item.name,
-                rarity_label(lang, &item.rarity),
-                item.upgrade
+            let ctx = super::sheet::item_tooltip_trigger(
+                format!("ld2-bp-tip-{uid}"),
+                ctx,
+                tip_detail,
+                tip_skills,
+                self.config.theme.clone(),
+                lang,
+                item.rarity.clone(),
+                format!(
+                    "{} · {} · +{}",
+                    item.name,
+                    rarity_label(lang, &item.rarity),
+                    item.upgrade
+                ),
+                uid.clone(),
             );
-            let tip_rarity = item.rarity.clone();
-            let tip_lang = lang;
-            // Пульс свечения НАРУЖУ (заказчик): тень дышит
-            // alpha 0.10…0.50 (~2.5 с) цветом редкости — на карточке
-            // внутри тултипа.
-            let pulse_rarity = tip_rarity.clone();
-            let pulse_uid = uid.clone();
-            let ctx = TooltipTrigger::new(format!("ld2-bp-tip-{uid}"), ctx, move |_, _| {
-                let pulse_rarity = pulse_rarity.clone();
-                let pulse_uid = pulse_uid.clone();
-                let pal = crate::palette::palette(&tip_theme);
-                // Фон и вид — как у окна описания: карточка
-                // pal.panel с рамкой цвета редкости; отрицательные
-                // поля гасят паддинг сурфейса.
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .mx(px(-8.0))
-                    .my(px(-4.0))
-                    .p(px(10.0))
-                    .rounded_md()
-                    .bg(rgb(pal.panel))
-                    .border_1()
-                    .border_color(rgb(rarity_color(&tip_rarity, &pal)))
-                    .text_color(rgb(pal.text))
-                    .text_size(px(13.0))
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(tip_name_line.clone()),
-                    )
-                    .child(super::sheet::item_description_body(
-                        tip_lang,
-                        &pal,
-                        &tip_detail,
-                        &tip_skills,
-                    ))
-                    .with_animation(
-                        SharedString::from(format!("tip-pulse-{pulse_uid}")),
-                        Animation::new(std::time::Duration::from_millis(2500)).repeat(),
-                        move |card, t| {
-                            let alpha: f32 = (0.30 + 0.20 * (2.0 * std::f32::consts::PI * t).sin())
-                                .clamp(0.10, 0.50);
-                            let base = rarity_color(&pulse_rarity, &pal) & 0xff_ffff;
-                            card.shadow(vec![gpui::BoxShadow {
-                                color: gpui::rgba((base << 8) | (alpha * 255.0) as u32).into(),
-                                offset: gpui::point(px(0.0), px(0.0)),
-                                blur_radius: px(14.0),
-                                spread_radius: px(2.0),
-                                inset: false,
-                            }])
-                        },
-                    )
-                    .into_any_element()
-            })
-            .delay(std::time::Duration::from_secs(1));
             // R-dnd: старт перетаскивания — на САМОЙ внешней строке
             // (Flip-row): единообразно для всех редкостей (заказчик:
             // у эпиков/легендарок анимация-обёртка плитки ломала
@@ -544,8 +497,16 @@ impl Root {
             .child(flip)
             .on_drag_move::<ItemDrag>(move |event, _window, cx| {
                 // Пересчёт reorder — только когда курсор над списком
-                // (слушает все перемещения при активном drag).
+                // (слушает все перемещения при активном drag); уход со
+                // списка снимает маркер зоны — иначе отпускание вне
+                // зон не откроет подтверждение (заказчик).
                 if !event.bounds.contains(&event.event.position) {
+                    this.update(cx, |root, cx| {
+                        if root.drop_hit == Some(DropHit::BpList) {
+                            root.drop_hit = None;
+                            cx.notify();
+                        }
+                    });
                     return;
                 }
                 this.update(cx, |root, cx| {
@@ -599,10 +560,12 @@ impl Root {
                             if let Err(e) = root.transport.send(&cmd) {
                                 root.store.notice = Some(format!("нет связи: {e}"));
                             }
-                            root.drop_hit = None;
                         }
                     }
                     root.bp_hold = None;
+                    // Drop обработан списком — drag поглощён: tick не
+                    // открывает подтверждение выброса (заказчик).
+                    root.drag_item = None;
                     cx.notify();
                 });
             });

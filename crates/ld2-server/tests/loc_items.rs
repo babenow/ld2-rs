@@ -145,9 +145,16 @@ async fn drop_pickup_between_players_and_ttl() {
     assert_eq!(b.ack(seq).await["result"], "ok", "подбор");
     let added = b.wait_event("evt/item/added").await;
     assert_eq!(added["payload"]["item"]["def_id"], "potion_heal");
-    // A видит исчезновение объекта из локации.
+    // A видит исчезновение объекта из локации; подобрал B — в
+    // despawn имя/пол для строк журнала (R-dnd, заказчик).
     let despawn = a.wait_event("evt/entity/despawn").await;
     assert_eq!(despawn["payload"]["entity_id"], ground_id);
+    assert!(
+        despawn["payload"]["picked_by"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "picked_by в despawn: {despawn}"
+    );
 
     // A больше не владеет выброшенным (uid удалён из инвентаря).
     let seq = a
@@ -229,6 +236,60 @@ async fn drop_epic_item_works() {
         .iter()
         .any(|e| e["ground"] == true);
     assert!(ground, "эпик лежит на земле: {snap}");
+}
+
+#[tokio::test]
+async fn drop_pickup_keeps_item_state() {
+    // R-dnd (заказчик): камни не теряются при выбросе → подборе
+    // (раньше подбор создавал «простой» стак); предмет на земле
+    // несёт снапшот для отображения «как в рюкзаке».
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, _, _) = in_world(&ws).await;
+
+    // Посох с сокетами + руна → вставить руну в первый сокет.
+    let staff = give(&mut a, "staff_apprentice").await;
+    let rune = give(&mut a, "rune_flame_ash").await;
+    let seq = a
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff, "socket_index": 0, "rune_uid": rune }),
+        )
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "вставка руны");
+
+    // Полный выброс посоха → на земле снапшот с сокетами (extra.item).
+    let seq = a.send("cmd/item.drop", json!({ "item_uid": staff })).await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "выброс посоха");
+    let spawn = a.wait_event("evt/entity/spawn").await;
+    let ground_id = spawn["payload"]["entity"]["id"]
+        .as_str()
+        .expect("id наземного предмета")
+        .to_string();
+    // Entity.extra сериализуется flatten — поля прямо в объекте.
+    let item = &spawn["payload"]["entity"];
+    assert!(
+        item["item"]["sockets"].as_array().is_some_and(|s| !s.is_empty()),
+        "сокеты в снапшоте на земле: {item}"
+    );
+
+    // Подбор тем же персонажем → руна на месте (состояние
+    // восстанавливается отдельной строкой).
+    let seq = a
+        .send("cmd/item.use", json!({ "item_uid": ground_id }))
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "подбор");
+    let added = a.wait_event("evt/item/added").await;
+    let sockets = added["payload"]["item"]["sockets"]
+        .as_array()
+        .expect("сокеты после подбора");
+    assert!(
+        !sockets.is_empty() && sockets[0]["rune"].is_object(),
+        "руна пережила выброс → подбор: {added}"
+    );
 }
 
 #[tokio::test]

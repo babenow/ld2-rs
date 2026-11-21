@@ -863,6 +863,8 @@ pub(crate) fn mob_kill_effects(
                 entity_id: target.to_string(),
                 location_id: loc.to_string(),
                 kind: Some(ld2_protocol::types::EntityKind::Monster),
+                picked_by: None,
+                picked_gender: None,
             },
         );
         if let Some(corpse_id) = &corpse_id {
@@ -1344,6 +1346,8 @@ async fn respawn_step(state: &SharedState) {
                             entity_id: corpse_id,
                             location_id: entry.location_id.clone(),
                             kind: Some(ld2_protocol::types::EntityKind::Corpse),
+                            picked_by: None,
+                            picked_gender: None,
                         },
                     );
                     for addr in world.chars_in_location(&entry.location_id) {
@@ -1603,6 +1607,8 @@ async fn corpse_expire_step(state: &SharedState) {
             entity_id: corpse_id,
             location_id: loc.clone(),
             kind: Some(ld2_protocol::types::EntityKind::Corpse),
+            picked_by: None,
+            picked_gender: None,
         };
         let text = event_text("evt/entity/despawn", &payload);
         let world = state.world.lock().expect("мир");

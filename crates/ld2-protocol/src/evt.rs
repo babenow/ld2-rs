@@ -183,6 +183,14 @@ pub struct EntityDespawn {
     /// §11: старый сервер не шлёт → прежняя строка.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<crate::types::EntityKind>,
+    /// R-dnd (заказчик 2026-11-21): кто поднял предмет с земли —
+    /// строка журнала «{имя} подобрал(а) …»; `None` — не подбор
+    /// (TTL/другие причины). Аддитивно §11: старый сервер не шлёт.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picked_by: Option<String>,
+    /// Пол подобрал(а) — «подобрала» для female.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picked_gender: Option<String>,
 }
 
 /// M20: предмет в локации исчез (TTL выброса) — журнал «{name} исчез».

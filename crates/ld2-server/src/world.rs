@@ -404,10 +404,60 @@ pub struct GroundItem {
     pub qty: i64,
     /// Уровень заточки на момент выброса — строка журнала «+N».
     pub upgrade: i64,
+    /// Сокеты/бонусы на момент выброса (raw-колонки ItemRow) —
+    /// восстановление при подборе (R-dnd: камни не теряются).
+    pub sockets: serde_json::Value,
+    pub bonuses: Option<serde_json::Value>,
+    /// ItemSnapshot для отображения на земле «как в рюкзаке» —
+    /// `extra["item"]` (заказчик).
+    pub display: serde_json::Value,
     /// Кто бросил (char_id) — для журнала.
     pub dropped_by: String,
     /// Epoch-секунда исчезновения.
     pub expires_at: i64,
+}
+
+impl GroundItem {
+    /// Entity для снапшота/спавна: extra.ground/def_id/qty/upgrade +
+    /// `item` — снапшот предмета (единый вид build_location и
+    /// `evt/entity/spawn`; раньше spawn не нёс upgrade).
+    pub fn entity(&self) -> Entity {
+        let mut extra = serde_json::Map::new();
+        extra.insert("ground".into(), serde_json::json!(true));
+        extra.insert("def_id".into(), serde_json::json!(self.def_id));
+        extra.insert("qty".into(), serde_json::json!(self.qty));
+        extra.insert("upgrade".into(), serde_json::json!(self.upgrade));
+        extra.insert("item".into(), self.display.clone());
+        Entity {
+            id: self.id.clone(),
+            kind: EntityKind::Object,
+            name: self.name.clone(),
+            hp: None,
+            tags: None,
+            was_player: None,
+            aggro: None,
+            boss: None,
+            next_attack_at: None,
+            attack_interval: None,
+            attacking: None,
+            extra,
+        }
+    }
+
+    /// R-dnd: есть ли состояние (заточка/камни/бонусы) — при подборе
+    /// восстанавливается отдельной строкой, в «простой» стак не
+    /// складывается (иначе камни теряются, заказчик).
+    pub fn stateful(&self) -> bool {
+        let empty = |v: &serde_json::Value| match v {
+            serde_json::Value::Array(a) => a.is_empty(),
+            serde_json::Value::Object(o) => o.is_empty(),
+            serde_json::Value::Null => true,
+            _ => false,
+        };
+        self.upgrade != 0
+            || !empty(&self.sockets)
+            || self.bonuses.as_ref().is_some_and(|b| !empty(b))
+    }
 }
 
 impl LiveCorpse {
@@ -1482,25 +1532,9 @@ impl World {
             .collect();
         ground.sort_by(|a, b| a.id.cmp(&b.id));
         for item in ground {
-            let mut extra = serde_json::Map::new();
-            extra.insert("ground".into(), serde_json::json!(true));
-            extra.insert("def_id".into(), serde_json::json!(item.def_id));
-            extra.insert("qty".into(), serde_json::json!(item.qty));
-            extra.insert("upgrade".into(), serde_json::json!(item.upgrade));
-            snapshot.entities.push(Entity {
-                id: item.id.clone(),
-                kind: EntityKind::Object,
-                name: item.name.clone(),
-                hp: None,
-                tags: None,
-                was_player: None,
-                aggro: None,
-                boss: None,
-                next_attack_at: None,
-                attack_interval: None,
-                attacking: None,
-                extra,
-            });
+            // R-dnd: единый вид снапшота/спавна (extra.item — снапшот
+            // предмета для отображения «как в рюкзаке»).
+            snapshot.entities.push(item.entity());
         }
         // M20/F20b: ресурсы (скрытые — до респавна не показываются).
         let mut nodes: Vec<&ResourceNode> = self
@@ -1579,28 +1613,39 @@ impl World {
     // ─── M20: предметы в локациях (выбросы) и TTL трупов ────────────
 
     /// Бросить предмет в локацию (item.drop); id наземного предмета.
-    #[allow(clippy::too_many_arguments)] // (location, name, def, qty, upgrade, by, ttl)
+    /// R-dnd: состояние предмета (row — raw-колонки) + снапшот для
+    /// отображения; состояние уходит на землю только при ПОЛНОМ
+    /// выбросе (при частичном оно остаётся у остатка стака).
+    #[allow(clippy::too_many_arguments)] // (location, name, row, qty, snap, by, ttl)
     pub fn drop_ground(
         &mut self,
         location_id: &str,
         name: &str,
-        def_id: &str,
+        row: &crate::db::items::ItemRow,
         qty: i64,
-        upgrade: i64,
+        display: serde_json::Value,
         dropped_by: &str,
         expires_at: i64,
     ) -> String {
         self.ground_seq += 1;
         let id = format!("g{}", self.ground_seq);
+        let full = qty >= i64::from(row.qty);
         self.ground_items.insert(
             id.clone(),
             GroundItem {
                 id: id.clone(),
                 location_id: location_id.to_string(),
                 name: name.to_string(),
-                def_id: def_id.to_string(),
+                def_id: row.def_id.clone(),
                 qty,
-                upgrade,
+                upgrade: if full { i64::from(row.upgrade) } else { 0 },
+                sockets: if full {
+                    row.sockets.clone()
+                } else {
+                    serde_json::json!([])
+                },
+                bonuses: if full { row.bonuses.clone() } else { None },
+                display,
                 dropped_by: dropped_by.to_string(),
                 expires_at,
             },
@@ -1894,6 +1939,46 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R-dnd: GroundItem хранит состояние (камни/заточка/бонусы) и
+    /// снапшот для отображения; entity() отдаёт всё в extra.
+    #[test]
+    fn ground_item_state_and_entity_extra() {
+        let g = GroundItem {
+            id: "g1".into(),
+            location_id: "l_village".into(),
+            name: "Посох подмастерья".into(),
+            def_id: "staff_apprentice".into(),
+            qty: 1,
+            upgrade: 2,
+            sockets: serde_json::json!([{ "index": 0, "rune": null }]),
+            bonuses: None,
+            display: serde_json::json!({ "name": "Посох подмастерья", "rarity": "rare" }),
+            dropped_by: "c1".into(),
+            expires_at: 0,
+        };
+        assert!(g.stateful(), "заточка + сокет — состояние");
+        let ent = g.entity();
+        assert_eq!(ent.extra["upgrade"], 2);
+        assert_eq!(ent.extra["item"]["name"], "Посох подмастерья");
+        assert_eq!(ent.extra["qty"], 1);
+        // Простой стак (деньги/зелья) — без состояния.
+        let plain = GroundItem {
+            upgrade: 0,
+            sockets: serde_json::json!([]),
+            bonuses: None,
+            ..g.clone()
+        };
+        assert!(!plain.stateful(), "простой стак без состояния");
+        // Бонусы инстанса — тоже состояние.
+        let bonused = GroundItem {
+            upgrade: 0,
+            sockets: serde_json::json!([]),
+            bonuses: Some(serde_json::json!([{ "kind": "attr", "id": "str", "value": 5 }])),
+            ..g.clone()
+        };
+        assert!(bonused.stateful(), "бонусы — состояние");
+    }
 
     /// M24: «режим бога» — по-персонажный toggle неуязвимости
     /// (tick::apply_mob_hit смотрит `is_god` до применения урона).

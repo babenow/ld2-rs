@@ -221,6 +221,34 @@ pub async fn insert(
     .await
 }
 
+/// R-dnd: подбор предмета с состоянием (заточка/камни/бонусы) —
+/// отдельная запись с восстановлением колонок (в «простой» стак не
+/// складывается — состояние не пережило бы склейку).
+pub async fn insert_stateful(
+    pool: &PgPool,
+    char_id: &str,
+    def_id: &str,
+    qty: i64,
+    upgrade: i32,
+    sockets: &Value,
+    bonuses: Option<Value>,
+) -> Result<ItemRow, sqlx::Error> {
+    sqlx::query_as::<_, ItemRow>(
+        "INSERT INTO items (character_id, def_id, qty, upgrade, sockets, bonuses, sort_order) \
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT MAX(sort_order) + 1 \
+         FROM items WHERE character_id = $1), 0)) \
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .bind(qty)
+    .bind(upgrade)
+    .bind(sockets)
+    .bind(bonuses)
+    .fetch_one(pool)
+    .await
+}
+
 /// M18/F47: записать бонусы инстанса (ADR-010) — dev-сценарий
 /// `/scenario bonus`, будущие источники в игре.
 pub async fn set_bonuses(pool: &PgPool, uid: &str, bonuses: Value) -> Result<(), sqlx::Error> {

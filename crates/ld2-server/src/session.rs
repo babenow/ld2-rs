@@ -3296,19 +3296,33 @@ impl Session {
             return vec![Self::err(seq, ErrorCode::Internal, "нет определения")];
         };
         let slots = self.state.config.gameplay.inventory.slots;
-        match Self::take_loot_fits(pool, char_id, &ground.def_id, slots).await {
-            Ok(true) => {}
-            Ok(false) => {
-                return vec![Self::err(
-                    seq,
-                    ErrorCode::InventoryFull,
-                    "инвентарь заполнен",
-                )];
+        // R-dnd: предмет с состоянием (заточка/камни/бонусы) занимает
+        // отдельную строку — место проверяем строго (в «простой» стак
+        // не складывается, иначе камни теряются — заказчик).
+        let stateful = ground.stateful();
+        let fits = if stateful {
+            match db::items::count(pool, char_id).await {
+                Ok(n) => n < i64::from(slots),
+                Err(e) => {
+                    warn!("подбор (слоты): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
             }
-            Err(e) => {
-                warn!("подбор (слоты): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        } else {
+            match Self::take_loot_fits(pool, char_id, &ground.def_id, slots).await {
+                Ok(fits) => fits,
+                Err(e) => {
+                    warn!("подбор (слоты): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
             }
+        };
+        if !fits {
+            return vec![Self::err(
+                seq,
+                ErrorCode::InventoryFull,
+                "инвентарь заполнен",
+            )];
         }
         let taken = {
             let mut world = self.state.world.lock().expect("мир");
@@ -3317,14 +3331,35 @@ impl Session {
         let Some(taken) = taken else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "уже подобрано")];
         };
-        let (row, stacked) =
+        let (row, stacked) = if stateful {
+            // Восстановление состояния — отдельная запись (M18: в
+            // «простой» стак не складывается).
+            match db::items::insert_stateful(
+                pool,
+                char_id,
+                &taken.def_id,
+                taken.qty,
+                i32::try_from(taken.upgrade).unwrap_or(i32::MAX),
+                &taken.sockets,
+                taken.bonuses.clone(),
+            )
+            .await
+            {
+                Ok(r) => (r, false),
+                Err(e) => {
+                    warn!("подбор (восстановление): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+        } else {
             match db::items::grant_stacking(pool, char_id, &taken.def_id, taken.qty).await {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("подбор (выдача): {e}");
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                 }
-            };
+            }
+        };
         // Снять с земли — всем в локации (объект исчезает).
         // R-dnd: подбор — в despawn имя/пол подобрал(а) для журнала
         // («Вы подняли…» / «{имя} подобрал(а)…»).
@@ -5118,14 +5153,20 @@ impl Session {
                 .as_ref()
                 .map(|c| (c.name.clone(), c.gender.clone()))
                 .unwrap_or_else(|| ("Игрок".into(), "male".into()));
+            // R-dnd: снапшот предмета для отображения на земле «как
+            // в рюкзаке» (цвет редкости/+N/×qty/слоты) + raw-состояние
+            // для восстановления при подборе.
+            let mut snap = item_snapshot(&item, &def);
+            snap.qty = Some(qty);
+            let display = serde_json::to_value(&snap).unwrap_or_default();
             let dropped = {
                 let mut world = self.state.world.lock().expect("мир");
                 world.drop_ground(
                     location_id,
                     &def.name,
-                    &item.def_id,
+                    &item,
                     qty,
-                    i64::from(item.upgrade),
+                    display,
                     &char_id,
                     expires_at,
                 )
@@ -5212,25 +5253,11 @@ impl Session {
         ground_id: &str,
     ) -> Option<ld2_protocol::types::Entity> {
         let world = self.state.world.lock().expect("мир");
-        let g = world.ground_item(ground_id)?;
-        let mut extra = serde_json::Map::new();
-        extra.insert("ground".into(), serde_json::json!(true));
-        extra.insert("def_id".into(), serde_json::json!(g.def_id));
-        extra.insert("qty".into(), serde_json::json!(g.qty));
-        Some(ld2_protocol::types::Entity {
-            id: g.id.clone(),
-            kind: ld2_protocol::types::EntityKind::Object,
-            name: g.name.clone(),
-            hp: None,
-            tags: None,
-            was_player: None,
-            aggro: None,
-            boss: None,
-            next_attack_at: None,
-            attack_interval: None,
-            attacking: None,
-            extra,
-        })
+        // R-dnd: единый вид с build_location (extra.upgrade + item —
+        // снапшот предмета для отображения «как в рюкзаке»).
+        world
+            .ground_item(ground_id)
+            .map(crate::world::GroundItem::entity)
     }
 
     /// `cmd/chat.send` (§7): dev-сценарии `/scenario …` (ФР-06/тесты);

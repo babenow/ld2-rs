@@ -1470,17 +1470,21 @@ impl Root {
             row = row
                 .on_drag_move::<ItemDrag>(move |event, _window, cx| {
                     // Слушает ВСЕ перемещения при активном drag —
-                    // засчитываем только карточку под курсором (иначе
-                    // все слоты перетирают drop_hit).
-                    if !event.bounds.contains(&event.event.position) {
-                        return;
-                    }
+                    // засчитываем только карточку под курсором; уход
+                    // с карточки снимает маркер (иначе отпускание вне
+                    // зон не откроет подтверждение — заказчик).
+                    let over = event.bounds.contains(&event.event.position);
                     zone_move.update(cx, |root, cx| {
-                        if matches!(
-                            root.drag_item.as_ref().map(|d| &d.from),
-                            Some(DragSource::Bp)
-                        ) {
-                            root.drop_hit = Some(DropHit::EqSlot(zone_slot_move.clone()));
+                        let mine = DropHit::EqSlot(zone_slot_move.clone());
+                        if over {
+                            // Любой источник drag (рюкзак/экипировка) —
+                            // подсветка зоны при наведении.
+                            if root.drag_item.is_some() {
+                                root.drop_hit = Some(mine.clone());
+                                cx.notify();
+                            }
+                        } else if root.drop_hit == Some(mine) {
+                            root.drop_hit = None;
                             cx.notify();
                         }
                     });
@@ -1521,6 +1525,11 @@ impl Root {
                                 }
                             }
                         }
+                        // Drop обработан зоной — drag поглощён: tick
+                        // не открывает подтверждение выброса (заказчик:
+                        // отпускание НА слоте не предлагает выбросить).
+                        root.drag_item = None;
+                        root.bp_hold = None;
                         root.drop_hit = None;
                         cx.notify();
                     });
@@ -3550,6 +3559,67 @@ pub(crate) fn quality_color(def_id: Option<&str>) -> Option<u32> {
 /// Цвет названия предмета: качество (снятие шкур) иначе редкость.
 pub(crate) fn item_color(item: &ItemSnapshot, pal: &Palette) -> u32 {
     quality_color(item.def_id.as_deref()).unwrap_or_else(|| rarity_color(&item.rarity, pal))
+}
+
+/// Тултип описания предмета (рюкзак и предметы на земле, R-dnd):
+/// карточка с рамкой цвета редкости, описанием и пульсом наружу
+/// (~2.5 с); задержка 1 с (заказчик 2026-11-20). Общий виджет.
+#[allow(clippy::too_many_arguments)] // (id, child, detail, skills, theme, lang, rarity, line, key)
+pub(crate) fn item_tooltip_trigger(
+    id: impl Into<gpui::ElementId>,
+    child: impl IntoElement,
+    detail: serde_json::Value,
+    skills: std::collections::HashMap<String, String>,
+    theme: String,
+    lang: Lang,
+    rarity: String,
+    name_line: String,
+    anim_key: String,
+) -> TooltipTrigger {
+    let pulse_rarity = rarity.clone();
+    let pulse_key = anim_key.clone();
+    TooltipTrigger::new(id, child, move |_, _| {
+        let pal = crate::palette::palette(&theme);
+        let pulse_rarity = pulse_rarity.clone();
+        let pulse_key = pulse_key.clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .mx(px(-8.0))
+            .my(px(-4.0))
+            .p(px(10.0))
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .border_1()
+            .border_color(rgb(rarity_color(&rarity, &pal)))
+            .text_color(rgb(pal.text))
+            .text_size(px(13.0))
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(name_line.clone()),
+            )
+            .child(item_description_body(lang, &pal, &detail, &skills))
+            .with_animation(
+                SharedString::from(format!("tip-pulse-{pulse_key}")),
+                Animation::new(std::time::Duration::from_millis(2500)).repeat(),
+                move |card, t| {
+                    let alpha: f32 =
+                        (0.30 + 0.20 * (2.0 * std::f32::consts::PI * t).sin()).clamp(0.10, 0.50);
+                    let base = rarity_color(&pulse_rarity, &pal) & 0xff_ffff;
+                    card.shadow(vec![gpui::BoxShadow {
+                        color: gpui::rgba((base << 8) | (alpha * 255.0) as u32).into(),
+                        offset: gpui::point(px(0.0), px(0.0)),
+                        blur_radius: px(14.0),
+                        spread_radius: px(2.0),
+                        inset: false,
+                    }])
+                },
+            )
+            .into_any_element()
+    })
+    .delay(std::time::Duration::from_secs(1))
 }
 
 /// M16/F29e: название редкости (l10n; неизвестная — как есть).
