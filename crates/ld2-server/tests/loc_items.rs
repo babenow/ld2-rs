@@ -272,7 +272,9 @@ async fn drop_pickup_keeps_item_state() {
     // Entity.extra сериализуется flatten — поля прямо в объекте.
     let item = &spawn["payload"]["entity"];
     assert!(
-        item["item"]["sockets"].as_array().is_some_and(|s| !s.is_empty()),
+        item["item"]["sockets"]
+            .as_array()
+            .is_some_and(|s| !s.is_empty()),
         "сокеты в снапшоте на земле: {item}"
     );
 

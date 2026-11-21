@@ -40,8 +40,8 @@ use ely::primitives::{IconName, Tooltip, TooltipTrigger};
 
 use super::quests::goals_summary;
 use super::{
-    act_btn, char_card_origin, clamp_char_size, scrollable_tab, DragSource, DropHit, ItemDrag,
-    PopupDrag, PopupKind, PopupResize, Root,
+    act_btn, char_card_origin, clamp_char_size, scrollable_tab, DragSource, ItemDrag, PopupDrag,
+    PopupKind, PopupResize, Root,
 };
 
 /// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
@@ -856,24 +856,31 @@ impl Root {
             // предметов (иначе отпускание на подложке/полях окна
             // открывало подтверждение выброса); маркер ведёт КАРТОЧКА,
             // список не трогает — иначе clear-ы спорили по порядку.
-            .on_drag_move::<ItemDrag>({
+            // R-dnd (заказчик): отпускание В ЛЮБОЙ точке окна рюкзака —
+            // приём (раньше поля/подложка окна открывали подтверждение
+            // выброса). on_drop — hover hit-test, работает для drag из
+            // любого места.
+            .on_drop::<ItemDrag>({
                 let card_this = cx.entity();
-                move |event, _, cx| {
+                move |drag: &ItemDrag, _, cx| {
                     if kind != PopupKind::Backpack {
                         return;
                     }
                     card_this.update(cx, |root, cx| {
-                        if event.bounds.contains(&event.event.position) {
-                            if root.drag_item.is_some() && root.drop_hit != Some(DropHit::BpList) {
-                                tracing::info!("dnd: карточка рюкзака — зона приёма");
-                                root.drop_hit = Some(DropHit::BpList);
-                                cx.notify();
+                        if let DragSource::Equip(slot) = &drag.from {
+                            tracing::info!("dnd: drop в окно рюкзака → снять в рюкзак");
+                            let cmd = ItemUnequip { slot: slot.clone() };
+                            if let Err(e) = root.transport.send(&cmd) {
+                                root.store.notice = Some(format!("нет связи: {e}"));
                             }
-                        } else if root.drop_hit == Some(DropHit::BpList) {
-                            tracing::info!("dnd: уход с карточки рюкзака");
-                            root.drop_hit = None;
-                            cx.notify();
+                        } else {
+                            // Предмет из рюкзака в своё же окно — без
+                            // действия (не «выбросить»).
+                            tracing::info!("dnd: drop в окно рюкзака → без действия");
                         }
+                        root.drag_item = None;
+                        root.bp_hold = None;
+                        cx.notify();
                     });
                 }
             })
@@ -1413,7 +1420,6 @@ impl Root {
         // колонки одинаковой высоты; слоты рук — отдельным блоком
         // внизу (указание заказчика).
         // R-dnd: тянется ли предмет (для подсветки зон).
-        let drag_active = self.drag_item.is_some();
         let mut rows: Vec<AnyElement> = Vec::new();
         let mut hand_rows: Vec<AnyElement> = Vec::new();
         for slot in &equip_slots {
@@ -1421,15 +1427,6 @@ impl Root {
             let item = uid
                 .as_ref()
                 .and_then(|u| snap.char.inventory.iter().find(|i| i.uid == *u));
-            // R-dnd: подсветка зоны при перетаскивании из рюкзака —
-            // подходящий слот зелёным, неподходящий красным.
-            let drop_here =
-                drag_active && matches!(&self.drop_hit, Some(DropHit::EqSlot(s)) if s == slot);
-            let drop_fits = drop_here
-                && self
-                    .drag_slot_of()
-                    .as_deref()
-                    .is_some_and(|ds| ds == slot.as_str());
             // M18 (указание заказчика): карточка слота — вертикально:
             // **название слота в верхней строке**, предмет ниже (правым
             // краем); кнопки «Снять»/«Описание» — в контекстном меню.
@@ -1463,17 +1460,6 @@ impl Root {
                     row.shadow(rarity_glow_inset(&item.rarity, pal))
                 })
                 .cursor_pointer()
-                // R-dnd: подсветка зоны при перетаскивании из рюкзака —
-                // подходящий слот зелёным, неподходящий красным.
-                .when(drop_here, |row| {
-                    if drop_fits {
-                        row.border_color(rgb(pal.success))
-                    } else {
-                        // Неверный слот: красная рамка 2px (заказчик),
-                        // без предупреждения — перемещение блокируется.
-                        row.border(px(2.0)).border_color(rgb(pal.danger))
-                    }
-                })
                 // Подсветка: пустой слот — общий selection, занятый —
                 // цветом предмета (ветки ниже); клик — контекстное меню.
                 ;
@@ -1485,34 +1471,74 @@ impl Root {
                     .text_color(rgb(pal.muted))
                     .child(slot_label(lang, slot)),
             );
-            // R-dnd: зона приёма для предметов из рюкзака.
+            // R-dnd: зона приёма (из рюкзака/из экипировки) — on_drop
+            // по hover hit-test (работает для drag из любого места).
             let zone_slot = slot.clone();
             let zone_this = cx.entity();
-            let zone_move = zone_this.clone();
-            let zone_slot_move = zone_slot.clone();
-            row = row.on_drag_move::<ItemDrag>(move |event, _window, cx| {
-                // Слушает ВСЕ перемещения при активном drag —
-                // засчитываем только карточку под курсором; уход
-                // с карточки снимает маркер (иначе отпускание вне
-                // зон не откроет подтверждение — заказчик).
-                let over = event.bounds.contains(&event.event.position);
-                zone_move.update(cx, |root, cx| {
-                    let mine = DropHit::EqSlot(zone_slot_move.clone());
-                    if over {
-                        // Любой источник drag (рюкзак/экипировка) —
-                        // подсветка зоны при наведении.
-                        if root.drag_item.is_some() && root.drop_hit != Some(mine.clone()) {
-                            tracing::info!("dnd: слот {} под курсором", zone_slot_move);
-                            root.drop_hit = Some(mine);
-                            cx.notify();
+            let zone_slot_drop = zone_slot.clone();
+            row = row
+                .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
+                    zone_this.update(cx, |root, cx| {
+                        let fits = drag.slot_req.as_deref() == Some(zone_slot_drop.as_str());
+                        match &drag.from {
+                            // Из рюкзака: подходящий слот → надеть;
+                            // неподходящий — блок без предупреждения
+                            // (предмет остаётся в рюкзаке, заказчик).
+                            DragSource::Bp => {
+                                if fits {
+                                    tracing::info!("dnd: drop → надеть {}", zone_slot_drop);
+                                    let cmd = ItemEquip {
+                                        item_uid: drag.uid.clone(),
+                                        slot: zone_slot_drop.clone(),
+                                    };
+                                    root.send_cmd(&cmd, Act::Equip);
+                                } else {
+                                    tracing::info!("dnd: drop → блок, слот не подходит");
+                                }
+                            }
+                            // Из экипировки: верный другой слот — перенести;
+                            // неверный — вернуть в рюкзак (НЕ выбрасывать,
+                            // заказчик).
+                            DragSource::Equip(from_slot) => {
+                                if *from_slot == zone_slot_drop {
+                                    tracing::info!("dnd: drop → тот же слот");
+                                } else if fits {
+                                    tracing::info!("dnd: drop → надеть {}", zone_slot_drop);
+                                    let cmd = ItemEquip {
+                                        item_uid: drag.uid.clone(),
+                                        slot: zone_slot_drop.clone(),
+                                    };
+                                    root.send_cmd(&cmd, Act::Equip);
+                                } else {
+                                    tracing::info!("dnd: drop → снять в рюкзак");
+                                    let cmd = ItemUnequip {
+                                        slot: from_slot.clone(),
+                                    };
+                                    root.send_cmd(&cmd, Act::Unequip);
+                                }
+                            }
                         }
-                    } else if root.drop_hit == Some(mine) {
-                        tracing::info!("dnd: уход со слота {}", zone_slot_move);
-                        root.drop_hit = None;
+                        root.drag_item = None;
+                        root.bp_hold = None;
                         cx.notify();
+                    });
+                })
+                // R-dnd: подсветка зоны при перетаскивании — drag_over
+                // (hover hit-test; on_drag_move срабатывает только у
+                // источника drag). Подходящий слот — зелёная, неверный —
+                // красная 2px.
+                .drag_over::<ItemDrag>({
+                    let slot_over = zone_slot.clone();
+                    let success = pal.success;
+                    let danger = pal.danger;
+                    move |st, drag: &ItemDrag, _, _| {
+                        if drag.slot_req.as_deref() == Some(slot_over.as_str()) {
+                            st.border_color(rgb(success))
+                        } else {
+                            st.border_color(rgb(danger)).border(px(2.0))
+                        }
                     }
                 });
-            });
             let Some(item) = item else {
                 // M18 (указание заказчика): пустые слоты — **не
                 // подсвечиваются** и выглядят disabled (приглушены);
@@ -1547,7 +1573,6 @@ impl Root {
                 tracing::info!("dnd: старт drag {} из экипировки", drag.uid);
                 drag_this.update(cx, |root, cx| {
                     root.drag_item = Some(drag.clone());
-                    root.drop_hit = None;
                     root.popup_scrim_down = false;
                     cx.notify();
                 });
@@ -1592,19 +1617,7 @@ impl Root {
             // Подсветка зоны при перетаскивании (заказчик): hover-стиль
             // должен уступать drop-состоянию, иначе рамка слота
             // перекрывается цветом предмета.
-            row = row.hover(move |st| {
-                if drop_here {
-                    let st = st.border_color(rgb(if drop_fits { pal.success } else { pal.danger }));
-                    if drop_fits {
-                        st
-                    } else {
-                        // Неверный слот: красная рамка 2px.
-                        st.border(px(2.0))
-                    }
-                } else {
-                    st.border_color(rgb(color))
-                }
-            });
+            row = row.hover(move |st| st.border_color(rgb(color)));
             // Заказчик 2026-11-20: описание предмета — в тултипе (тот же
             // виджет, что и окно описания; появляется плавно).
             let tip_detail = serde_json::to_value(item).unwrap_or_default();

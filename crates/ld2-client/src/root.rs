@@ -17,9 +17,7 @@ use ld2_core::store::{
 };
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
 // R11/R16: StateResync (дельта неприменима), TimeSync (5 мин).
-use ld2_protocol::cmd::{
-    AuthLogin, CharDelete, ItemEquip, ItemMove, ItemUnequip, LocationMove, StateResync, TimeSync,
-};
+use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove, StateResync, TimeSync};
 
 mod admin;
 mod backpack;
@@ -65,15 +63,6 @@ pub(crate) enum DragSource {
     Bp,
     /// Из слота экипировки (ид слота).
     Equip(String),
-}
-
-/// Куда указывает курсор при перетаскивании (зоны сброса).
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum DropHit {
-    /// Список рюкзака (снятие из экипировки / порядок на месте).
-    BpList,
-    /// Карточка слота экипировки.
-    EqSlot(String),
 }
 
 /// Подтверждение выброса (перетащили вне зон).
@@ -564,8 +553,6 @@ pub struct Root {
     hovered_item: Option<String>,
     /// R-dnd: тянущийся предмет (зоны/подтверждение выброса).
     drag_item: Option<ItemDrag>,
-    /// R-dnd: зона под курсором (None — вне зон).
-    drop_hit: Option<DropHit>,
     /// R-dnd: подтверждение выброса (окно).
     drop_confirm: Option<DropPending>,
     /// R-dnd: reorder-состояние списка рюкзака (held-строка).
@@ -880,7 +867,6 @@ impl Root {
             chat_cooldown_until: None,
             hovered_item: None,
             drag_item: None,
-            drop_hit: None,
             drop_confirm: None,
             bp_hold: None,
 
@@ -920,130 +906,39 @@ impl Root {
 
     // ── tick: опрос транспорта + эффекты + поля ввода ─────────────────────
 
-    /// R-dnd: порядок строк рюкзака текущей вкладки (паритет рендера
-    /// backpack) — для reorder в tick (drop-исполнение по маркеру).
-    fn bp_visible_order(&self) -> Vec<String> {
-        let Some(snap) = self.store.snapshot.as_ref() else {
-            return Vec::new();
-        };
-        let equipped: std::collections::HashSet<&str> = snap
-            .char
-            .equip
-            .values()
-            .flatten()
-            .map(String::as_str)
-            .collect();
-        snap.char
-            .inventory
-            .iter()
-            .filter(|item| self.backpack_tab.matches(item) && !equipped.contains(item.uid.as_str()))
-            .map(|item| item.uid.clone())
-            .collect()
-    }
-
     /// Один шаг фонового цикла: дренаж ingress (≤64), исполнение эффектов,
     /// Enter в полях входа, бейдж обновлений. Возвращает задержку до
     /// следующего шага (НФР §8: события → 50 мс, idle → 200 мс ≤ 5 fps).
     pub fn tick(&mut self, cx: &mut Context<'_, Self>) -> Duration {
-        // R-dnd: перетаскивание закончилось — решение по маркеру зоны
-        // (drop_hit ведётся по границам в on_drag_move; gpui-шный
-        // on_drop требует hover hit-test'а и над окном рюкзака
-        // срабатывал не всегда — заказчик: «предложение выбросить» при
-        // отпускании в рюкзаке). Действие исполняется здесь ОДИН раз.
+        // R-dnd: drag закончился и НИ ОДНА зона не поглотила его своим
+        // on_drop (hover hit-test — работает для drag из любого места,
+        // в отличие от on_drag_move, который срабатывает только у
+        // элемента, где drag начался) — отпускание вне зон:
+        // подтверждение выброса (заказчик).
+        // R-dnd: drag закончился и НИ ОДНА зона не поглотила его своим
+        // on_drop (hover hit-test — работает для drag из любого места,
+        // в отличие от on_drag_move, который срабатывает только у
+        // элемента, где drag начался) — отпускание вне зон:
+        // подтверждение выброса (заказчик).
         if let Some(drag) = self.drag_item.take() {
             if !cx.has_active_drag() {
-                match self.drop_hit.take() {
-                    Some(DropHit::EqSlot(slot)) => {
-                        let fits = drag.slot_req.as_deref() == Some(slot.as_str());
-                        match &drag.from {
-                            // Из рюкзака: подходящий слот → надеть;
-                            // неподходящий — блок без предупреждения
-                            // (предмет остаётся в рюкзаке, заказчик).
-                            DragSource::Bp => {
-                                if fits {
-                                    tracing::info!("dnd: конец drag → надеть {}", slot);
-                                    let cmd = ItemEquip {
-                                        item_uid: drag.uid.clone(),
-                                        slot: slot.clone(),
-                                    };
-                                    self.send_cmd(&cmd, Act::Equip);
-                                } else {
-                                    tracing::info!("dnd: конец drag → блок, слот не подходит");
-                                }
-                            }
-                            // Из экипировки: верный другой слот —
-                            // перенести; неверный — вернуть в рюкзак
-                            // (НЕ выбрасывать, заказчик).
-                            DragSource::Equip(from_slot) => {
-                                if *from_slot == slot {
-                                    tracing::info!("dnd: конец drag → тот же слот");
-                                } else if fits {
-                                    tracing::info!("dnd: конец drag → надеть {}", slot);
-                                    let cmd = ItemEquip {
-                                        item_uid: drag.uid.clone(),
-                                        slot: slot.clone(),
-                                    };
-                                    self.send_cmd(&cmd, Act::Equip);
-                                } else {
-                                    tracing::info!("dnd: конец drag → снять в рюкзак");
-                                    let cmd = ItemUnequip {
-                                        slot: from_slot.clone(),
-                                    };
-                                    self.send_cmd(&cmd, Act::Unequip);
-                                }
-                            }
-                        }
-                    }
-                    Some(DropHit::BpList) => {
-                        match &drag.from {
-                            // Внутри списка — reorder по bp_hold.
-                            DragSource::Bp => {
-                                let hold = self.bp_hold.take();
-                                if let Some(hold) = hold.filter(|hold| hold.index != hold.target) {
-                                    let order = self.bp_visible_order();
-                                    if let Some(target_uid) = order.get(hold.target) {
-                                        tracing::info!("dnd: конец drag → reorder");
-                                        let cmd = ItemMove {
-                                            item_uid: hold.uid.clone(),
-                                            target_uid: target_uid.clone(),
-                                        };
-                                        if let Err(e) = self.transport.send(&cmd) {
-                                            self.store.notice = Some(format!("нет связи: {e}"));
-                                        }
-                                    }
-                                }
-                            }
-                            // Из экипировки в рюкзак — снять (заказчик).
-                            DragSource::Equip(slot) => {
-                                tracing::info!("dnd: конец drag → снять в рюкзак");
-                                let cmd = ItemUnequip { slot: slot.clone() };
-                                if let Err(e) = self.transport.send(&cmd) {
-                                    self.store.notice = Some(format!("нет связи: {e}"));
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        // Вне зон — подтверждение выброса (заказчик).
-                        tracing::info!("dnd: конец drag вне зон → подтверждение выброса");
-                        let found = self
-                            .store
-                            .snapshot
-                            .as_ref()
-                            .and_then(|s| s.char.inventory.iter().find(|i| i.uid == drag.uid))
-                            .map(|i| (i.name.clone(), i.qty.unwrap_or(1).max(1)));
-                        let (name, max) = found.unwrap_or_else(|| (drag.uid.clone(), 1));
-                        self.drop_confirm = Some(DropPending {
-                            uid: drag.uid.clone(),
-                            name,
-                            from: drag.from,
-                            max,
-                            qty: max,
-                        });
-                    }
-                }
+                tracing::info!("dnd: конец drag вне зон → подтверждение выброса");
+                // Стак: max — сколько в стаке (1 — одиночный).
+                let found = self
+                    .store
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.char.inventory.iter().find(|i| i.uid == drag.uid))
+                    .map(|i| (i.name.clone(), i.qty.unwrap_or(1).max(1)));
+                let (name, max) = found.unwrap_or_else(|| (drag.uid.clone(), 1));
+                self.drop_confirm = Some(DropPending {
+                    uid: drag.uid.clone(),
+                    name,
+                    from: drag.from,
+                    max,
+                    qty: max,
+                });
                 self.bp_hold = None;
-                self.drop_hit = None;
                 cx.notify();
             } else {
                 self.drag_item = Some(drag);
@@ -1333,15 +1228,6 @@ impl Root {
     }
 
     /// R-dnd: слот dragged-предмета (для подсветки зон).
-    pub(crate) fn drag_slot_of(&self) -> Option<String> {
-        let uid = &self.drag_item.as_ref()?.uid;
-        self.store
-            .snapshot
-            .as_ref()
-            .and_then(|s| s.char.inventory.iter().find(|i| &i.uid == uid))
-            .and_then(|i| i.slot.clone())
-    }
-
     /// R-dnd: окно подтверждения выброса (Dialog, как выход).
     pub(crate) fn drop_confirm_dialog(
         &mut self,

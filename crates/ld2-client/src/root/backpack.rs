@@ -16,6 +16,7 @@ use gpui::{
 };
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::Screen;
+use ld2_protocol::cmd::ItemMove;
 use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
@@ -465,7 +466,6 @@ impl Root {
                             from: DragSource::Bp,
                             slot_req: drag.slot_req.clone(),
                         });
-                        root.drop_hit = None;
                         root.popup_scrim_down = false;
                         root.bp_hold = Some(BpHold {
                             uid: drag.uid.clone(),
@@ -488,6 +488,8 @@ impl Root {
         // (ItemMove), на зоны — экипировка/снятие, вне зон —
         // подтверждение выброса (заказчик 2026-11-21).
         let order_len = order.len();
+        let order_drop = order.clone();
+        let this_drop = this.clone();
         let list = div()
             .id("ld2-bp-list")
             .flex()
@@ -519,6 +521,31 @@ impl Root {
                         root.bp_hold = Some(hold);
                         cx.notify();
                     }
+                });
+            })
+            // R-dnd: отпускание НАД списком — reorder (hover hit-test);
+            // отпускание на подложке окна ловит карточка (on_drop).
+            .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
+                this_drop.update(cx, |root, cx| {
+                    if matches!(drag.from, DragSource::Bp) {
+                        if let Some(hold) = root.bp_hold.take() {
+                            if hold.index != hold.target {
+                                if let Some(target_uid) = order_drop.get(hold.target) {
+                                    tracing::info!("dnd: drop в списке → reorder");
+                                    let cmd = ItemMove {
+                                        item_uid: hold.uid.clone(),
+                                        target_uid: target_uid.clone(),
+                                    };
+                                    if let Err(e) = root.transport.send(&cmd) {
+                                        root.store.notice = Some(format!("нет связи: {e}"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    root.drag_item = None;
+                    root.bp_hold = None;
+                    cx.notify();
                 });
             });
         // Горизонтальный простор внешней ауре свечения (кромка
