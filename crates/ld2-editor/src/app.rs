@@ -4,12 +4,15 @@
 //! Логика — в [`crate::project::EditorProject`] (без gpui, юнит-тесты);
 //! здесь только рендер и обработка ввода.
 
-use ely::forms::{Input, InputEvent, TextInput};
+use ely::forms::{Choice, Input, InputEvent, Select, TextInput};
 use gpui::{
-    div, prelude::*, px, rgb, uniform_list, Context, EmptyView, Entity, IntoElement, Render,
-    ScrollStrategy, SharedString, UniformListScrollHandle, Window,
+    div, prelude::*, px, rgb, uniform_list, Context, ElementId, EmptyView, Entity, IntoElement,
+    Render, ScrollStrategy, SharedString, UniformListScrollHandle, Window,
 };
-use ld2_content::EntityKind;
+use ld2_content::{
+    EntityKind, EFFECT_KINDS, ITEM_ATTRS, ITEM_CLASSES, ITEM_PARAMS, ITEM_RARITIES, ITEM_SLOTS,
+    SPELL_SCHOOLS,
+};
 use serde_json::Value;
 
 use crate::map::{auto_layout, compass_dir, node_size, snap_cell, MapLayout};
@@ -220,11 +223,52 @@ pub struct EditorApp {
     // поля поиска
     search: Option<Entity<TextInput>>,
 
-    // форма предмета
+    // форма предмета (E6.2: структурные зоны без JSON)
+    item_id: Option<Entity<TextInput>>,
     item_name: Option<Entity<TextInput>>,
-    item_rarity: Option<Entity<TextInput>>,
     item_gold: Option<Entity<TextInput>>,
-    item_stats: Option<Entity<TextInput>>,
+    item_qty: Option<Entity<TextInput>>,
+    item_upgrade: Option<Entity<TextInput>>,
+    item_sockets: Option<Entity<TextInput>>,
+    item_rune_sockets: Option<Entity<TextInput>>,
+    item_hands: Option<Entity<TextInput>>,
+    item_cooldown: Option<Entity<TextInput>>,
+    // статы предмета (stats)
+    stat_dmg: Option<Entity<TextInput>>,
+    stat_armor: Option<Entity<TextInput>>,
+    stat_magic: Option<Entity<TextInput>>,
+    stat_heal: Option<Entity<TextInput>>,
+    stat_quality: Option<Entity<TextInput>>,
+    stat_damage: Option<Entity<TextInput>>,
+    stat_chance: Option<Entity<TextInput>>,
+    stat_charges: Option<Entity<TextInput>>,
+    stat_max: Option<Entity<TextInput>>,
+    stat_cost: Option<Entity<TextInput>>,
+    stat_glyph: Option<Entity<TextInput>>,
+    stat_spell: Option<Entity<TextInput>>,
+    stat_value: Option<Entity<TextInput>>,
+    // параметры stats.param и бонусы ADR-010
+    selected_param: Option<String>,
+    param_value: Option<Entity<TextInput>>,
+    selected_bonus: Option<usize>,
+    bonus_value: Option<Entity<TextInput>>,
+    // автобаффы stats.buff / stats.buff2
+    buff_value: Option<Entity<TextInput>>,
+    buff_duration: Option<Entity<TextInput>>,
+    buff_stacks: Option<Entity<TextInput>>,
+    buff2_value: Option<Entity<TextInput>>,
+    buff2_duration: Option<Entity<TextInput>>,
+    buff2_stacks: Option<Entity<TextInput>>,
+    // эффект stats.effect
+    effect_value: Option<Entity<TextInput>>,
+    effect_duration: Option<Entity<TextInput>>,
+    effect_period: Option<Entity<TextInput>>,
+    // требования requires
+    req_str: Option<Entity<TextInput>>,
+    req_dex: Option<Entity<TextInput>>,
+    req_vit: Option<Entity<TextInput>>,
+    req_int: Option<Entity<TextInput>>,
+    req_level: Option<Entity<TextInput>>,
 
     // форма локации
     loc_name: Option<Entity<TextInput>>,
@@ -374,10 +418,46 @@ impl EditorApp {
             map_drag_grab: (0.0, 0.0),
             locations_scroll: UniformListScrollHandle::new(),
             search: None,
+            item_id: None,
             item_name: None,
-            item_rarity: None,
             item_gold: None,
-            item_stats: None,
+            item_qty: None,
+            item_upgrade: None,
+            item_sockets: None,
+            item_rune_sockets: None,
+            item_hands: None,
+            item_cooldown: None,
+            stat_dmg: None,
+            stat_armor: None,
+            stat_magic: None,
+            stat_heal: None,
+            stat_quality: None,
+            stat_damage: None,
+            stat_chance: None,
+            stat_charges: None,
+            stat_max: None,
+            stat_cost: None,
+            stat_glyph: None,
+            stat_spell: None,
+            stat_value: None,
+            selected_param: None,
+            param_value: None,
+            selected_bonus: None,
+            bonus_value: None,
+            buff_value: None,
+            buff_duration: None,
+            buff_stacks: None,
+            buff2_value: None,
+            buff2_duration: None,
+            buff2_stacks: None,
+            effect_value: None,
+            effect_duration: None,
+            effect_period: None,
+            req_str: None,
+            req_dex: None,
+            req_vit: None,
+            req_int: None,
+            req_level: None,
             loc_name: None,
             loc_text: None,
             loc_flags: None,
@@ -556,10 +636,44 @@ impl EditorApp {
         let mk = |window: &mut Window, cx: &mut Context<'_, Self>, placeholder: &'static str| {
             cx.new(|cx| TextInput::new(window, cx).placeholder(placeholder))
         };
+        self.item_id = Some(mk(window, cx, "id предмета"));
         self.item_name = Some(mk(window, cx, "Имя предмета"));
-        self.item_rarity = Some(mk(window, cx, "rarity"));
-        self.item_gold = Some(mk(window, cx, "gold_value (целое)"));
-        self.item_stats = Some(mk(window, cx, "stats — JSON"));
+        self.item_gold = Some(mk(window, cx, "Цена (золото)"));
+        self.item_qty = Some(mk(window, cx, "Количество в стаке"));
+        self.item_upgrade = Some(mk(window, cx, "Предел заточки (upgrade)"));
+        self.item_sockets = Some(mk(window, cx, "Сокетов всего"));
+        self.item_rune_sockets = Some(mk(window, cx, "Из них под руны"));
+        self.item_hands = Some(mk(window, cx, "Рук (1/2)"));
+        self.item_cooldown = Some(mk(window, cx, "Кулдаун, с (1.0)"));
+        self.stat_dmg = Some(mk(window, cx, "урон «6..9»"));
+        self.stat_armor = Some(mk(window, cx, "броня"));
+        self.stat_magic = Some(mk(window, cx, "магия"));
+        self.stat_heal = Some(mk(window, cx, "лечение"));
+        self.stat_quality = Some(mk(window, cx, "качество (-5/0)"));
+        self.stat_damage = Some(mk(window, cx, "урон заклинания"));
+        self.stat_chance = Some(mk(window, cx, "шанс"));
+        self.stat_charges = Some(mk(window, cx, "заряды"));
+        self.stat_max = Some(mk(window, cx, "макс. зарядов"));
+        self.stat_cost = Some(mk(window, cx, "стоимость каста"));
+        self.stat_glyph = Some(mk(window, cx, "глиф руны"));
+        self.stat_spell = Some(mk(window, cx, "id заклинания"));
+        self.stat_value = Some(mk(window, cx, "значение (attr)"));
+        self.param_value = Some(mk(window, cx, "значение параметра"));
+        self.bonus_value = Some(mk(window, cx, "значение бонуса"));
+        self.buff_value = Some(mk(window, cx, "значение"));
+        self.buff_duration = Some(mk(window, cx, "секунд"));
+        self.buff_stacks = Some(mk(window, cx, "стаков"));
+        self.buff2_value = Some(mk(window, cx, "значение"));
+        self.buff2_duration = Some(mk(window, cx, "секунд"));
+        self.buff2_stacks = Some(mk(window, cx, "стаков"));
+        self.effect_value = Some(mk(window, cx, "урон эффекта"));
+        self.effect_duration = Some(mk(window, cx, "секунд"));
+        self.effect_period = Some(mk(window, cx, "период, с"));
+        self.req_str = Some(mk(window, cx, "str"));
+        self.req_dex = Some(mk(window, cx, "dex"));
+        self.req_vit = Some(mk(window, cx, "vit"));
+        self.req_int = Some(mk(window, cx, "int"));
+        self.req_level = Some(mk(window, cx, "уровень"));
         self.loc_name = Some(mk(window, cx, "Имя локации"));
         self.loc_text = Some(mk(window, cx, "Текст/описание (E3: одна строка)"));
         self.loc_flags = Some(mk(window, cx, "Флаги через запятую: safe, pvp"));
@@ -784,16 +898,7 @@ impl EditorApp {
         })
         .detach();
 
-        let submit_groups: [(&[&Option<Entity<TextInput>>], ApplyKind); 4] = [
-            (
-                &[
-                    &self.item_name,
-                    &self.item_rarity,
-                    &self.item_gold,
-                    &self.item_stats,
-                ],
-                ApplyKind::Item,
-            ),
+        let submit_groups: [(&[&Option<Entity<TextInput>>], ApplyKind); 3] = [
             (
                 &[
                     &self.loc_name,
@@ -907,6 +1012,88 @@ impl EditorApp {
             }
         }
 
+        // E6.2: Enter в полях структурных зон предмета.
+        let item_submit_groups: [(ApplyKind, Vec<Option<Entity<TextInput>>>); 8] = [
+            (
+                ApplyKind::Item,
+                vec![
+                    self.item_id.clone(),
+                    self.item_name.clone(),
+                    self.item_gold.clone(),
+                    self.item_qty.clone(),
+                    self.item_upgrade.clone(),
+                    self.item_sockets.clone(),
+                    self.item_rune_sockets.clone(),
+                    self.item_hands.clone(),
+                    self.item_cooldown.clone(),
+                ],
+            ),
+            (
+                ApplyKind::ItemStats,
+                vec![
+                    self.stat_dmg.clone(),
+                    self.stat_armor.clone(),
+                    self.stat_magic.clone(),
+                    self.stat_heal.clone(),
+                    self.stat_quality.clone(),
+                    self.stat_damage.clone(),
+                    self.stat_chance.clone(),
+                    self.stat_charges.clone(),
+                    self.stat_max.clone(),
+                    self.stat_cost.clone(),
+                    self.stat_glyph.clone(),
+                    self.stat_spell.clone(),
+                    self.stat_value.clone(),
+                ],
+            ),
+            (ApplyKind::ItemParam, vec![self.param_value.clone()]),
+            (
+                ApplyKind::ItemBuff,
+                vec![
+                    self.buff_value.clone(),
+                    self.buff_duration.clone(),
+                    self.buff_stacks.clone(),
+                ],
+            ),
+            (
+                ApplyKind::ItemBuff2,
+                vec![
+                    self.buff2_value.clone(),
+                    self.buff2_duration.clone(),
+                    self.buff2_stacks.clone(),
+                ],
+            ),
+            (
+                ApplyKind::ItemEffect,
+                vec![
+                    self.effect_value.clone(),
+                    self.effect_duration.clone(),
+                    self.effect_period.clone(),
+                ],
+            ),
+            (ApplyKind::ItemBonus, vec![self.bonus_value.clone()]),
+            (
+                ApplyKind::ItemRequires,
+                vec![
+                    self.req_str.clone(),
+                    self.req_dex.clone(),
+                    self.req_vit.clone(),
+                    self.req_int.clone(),
+                    self.req_level.clone(),
+                ],
+            ),
+        ];
+        for (kind, inputs) in item_submit_groups {
+            for input in inputs.into_iter().flatten() {
+                cx.subscribe(&input, move |this, _, event: &InputEvent, cx| {
+                    if *event == InputEvent::Submit {
+                        this.apply(kind, cx);
+                    }
+                })
+                .detach();
+            }
+        }
+
         // E5: поиск в пикере-ссылке.
         cx.subscribe(&picker_search, |this, field, event: &InputEvent, cx| {
             if *event == InputEvent::Changed {
@@ -941,6 +1128,8 @@ impl EditorApp {
 
     fn select_item(&mut self, index: usize, cx: &mut Context<'_, Self>) {
         self.selected_item = Some(index);
+        self.selected_param = None;
+        self.selected_bonus = None;
         self.refresh_item_fields(cx);
         if let Some(item) = self
             .project
@@ -1020,24 +1209,126 @@ impl EditorApp {
     // ─── перечитывание полей ─────────────────────────────────────────────
 
     fn refresh_item_fields(&mut self, cx: &mut Context<'_, Self>) {
+        self.refresh_item_zone_fields(cx);
+    }
+
+    /// Перечитать структурные зоны предмета (основное, статы, баффы, …).
+    fn refresh_item_zone_fields(&mut self, cx: &mut Context<'_, Self>) {
         let Some(index) = self.selected_item else {
             return;
         };
         let Some(item) = self
             .project
             .as_ref()
-            .and_then(|p| p.content().items.get(index))
+            .and_then(|project| project.content().items.get(index))
             .cloned()
         else {
             self.selected_item = None;
             return;
         };
-        Self::put_text(&self.item_name, item.name, cx);
-        Self::put_text(&self.item_rarity, item.rarity, cx);
+        Self::put_text(&self.item_id, item.id.clone(), cx);
+        Self::put_text(&self.item_name, item.name.clone(), cx);
         Self::put_text(&self.item_gold, item.gold_value.to_string(), cx);
         Self::put_text(
-            &self.item_stats,
-            serde_json::to_string_pretty(&item.stats).unwrap_or_default(),
+            &self.item_qty,
+            item.qty.map(|qty| qty.to_string()).unwrap_or_default(),
+            cx,
+        );
+        Self::put_text(&self.item_upgrade, item.upgrade.to_string(), cx);
+        Self::put_text(&self.item_sockets, item.sockets.to_string(), cx);
+        Self::put_text(
+            &self.item_rune_sockets,
+            item.rune_sockets
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            cx,
+        );
+        Self::put_text(
+            &self.item_hands,
+            item.hands
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            cx,
+        );
+        Self::put_text(
+            &self.item_cooldown,
+            item.cooldown_s.map(format_number).unwrap_or_default(),
+            cx,
+        );
+
+        let stat = |key: &str| item.stats.get(key).map(text_value).unwrap_or_default();
+        Self::put_text(&self.stat_dmg, stat("dmg"), cx);
+        Self::put_text(&self.stat_armor, stat("armor"), cx);
+        Self::put_text(&self.stat_magic, stat("magic"), cx);
+        Self::put_text(&self.stat_heal, stat("heal"), cx);
+        Self::put_text(&self.stat_quality, stat("quality"), cx);
+        Self::put_text(&self.stat_damage, stat("damage"), cx);
+        Self::put_text(&self.stat_chance, stat("chance"), cx);
+        Self::put_text(&self.stat_charges, stat("charges"), cx);
+        Self::put_text(&self.stat_max, stat("max"), cx);
+        Self::put_text(&self.stat_cost, stat("cost"), cx);
+        Self::put_text(&self.stat_glyph, stat("glyph"), cx);
+        Self::put_text(&self.stat_spell, stat("spell"), cx);
+        Self::put_text(&self.stat_value, stat("value"), cx);
+
+        let param_text = self
+            .selected_param
+            .as_ref()
+            .and_then(|param| item.stats.get("param").and_then(|params| params.get(param)))
+            .map(text_value)
+            .unwrap_or_default();
+        Self::put_text(&self.param_value, param_text, cx);
+
+        let buff = |slot: &str, key: &str| {
+            item.stats
+                .get(slot)
+                .and_then(|buff| buff.get(key))
+                .map(text_value)
+                .unwrap_or_default()
+        };
+        Self::put_text(&self.buff_value, buff("buff", "value"), cx);
+        Self::put_text(&self.buff_duration, buff("buff", "duration_s"), cx);
+        Self::put_text(&self.buff_stacks, buff("buff", "max_stacks"), cx);
+        Self::put_text(&self.buff2_value, buff("buff2", "value"), cx);
+        Self::put_text(&self.buff2_duration, buff("buff2", "duration_s"), cx);
+        Self::put_text(&self.buff2_stacks, buff("buff2", "max_stacks"), cx);
+
+        let effect = |key: &str| {
+            item.stats
+                .get("effect")
+                .and_then(|effect| effect.get(key))
+                .map(text_value)
+                .unwrap_or_default()
+        };
+        Self::put_text(&self.effect_value, effect("value"), cx);
+        Self::put_text(&self.effect_duration, effect("duration_s"), cx);
+        Self::put_text(&self.effect_period, effect("period_s"), cx);
+
+        let bonus_text = self
+            .selected_bonus
+            .and_then(|bonus| item.bonuses.get(bonus))
+            .map(|bonus| bonus.value.to_string())
+            .unwrap_or_default();
+        Self::put_text(&self.bonus_value, bonus_text, cx);
+
+        let attr = |name: &str| {
+            item.requires
+                .as_ref()
+                .and_then(|requires| requires.attr.get(name))
+                .map(|value| value.to_string())
+                .unwrap_or_default()
+        };
+        Self::put_text(&self.req_str, attr("str"), cx);
+        Self::put_text(&self.req_dex, attr("dex"), cx);
+        Self::put_text(&self.req_vit, attr("vit"), cx);
+        Self::put_text(&self.req_int, attr("int"), cx);
+        Self::put_text(
+            &self.req_level,
+            item.requires
+                .as_ref()
+                .and_then(|requires| requires.level)
+                .map(|level| level.to_string())
+                .unwrap_or_default(),
             cx,
         );
     }
@@ -1143,6 +1434,13 @@ impl EditorApp {
     fn apply(&mut self, kind: ApplyKind, cx: &mut Context<'_, Self>) {
         match kind {
             ApplyKind::Item => self.apply_item(cx),
+            ApplyKind::ItemStats => self.apply_item_stats(cx),
+            ApplyKind::ItemParam => self.apply_item_param(cx),
+            ApplyKind::ItemBuff => self.apply_item_buff("buff", cx),
+            ApplyKind::ItemBuff2 => self.apply_item_buff("buff2", cx),
+            ApplyKind::ItemEffect => self.apply_item_effect(cx),
+            ApplyKind::ItemBonus => self.apply_item_bonus(cx),
+            ApplyKind::ItemRequires => self.apply_item_requires(cx),
             ApplyKind::Location => self.apply_location(cx),
             ApplyKind::Exit => self.apply_exit(cx),
             ApplyKind::Entity => self.apply_entity(cx),
@@ -1169,19 +1467,319 @@ impl EditorApp {
             cx.notify();
             return;
         };
-        let name = self.field_text(&self.item_name, cx);
-        let rarity = self.field_text(&self.item_rarity, cx);
-        let gold_text = self.field_text(&self.item_gold, cx);
-        let stats_text = self.field_text(&self.item_stats, cx);
-        let Ok(gold) = gold_text.trim().parse::<i64>() else {
-            self.status = format!("gold_value: нужно целое число (получено «{gold_text}»)");
+        let id = self.field_text(&self.item_id, cx).trim().to_string();
+        if id.is_empty() {
+            self.status = "id предмета не может быть пустым".into();
+            cx.notify();
+            return;
+        }
+        let name = self.field_text(&self.item_name, cx).trim().to_string();
+        if name.is_empty() {
+            self.status = "имя предмета не может быть пустым".into();
+            cx.notify();
+            return;
+        }
+        let parse_int = |label: &str, text: String| -> Result<Option<i64>, String> {
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            text.parse::<i64>()
+                .map(Some)
+                .map_err(|_| format!("{label}: нужно целое число (получено «{text}»)"))
+        };
+        let parse_float = |label: &str, text: String| -> Result<Option<f64>, String> {
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            text.parse::<f64>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .map(Some)
+                .ok_or_else(|| format!("{label}: нужно число (получено «{text}»)"))
+        };
+        let mut fields: Vec<(&str, Option<Value>)> = vec![
+            ("id", Some(Value::from(id))),
+            ("name", Some(Value::from(name))),
+        ];
+        for (key, label, text) in [
+            ("gold_value", "Цена", self.field_text(&self.item_gold, cx)),
+            ("qty", "Количество", self.field_text(&self.item_qty, cx)),
+            (
+                "upgrade",
+                "Предел заточки",
+                self.field_text(&self.item_upgrade, cx),
+            ),
+            (
+                "sockets",
+                "Сокетов",
+                self.field_text(&self.item_sockets, cx),
+            ),
+            (
+                "rune_sockets",
+                "Из них под руны",
+                self.field_text(&self.item_rune_sockets, cx),
+            ),
+            ("hands", "Рук", self.field_text(&self.item_hands, cx)),
+        ] {
+            match parse_int(label, text) {
+                Ok(value) => fields.push((key, value.map(Value::from))),
+                Err(err) => {
+                    self.status = err;
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        match parse_float("Кулдаун", self.field_text(&self.item_cooldown, cx)) {
+            Ok(value) => fields.push(("cooldown_s", value.map(Value::from))),
+            Err(err) => {
+                self.status = err;
+                cx.notify();
+                return;
+            }
+        }
+        let Some(project) = self.project.as_mut() else {
+            return;
+        };
+        let mut error = None;
+        for (key, value) in fields {
+            if let Err(err) = project.set_item_field(index, key, value) {
+                error = Some(err.to_string());
+                break;
+            }
+        }
+        self.status = error.unwrap_or_else(|| "основное: применено (Ctrl+S — сохранить)".into());
+        self.refresh_item_zone_fields(cx);
+        cx.notify();
+    }
+
+    /// Применить статы `stats` (текстовые/числовые поля; Select — сразу).
+    fn apply_item_stats(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            self.status = "не выбран предмет".into();
             cx.notify();
             return;
         };
-        let stats: Value = match serde_json::from_str(&stats_text) {
-            Ok(value @ Value::Object(_)) => value,
+        let mut edits: Vec<(&str, Option<Value>)> = Vec::new();
+        for (key, input) in [
+            ("dmg", &self.stat_dmg),
+            ("glyph", &self.stat_glyph),
+            ("spell", &self.stat_spell),
+        ] {
+            let text = self.field_text(input, cx).trim().to_string();
+            edits.push((
+                key,
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(Value::from(text))
+                },
+            ));
+        }
+        for (key, label, input) in [
+            ("armor", "Броня", &self.stat_armor),
+            ("magic", "Магия", &self.stat_magic),
+            ("heal", "Лечение", &self.stat_heal),
+            ("quality", "Качество", &self.stat_quality),
+            ("damage", "Урон заклинания", &self.stat_damage),
+            ("charges", "Заряды", &self.stat_charges),
+            ("max", "Макс. зарядов", &self.stat_max),
+            ("cost", "Стоимость каста", &self.stat_cost),
+            ("value", "Значение", &self.stat_value),
+        ] {
+            let text = self.field_text(input, cx).trim().to_string();
+            if text.is_empty() {
+                edits.push((key, None));
+                continue;
+            }
+            match text.parse::<i64>() {
+                Ok(value) => edits.push((key, Some(Value::from(value)))),
+                Err(_) => {
+                    self.status = format!("{label}: нужно целое число (получено «{text}»)");
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        let chance = self.field_text(&self.stat_chance, cx).trim().to_string();
+        if chance.is_empty() {
+            edits.push(("chance", None));
+        } else {
+            match chance.parse::<f64>() {
+                Ok(value) if value.is_finite() => edits.push(("chance", Some(number_value(value)))),
+                _ => {
+                    self.status = format!("Шанс: нужно число (получено «{chance}»)");
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        let Some(project) = self.project.as_mut() else {
+            return;
+        };
+        let mut error = None;
+        for (key, value) in edits {
+            if let Err(err) = project.set_item_stat(index, key, value) {
+                error = Some(err.to_string());
+                break;
+            }
+        }
+        self.status = error.unwrap_or_else(|| "статы: применены".into());
+        self.refresh_item_zone_fields(cx);
+        cx.notify();
+    }
+
+    /// Применить значение выбранного параметра `stats.param.<id>`.
+    fn apply_item_param(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let Some(param) = self.selected_param.clone() else {
+            self.status = "не выбран параметр".into();
+            cx.notify();
+            return;
+        };
+        let text = self.field_text(&self.param_value, cx).trim().to_string();
+        let Some(project) = self.project.as_mut() else {
+            return;
+        };
+        let result = if text.is_empty() {
+            project.set_item_param(index, &param, None)
+        } else {
+            match text.parse::<f64>().ok().filter(|value| value.is_finite()) {
+                Some(number) => {
+                    let current = project
+                        .content()
+                        .items
+                        .get(index)
+                        .and_then(|item| item.stats.get("param"))
+                        .and_then(|params| params.get(&param))
+                        .cloned();
+                    let pct = matches!(&current, Some(Value::Object(map))
+                        if map.get("pct").and_then(Value::as_bool).unwrap_or(false));
+                    let value = if pct {
+                        serde_json::json!({"value": number_value(number), "pct": true})
+                    } else {
+                        number_value(number)
+                    };
+                    project.set_item_param(index, &param, Some(value))
+                }
+                None => {
+                    self.status = format!("параметр {param}: нужно число (получено «{text}»)");
+                    cx.notify();
+                    return;
+                }
+            }
+        };
+        self.item_apply_result(result, "параметр: применён", cx);
+    }
+
+    /// Применить автобафф `stats.buff`/`stats.buff2`.
+    fn apply_item_buff(&mut self, slot: &str, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let (value_input, duration_input, stacks_input) = if slot == "buff" {
+            (&self.buff_value, &self.buff_duration, &self.buff_stacks)
+        } else {
+            (&self.buff2_value, &self.buff2_duration, &self.buff2_stacks)
+        };
+        let value_text = self.field_text(value_input, cx).trim().to_string();
+        let duration_text = self.field_text(duration_input, cx).trim().to_string();
+        let stacks_text = self.field_text(stacks_input, cx).trim().to_string();
+        let Some(project) = self.project.as_mut() else {
+            return;
+        };
+        if value_text.is_empty() && duration_text.is_empty() && stacks_text.is_empty() {
+            let result = project.remove_item_buff(index, slot);
+            self.item_apply_result(result, "автобафф удалён", cx);
+            return;
+        }
+        let value = match value_text.parse::<f64>() {
+            Ok(value) if value.is_finite() => Some(number_value(value)),
+            _ if value_text.is_empty() => None,
             _ => {
-                self.status = "stats: ожидается JSON-объект".into();
+                self.status = format!("бафф {slot}: значение — число");
+                cx.notify();
+                return;
+            }
+        };
+        let duration = match duration_text.parse::<f64>() {
+            Ok(value) if value.is_finite() => Some(number_value(value)),
+            _ if duration_text.is_empty() => None,
+            _ => {
+                self.status = format!("бафф {slot}: длительность — число");
+                cx.notify();
+                return;
+            }
+        };
+        let stacks = match stacks_text.parse::<i64>() {
+            Ok(value) => Some(Value::from(value)),
+            Err(_) if stacks_text.is_empty() => None,
+            Err(_) => {
+                self.status = format!("бафф {slot}: стаки — целое число");
+                cx.notify();
+                return;
+            }
+        };
+        let mut error = None;
+        for (key, value) in [
+            ("value", value),
+            ("duration_s", duration),
+            ("max_stacks", stacks),
+        ] {
+            if let Err(err) = project.set_item_buff_field(index, slot, key, value) {
+                error = Some(err.to_string());
+                break;
+            }
+        }
+        self.status = error.unwrap_or_else(|| "автобафф: применён".into());
+        self.refresh_item_zone_fields(cx);
+        cx.notify();
+    }
+
+    /// Применить эффект `stats.effect` (вид выбирается Select).
+    fn apply_item_effect(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let parse_optional = |label: &str, text: String| -> Result<Option<Value>, String> {
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            text.parse::<f64>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .map(|value| Some(number_value(value)))
+                .ok_or_else(|| format!("{label}: нужно число (получено «{text}»)"))
+        };
+        let value = match parse_optional("Урон эффекта", self.field_text(&self.effect_value, cx))
+        {
+            Ok(value) => value,
+            Err(err) => {
+                self.status = err;
+                cx.notify();
+                return;
+            }
+        };
+        let duration =
+            match parse_optional("Длительность", self.field_text(&self.effect_duration, cx))
+            {
+                Ok(value) => value,
+                Err(err) => {
+                    self.status = err;
+                    cx.notify();
+                    return;
+                }
+            };
+        let period = match parse_optional("Период", self.field_text(&self.effect_period, cx))
+        {
+            Ok(value) => value,
+            Err(err) => {
+                self.status = err;
                 cx.notify();
                 return;
             }
@@ -1189,18 +1787,127 @@ impl EditorApp {
         let Some(project) = self.project.as_mut() else {
             return;
         };
-        match project.set_item_fields(
-            index,
-            vec![
-                ("name", Value::from(name)),
-                ("rarity", Value::from(rarity)),
-                ("gold_value", Value::from(gold)),
-                ("stats", stats),
-            ],
-        ) {
-            Ok(()) => self.status = "предмет применён (Ctrl+S — сохранить)".into(),
-            Err(err) => self.status = err.to_string(),
+        let mut error = None;
+        for (key, value) in [
+            ("value", value),
+            ("duration_s", duration),
+            ("period_s", period),
+        ] {
+            let Some(value) = value else {
+                if let Err(err) = project.set_item_effect_field(index, key, None) {
+                    error = Some(err.to_string());
+                }
+                continue;
+            };
+            if let Err(err) = project.set_item_effect_field(index, key, Some(value)) {
+                error = Some(err.to_string());
+                break;
+            }
         }
+        self.status = error.unwrap_or_else(|| "эффект: применён".into());
+        self.refresh_item_zone_fields(cx);
+        cx.notify();
+    }
+
+    /// Применить значение выбранного бонуса (ADR-010).
+    fn apply_item_bonus(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let Some(bonus_index) = self.selected_bonus else {
+            self.status = "не выбран бонус".into();
+            cx.notify();
+            return;
+        };
+        let text = self.field_text(&self.bonus_value, cx).trim().to_string();
+        let Some(project) = self.project.as_mut() else {
+            return;
+        };
+        match text.parse::<i64>() {
+            Ok(value) => {
+                let result = project.set_item_bonus_field(
+                    index,
+                    bonus_index,
+                    "value",
+                    Some(Value::from(value)),
+                );
+                self.item_apply_result(result, "бонус: применён", cx);
+            }
+            Err(_) => {
+                self.status = format!("бонус: значение — целое число (получено «{text}»)");
+                cx.notify();
+            }
+        }
+    }
+
+    /// Применить требования `requires` (атрибуты и уровень).
+    fn apply_item_requires(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let mut attr_values: Vec<(&str, &str, &Option<Entity<TextInput>>)> = vec![
+            ("str", "str", &self.req_str),
+            ("dex", "dex", &self.req_dex),
+            ("vit", "vit", &self.req_vit),
+            ("int", "int", &self.req_int),
+        ];
+        let mut values: Vec<(&str, Option<Value>)> = Vec::new();
+        for (attr, label, input) in attr_values.drain(..) {
+            let text = self.field_text(input, cx).trim().to_string();
+            if text.is_empty() {
+                values.push((attr, None));
+                continue;
+            }
+            match text.parse::<i64>() {
+                Ok(value) => values.push((attr, Some(Value::from(value)))),
+                Err(_) => {
+                    self.status = format!("requires.{label}: нужно целое число");
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        let level_text = self.field_text(&self.req_level, cx).trim().to_string();
+        let Some(project) = self.project.as_mut() else {
+            return;
+        };
+        let mut error = None;
+        for (attr, value) in values {
+            if let Err(err) = project.set_item_requires_attr(index, attr, value) {
+                error = Some(err.to_string());
+                break;
+            }
+        }
+        if error.is_none() {
+            let level = match level_text.parse::<i64>() {
+                Ok(value) => Some(Value::from(value)),
+                Err(_) if level_text.is_empty() => None,
+                Err(_) => {
+                    self.status = "requires.level: нужно целое число".into();
+                    cx.notify();
+                    return;
+                }
+            };
+            if let Err(err) = project.set_item_requires_field(index, "level", level) {
+                error = Some(err.to_string());
+            }
+        }
+        self.status = error.unwrap_or_else(|| "требования: применены".into());
+        self.refresh_item_zone_fields(cx);
+        cx.notify();
+    }
+
+    fn item_apply_result(
+        &mut self,
+        result: Result<(), crate::project::ProjectError>,
+        ok: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.status = match result {
+            Ok(()) => ok.to_string(),
+            Err(err) => err.to_string(),
+        };
+        self.refresh_item_zone_fields(cx);
         cx.notify();
     }
 
@@ -5140,9 +5847,20 @@ impl EditorApp {
                     ))
                     .child(
                         div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(MUTED))
-                            .child(format!("{count} предметов")),
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(MUTED))
+                                    .child(format!("{count} предметов")),
+                            )
+                            .child(
+                                self.button("btn-add-item", "+ предмет").on_click(
+                                    cx.listener(|this, _, _, cx| this.add_item_click(cx)),
+                                ),
+                            ),
                     ),
             )
             .child(list)
@@ -5334,6 +6052,509 @@ impl EditorApp {
         self.apply(kind, cx);
     }
 
+    // ─── E6.2: структурный редактор предмета ─────────────────────────────
+
+    fn item_set_select(
+        &mut self,
+        field: &'static str,
+        value: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_field(index, field, value.map(Value::String))
+        };
+        self.item_apply_result(result, "выбор применён", cx);
+    }
+
+    fn item_set_stat_select(
+        &mut self,
+        stat: &'static str,
+        value: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_stat(index, stat, value.map(Value::String))
+        };
+        self.item_apply_result(result, "характеристика применена", cx);
+    }
+
+    fn item_set_buff_select(
+        &mut self,
+        slot: &'static str,
+        key: &'static str,
+        value: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_buff_field(index, slot, key, value.map(Value::String))
+        };
+        self.item_apply_result(result, "бафф применён", cx);
+    }
+
+    fn item_set_effect_kind(&mut self, value: Option<String>, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_effect_field(index, "kind", value.map(Value::String))
+        };
+        self.item_apply_result(result, "вид эффекта применён", cx);
+    }
+
+    fn item_set_bonus_select(
+        &mut self,
+        key: &'static str,
+        value: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(index), Some(bonus)) = (self.selected_item, self.selected_bonus) else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_bonus_field(index, bonus, key, value.map(Value::String))
+        };
+        self.item_apply_result(result, "бонус применён", cx);
+    }
+
+    fn item_set_requires_profession(&mut self, value: Option<String>, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_requires_field(index, "profession", value.map(Value::String))
+        };
+        self.item_apply_result(result, "требование применено", cx);
+    }
+
+    fn item_toggle_param_pct(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(index), Some(param)) = (self.selected_item, self.selected_param.clone()) else {
+            self.status = "параметр не выбран".into();
+            cx.notify();
+            return;
+        };
+        let current = self
+            .project
+            .as_ref()
+            .and_then(|project| project.content().items.get(index))
+            .and_then(|item| item.stats.get("param"))
+            .and_then(|params| params.get(&param))
+            .cloned();
+        let (value, to_pct) = match current {
+            Some(Value::Object(map)) => (
+                map.get("value").and_then(Value::as_i64).unwrap_or(1),
+                !map.get("pct").and_then(Value::as_bool).unwrap_or(false),
+            ),
+            Some(value) => (value.as_i64().unwrap_or(1), true),
+            None => (1, true),
+        };
+        let value = if to_pct {
+            serde_json::json!({"value": value, "pct": true})
+        } else {
+            Value::from(value)
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_param(index, &param, Some(value))
+        };
+        self.item_apply_result(result, "pct параметра переключён", cx);
+    }
+
+    fn item_toggle_buff_pct(&mut self, slot: &'static str, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let enabled = self
+            .project
+            .as_ref()
+            .and_then(|project| project.content().items.get(index))
+            .and_then(|item| item.stats.get(slot))
+            .and_then(|buff| buff.get("pct"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let value = if enabled {
+            None
+        } else {
+            Some(Value::Bool(true))
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_buff_field(index, slot, "pct", value)
+        };
+        self.item_apply_result(result, "pct баффа переключён", cx);
+    }
+
+    fn item_toggle_bonus_pct(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(index), Some(bonus)) = (self.selected_item, self.selected_bonus) else {
+            return;
+        };
+        let enabled = self
+            .project
+            .as_ref()
+            .and_then(|project| project.item_bonuses(index).get(bonus).cloned())
+            .and_then(|bonus| bonus.get("pct").and_then(Value::as_bool))
+            .unwrap_or(false);
+        let value = if enabled {
+            None
+        } else {
+            Some(Value::Bool(true))
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_bonus_field(index, bonus, "pct", value)
+        };
+        self.item_apply_result(result, "pct бонуса переключён", cx);
+    }
+
+    fn item_add_buff(&mut self, slot: &'static str, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            let mut result = Ok(());
+            for (key, value) in [
+                ("param", Value::from(ITEM_PARAMS[0])),
+                ("value", Value::from(1)),
+                ("duration_s", Value::from(5)),
+                ("max_stacks", Value::from(1)),
+            ] {
+                if let Err(err) = project.set_item_buff_field(index, slot, key, Some(value)) {
+                    result = Err(err);
+                    break;
+                }
+            }
+            result
+        };
+        self.item_apply_result(result, "бафф добавлен", cx);
+    }
+
+    fn item_delete_buff(&mut self, slot: &'static str, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.remove_item_buff(index, slot)
+        };
+        self.item_apply_result(result, "бафф удалён", cx);
+    }
+
+    fn item_add_effect(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            let mut result = Ok(());
+            for (key, value) in [
+                ("kind", Value::from(EFFECT_KINDS[0])),
+                ("value", Value::from(1)),
+                ("duration_s", Value::from(3)),
+                ("period_s", Value::from(1)),
+            ] {
+                if let Err(err) = project.set_item_effect_field(index, key, Some(value)) {
+                    result = Err(err);
+                    break;
+                }
+            }
+            result
+        };
+        self.item_apply_result(result, "эффект добавлен", cx);
+    }
+
+    fn item_delete_effect(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.remove_item_effect(index)
+        };
+        self.item_apply_result(result, "эффект удалён", cx);
+    }
+
+    fn item_select_param(&mut self, param: String, cx: &mut Context<'_, Self>) {
+        self.selected_param = Some(param);
+        self.refresh_item_zone_fields(cx);
+        cx.notify();
+    }
+
+    fn item_add_param_click(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let added = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.add_item_param(index)
+        };
+        match added {
+            Ok(param) => {
+                self.selected_param = Some(param);
+                self.item_apply_result(Ok(()), "параметр добавлен", cx);
+            }
+            Err(err) => self.item_apply_result(Err(err), "", cx),
+        }
+    }
+
+    fn item_delete_param_click(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(index), Some(param)) = (self.selected_item, self.selected_param.clone()) else {
+            self.status = "параметр не выбран".into();
+            cx.notify();
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.set_item_param(index, &param, None)
+        };
+        if result.is_ok() {
+            self.selected_param = None;
+        }
+        self.item_apply_result(result, "параметр удалён", cx);
+    }
+
+    fn item_select_bonus(&mut self, bonus: usize, cx: &mut Context<'_, Self>) {
+        self.selected_bonus = Some(bonus);
+        self.refresh_item_zone_fields(cx);
+        cx.notify();
+    }
+
+    fn item_add_bonus_click(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let added = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.add_item_bonus(index)
+        };
+        match added {
+            Ok(bonus) => {
+                self.selected_bonus = Some(bonus);
+                self.item_apply_result(Ok(()), "бонус добавлен", cx);
+            }
+            Err(err) => self.item_apply_result(Err(err), "", cx),
+        }
+    }
+
+    fn item_delete_bonus_click(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(index), Some(bonus)) = (self.selected_item, self.selected_bonus) else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.remove_item_bonus(index, bonus)
+        };
+        if result.is_ok() {
+            self.selected_bonus = None;
+        }
+        self.item_apply_result(result, "бонус удалён", cx);
+    }
+
+    fn item_add_requires_click(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.add_item_requires(index)
+        };
+        self.item_apply_result(result, "требования добавлены", cx);
+    }
+
+    fn item_delete_requires_click(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.remove_item_requires(index)
+        };
+        self.item_apply_result(result, "требования удалены", cx);
+    }
+
+    fn add_item_click(&mut self, cx: &mut Context<'_, Self>) {
+        let added = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.add_item()
+        };
+        match added {
+            Ok(index) => {
+                self.selected_item = Some(index);
+                self.selected_param = None;
+                self.selected_bonus = None;
+                self.refresh_item_fields(cx);
+                self.status = "предмет добавлен".into();
+                cx.notify();
+            }
+            Err(err) => {
+                self.status = err.to_string();
+                cx.notify();
+            }
+        }
+    }
+
+    fn delete_item_click(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(index) = self.selected_item else {
+            self.status = "не выбран предмет".into();
+            cx.notify();
+            return;
+        };
+        let result = {
+            let Some(project) = self.project.as_mut() else {
+                return;
+            };
+            project.remove_item(index)
+        };
+        if result.is_ok() {
+            self.selected_item = None;
+            self.selected_param = None;
+            self.selected_bonus = None;
+        }
+        match result {
+            Ok(()) => self.status = "предмет удалён · Ctrl+S — сохранить".into(),
+            Err(err) => self.status = err.to_string(),
+        }
+        cx.notify();
+    }
+
+    fn group_box(&self, title: &'static str, body: impl IntoElement) -> impl IntoElement {
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .rounded_lg()
+            .border_1()
+            .border_color(rgb(BORDER))
+            .bg(rgb(PANEL))
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(ACCENT))
+                    .child(title),
+            )
+            .child(body)
+    }
+
+    fn field_cell(
+        &self,
+        label: &'static str,
+        input: &Option<Entity<TextInput>>,
+    ) -> impl IntoElement {
+        div().w(px(190.0)).child(self.text_field(label, input))
+    }
+
+    fn select_control<H>(
+        &self,
+        id: impl Into<ElementId>,
+        label: &'static str,
+        choices: Vec<Choice>,
+        selected: Option<String>,
+        handler: H,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement
+    where
+        H: Fn(&mut Self, Option<String>, &mut Context<'_, Self>) + 'static,
+    {
+        let mut select = Select::new(id, choices).placeholder("—");
+        if let Some(value) = selected {
+            select = select.selected(value);
+        }
+        div()
+            .w(px(190.0))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(MUTED))
+                    .child(label),
+            )
+            .child(
+                select.on_change(cx.listener(move |this, value: &SharedString, _, cx| {
+                    let value = value.to_string();
+                    let value = if value.is_empty() { None } else { Some(value) };
+                    handler(this, value, cx);
+                })),
+            )
+    }
+
+    fn chip(
+        &self,
+        id: impl Into<ElementId>,
+        label: &'static str,
+        active: bool,
+    ) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(if active { ACCENT } else { BORDER }))
+            .bg(rgb(if active { ACCENT } else { PANEL_ALT }))
+            .text_color(rgb(if active { 0x101010 } else { TEXT }))
+            .text_size(px(11.0))
+            .cursor_pointer()
+            .child(label)
+    }
+
     fn items_inspector(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let mut panel = div()
             .id("inspector-items")
@@ -5360,9 +6581,583 @@ impl EditorApp {
                     .child("Выберите предмет в списке."),
             );
         };
-        let Some(item) = project.content().items.get(index) else {
+        let Some(item) = project.content().items.get(index).cloned() else {
             return panel.child(div().text_color(rgb(ERR)).child("предмет исчез"));
         };
+        let can_undo = project.can_undo();
+        let can_redo = project.can_redo();
+        let param_keys = project.item_param_keys(index);
+        let bonuses = project.item_bonuses(index);
+        let mut types: Vec<String> = project
+            .content()
+            .items
+            .iter()
+            .map(|item| item.item_type.clone())
+            .collect();
+        types.sort();
+        types.dedup();
+        let skill_ids: Vec<String> = project
+            .content()
+            .skills
+            .iter()
+            .map(|skill| skill.id.clone())
+            .collect();
+        let profession_ids: Vec<String> = project
+            .content()
+            .professions
+            .iter()
+            .map(|profession| profession.id.clone())
+            .collect();
+        let type_choices: Vec<Choice> = types
+            .iter()
+            .map(|item_type| Choice::new(item_type.clone(), item_type.clone()))
+            .collect();
+        let skill_refs: Vec<&str> = skill_ids.iter().map(String::as_str).collect();
+        let profession_refs: Vec<&str> = profession_ids.iter().map(String::as_str).collect();
+        let skill_choices = choices_with_none(&skill_refs);
+        let profession_choices = choices_with_none(&profession_refs);
+
+        // ── основное ──
+        let mut main_row = div().flex().flex_wrap().gap_2();
+        main_row = main_row
+            .child(self.field_cell("id", &self.item_id))
+            .child(self.field_cell("Имя", &self.item_name))
+            .child(self.select_control(
+                "item-type",
+                "Тип",
+                type_choices,
+                Some(item.item_type.clone()),
+                |this, value, cx| this.item_set_select("type", value, cx),
+                cx,
+            ))
+            .child(self.select_control(
+                "item-rarity",
+                "Редкость",
+                choices(&ITEM_RARITIES),
+                Some(item.rarity.clone()),
+                |this, value, cx| this.item_set_select("rarity", value, cx),
+                cx,
+            ))
+            .child(self.select_control(
+                "item-slot",
+                "Слот",
+                choices_with_none(&ITEM_SLOTS),
+                item.slot.clone(),
+                |this, value, cx| this.item_set_select("slot", value, cx),
+                cx,
+            ))
+            .child(self.select_control(
+                "item-skill",
+                "Навык",
+                skill_choices.clone(),
+                item.skill.clone(),
+                |this, value, cx| this.item_set_select("skill", value, cx),
+                cx,
+            ))
+            .child(self.field_cell("Цена (золото)", &self.item_gold))
+            .child(self.field_cell("Количество", &self.item_qty))
+            .child(self.field_cell("Заточка (upgrade)", &self.item_upgrade))
+            .child(self.field_cell("Сокетов", &self.item_sockets))
+            .child(self.field_cell("Под руны", &self.item_rune_sockets))
+            .child(self.field_cell("Рук", &self.item_hands))
+            .child(self.field_cell("Кулдаун, с", &self.item_cooldown))
+            .child(
+                div()
+                    .flex()
+                    .items_end()
+                    .gap_2()
+                    .child(
+                        self.button("btn-apply-item", "Применить основное")
+                            .on_click(cx.listener(|this, _, _, cx| this.apply_item(cx))),
+                    )
+                    .child(
+                        self.button("btn-delete-item", "Удалить предмет")
+                            .on_click(cx.listener(|this, _, _, cx| this.delete_item_click(cx))),
+                    ),
+            );
+
+        // ── характеристики (stats) ──
+        let mut stats_row = div().flex().flex_wrap().gap_2();
+        stats_row = stats_row
+            .child(self.field_cell("Урон (dmg)", &self.stat_dmg))
+            .child(self.field_cell("Броня (armor)", &self.stat_armor))
+            .child(self.field_cell("Магия (magic)", &self.stat_magic))
+            .child(self.field_cell("Лечение (heal)", &self.stat_heal))
+            .child(self.field_cell("Качество (quality)", &self.stat_quality))
+            .child(self.field_cell("Урон (damage)", &self.stat_damage))
+            .child(self.field_cell("Шанс (chance)", &self.stat_chance))
+            .child(self.field_cell("Заряды (charges)", &self.stat_charges))
+            .child(self.field_cell("Макс. зарядов (max)", &self.stat_max))
+            .child(self.field_cell("Стоимость каста (cost)", &self.stat_cost))
+            .child(self.field_cell("Глиф (glyph)", &self.stat_glyph))
+            .child(self.field_cell("Заклинание (spell)", &self.stat_spell))
+            .child(self.field_cell("Значение (value)", &self.stat_value))
+            .child(
+                self.select_control(
+                    "stat-school",
+                    "Школа",
+                    choices(&SPELL_SCHOOLS),
+                    item.stats
+                        .get("school")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    |this, value, cx| this.item_set_stat_select("school", value, cx),
+                    cx,
+                ),
+            )
+            .child(
+                self.select_control(
+                    "stat-class",
+                    "Класс",
+                    choices(&ITEM_CLASSES),
+                    item.stats
+                        .get("class")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    |this, value, cx| this.item_set_stat_select("class", value, cx),
+                    cx,
+                ),
+            )
+            .child(
+                self.select_control(
+                    "stat-attr",
+                    "Атрибут",
+                    choices(&ITEM_ATTRS),
+                    item.stats
+                        .get("attr")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    |this, value, cx| this.item_set_stat_select("attr", value, cx),
+                    cx,
+                ),
+            )
+            .child(
+                div().flex().items_end().gap_2().child(
+                    self.button("btn-apply-stats", "Применить характеристики")
+                        .on_click(cx.listener(|this, _, _, cx| this.apply_item_stats(cx))),
+                ),
+            );
+
+        // ── параметры stats.param ──
+        let param_map = item
+            .stats
+            .get("param")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let selected_param = self
+            .selected_param
+            .clone()
+            .filter(|param| param_map.contains_key(param));
+        let param_pct = selected_param
+            .as_ref()
+            .and_then(|param| param_map.get(param))
+            .and_then(|value| value.get("pct"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let mut params_body = div().flex().flex_col().gap_1();
+        for (param, value) in param_map.iter() {
+            let selected = selected_param.as_deref() == Some(param.as_str());
+            let pct = value.get("pct").and_then(Value::as_bool).unwrap_or(false);
+            let shown = text_value(value);
+            let click_param = param.clone();
+            let row_id = SharedString::from(format!("item-param-{param}"));
+            params_body = params_body.child(
+                div()
+                    .id(row_id)
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .when(selected, |d| d.bg(rgb(PANEL_ALT)))
+                    .hover(|d| d.bg(rgb(PANEL_ALT)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.item_select_param(click_param.clone(), cx)
+                    }))
+                    .child(div().w(px(200.0)).text_size(px(12.0)).child(param.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(11.0))
+                            .text_color(rgb(MUTED))
+                            .child(shown),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(rgb(if pct { ACCENT } else { MUTED }))
+                            .child(if pct { "pct" } else { "" }),
+                    ),
+            );
+        }
+        if let Some(param) = &selected_param {
+            params_body =
+                params_body.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_end()
+                        .gap_2()
+                        .child(self.field_cell("Значение", &self.param_value))
+                        .child(
+                            self.chip(
+                                "chip-param-pct",
+                                if param_pct { "pct ✓" } else { "pct" },
+                                param_pct,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.item_toggle_param_pct(cx))),
+                        )
+                        .child(
+                            self.button("btn-apply-param", "Применить")
+                                .on_click(cx.listener(|this, _, _, cx| this.apply_item_param(cx))),
+                        )
+                        .child(self.button("btn-del-param", "Удалить").on_click(
+                            cx.listener(|this, _, _, cx| this.item_delete_param_click(cx)),
+                        ))
+                        .child(
+                            div()
+                                .text_size(px(10.0))
+                                .text_color(rgb(MUTED))
+                                .child(format!("param: {param}")),
+                        ),
+                );
+        } else {
+            params_body = params_body.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(MUTED))
+                    .child("Выберите параметр или добавьте новый."),
+            );
+        }
+        params_body = params_body.child(
+            self.button("btn-add-param", "+ параметр")
+                .on_click(cx.listener(|this, _, _, cx| this.item_add_param_click(cx))),
+        );
+
+        // ── автобаффы buff/buff2 ──
+        let mut buffs_body = div().flex().flex_col().gap_2();
+        for slot in ["buff", "buff2"] {
+            let current = item.stats.get(slot).and_then(Value::as_object).cloned();
+            let title = if slot == "buff" {
+                "Автобафф (buff)"
+            } else {
+                "Автобафф 2 (buff2)"
+            };
+            let mut block = div().flex().flex_col().gap_2().child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(MUTED))
+                    .child(title),
+            );
+            match current {
+                Some(map) => {
+                    let param = map
+                        .get("param")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let pct = map.get("pct").and_then(Value::as_bool).unwrap_or(false);
+                    let value_input = if slot == "buff" {
+                        &self.buff_value
+                    } else {
+                        &self.buff2_value
+                    };
+                    let duration_input = if slot == "buff" {
+                        &self.buff_duration
+                    } else {
+                        &self.buff2_duration
+                    };
+                    let stacks_input = if slot == "buff" {
+                        &self.buff_stacks
+                    } else {
+                        &self.buff2_stacks
+                    };
+                    let apply_button = if slot == "buff" {
+                        self.button("btn-apply-buff", "Применить").on_click(
+                            cx.listener(|this, _, _, cx| this.apply_item_buff("buff", cx)),
+                        )
+                    } else {
+                        self.button("btn-apply-buff2", "Применить").on_click(
+                            cx.listener(|this, _, _, cx| this.apply_item_buff("buff2", cx)),
+                        )
+                    };
+                    let delete_button = if slot == "buff" {
+                        self.button("btn-del-buff", "Удалить бафф").on_click(
+                            cx.listener(|this, _, _, cx| this.item_delete_buff("buff", cx)),
+                        )
+                    } else {
+                        self.button("btn-del-buff2", "Удалить бафф").on_click(
+                            cx.listener(|this, _, _, cx| this.item_delete_buff("buff2", cx)),
+                        )
+                    };
+                    block = block.child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_end()
+                            .gap_2()
+                            .child(self.select_control(
+                                SharedString::from(format!("select-buff-param-{slot}")),
+                                "Параметр",
+                                choices(&ITEM_PARAMS),
+                                Some(param),
+                                move |this, value, cx| {
+                                    this.item_set_buff_select(slot, "param", value, cx)
+                                },
+                                cx,
+                            ))
+                            .child(self.field_cell("Значение", value_input))
+                            .child(self.field_cell("Длительность, с", duration_input))
+                            .child(self.field_cell("Макс. стаков", stacks_input))
+                            .child(
+                                self.chip(
+                                    SharedString::from(format!("chip-buff-pct-{slot}")),
+                                    if pct { "pct ✓" } else { "pct" },
+                                    pct,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.item_toggle_buff_pct(slot, cx),
+                                )),
+                            )
+                            .child(apply_button)
+                            .child(delete_button),
+                    );
+                }
+                None => {
+                    let add_button = if slot == "buff" {
+                        self.button("btn-add-buff", "+ бафф")
+                            .on_click(cx.listener(|this, _, _, cx| this.item_add_buff("buff", cx)))
+                    } else {
+                        self.button("btn-add-buff2", "+ бафф 2")
+                            .on_click(cx.listener(|this, _, _, cx| this.item_add_buff("buff2", cx)))
+                    };
+                    block = block.child(add_button);
+                }
+            }
+            buffs_body = buffs_body.child(block);
+        }
+
+        // ── эффект stats.effect ──
+        let effect = item.stats.get("effect").and_then(Value::as_object).cloned();
+        let effect_body = match effect {
+            Some(map) => {
+                let kind = map
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                div().flex().flex_col().gap_2().child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_end()
+                        .gap_2()
+                        .child(self.select_control(
+                            "select-effect-kind",
+                            "Вид эффекта",
+                            choices(&EFFECT_KINDS),
+                            Some(kind),
+                            |this, value, cx| this.item_set_effect_kind(value, cx),
+                            cx,
+                        ))
+                        .child(self.field_cell("Урон эффекта", &self.effect_value))
+                        .child(self.field_cell("Длительность, с", &self.effect_duration))
+                        .child(self.field_cell("Период, с", &self.effect_period))
+                        .child(
+                            self.button("btn-apply-effect", "Применить")
+                                .on_click(cx.listener(|this, _, _, cx| this.apply_item_effect(cx))),
+                        )
+                        .child(
+                            self.button("btn-del-effect", "Удалить эффект").on_click(
+                                cx.listener(|this, _, _, cx| this.item_delete_effect(cx)),
+                            ),
+                        ),
+                )
+            }
+            None => div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(MUTED))
+                        .child("Эффект не задан."),
+                )
+                .child(
+                    self.button("btn-add-effect", "+ эффект")
+                        .on_click(cx.listener(|this, _, _, cx| this.item_add_effect(cx))),
+                ),
+        };
+
+        // ── бонусы ADR-010 ──
+        let mut bonus_body = div().flex().flex_col().gap_1();
+        for (bonus_index, bonus) in bonuses.iter().enumerate() {
+            let selected = self.selected_bonus == Some(bonus_index);
+            let kind = bonus
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let id = bonus
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let value = bonus.get("value").and_then(Value::as_i64).unwrap_or(0);
+            let pct = bonus.get("pct").and_then(Value::as_bool).unwrap_or(false);
+            bonus_body = bonus_body.child(
+                div()
+                    .id(SharedString::from(format!("item-bonus-{bonus_index}")))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .when(selected, |d| d.bg(rgb(PANEL_ALT)))
+                    .hover(|d| d.bg(rgb(PANEL_ALT)))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.item_select_bonus(bonus_index, cx)),
+                    )
+                    .child(
+                        div()
+                            .w(px(90.0))
+                            .text_size(px(11.0))
+                            .text_color(rgb(MUTED))
+                            .child(kind),
+                    )
+                    .child(div().w(px(220.0)).text_size(px(12.0)).child(id))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(11.0))
+                            .text_color(rgb(MUTED))
+                            .child(format!("{value}{}", if pct { "%" } else { "" })),
+                    ),
+            );
+        }
+        let selected_bonus_value = self
+            .selected_bonus
+            .and_then(|bonus| bonuses.get(bonus).cloned());
+        if let Some(bonus) = &selected_bonus_value {
+            let kind = bonus
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("attr")
+                .to_string();
+            let id = bonus
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let pct = bonus.get("pct").and_then(Value::as_bool).unwrap_or(false);
+            let id_choices: Vec<Choice> = match kind.as_str() {
+                "param" => choices(&ITEM_PARAMS),
+                "skill" => skill_choices.clone(),
+                _ => choices(&ITEM_ATTRS),
+            };
+            let delete_button = self
+                .button("btn-del-bonus", "Удалить бонус")
+                .on_click(cx.listener(|this, _, _, cx| this.item_delete_bonus_click(cx)));
+            bonus_body = bonus_body.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_end()
+                    .gap_2()
+                    .child(self.select_control(
+                        "select-bonus-kind",
+                        "Вид",
+                        choices(&["attr", "param", "skill"]),
+                        Some(kind),
+                        |this, value, cx| this.item_set_bonus_select("kind", value, cx),
+                        cx,
+                    ))
+                    .child(self.select_control(
+                        "select-bonus-id",
+                        "Идентификатор",
+                        id_choices,
+                        Some(id),
+                        |this, value, cx| this.item_set_bonus_select("id", value, cx),
+                        cx,
+                    ))
+                    .child(self.field_cell("Значение", &self.bonus_value))
+                    .child(
+                        self.chip("chip-bonus-pct", if pct { "pct ✓" } else { "pct" }, pct)
+                            .on_click(cx.listener(|this, _, _, cx| this.item_toggle_bonus_pct(cx))),
+                    )
+                    .child(
+                        self.button("btn-apply-bonus", "Применить")
+                            .on_click(cx.listener(|this, _, _, cx| this.apply_item_bonus(cx))),
+                    )
+                    .child(delete_button),
+            );
+        } else {
+            bonus_body = bonus_body.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(MUTED))
+                    .child("Выберите бонус или добавьте новый."),
+            );
+        }
+        bonus_body = bonus_body.child(
+            self.button("btn-add-bonus", "+ бонус")
+                .on_click(cx.listener(|this, _, _, cx| this.item_add_bonus_click(cx))),
+        );
+
+        // ── требования requires ──
+        let requires_body = match &item.requires {
+            Some(requires) => div().flex().flex_col().gap_2().child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_end()
+                    .gap_2()
+                    .child(self.select_control(
+                        "req-profession",
+                        "Профессия",
+                        profession_choices,
+                        requires.profession.clone(),
+                        |this, value, cx| this.item_set_requires_profession(value, cx),
+                        cx,
+                    ))
+                    .child(self.field_cell("str", &self.req_str))
+                    .child(self.field_cell("dex", &self.req_dex))
+                    .child(self.field_cell("vit", &self.req_vit))
+                    .child(self.field_cell("int", &self.req_int))
+                    .child(self.field_cell("Уровень", &self.req_level))
+                    .child(
+                        self.button("btn-apply-requires", "Применить")
+                            .on_click(cx.listener(|this, _, _, cx| this.apply_item_requires(cx))),
+                    )
+                    .child(
+                        self.button("btn-del-requires", "Удалить требования")
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.item_delete_requires_click(cx)),
+                            ),
+                    ),
+            ),
+            None => div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(MUTED))
+                        .child("Требований нет."),
+                )
+                .child(
+                    self.button("btn-add-requires", "+ требования")
+                        .on_click(cx.listener(|this, _, _, cx| this.item_add_requires_click(cx))),
+                ),
+        };
+
         panel = panel
             .child(
                 div()
@@ -5374,15 +7169,21 @@ impl EditorApp {
                     .text_size(px(11.0))
                     .text_color(rgb(MUTED))
                     .child(format!(
-                        "type: {} · rarity: {}",
-                        item.item_type, item.rarity
+                        "type: {} · rarity: {} · бонусов: {} · параметров: {}",
+                        item.item_type,
+                        item.rarity,
+                        bonuses.len(),
+                        param_keys.len()
                     )),
             )
-            .child(self.text_field("Имя", &self.item_name))
-            .child(self.text_field("Редкость (rarity)", &self.item_rarity))
-            .child(self.text_field("Цена (gold_value)", &self.item_gold))
-            .child(self.text_field("stats (JSON-объект)", &self.item_stats))
-            .child(self.actions_row(cx, project.can_undo(), project.can_redo()));
+            .child(self.group_box("Основное", main_row))
+            .child(self.group_box("Характеристики (stats)", stats_row))
+            .child(self.group_box("Параметры (stats.param)", params_body))
+            .child(self.group_box("Автобаффы (stats.buff / buff2)", buffs_body))
+            .child(self.group_box("Эффект (stats.effect)", effect_body))
+            .child(self.group_box("Бонусы (ADR-010)", bonus_body))
+            .child(self.group_box("Требования (requires)", requires_body))
+            .child(self.actions_row(cx, can_undo, can_redo));
         for error in project.report().errors.iter().take(5) {
             panel = panel.child(
                 div()
@@ -6338,6 +8139,47 @@ impl EditorApp {
 }
 
 /// Первые `max` символов строки (для строк списков).
+/// Текстовое представление значения stats для поля ввода.
+fn text_value(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        _ => value.to_string(),
+    }
+}
+
+/// Значение из числа для JSON: целые пишутся без `.0`.
+fn number_value(value: f64) -> Value {
+    if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
+        Value::from(value as i64)
+    } else {
+        Value::from(value)
+    }
+}
+
+/// Число для поля ввода: целые — без `.0`.
+fn format_number(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{}", value as i64)
+    } else {
+        value.to_string()
+    }
+}
+
+/// Список вариантов Select из фиксированных id (значение = подпись).
+fn choices(items: &[&str]) -> Vec<Choice> {
+    items
+        .iter()
+        .map(|item| Choice::new((*item).to_string(), (*item).to_string()))
+        .collect()
+}
+
+/// То же, но с пустым вариантом «—» в начале (значение `""` → удалить поле).
+fn choices_with_none(items: &[&str]) -> Vec<Choice> {
+    let mut result = vec![Choice::new("", "—")];
+    result.extend(choices(items));
+    result
+}
+
 fn clip(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_string();
@@ -6368,6 +8210,13 @@ fn kind_str(kind: EntityKind) -> &'static str {
 #[derive(Clone, Copy)]
 enum ApplyKind {
     Item,
+    ItemStats,
+    ItemParam,
+    ItemBuff,
+    ItemBuff2,
+    ItemEffect,
+    ItemBonus,
+    ItemRequires,
     Location,
     Exit,
     Entity,

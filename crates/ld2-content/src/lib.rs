@@ -16,7 +16,9 @@ pub use load::{load, CONTENT_FILES};
 pub use model::*;
 pub use raw::{ContentFile, RawContent};
 pub use validate::{
-    validate, validate_npc_content, validate_references, validate_report, ValidationReport,
+    validate, validate_items, validate_npc_content, validate_references, validate_report,
+    ValidationReport, EFFECT_KINDS, ITEM_ATTRS, ITEM_CLASSES, ITEM_PARAMS, ITEM_RARITIES,
+    ITEM_SLOTS, ITEM_STAT_KEYS, SPELL_SCHOOLS,
 };
 pub use version::{version, version_raw};
 

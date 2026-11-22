@@ -13,8 +13,9 @@
 use std::path::{Path, PathBuf};
 
 use ld2_content::{
-    validate_npc_content, validate_references, validate_report, version_raw, ContentDialogs,
-    ContentError, ContentFile, ContentShops, GameContent, RawContent, ValidationReport,
+    validate_items, validate_npc_content, validate_references, validate_report, version_raw,
+    ContentDialogs, ContentError, ContentFile, ContentShops, GameContent, RawContent,
+    ValidationReport, ITEM_ATTRS, ITEM_PARAMS,
 };
 use serde_json::{json, Value};
 
@@ -292,6 +293,7 @@ impl EditorProject {
     }
 
     /// Установить поля по пути (обёртка над [`Self::apply_edits`]).
+    #[allow(dead_code)] // используется тестами и старым API
     pub fn apply(
         &mut self,
         edits: Vec<(ContentFile, Vec<PathSeg>, Value)>,
@@ -311,6 +313,7 @@ impl EditorProject {
 
     /// Правка полей предмета по имени (UI-форма): `name`, `rarity`,
     /// `gold_value`, `stats` (объект), …
+    #[allow(dead_code)] // используется тестами; UI пишет через set_item_field
     pub fn set_item_fields(
         &mut self,
         index: usize,
@@ -331,6 +334,289 @@ impl EditorProject {
             })
             .collect();
         self.apply(edits)
+    }
+
+    // ─── E6.2: полный редактор предмета (структурные зоны) ────────────────
+
+    /// Путь к элементу массива предметов: `[items, index]`.
+    fn item_base(index: usize) -> Vec<PathSeg> {
+        record_path(ContentFile::Items, index)
+    }
+
+    /// Полный путь к относительному пути внутри предмета.
+    fn item_path(index: usize, rel: &[PathSeg]) -> Vec<PathSeg> {
+        let mut path = Self::item_base(index);
+        path.extend_from_slice(rel);
+        path
+    }
+
+    /// Установить/удалить значение по относительному пути внутри предмета.
+    /// `None` — удаляет ключ (для необязательных полей).
+    pub fn item_edit(
+        &mut self,
+        index: usize,
+        rel: Vec<PathSeg>,
+        value: Option<Value>,
+    ) -> Result<(), ProjectError> {
+        let path = Self::item_path(index, &rel);
+        let edit = match value {
+            Some(value) => Edit::Set(path, value),
+            None => Edit::RemoveKey(path),
+        };
+        self.apply_edits(ContentFile::Items, vec![edit])
+    }
+
+    /// Поле верхнего уровня предмета (`name`, `type`, `rarity`, `slot`,
+    /// `gold_value`, `upgrade`, `qty`, `sockets`, `rune_sockets`, `hands`,
+    /// `cooldown_s`, `skill`, …); `None` — удалить необязательное поле.
+    pub fn set_item_field(
+        &mut self,
+        index: usize,
+        key: &str,
+        value: Option<Value>,
+    ) -> Result<(), ProjectError> {
+        self.item_edit(index, vec![PathSeg::key(key)], value)
+    }
+
+    /// Поле `stats`: `set_item_stat(0, "dmg", Some("6..9".into()))`.
+    pub fn set_item_stat(
+        &mut self,
+        index: usize,
+        stat: &str,
+        value: Option<Value>,
+    ) -> Result<(), ProjectError> {
+        self.item_edit(
+            index,
+            vec![PathSeg::key("stats"), PathSeg::key(stat)],
+            value,
+        )
+    }
+
+    /// Параметр `stats.param.<param>`: значение-число или `{value, pct}`.
+    pub fn set_item_param(
+        &mut self,
+        index: usize,
+        param: &str,
+        value: Option<Value>,
+    ) -> Result<(), ProjectError> {
+        self.item_edit(
+            index,
+            vec![
+                PathSeg::key("stats"),
+                PathSeg::key("param"),
+                PathSeg::key(param),
+            ],
+            value,
+        )
+    }
+
+    /// Ключи `stats.param` предмета в порядке файла.
+    pub fn item_param_keys(&self, index: usize) -> Vec<String> {
+        self.value_at(
+            ContentFile::Items,
+            &Self::item_path(index, &[PathSeg::key("stats"), PathSeg::key("param")]),
+        )
+        .and_then(|value| value.as_object().cloned())
+        .map(|params| params.keys().cloned().collect())
+        .unwrap_or_default()
+    }
+
+    /// Добавить первый свободный параметр в `stats.param` (значение 1).
+    pub fn add_item_param(&mut self, index: usize) -> Result<String, ProjectError> {
+        let used = self.item_param_keys(index);
+        let param = ITEM_PARAMS
+            .iter()
+            .find(|param| !used.iter().any(|used| used == *param))
+            .ok_or_else(|| ProjectError::Patch("все параметры уже заданы".into()))?;
+        self.set_item_param(index, param, Some(Value::from(1)))?;
+        Ok((*param).to_string())
+    }
+
+    /// Поле автобаффа `stats.buff`/`stats.buff2` (`param`, `value`,
+    /// `duration_s`, `max_stacks`, `pct`); `None` — удалить поле.
+    pub fn set_item_buff_field(
+        &mut self,
+        index: usize,
+        buff: &str,
+        key: &str,
+        value: Option<Value>,
+    ) -> Result<(), ProjectError> {
+        self.item_edit(
+            index,
+            vec![PathSeg::key("stats"), PathSeg::key(buff), PathSeg::key(key)],
+            value,
+        )
+    }
+
+    /// Удалить автобафф `stats.buff`/`stats.buff2`.
+    pub fn remove_item_buff(&mut self, index: usize, buff: &str) -> Result<(), ProjectError> {
+        self.item_edit(index, vec![PathSeg::key("stats"), PathSeg::key(buff)], None)
+    }
+
+    /// Поле `stats.effect` (`kind`, `value`, `duration_s`, `period_s`).
+    pub fn set_item_effect_field(
+        &mut self,
+        index: usize,
+        key: &str,
+        value: Option<Value>,
+    ) -> Result<(), ProjectError> {
+        self.item_edit(
+            index,
+            vec![
+                PathSeg::key("stats"),
+                PathSeg::key("effect"),
+                PathSeg::key(key),
+            ],
+            value,
+        )
+    }
+
+    /// Удалить эффект `stats.effect`.
+    pub fn remove_item_effect(&mut self, index: usize) -> Result<(), ProjectError> {
+        self.item_edit(
+            index,
+            vec![PathSeg::key("stats"), PathSeg::key("effect")],
+            None,
+        )
+    }
+
+    /// Бонусы предмета (ADR-010) из сырого JSON.
+    pub fn item_bonuses(&self, index: usize) -> Vec<Value> {
+        self.value_at(
+            ContentFile::Items,
+            &Self::item_path(index, &[PathSeg::key("bonuses")]),
+        )
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default()
+    }
+
+    /// Добавить бонус (ADR-010): первый свободный атрибут/параметр.
+    /// Возвращает индекс нового бонуса.
+    pub fn add_item_bonus(&mut self, index: usize) -> Result<usize, ProjectError> {
+        let bonuses = self.item_bonuses(index);
+        let used: Vec<&str> = bonuses
+            .iter()
+            .filter_map(|bonus| bonus.get("id").and_then(Value::as_str))
+            .collect();
+        let (kind, id) = ITEM_ATTRS
+            .iter()
+            .map(|id| ("attr", *id))
+            .chain(ITEM_PARAMS.iter().map(|id| ("param", *id)))
+            .find(|(_, id)| !used.contains(id))
+            .ok_or_else(|| ProjectError::Patch("все атрибуты и параметры уже заданы".into()))?;
+        self.apply_edits(
+            ContentFile::Items,
+            vec![Edit::Push(
+                Self::item_path(index, &[PathSeg::key("bonuses")]),
+                serde_json::json!({"kind": kind, "id": id, "value": 1}),
+            )],
+        )?;
+        Ok(bonuses.len())
+    }
+
+    /// Поле бонуса по индексу: `kind`, `id`, `value`, `pct`; `None` —
+    /// удалить необязательное поле (`pct`).
+    pub fn set_item_bonus_field(
+        &mut self,
+        index: usize,
+        bonus_index: usize,
+        key: &str,
+        value: Option<Value>,
+    ) -> Result<(), ProjectError> {
+        self.item_edit(
+            index,
+            vec![
+                PathSeg::key("bonuses"),
+                PathSeg::Index(bonus_index),
+                PathSeg::key(key),
+            ],
+            value,
+        )
+    }
+
+    /// Удалить бонус по индексу.
+    pub fn remove_item_bonus(
+        &mut self,
+        index: usize,
+        bonus_index: usize,
+    ) -> Result<(), ProjectError> {
+        self.apply_edits(
+            ContentFile::Items,
+            vec![Edit::Remove(Self::item_path(
+                index,
+                &[PathSeg::key("bonuses"), PathSeg::Index(bonus_index)],
+            ))],
+        )
+    }
+
+    /// Создать пустые требования `requires` (`{}`).
+    pub fn add_item_requires(&mut self, index: usize) -> Result<(), ProjectError> {
+        self.set_item_field(index, "requires", Some(Value::Object(Default::default())))
+    }
+
+    /// Удалить требования целиком.
+    pub fn remove_item_requires(&mut self, index: usize) -> Result<(), ProjectError> {
+        self.set_item_field(index, "requires", None)
+    }
+
+    /// Требование по атрибуту: `requires.attr.<attr>`; `None` — удалить.
+    pub fn set_item_requires_attr(
+        &mut self,
+        index: usize,
+        attr: &str,
+        value: Option<Value>,
+    ) -> Result<(), ProjectError> {
+        self.item_edit(
+            index,
+            vec![
+                PathSeg::key("requires"),
+                PathSeg::key("attr"),
+                PathSeg::key(attr),
+            ],
+            value,
+        )
+    }
+
+    /// Требование `requires.profession` / `requires.level`; `None` — удалить.
+    pub fn set_item_requires_field(
+        &mut self,
+        index: usize,
+        key: &str,
+        value: Option<Value>,
+    ) -> Result<(), ProjectError> {
+        self.item_edit(
+            index,
+            vec![PathSeg::key("requires"), PathSeg::key(key)],
+            value,
+        )
+    }
+
+    /// Новый предмет (E6.2): id `item_new_N`, базовые поля, пустые статы.
+    pub fn add_item(&mut self) -> Result<usize, ProjectError> {
+        let ids: Vec<&str> = self
+            .content
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        let id = unique_id(&ids, "item_new_");
+        let index = self.add_record(
+            ContentFile::Items,
+            serde_json::json!({
+                "id": id,
+                "type": "weapon",
+                "name": "Новый предмет",
+                "rarity": "common",
+                "upgrade": 0,
+                "gold_value": 0,
+            }),
+        )?;
+        Ok(index)
+    }
+
+    /// Удалить предмет по индексу.
+    pub fn remove_item(&mut self, index: usize) -> Result<(), ProjectError> {
+        self.remove_record(ContentFile::Items, index)
     }
 
     /// Правка полей локации: `name`, `text`, `flags` (массив строк),
@@ -1439,6 +1725,7 @@ fn build_report_and_version(
 ) -> Result<(ValidationReport, String), ContentError> {
     let mut report = validate_report(content);
     report.warnings.extend(validate_references(content));
+    report.warnings.extend(validate_items(content));
     let npc_report = validate_npc_content(dialogs, shops, content);
     report.errors.extend(npc_report.errors);
     report.warnings.extend(npc_report.warnings);
@@ -2254,6 +2541,152 @@ mod tests {
             .currencies
             .iter()
             .any(|currency| currency.items.is_empty())));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ─── E6.2: полный редактор предмета ──────────────────────────────────
+
+    fn item_index(project: &EditorProject, id: &str) -> usize {
+        project
+            .content()
+            .items
+            .iter()
+            .position(|item| item.id == id)
+            .unwrap_or_else(|| panic!("нет предмета {id}"))
+    }
+
+    #[test]
+    fn item_stat_and_bonus_ops_with_undo() {
+        let root = temp_root();
+        let mut project = EditorProject::open(&root).expect("проект открывается");
+        let axe = item_index(&project, "drakkar_axe");
+        let bonuses_before = project.content().items[axe].bonuses.len();
+
+        // бонус добавляется первым свободным атрибутом/параметром
+        let bonus_index = project.add_item_bonus(axe).expect("бонус");
+        assert_eq!(bonus_index, bonuses_before);
+        let bonuses = project.item_bonuses(axe);
+        assert_eq!(bonuses.len(), bonuses_before + 1);
+        project
+            .set_item_bonus_field(axe, bonus_index, "value", Some(Value::from(7)))
+            .expect("значение бонуса");
+        assert_eq!(project.item_bonuses(axe)[bonus_index]["value"], 7);
+        project
+            .set_item_bonus_field(axe, bonus_index, "pct", Some(Value::from(true)))
+            .expect("pct");
+
+        // параметр статов: число и {value,pct}
+        project
+            .set_item_param(axe, "crit_chance", Some(Value::from(3)))
+            .expect("параметр");
+        assert_eq!(
+            project.content().items[axe].stats["param"]["crit_chance"],
+            3
+        );
+        let param = project.add_item_param(axe).expect("новый параметр");
+        assert!(project.item_param_keys(axe).contains(&param));
+
+        // undo возвращает состояние до последней операции
+        assert!(project.undo(), "undo");
+        assert!(!project.item_param_keys(axe).contains(&param));
+
+        project
+            .remove_item_bonus(axe, bonus_index)
+            .expect("удаление бонуса");
+        assert_eq!(project.content().items[axe].bonuses.len(), bonuses_before);
+
+        project.save().expect("сохранение");
+        let reopened = EditorProject::open(&root).expect("переоткрытие");
+        assert_eq!(reopened.content().items[axe].bonuses.len(), bonuses_before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn item_buff_effect_and_requires_are_structural() {
+        let root = temp_root();
+        let mut project = EditorProject::open(&root).expect("проект открывается");
+        let rune = project
+            .content()
+            .items
+            .iter()
+            .position(|item| item.item_type == "rune")
+            .expect("руна");
+
+        project
+            .set_item_buff_field(rune, "buff", "param", Some(Value::from("damage")))
+            .expect("param баффа");
+        project
+            .set_item_buff_field(rune, "buff", "value", Some(Value::from(5)))
+            .expect("value баффа");
+        project
+            .set_item_buff_field(rune, "buff2", "duration_s", Some(Value::from(12)))
+            .expect("второй бафф");
+        let stats = &project.content().items[rune].stats;
+        assert_eq!(stats["buff"]["param"], "damage");
+        assert_eq!(stats["buff2"]["duration_s"], 12);
+
+        project
+            .set_item_effect_field(rune, "kind", Some(Value::from("burn")))
+            .expect("вид эффекта");
+        project
+            .set_item_effect_field(rune, "duration_s", Some(Value::from(6)))
+            .expect("длительность");
+        assert_eq!(
+            project.content().items[rune].stats["effect"]["kind"],
+            "burn"
+        );
+        project.remove_item_effect(rune).expect("эффект удалён");
+        assert!(project.content().items[rune].stats.get("effect").is_none());
+
+        project.add_item_requires(rune).expect("требования");
+        project
+            .set_item_requires_attr(rune, "int", Some(Value::from(5)))
+            .expect("требование int");
+        project
+            .set_item_requires_field(rune, "level", Some(Value::from(10)))
+            .expect("уровень");
+        let requires = project.content().items[rune]
+            .requires
+            .as_ref()
+            .expect("requires");
+        assert_eq!(requires.attr["int"], 5);
+        assert_eq!(requires.level, Some(10));
+
+        assert!(project.undo(), "undo уровня");
+        assert_eq!(
+            project.content().items[rune]
+                .requires
+                .as_ref()
+                .and_then(|requires| requires.level),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn add_and_remove_item_with_undo() {
+        let root = temp_root();
+        let mut project = EditorProject::open(&root).expect("проект открывается");
+        let before = project.content().items.len();
+
+        let index = project.add_item().expect("предмет");
+        assert_eq!(project.content().items.len(), before + 1);
+        let id = project.content().items[index].id.clone();
+        assert!(id.starts_with("item_new_"));
+        project
+            .set_item_field(index, "rarity", Some(Value::from("rare")))
+            .expect("редкость");
+        assert_eq!(project.content().items[index].rarity, "rare");
+        assert!(
+            project.report().warnings.is_empty(),
+            "новый предмет не даёт предупреждений: {:?}",
+            project.report().warnings
+        );
+
+        project.remove_item(index).expect("удаление предмета");
+        assert_eq!(project.content().items.len(), before);
+        assert!(project.undo(), "undo удаления");
+        assert_eq!(project.content().items.len(), before + 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 }
