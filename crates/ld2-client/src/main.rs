@@ -6,6 +6,7 @@
 
 mod fa;
 mod gem_glyph;
+mod map;
 mod palette;
 mod root;
 mod rune_glyph;

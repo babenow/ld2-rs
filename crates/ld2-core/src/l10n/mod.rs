@@ -112,7 +112,7 @@ pub enum Key {
     MonstersLabel,
     NpcsLabel,
     CorpsesLabel,
-    HistoryLabel,
+    MapLabel,
     LogLabel,
     Examine,
     /// M18/F35: пункт контекстного меню NPC — открыть диалог.
@@ -217,6 +217,8 @@ pub enum Key {
     ResetProf,
     ResetProfConfirm,
     HkOpenProfessions,
+    /// M26: строка настроек хоткея окна карты.
+    HkOpenMap,
     // M21: карточка профессии — шкалы и ранги
     ProfSlotFirst,
     ProfSlotSecond,
@@ -373,6 +375,8 @@ pub enum Key {
     HkCycleTarget,
     HkPress,
     SettingsBtn,
+    /// M26: тултип кнопки «Карта» в шапке.
+    MapBtn,
     UpdateBadge,
     On,
     Off,
@@ -777,7 +781,7 @@ mod tests {
         Key::MonstersLabel,
         Key::NpcsLabel,
         Key::CorpsesLabel,
-        Key::HistoryLabel,
+        Key::MapLabel,
         Key::LogLabel,
         Key::Examine,
         Key::BtnTalk,
@@ -868,6 +872,7 @@ mod tests {
         Key::ResetProf,
         Key::ResetProfConfirm,
         Key::HkOpenProfessions,
+        Key::HkOpenMap,
         Key::ProfSlotFirst,
         Key::ProfSlotSecond,
         Key::ProfLevelLabel,
@@ -1000,6 +1005,7 @@ mod tests {
         Key::HkCycleTarget,
         Key::HkPress,
         Key::SettingsBtn,
+        Key::MapBtn,
         Key::UpdateBadge,
         Key::On,
         Key::Off,

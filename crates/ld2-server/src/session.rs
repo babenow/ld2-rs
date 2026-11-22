@@ -5132,6 +5132,7 @@ impl Session {
                 "locations": chunk,
                 "offset": next,
                 "total": cache.total(),
+                "root": cache.root(),
             }),
         )]
     }
