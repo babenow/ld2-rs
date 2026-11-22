@@ -1,0 +1,22 @@
+[package]
+name = "ld2-editor"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Редактор контента ld2 (gpui + Ely): локации, мобы/НПС, предметы, диалоги, квесты, рецепты, магазины, навыки, профессии"
+
+[[bin]]
+name = "ld2-editor"
+path = "src/main.rs"
+
+[dependencies]
+ld2-content = { path = "../ld2-content" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+gpui = { workspace = true }
+gpui_platform = { workspace = true }
+ely = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

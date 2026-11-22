@@ -4081,6 +4081,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ld2-content"
+version = "0.22.0"
+dependencies = [
+ "ld2-protocol",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "ld2-core"
 version = "0.22.0"
 dependencies = [
@@ -4105,6 +4117,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ld2-editor"
+version = "0.22.0"
+dependencies = [
+ "anyhow",
+ "ely-gpui-component",
+ "gpui-pre",
+ "gpui-pre-platform",
+ "ld2-content",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "ld2-protocol"
 version = "0.22.0"
 dependencies = [
@@ -4122,6 +4150,7 @@ dependencies = [
  "axum",
  "futures-util",
  "getrandom 0.3.4",
+ "ld2-content",
  "ld2-core",
  "ld2-protocol",
  "ld2-test-kit",

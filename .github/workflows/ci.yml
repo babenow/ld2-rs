@@ -47,6 +47,21 @@ jobs:
       - name: build
         run: cargo build --workspace
 
+      # M27/E6: артефакт редактора контента для контент-мейкера (только push).
+      - name: release build (ld2-editor)
+        if: github.event_name == 'push'
+        run: cargo build --release -p ld2-editor
+
+      - name: upload ld2-editor artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ld2-editor-${{ matrix.os }}
+          path: |
+            target/release/ld2-editor
+            target/release/ld2-editor.exe
+          if-no-files-found: ignore
+
   # Реальный сервер (PLAN-M12.1, D24): тесты с БД — только здесь; в матрице
   # 3 ОС LD2_TEST_DATABASE_URL не задан и эти тесты пропускаются.
   server:

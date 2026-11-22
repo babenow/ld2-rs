@@ -1,0 +1,14 @@
+[package]
+name = "ld2-content"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Схема контента ld2: типы, загрузка, валидация, версия (общая для сервера и редактора)"
+
+[dependencies]
+ld2-protocol = { path = "../ld2-protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+tracing = { workspace = true }

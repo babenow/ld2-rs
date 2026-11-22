@@ -1047,7 +1047,12 @@
         "charges": 6,
         "max": 8,
         "glyph": "R",
-        "buff": {"param": "crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
         "class": "warrior"
       },
       "gold_value": 60
@@ -1066,8 +1071,19 @@
         "charges": 5,
         "max": 8,
         "glyph": "RB",
-        "buff": {"param": "crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
-        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
         "class": "warrior"
       },
       "gold_value": 130
@@ -1086,9 +1102,24 @@
         "charges": 4,
         "max": 8,
         "glyph": "RBW",
-        "buff": {"param": "crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
-        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
-        "effect": {"kind": "bleed", "value": 4, "duration_s": 6},
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "effect": {
+          "kind": "bleed",
+          "value": 4,
+          "duration_s": 6
+        },
         "class": "warrior"
       },
       "gold_value": 260
@@ -1107,7 +1138,12 @@
         "charges": 6,
         "max": 8,
         "glyph": "E",
-        "buff": {"param": "accuracy", "value": 6, "duration_s": 12, "max_stacks": 3},
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
         "class": "archer"
       },
       "gold_value": 55
@@ -1126,8 +1162,19 @@
         "charges": 5,
         "max": 8,
         "glyph": "EW",
-        "buff": {"param": "accuracy", "value": 6, "duration_s": 12, "max_stacks": 3},
-        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
         "class": "archer"
       },
       "gold_value": 130
@@ -1146,9 +1193,23 @@
         "charges": 4,
         "max": 8,
         "glyph": "EWS",
-        "buff": {"param": "accuracy", "value": 6, "duration_s": 12, "max_stacks": 3},
-        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
-        "effect": {"kind": "root", "duration_s": 4},
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "effect": {
+          "kind": "root",
+          "duration_s": 4
+        },
         "class": "archer"
       },
       "gold_value": 260
@@ -1168,7 +1229,12 @@
         "max": 10,
         "glyph": "S",
         "school": "fire",
-        "buff": {"param": "magic_crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
+        "buff": {
+          "param": "magic_crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
         "class": "mage"
       },
       "gold_value": 60
@@ -1188,8 +1254,19 @@
         "max": 10,
         "glyph": "SG",
         "school": "fire",
-        "buff": {"param": "magic_crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
-        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
+        "buff": {
+          "param": "magic_crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
         "class": "mage"
       },
       "gold_value": 130
@@ -1209,9 +1286,25 @@
         "max": 10,
         "glyph": "SGA",
         "school": "fire",
-        "buff": {"param": "magic_crit_chance", "value": 8, "duration_s": 12, "max_stacks": 2},
-        "buff2": {"param": "damage", "value": 10, "pct": true, "duration_s": 12, "max_stacks": 2},
-        "effect": {"kind": "burn", "value": 3, "period_s": 2, "duration_s": 6},
+        "buff": {
+          "param": "magic_crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "effect": {
+          "kind": "burn",
+          "value": 3,
+          "period_s": 2,
+          "duration_s": 6
+        },
         "class": "mage"
       },
       "gold_value": 260

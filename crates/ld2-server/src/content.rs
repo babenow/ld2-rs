@@ -11,279 +11,14 @@
 
 use std::path::{Path, PathBuf};
 
-use ld2_protocol::types::{Entity, Exit, ItemBonus, Requires};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
-/// Строка content-файла: выход хранит целевую локацию (`to`) — на проводе
-/// её быть не должно (§6 [`Exit`] без `to`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentExit {
-    pub id: String,
-    pub label: String,
-    #[serde(default)]
-    pub dir: Option<String>,
-    /// Целевая локация (только БД/контент, в снапшот не попадает).
-    pub to: String,
-}
-
-impl ContentExit {
-    /// Проводной вид выхода (§6): без `to`.
-    pub fn to_wire(&self) -> Exit {
-        Exit {
-            id: self.id.clone(),
-            label: self.label.clone(),
-            dir: self.dir.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentLocation {
-    pub id: String,
-    pub name: String,
-    /// Единственная спавн-точка новых персонажей (→ `meta.spawn_location`).
-    #[serde(default)]
-    pub spawn: bool,
-    #[serde(default)]
-    pub flags: Vec<String>,
-    pub text: String,
-    #[serde(default)]
-    pub exits: Vec<ContentExit>,
-    #[serde(default)]
-    pub entities: Vec<Entity>,
-}
-
-/// Навык из `skills.json` (skills.md §3: id + имя; группа — для UI).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentSkill {
-    pub id: String,
-    pub name: String,
-    pub group: String,
-    /// M14/F17: описание эффекта для UI (тултип/карточка навыка).
-    /// `default` — старый skills.json без поля продолжает грузиться.
-    #[serde(default)]
-    pub description: String,
-}
-
-/// Определение предмета из `items.json` (§6 `ItemSnapshot`-ядро).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentItemDef {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub item_type: String,
-    pub name: String,
-    pub rarity: String,
-    #[serde(default)]
-    pub upgrade: i32,
-    #[serde(default)]
-    pub stats: serde_json::Map<String, serde_json::Value>,
-    #[serde(default)]
-    pub requires: Option<Requires>,
-    #[serde(default)]
-    pub gold_value: i64,
-    /// Стартовое количество стака при взятии/выдаче.
-    #[serde(default)]
-    pub qty: Option<i64>,
-    /// Навык, который качается убийством этим оружием (skills.md §2.3);
-    /// `None` → `unarmed`.
-    #[serde(default)]
-    pub skill: Option<String>,
-    /// Количество сокетов (посохи, ADR-002) — создаются при вставке.
-    #[serde(default)]
-    pub sockets: u32,
-    /// M18/F58 (ADR-012, уточнение заказчика): сколько слотов
-    /// принимают руны — **отдельное поле определения** (как
-    /// `sockets`), а не в `stats`. `None` — не указано → дефолт по
-    /// типу: броня 0, оружие/посох — все слоты.
-    #[serde(default)]
-    pub rune_sockets: Option<i32>,
-    /// M17/F30g: кулдаун использования/скорость атаки, с
-    /// (дефолт 1.0 — «по умолчанию 1 сек»).
-    #[serde(default)]
-    pub cooldown_s: Option<f64>,
-    /// M17/F30b: слот, куда предмет надевается (main_hand/off_hand/
-    /// head/…/псевдослоты пар ring|artifact); `None` — не экипируется.
-    #[serde(default)]
-    pub slot: Option<String>,
-    /// M17/F30b: руки (2 — двуручное: занимает обе руки и блокирует
-    /// левую); `None` → 1.
-    #[serde(default)]
-    pub hands: Option<i32>,
-    /// M18/F47: бонусы предмета (ADR-010) — атрибут/параметр/навык.
-    #[serde(default)]
-    pub bonuses: Vec<ItemBonus>,
-}
-
-/// Профессия из `professions.json` (skills.md §5.1: первичная/вторичная).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentProfession {
-    pub id: String,
-    pub name: String,
-    /// `primary` — занимает слот `profession_limit`; `secondary` — нет.
-    #[serde(rename = "type", default = "default_primary")]
-    pub prof_type: String,
-}
-
-fn default_primary() -> String {
-    "primary".into()
-}
-
-/// Инструмент рецепта: предмет с этим `item_type` в инвентаре (skills.md §5.4).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentTool {
-    #[serde(rename = "type")]
-    pub item_type: String,
-}
-
-/// Требования рецепта (открытый объект §6: attr/skill — сервер читает).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ContentRequires {
-    #[serde(default)]
-    pub attr: std::collections::BTreeMap<String, i64>,
-    #[serde(default)]
-    pub skill: std::collections::BTreeMap<String, i64>,
-}
-
-/// Рецепт из `recipes.json` (skills.md §5.4 — payload `cmd/craft.recipes`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentRecipe {
-    pub id: String,
-    pub name: String,
-    pub profession: String,
-    #[serde(default = "one")]
-    pub rank: i32,
-    /// Станок, который должен быть в локации; `None` — без станка.
-    #[serde(default)]
-    pub station: Option<String>,
-    #[serde(default)]
-    pub tool: Option<ContentTool>,
-    #[serde(default)]
-    pub requires: ContentRequires,
-    #[serde(default)]
-    pub inputs: Vec<ContentInput>,
-    #[serde(default = "one")]
-    pub time_s: i32,
-    #[serde(default)]
-    pub xp: ContentRecipeXp,
-    pub output: ContentOutput,
-    #[serde(default)]
-    pub station_label: Option<String>,
-}
-
-fn one() -> i32 {
-    1
-}
-
-/// Ингредиент: `qty` штук с `item_type` в инвентаре.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentInput {
-    #[serde(rename = "type")]
-    pub item_type: String,
-    #[serde(default = "one_i64")]
-    pub qty: i64,
-}
-
-fn one_i64() -> i64 {
-    1
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ContentRecipeXp {
-    #[serde(default)]
-    pub profession: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentOutput {
-    #[serde(rename = "type")]
-    pub item_type: String,
-    #[serde(default = "one_i64")]
-    pub qty: i64,
-}
-
-/// Квест из `quests.json` (ФР-12).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentQuest {
-    pub id: String,
-    pub title: String,
-    #[serde(default)]
-    pub giver: Option<String>,
-    #[serde(default)]
-    pub goals: Vec<ContentGoal>,
-    #[serde(default)]
-    pub reward: ContentReward,
-    #[serde(default)]
-    pub reward_label: Option<String>,
-}
-
-/// Цель квеста: `kill <target>` — убийства сущности с данным id.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentGoal {
-    #[serde(rename = "type")]
-    pub goal_type: String,
-    #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default = "one_i64")]
-    pub need: i64,
-    #[serde(default)]
-    pub text: String,
-}
-
-/// Награда квеста: XP в пул + предметы; M21 — опционально
-/// **повышение ранга профессии** (`rank_up: "<profession_id>"`):
-/// та же граница уровней, что у тренера, но без золота.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ContentReward {
-    #[serde(default)]
-    pub xp: i64,
-    #[serde(default)]
-    pub items: Vec<ContentInput>,
-    #[serde(default)]
-    pub rank_up: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LocationsRoot {
-    locations: Vec<ContentLocation>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SkillsRoot {
-    skills: Vec<ContentSkill>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ItemsRoot {
-    items: Vec<ContentItemDef>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProfessionsRoot {
-    professions: Vec<ContentProfession>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RecipesRoot {
-    recipes: Vec<ContentRecipe>,
-}
-
-#[derive(Debug, Deserialize)]
-struct QuestsRoot {
-    quests: Vec<ContentQuest>,
-}
-
-/// Весь контент каталога (для версии и сида).
-#[derive(Debug, Serialize)]
-pub struct GameContent {
-    locations: Vec<ContentLocation>,
-    skills: Vec<ContentSkill>,
-    items: Vec<ContentItemDef>,
-    professions: Vec<ContentProfession>,
-    recipes: Vec<ContentRecipe>,
-    quests: Vec<ContentQuest>,
-}
+// E1 (M27): схема контента — общая с редактором (`ld2-content`).
+pub use ld2_content::{
+    ContentExit, ContentGoal, ContentInput, ContentItemDef, ContentLocation, ContentOutput,
+    ContentProfession, ContentQuest, ContentRecipe, ContentRecipeXp, ContentRequires, ContentSkill,
+    ContentTool, GameContent, CONTENT_FILES,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContentError {
@@ -293,6 +28,9 @@ pub enum ContentError {
     Json(PathBuf, serde_json::Error),
     #[error("контент: {0}")]
     Db(#[from] sqlx::Error),
+    /// E1: ошибка общей схемы `ld2-content` (чтение/валидация/версия).
+    #[error("контент: {0}")]
+    Load(#[from] ld2_content::ContentError),
     #[error("контент: в {0} нет ни одной локации")]
     Empty(PathBuf),
     /// M27 (hot reload): структурная валидация перед сидом — одна строка
@@ -314,9 +52,13 @@ pub struct SeedReport {
 /// Сид контента в PostgreSQL (D26). Вызывается при старте сервера и
 /// подкомандой `seed` (M27): перечитывает каталог и применяет изменения.
 pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, ContentError> {
-    let content = load(dir.as_ref())?;
+    let dir = dir.as_ref();
+    let content = load(dir)?;
     validate(&content)?;
-    let version = content_version(&content)?;
+    // E6: версия — по всем 8 файлам (включая dialogs/shops), а не только
+    // по типизированному сиду: правка диалогов/магазинов меняет версию.
+    let raw = ld2_content::RawContent::load(dir)?;
+    let version = content_version(&raw)?;
     seed_content(pool, &content, version).await
 }
 
@@ -499,131 +241,21 @@ async fn seed_content(
     })
 }
 
-/// Загрузка обязательных файлов каталога (M27: `pub` — hot reload и
-/// подкоманда `seed` переиспользуют её).
+/// Загрузка контента через общую схему (`ld2-content`): типы/чтение —
+/// одни для сервера и редактора (E1).
 pub fn load(dir: &Path) -> Result<GameContent, ContentError> {
-    let read = |name: &str| -> Result<String, ContentError> {
-        let path = dir.join(name);
-        std::fs::read_to_string(&path).map_err(|e| ContentError::Io(path, e))
-    };
-
-    let locations: LocationsRoot = serde_json::from_str(&read("locations.json")?)
-        .map_err(|e| ContentError::Json(dir.join("locations.json"), e))?;
-    let skills: SkillsRoot = serde_json::from_str(&read("skills.json")?)
-        .map_err(|e| ContentError::Json(dir.join("skills.json"), e))?;
-    let items: ItemsRoot = serde_json::from_str(&read("items.json")?)
-        .map_err(|e| ContentError::Json(dir.join("items.json"), e))?;
-    let professions: ProfessionsRoot = serde_json::from_str(&read("professions.json")?)
-        .map_err(|e| ContentError::Json(dir.join("professions.json"), e))?;
-    let recipes: RecipesRoot = serde_json::from_str(&read("recipes.json")?)
-        .map_err(|e| ContentError::Json(dir.join("recipes.json"), e))?;
-    let quests: QuestsRoot = serde_json::from_str(&read("quests.json")?)
-        .map_err(|e| ContentError::Json(dir.join("quests.json"), e))?;
-
-    if locations.locations.is_empty() {
-        return Err(ContentError::Empty(dir.to_path_buf()));
-    }
-    Ok(GameContent {
-        locations: locations.locations,
-        skills: skills.skills,
-        items: items.items,
-        professions: professions.professions,
-        recipes: recipes.recipes,
-        quests: quests.quests,
-    })
+    ld2_content::load(dir).map_err(ContentError::Load)
 }
 
-/// Структурная валидация контента перед сидом/hot reload (M27 фаза 1).
-///
-/// **Фатально** (сид/hot reload отказываются применять, старое состояние
-/// сохраняется): дубликаты id — upsert молча перетёр бы записи в БД.
-/// **Предупреждение** (warn + применяем): висячие выходы — карта мира
-/// отфильтровывает их, переход вернёт `E_TARGET_GONE`; во время мержа
-/// карт это допустимое промежуточное состояние, валить старт сервера ради
-/// него нельзя.
+/// Структурная валидация контента — общая с редактором (`ld2-content`).
 pub fn validate(content: &GameContent) -> Result<(), ContentError> {
-    use std::collections::HashSet;
-
-    let mut problems: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
-    let mut loc_ids: HashSet<&str> = HashSet::with_capacity(content.locations.len());
-    for loc in &content.locations {
-        if !loc_ids.insert(loc.id.as_str()) {
-            problems.push(format!("локация: дубликат id {}", loc.id));
-        }
-    }
-    for loc in &content.locations {
-        let mut entity_ids: HashSet<&str> = HashSet::with_capacity(loc.entities.len());
-        for entity in &loc.entities {
-            if !entity_ids.insert(entity.id.as_str()) {
-                problems.push(format!(
-                    "локация {}: дубликат сущности {}",
-                    loc.id, entity.id
-                ));
-            }
-        }
-        for exit in &loc.exits {
-            if !loc_ids.contains(exit.to.as_str()) {
-                warnings.push(format!(
-                    "локация {}: выход {} ведёт в несуществующую {}",
-                    loc.id, exit.id, exit.to
-                ));
-            }
-        }
-    }
-
-    let mut seen: HashSet<&str> = HashSet::new();
-    for skill in &content.skills {
-        if !seen.insert(skill.id.as_str()) {
-            problems.push(format!("навык: дубликат id {}", skill.id));
-        }
-    }
-    seen.clear();
-    for item in &content.items {
-        if !seen.insert(item.id.as_str()) {
-            problems.push(format!("предмет: дубликат id {}", item.id));
-        }
-    }
-    seen.clear();
-    for prof in &content.professions {
-        if !seen.insert(prof.id.as_str()) {
-            problems.push(format!("профессия: дубликат id {}", prof.id));
-        }
-    }
-    seen.clear();
-    for recipe in &content.recipes {
-        if !seen.insert(recipe.id.as_str()) {
-            problems.push(format!("рецепт: дубликат id {}", recipe.id));
-        }
-    }
-    seen.clear();
-    for quest in &content.quests {
-        if !seen.insert(quest.id.as_str()) {
-            problems.push(format!("квест: дубликат id {}", quest.id));
-        }
-    }
-
-    for warning in &warnings {
-        tracing::warn!("контент (не критично): {warning}");
-    }
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(ContentError::Invalid(problems.join("; ")))
+    match ld2_content::validate(content) {
+        Ok(()) => Ok(()),
+        // Фатальные проблемы остаются серверным variant'ом (тесты/сообщения).
+        Err(ld2_content::ContentError::Invalid(problems)) => Err(ContentError::Invalid(problems)),
+        Err(e) => Err(ContentError::Load(e)),
     }
 }
-
-/// Файлы каталога, участвующие в hot reload (сид + диалоги/магазины).
-pub const CONTENT_FILES: [&str; 8] = [
-    "locations.json",
-    "skills.json",
-    "items.json",
-    "professions.json",
-    "recipes.json",
-    "quests.json",
-    "dialogs.json",
-    "shops.json",
-];
 
 /// Дешёвый отпечаток каталога (имя + размер + mtime файлов
 /// [`CONTENT_FILES`]): poll сравнивает отпечаток и делает полную
@@ -667,7 +299,8 @@ pub async fn reload(pool: &PgPool, dir: impl AsRef<Path>) -> Result<ReloadReport
     let dir = dir.as_ref();
     let content = load(dir)?;
     validate(&content)?;
-    let version = content_version(&content)?;
+    let raw = ld2_content::RawContent::load(dir)?;
+    let version = content_version(&raw)?;
     let dialogs = crate::dialogs::load(dir)?;
     let shops = crate::shops::load(dir)?;
     let seeded = seed_content(pool, &content, version).await?;
@@ -681,18 +314,10 @@ pub async fn reload(pool: &PgPool, dir: impl AsRef<Path>) -> Result<ReloadReport
     })
 }
 
-/// Версия контента: sha256 от канонического дерева **всего** контента
-/// (неизменное содержимое → неизменная версия независимо от имён файлов).
-fn content_version(content: &GameContent) -> Result<String, ContentError> {
-    let canonical = serde_json::to_string(content)
-        .map_err(|e| ContentError::Json(PathBuf::from("<canonical>"), e))?;
-    let mut hasher = Sha256::new();
-    hasher.update(canonical.as_bytes());
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+/// sha256-версия контента (реализация — в `ld2-content`); E6: по сырым
+/// 8 файлам, поэтому включает dialogs/shops.
+fn content_version(raw: &ld2_content::RawContent) -> Result<String, ContentError> {
+    ld2_content::version_raw(raw).map_err(ContentError::Load)
 }
 
 #[cfg(test)]
@@ -1206,6 +831,7 @@ mod tests {
             label: "Проба".into(),
             dir: None,
             to: "no_such_location".into(),
+            extra: Default::default(),
         });
         assert!(
             validate(&content).is_ok(),
