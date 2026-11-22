@@ -142,6 +142,7 @@ content_dir = "content"    # статический контент (JSON) → с
 tick_hz = 10               # тик-луп мира (D31), 1..=100
 autosave_interval_s = 30   # периодический флаш онлайн-состояния (D27)
 journal_ttl_s = 30          # M25: время жизни строки журнала (Лог), с; 0 — не удаляются
+content_poll_s = 30         # M27: hot reload контента — период проверки каталога, с; 0 — только SIGHUP/admin
 
 [skills]                   # skills.md §8: xp_to_next = round(base_xp × growth^rank)
 base_xp = 120

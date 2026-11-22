@@ -525,6 +525,13 @@ pub struct AdminClear {
     pub target: String,
 }
 
+/// M27 (hot reload контента): перечитать каталог `content/` на работающем
+/// сервере — идемпотентный сид в БД при смене версии + замена диалогов/
+/// магазинов/версии в памяти + сброс кэша карты мира. Только `role=admin`
+/// → `E_PERMISSION`; ack `{version, applied, locations, items}`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AdminContentReload {}
+
 /// M24: содержимое выбранной цели правой колонки (кроме self —
 /// ack `{items: [{ref, id, name, type, rarity, qty}]}` — рюкзак
 /// (`self`/`char:<имя>`), лут трупа (`corpse:<id>`), будущий лут
@@ -576,6 +583,7 @@ impl_commands!(
     (AdminGodMode, "cmd/admin.god_mode", false),
     (AdminTargetInfo, "cmd/admin.target.info", true),
     (AdminClear, "cmd/admin.clear", false),
+    (AdminContentReload, "cmd/admin.content.reload", true),
     (UpgradePreview, "cmd/upgrade.preview", true),
     (UpgradeStart, "cmd/upgrade.start", false),
     (CraftList, "cmd/craft.list", true),

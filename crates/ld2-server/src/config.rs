@@ -377,6 +377,12 @@ pub struct WorldSection {
     /// возрождается (план M20, решение 5).
     #[serde(default)]
     pub respawn_default: Option<RespawnRange>,
+    /// M27 (hot reload, фаза 1): период проверки каталога контента, с;
+    /// `0` — только по SIGHUP/admin-команде. Изменение отпечатка
+    /// (`size`+`mtime` файлов каталога) → перечитать контент и применить
+    /// без рестарта.
+    #[serde(default = "default_content_poll_s")]
+    pub content_poll_s: u64,
 }
 
 const fn default_corpse_ttl() -> i64 {
@@ -389,6 +395,10 @@ const fn default_journal_ttl() -> i64 {
 
 const fn default_drop_ttl() -> i64 {
     60
+}
+
+const fn default_content_poll_s() -> u64 {
+    30
 }
 
 /// Константы модели опыта навыков (skills.md §8 — «конфиг сервера», D25).

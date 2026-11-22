@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 
 use ld2_protocol::cmd::{
-    AdminClear, AdminGiveAsk, AdminGodMode, AdminItems, AdminRemoveAsk, AdminTargetInfo, AuthLogin,
-    AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect, ChatDelete, ChatSend,
-    CombatAttack, CraftLearn, CraftRankUp, CraftRecipes, CraftReset, CraftStart, CrimeLog,
-    EntityInfo, GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick, GuildRankSet,
-    ItemDrop, ItemEquip, ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast,
+    AdminClear, AdminContentReload, AdminGiveAsk, AdminGodMode, AdminItems, AdminRemoveAsk,
+    AdminTargetInfo, AuthLogin, AuthRegister, AuthResume, CharCreate, CharDelete, CharSelect,
+    ChatDelete, ChatSend, CombatAttack, CraftLearn, CraftRankUp, CraftRecipes, CraftReset,
+    CraftStart, CrimeLog, EntityInfo, GuildBrowse, GuildCreate, GuildInvite, GuildJoin, GuildKick,
+    GuildRankSet, ItemDrop, ItemEquip, ItemMove, ItemUnequip, ItemUse, LocationMove, MagicRuneCast,
     MagicScrollCast, MapWorld, NpcReply, NpcTalk, PartyAccept, PartyInvite, PartyKick,
     ResourceGather, ShopBuy, ShopList, SkillTrain, SkillUse, SocketExtract, SocketInsert,
     StateResync, TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold, UpgradePreview,
@@ -311,6 +311,7 @@ impl Session {
             "cmd/admin.god_mode" => self.admin_god_mode(env, seq).await,
             "cmd/admin.target.info" => self.admin_target_info(env, seq).await,
             "cmd/admin.clear" => self.admin_clear(env, seq).await,
+            "cmd/admin.content.reload" => self.admin_content_reload(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
             "cmd/skill.train" => self.skill_train(env, seq).await,
             "cmd/item.use" => {
@@ -941,7 +942,7 @@ impl Session {
         // админ-панели (клиент не знает content/shops.json).
         for entity in &mut snapshot.entities {
             if entity.kind == ld2_protocol::types::EntityKind::Npc
-                && self.state.shops.contains_key(&entity.id)
+                && self.state.content().shops.contains_key(&entity.id)
             {
                 entity
                     .extra
@@ -2152,8 +2153,8 @@ impl Session {
             Ok(entity) => entity,
             Err(out) => return vec![out],
         };
-        let entry = match self
-            .state
+        let content = self.state.content();
+        let entry = match content
             .dialogs
             .get(&entity.id)
             .and_then(|def| def.training.iter().find(|t| t.skill == cmd.skill_id))
@@ -3869,6 +3870,7 @@ impl Session {
             // Магазин существует и имеет валютные вкладки.
             return self
                 .state
+                .content()
                 .shops
                 .get(id)
                 .is_some_and(|shop| !shop.currencies.is_empty());
@@ -3931,6 +3933,7 @@ impl Session {
             let (tab, idx): (usize, usize) = (tab.parse().ok()?, idx.parse().ok()?);
             let npc_id = target.strip_prefix("shop:")?;
             self.state
+                .content()
                 .shops
                 .get(npc_id)?
                 .currencies
@@ -4156,7 +4159,8 @@ impl Session {
             out
         } else if cmd.target.starts_with("shop:") {
             let npc = &cmd.target["shop:".len()..];
-            let Some(shop) = self.state.shops.get(npc) else {
+            let content = self.state.content();
+            let Some(shop) = content.shops.get(npc) else {
                 return vec![Self::err(seq, ErrorCode::TargetGone, "магазина нет")];
             };
             let (extra, removed) = {
@@ -4362,7 +4366,8 @@ impl Session {
 
         // ── магазин: контент → tombstone + надстройка ──
         if let Some(npc) = cmd.target.strip_prefix("shop:") {
-            let Some(shop) = self.state.shops.get(npc) else {
+            let content = self.state.content();
+            let Some(shop) = content.shops.get(npc) else {
                 return vec![Self::err(seq, ErrorCode::TargetGone, "магазина нет")];
             };
             let tabs: Vec<(usize, usize)> = shop
@@ -4398,6 +4403,54 @@ impl Session {
         }
 
         vec![Self::err(seq, ErrorCode::TargetGone, "неизвестная цель")]
+    }
+
+    /// `cmd/admin.content.reload` (M27, фаза 1): перечитать каталог
+    /// контента на работающем сервере — сид в БД (если версия изменилась),
+    /// замена диалогов/магазинов/версии в памяти и сброс кэша карты.
+    /// Только `role=admin` (§9 `E_PERMISSION`), аудит в лог.
+    async fn admin_content_reload(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
+        if let Some(err) = self.require_auth(seq) {
+            return vec![err];
+        }
+        if let Some(err) = self.require_admin(seq) {
+            return vec![err];
+        }
+        if Self::payload_of::<AdminContentReload>(env, seq).is_err() {
+            return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
+        }
+        match crate::reload::reload_state(&self.state).await {
+            Ok(outcome) => {
+                tracing::info!(
+                    "admin content reload: версия {} (БД: {}, локаций {}, предметов {})",
+                    short_version(&outcome.version),
+                    if outcome.applied {
+                        "применён"
+                    } else {
+                        "без изменений"
+                    },
+                    outcome.locations,
+                    outcome.items
+                );
+                vec![Self::ack_payload(
+                    seq,
+                    &serde_json::json!({
+                        "version": outcome.version,
+                        "applied": outcome.applied,
+                        "locations": outcome.locations,
+                        "items": outcome.items,
+                    }),
+                )]
+            }
+            Err(e) => {
+                warn!("admin content reload: {e}");
+                vec![Self::err(
+                    seq,
+                    ErrorCode::Internal,
+                    "контент не применён (старое состояние сохранено, см. логи)",
+                )]
+            }
+        }
     }
 
     /// M24: submit админ-диалога — `give:<target>#<def_id>` /
@@ -5058,6 +5111,7 @@ impl Session {
         }
         let exists = self
             .state
+            .content()
             .shops
             .get(npc_id)
             .and_then(|shop| shop.currencies.get(tab))
@@ -5111,16 +5165,30 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<MapWorld>(env, seq) else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
-        let cache = match self
-            .state
-            .map_cache
-            .get_or_try_init(|| crate::map::MapCache::build(&self.state.pool))
-            .await
-        {
-            Ok(cache) => cache,
-            Err(e) => {
-                warn!("map.world (кэш): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+        // M27: кэш инвалидируется hot reload'ом — при `None` строим заново
+        // (под write-локом, чтобы параллельные запросы не строили дважды).
+        // Снимок кэша: гвард бросаем сразу (блок), иначе временная жизнь
+        // read-гварда в scrutinee `match` до конца выражения → дедлок на
+        // write-локе в ветке `None` (первый запрос после hot reload).
+        let cached = { self.state.map_cache.read().await.clone() };
+        let cache = match cached {
+            Some(cache) => cache,
+            None => {
+                let built = match crate::map::MapCache::build(&self.state.pool).await {
+                    Ok(cache) => std::sync::Arc::new(cache),
+                    Err(e) => {
+                        warn!("map.world (кэш): {e}");
+                        return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                    }
+                };
+                let mut guard = self.state.map_cache.write().await;
+                match guard.as_ref() {
+                    Some(cache) => cache.clone(),
+                    None => {
+                        *guard = Some(built.clone());
+                        built
+                    }
+                }
             }
         };
         // Бюджет чанка: лимит WS (64 КБ) минус накладные поля ack.
@@ -9893,7 +9961,7 @@ impl Session {
         if entity.extra.contains_key("trainer") {
             actions.push("train");
         }
-        if self.state.shops.contains_key(&entity.id) {
+        if self.state.content().shops.contains_key(&entity.id) {
             actions.push("shop");
         }
         let pool = &self.state.pool;
@@ -9906,7 +9974,8 @@ impl Session {
         };
         let now = crate::time::now_epoch();
         let ctx = context.line_ctx(&available);
-        let node = match self.state.dialogs.get(&entity.id) {
+        let content = self.state.content();
+        let node = match content.dialogs.get(&entity.id) {
             Some(def) => {
                 let root = def
                     .root
@@ -9935,6 +10004,7 @@ impl Session {
         // навыков с ценой; у NPC без training — пустой массив.
         let training = self
             .state
+            .content()
             .dialogs
             .get(&entity.id)
             .map(|def| {
@@ -9997,7 +10067,8 @@ impl Session {
             Ok(entity) => entity,
             Err(out) => return vec![out],
         };
-        let Some(def) = self.state.dialogs.get(&entity.id) else {
+        let content = self.state.content();
+        let Some(def) = content.dialogs.get(&entity.id) else {
             return vec![Self::err(seq, ErrorCode::TargetGone, "диалога нет")];
         };
         let context = match self.dialog_context(&char_id, seq).await {
@@ -10112,7 +10183,7 @@ impl Session {
             Ok(entity) => entity,
             Err(out) => return vec![out],
         };
-        let Some(shop) = self.state.shops.get(&entity.id).cloned() else {
+        let Some(shop) = self.state.content().shops.get(&entity.id).cloned() else {
             return vec![Self::err(seq, ErrorCode::TargetGone, "нет магазина")];
         };
         let discount_bp = match self.shop_discount_bp(&char_id, seq).await {
@@ -10235,7 +10306,7 @@ impl Session {
             Ok(entity) => entity,
             Err(out) => return vec![out],
         };
-        let Some(shop) = self.state.shops.get(&entity.id).cloned() else {
+        let Some(shop) = self.state.content().shops.get(&entity.id).cloned() else {
             return vec![Self::err(seq, ErrorCode::TargetGone, "нет магазина")];
         };
         let Some(tab) = shop.currencies.iter().find(|c| c.currency == cmd.currency) else {
@@ -11220,4 +11291,9 @@ pub(crate) fn event_text(ty: &str, state_version: Option<u64>, payload: Value) -
         warn!("событие {ty} не влезает в лимит 64 KiB: {e}");
         String::new()
     })
+}
+
+/// Первые 12 символов sha256-версии контента — для компактного лога.
+fn short_version(version: &str) -> &str {
+    version.get(..12).unwrap_or(version)
 }

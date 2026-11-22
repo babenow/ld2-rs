@@ -14,6 +14,7 @@ pub mod db;
 pub mod death;
 pub mod dialogs;
 pub mod map;
+pub mod reload;
 pub mod session;
 pub mod shops;
 pub mod social;

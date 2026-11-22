@@ -295,6 +295,11 @@ pub enum ContentError {
     Db(#[from] sqlx::Error),
     #[error("контент: в {0} нет ни одной локации")]
     Empty(PathBuf),
+    /// M27 (hot reload): структурная валидация перед сидом — одна строка
+    /// со списком проблем (дубликаты id, висячие выходы), чтобы битый
+    /// контент не залился в БД работающего сервера.
+    #[error("контент не прошёл валидацию: {0}")]
+    Invalid(String),
 }
 
 /// Результат сида: что показать в логе старта.
@@ -306,11 +311,22 @@ pub struct SeedReport {
     pub applied: bool,
 }
 
-/// Сид контента в PostgreSQL (D26). Вызывается при старте сервера.
+/// Сид контента в PostgreSQL (D26). Вызывается при старте сервера и
+/// подкомандой `seed` (M27): перечитывает каталог и применяет изменения.
 pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, ContentError> {
     let content = load(dir.as_ref())?;
+    validate(&content)?;
     let version = content_version(&content)?;
+    seed_content(pool, &content, version).await
+}
 
+/// Применить **уже загруженный** контент (идемпотентно): версия совпала
+/// с `meta.content_version` → БД не трогается вовсе (M12.3).
+async fn seed_content(
+    pool: &PgPool,
+    content: &GameContent,
+    version: String,
+) -> Result<SeedReport, ContentError> {
     let current: Option<String> =
         sqlx::query_scalar("SELECT value FROM meta WHERE key = 'content_version'")
             .fetch_optional(pool)
@@ -483,8 +499,9 @@ pub async fn seed(pool: &PgPool, dir: impl AsRef<Path>) -> Result<SeedReport, Co
     })
 }
 
-/// Загрузка трёх обязательных файлов каталога.
-fn load(dir: &Path) -> Result<GameContent, ContentError> {
+/// Загрузка обязательных файлов каталога (M27: `pub` — hot reload и
+/// подкоманда `seed` переиспользуют её).
+pub fn load(dir: &Path) -> Result<GameContent, ContentError> {
     let read = |name: &str| -> Result<String, ContentError> {
         let path = dir.join(name);
         std::fs::read_to_string(&path).map_err(|e| ContentError::Io(path, e))
@@ -513,6 +530,154 @@ fn load(dir: &Path) -> Result<GameContent, ContentError> {
         professions: professions.professions,
         recipes: recipes.recipes,
         quests: quests.quests,
+    })
+}
+
+/// Структурная валидация контента перед сидом/hot reload (M27 фаза 1).
+///
+/// **Фатально** (сид/hot reload отказываются применять, старое состояние
+/// сохраняется): дубликаты id — upsert молча перетёр бы записи в БД.
+/// **Предупреждение** (warn + применяем): висячие выходы — карта мира
+/// отфильтровывает их, переход вернёт `E_TARGET_GONE`; во время мержа
+/// карт это допустимое промежуточное состояние, валить старт сервера ради
+/// него нельзя.
+pub fn validate(content: &GameContent) -> Result<(), ContentError> {
+    use std::collections::HashSet;
+
+    let mut problems: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut loc_ids: HashSet<&str> = HashSet::with_capacity(content.locations.len());
+    for loc in &content.locations {
+        if !loc_ids.insert(loc.id.as_str()) {
+            problems.push(format!("локация: дубликат id {}", loc.id));
+        }
+    }
+    for loc in &content.locations {
+        let mut entity_ids: HashSet<&str> = HashSet::with_capacity(loc.entities.len());
+        for entity in &loc.entities {
+            if !entity_ids.insert(entity.id.as_str()) {
+                problems.push(format!(
+                    "локация {}: дубликат сущности {}",
+                    loc.id, entity.id
+                ));
+            }
+        }
+        for exit in &loc.exits {
+            if !loc_ids.contains(exit.to.as_str()) {
+                warnings.push(format!(
+                    "локация {}: выход {} ведёт в несуществующую {}",
+                    loc.id, exit.id, exit.to
+                ));
+            }
+        }
+    }
+
+    let mut seen: HashSet<&str> = HashSet::new();
+    for skill in &content.skills {
+        if !seen.insert(skill.id.as_str()) {
+            problems.push(format!("навык: дубликат id {}", skill.id));
+        }
+    }
+    seen.clear();
+    for item in &content.items {
+        if !seen.insert(item.id.as_str()) {
+            problems.push(format!("предмет: дубликат id {}", item.id));
+        }
+    }
+    seen.clear();
+    for prof in &content.professions {
+        if !seen.insert(prof.id.as_str()) {
+            problems.push(format!("профессия: дубликат id {}", prof.id));
+        }
+    }
+    seen.clear();
+    for recipe in &content.recipes {
+        if !seen.insert(recipe.id.as_str()) {
+            problems.push(format!("рецепт: дубликат id {}", recipe.id));
+        }
+    }
+    seen.clear();
+    for quest in &content.quests {
+        if !seen.insert(quest.id.as_str()) {
+            problems.push(format!("квест: дубликат id {}", quest.id));
+        }
+    }
+
+    for warning in &warnings {
+        tracing::warn!("контент (не критично): {warning}");
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(ContentError::Invalid(problems.join("; ")))
+    }
+}
+
+/// Файлы каталога, участвующие в hot reload (сид + диалоги/магазины).
+pub const CONTENT_FILES: [&str; 8] = [
+    "locations.json",
+    "skills.json",
+    "items.json",
+    "professions.json",
+    "recipes.json",
+    "quests.json",
+    "dialogs.json",
+    "shops.json",
+];
+
+/// Дешёвый отпечаток каталога (имя + размер + mtime файлов
+/// [`CONTENT_FILES`]): poll сравнивает отпечаток и делает полную
+/// загрузку/парсинг только при изменении. `None` — каталог/файлы не
+/// читаются (watcher молчит и повторит на следующем тике).
+pub fn fingerprint(dir: &Path) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for name in CONTENT_FILES {
+        let meta = std::fs::metadata(dir.join(name)).ok()?;
+        name.hash(&mut hasher);
+        meta.len().hash(&mut hasher);
+        let modified = meta.modified().ok()?;
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos()
+            .hash(&mut hasher);
+    }
+    Some(hasher.finish())
+}
+
+/// Результат полной горячей перезагрузки контента (M27 фаза 1).
+pub struct ReloadReport {
+    /// sha256-версия контента.
+    pub version: String,
+    /// `true` — версия изменилась, сид применён; `false` — БД не трогалась.
+    pub applied: bool,
+    pub locations: usize,
+    pub items: usize,
+    /// Диалоги/магазины читаются из файлов (не из БД) — заменяются в памяти.
+    pub dialogs: std::collections::HashMap<String, crate::dialogs::DialogNpc>,
+    pub shops: std::collections::HashMap<String, crate::shops::ShopNpc>,
+}
+
+/// Горячая перезагрузка (M27 фаза 1): перечитать каталог, провалидировать,
+/// идемпотентно применить сид и вернуть части, которые сервер держит в
+/// памяти. При ошибке (JSON/валидация/БД) текущее состояние сервера не
+/// меняется — вызывающий решает, что делать (см. `reload::reload_state`).
+pub async fn reload(pool: &PgPool, dir: impl AsRef<Path>) -> Result<ReloadReport, ContentError> {
+    let dir = dir.as_ref();
+    let content = load(dir)?;
+    validate(&content)?;
+    let version = content_version(&content)?;
+    let dialogs = crate::dialogs::load(dir)?;
+    let shops = crate::shops::load(dir)?;
+    let seeded = seed_content(pool, &content, version).await?;
+    Ok(ReloadReport {
+        version: seeded.version,
+        applied: seeded.applied,
+        locations: content.locations.len(),
+        items: content.items.len(),
+        dialogs,
+        shops,
     })
 }
 
@@ -1016,5 +1181,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// M27: валидация ловит дубликаты id (защита БД от битого мержа).
+    #[test]
+    fn validate_catches_duplicate_location_id() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let mut content = load(&dir).expect("контент загружается");
+        assert!(validate(&content).is_ok(), "репозиторный контент валиден");
+
+        let dup = content.locations[0].clone();
+        content.locations.push(dup);
+        assert!(validate(&content).is_err(), "дубликат локации ловится");
+    }
+
+    /// M27: висячий выход — предупреждение, а не отказ (мерж карт может
+    /// оставлять их временно; карта/переходы их игнорируют).
+    #[test]
+    fn dangling_exit_is_tolerated_with_warning() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let mut content = load(&dir).expect("контент загружается");
+        content.locations[0].exits.push(ContentExit {
+            id: "probe_exit".into(),
+            label: "Проба".into(),
+            dir: None,
+            to: "no_such_location".into(),
+        });
+        assert!(
+            validate(&content).is_ok(),
+            "висячий выход не должен валить сид"
+        );
+    }
+
+    /// M27: отпечаток каталога стабилен, пока файлы не менялись.
+    #[test]
+    fn fingerprint_is_stable() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let first = fingerprint(&dir).expect("каталог читается");
+        let second = fingerprint(&dir).expect("каталог читается");
+        assert_eq!(first, second, "без изменений отпечаток тот же");
     }
 }
