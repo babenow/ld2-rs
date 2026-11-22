@@ -6,7 +6,8 @@
 
 use ely::forms::{Input, InputEvent, TextInput};
 use gpui::{
-    div, prelude::*, px, rgb, Context, EmptyView, Entity, IntoElement, Render, SharedString, Window,
+    div, prelude::*, px, rgb, uniform_list, Context, EmptyView, Entity, IntoElement, Render,
+    ScrollStrategy, SharedString, UniformListScrollHandle, Window,
 };
 use ld2_content::EntityKind;
 use serde_json::Value;
@@ -213,6 +214,8 @@ pub struct EditorApp {
     map_link: bool,
     map_dragging: Option<String>,
     map_drag_grab: (f32, f32),
+    /// Скролл виртуализованного списка локаций (1189 строк без лагов).
+    locations_scroll: UniformListScrollHandle,
 
     // поля поиска
     search: Option<Entity<TextInput>>,
@@ -369,6 +372,7 @@ impl EditorApp {
             map_link: false,
             map_dragging: None,
             map_drag_grab: (0.0, 0.0),
+            locations_scroll: UniformListScrollHandle::new(),
             search: None,
             item_name: None,
             item_rarity: None,
@@ -773,6 +777,8 @@ impl EditorApp {
         cx.subscribe(&search, |this, field, event: &InputEvent, cx| {
             if *event == InputEvent::Changed {
                 this.filter = field.read(cx).text().to_string();
+                // Сужение фильтра возвращает прокрутку к началу списка.
+                this.locations_scroll.scroll_to_item(0, ScrollStrategy::Top);
                 cx.notify();
             }
         })
@@ -946,6 +952,26 @@ impl EditorApp {
         cx.notify();
     }
 
+    /// Номер отфильтрованной строки локации (для scroll_to_item).
+    fn location_row_of(&self, index: usize) -> Option<usize> {
+        let filter = self.filter.trim().to_lowercase();
+        let project = self.project.as_ref()?;
+        let mut row = 0;
+        for (ix, location) in project.content().locations.iter().enumerate() {
+            if !filter.is_empty()
+                && !location.id.to_lowercase().contains(&filter)
+                && !location.name.to_lowercase().contains(&filter)
+            {
+                continue;
+            }
+            if ix == index {
+                return Some(row);
+            }
+            row += 1;
+        }
+        None
+    }
+
     fn select_location(&mut self, index: usize, cx: &mut Context<'_, Self>) {
         self.selected_location = Some(index);
         self.selected_exit = None;
@@ -968,6 +994,11 @@ impl EditorApp {
                 location.exits.len(),
                 location.entities.len()
             );
+        }
+        // Виртуализованный список: показать выбранную строку.
+        if let Some(row) = self.location_row_of(index) {
+            self.locations_scroll
+                .scroll_to_item(row, ScrollStrategy::Center);
         }
         cx.notify();
     }
@@ -5141,36 +5172,82 @@ impl EditorApp {
             }
         }
         let count = rows.len();
+        let total = self
+            .project
+            .as_ref()
+            .map(|project| project.content().locations.len())
+            .unwrap_or(0);
         let selected = self.selected_location;
-        let mut list = div()
-            .id("locations-list")
-            .flex_1()
-            .overflow_y_scroll()
-            .min_h_0();
-        for (index, id, name, meta) in rows {
-            list = list.child(
-                div()
-                    .id(("location-row", index))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .cursor_pointer()
-                    .when(selected == Some(index), |d| d.bg(rgb(PANEL_ALT)))
-                    .hover(|d| d.bg(rgb(PANEL_ALT)))
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_location(index, cx)))
-                    .child(
+        let this = cx.entity();
+        // Виртуализация (E6.1): рисуется только видимый диапазон строк —
+        // 1189 локаций ведут себя как ~20. Строки фиксированной высоты,
+        // длинные id/имена обрезаются многоточием.
+        let list = if count == 0 {
+            div()
+                .flex_1()
+                .min_h_0()
+                .px_2()
+                .py_2()
+                .text_size(px(12.0))
+                .text_color(rgb(MUTED))
+                .child("ничего не найдено — измените поиск")
+                .into_any_element()
+        } else {
+            let rows = std::rc::Rc::new(rows);
+            let row_data = rows.clone();
+            uniform_list("locations-rows", count, move |range, _window, _acx| {
+                range
+                    .map(|row| {
+                        let (index, id, name, meta) = row_data[row].clone();
+                        let this = this.clone();
                         div()
-                            .w(px(150.0))
-                            .text_size(px(11.0))
-                            .text_color(rgb(MUTED))
-                            .child(id),
-                    )
-                    .child(div().flex_1().text_size(px(12.0)).child(name))
-                    .child(div().text_size(px(11.0)).text_color(rgb(MUTED)).child(meta)),
-            );
-        }
+                            .id(("location-row", index))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .h(px(26.0))
+                            .px_2()
+                            .cursor_pointer()
+                            .when(selected == Some(index), |d| d.bg(rgb(PANEL_ALT)))
+                            .hover(|d| d.bg(rgb(PANEL_ALT)))
+                            .on_click(move |_, _, acx: &mut gpui::App| {
+                                this.update(acx, |this, cx| this.select_location(index, cx));
+                            })
+                            .child(
+                                div()
+                                    .w(px(150.0))
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(MUTED))
+                                    .child(id),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(px(12.0))
+                                    .child(name),
+                            )
+                            .child(div().text_size(px(11.0)).text_color(rgb(MUTED)).child(meta))
+                    })
+                    .collect::<Vec<gpui::Stateful<gpui::Div>>>()
+            })
+            .track_scroll(&self.locations_scroll)
+            .flex_1()
+            .min_h_0()
+            .into_any_element()
+        };
+        let counter = if count == total {
+            format!("{count} локаций")
+        } else {
+            format!("{count} из {total} локаций")
+        };
         div()
             .w(px(400.0))
             .flex()
@@ -5190,7 +5267,7 @@ impl EditorApp {
                         div()
                             .text_size(px(11.0))
                             .text_color(rgb(MUTED))
-                            .child(format!("{count} локаций")),
+                            .child(counter),
                     ),
             )
             .child(list)
