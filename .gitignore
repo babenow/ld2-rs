@@ -34,3 +34,6 @@ PLAN-CONTEXT.md
 .pgdata/
 .gigaide
 .agents/
+
+# Артефакты локальных инструментов/скиллов (архитектурные диаграммы)
+.archify/
