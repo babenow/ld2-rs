@@ -35,7 +35,7 @@ crates/ld2-server/src/session/magic.rs 601 329
 crates/ld2-server/src/session/quests.rs 320 253
 crates/ld2-server/src/session/socketing.rs 509 310
 crates/ld2-server/src/session/upgrade.rs 475 343
-crates/ld2-server/src/session.rs 3443 289
+crates/ld2-server/src/session.rs 2901 289
 crates/ld2-server/src/tick.rs 1923 514
 crates/ld2-server/src/world.rs 1938 153
 crates/ld2-test-kit/src/fixtures.rs 628 150
