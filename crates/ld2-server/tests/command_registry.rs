@@ -11,7 +11,7 @@ use ld2_protocol::cmd::ALL_COMMANDS;
 
 /// Тело `async fn dispatch` из `session.rs` (границы по балансу скобок).
 fn dispatch_body() -> &'static str {
-    let src = include_str!("../src/session.rs");
+    let src = include_str!("../src/session/mod.rs");
     let start = src
         .find("async fn dispatch")
         .expect("dispatch в session.rs");
