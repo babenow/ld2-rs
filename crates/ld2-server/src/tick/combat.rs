@@ -43,7 +43,6 @@ pub(super) fn plan_combat(
 
     plan
 }
-
 fn plan_char_attacks(
     plan: &mut Plan,
     world: &mut World,
@@ -56,222 +55,280 @@ fn plan_char_attacks(
         if now_ms < next_at {
             continue;
         }
-        // M17/F30g: период атаки — cooldown_s оружия, иначе конфиг.
-        let interval = world.char_attack_ms(&char_id).unwrap_or(attack_interval_ms);
-        world.set_next_attack(&char_id, now_ms + interval);
+        char_attack(
+            plan,
+            world,
+            now_ms,
+            cfg,
+            skills_cfg,
+            attack_interval_ms,
+            &char_id,
+            &target,
+            &loc,
+        );
+    }
+}
 
-        let target_alive_in_loc = world.mob_location(&target).is_some_and(|l| l == loc);
-        if !target_alive_in_loc {
-            world.end_combat(&char_id);
-            push_event(
-                plan,
-                &char_id,
-                "evt/combat/end",
-                &CombatEnd {
-                    reason: "цель недоступна".into(),
-                },
-            );
-            continue;
-        }
-        let Some(hp) = world.damage_mob(&target, cfg.base_damage) else {
-            world.end_combat(&char_id);
-            push_event(
-                plan,
-                &char_id,
-                "evt/combat/end",
-                &CombatEnd {
-                    reason: "цель недоступна".into(),
-                },
-            );
-            continue;
-        };
-        // M17/F30e: нанесённый урон → ярость (применяется в tick_once).
-        plan.char_hits.push((char_id.clone(), cfg.base_damage));
-        let mob_name = world
-            .mob(&target)
-            .map(|m| m.name.clone())
-            .unwrap_or_default();
-        let mob_max = world.mob_max_hp(&target);
-        let source_name = world.char_name(&char_id).unwrap_or_default();
+#[allow(clippy::too_many_arguments)]
+fn char_attack(
+    plan: &mut Plan,
+    world: &mut World,
+    now_ms: i64,
+    cfg: &CombatSection,
+    skills_cfg: &SkillsSection,
+    attack_interval_ms: i64,
+    char_id: &str,
+    target: &str,
+    loc: &str,
+) {
+    let char_id = char_id.to_string();
+    let target = target.to_string();
+    let loc = loc.to_string();
+    // M17/F30g: период атаки — cooldown_s оружия, иначе конфиг.
+    let interval = world.char_attack_ms(&char_id).unwrap_or(attack_interval_ms);
+    world.set_next_attack(&char_id, now_ms + interval);
 
-        // M17/F30f: строка удара — «вы» атакующему, имя — наблюдателям;
-        // «чем бьёт» — кэш экипированного оружия в мире.
-        let hits_as = world.char_hits_as(&char_id);
-        let mk_hit = |text: String| CombatHit {
-            source: char_id.clone(),
-            source_name: source_name.clone(),
-            target: target.clone(),
-            target_name: mob_name.clone(),
-            kind: CombatKind::Melee,
-            amount: cfg.base_damage,
-            crit: false,
-            miss: false,
-            text,
-            extra: Default::default(),
-        };
+    let target_alive_in_loc = world.mob_location(&target).is_some_and(|l| l == loc);
+    if !target_alive_in_loc {
+        world.end_combat(&char_id);
         push_event(
             plan,
             &char_id,
+            "evt/combat/end",
+            &CombatEnd {
+                reason: "цель недоступна".into(),
+            },
+        );
+        return;
+    }
+    let Some(hp) = world.damage_mob(&target, cfg.base_damage) else {
+        world.end_combat(&char_id);
+        push_event(
+            plan,
+            &char_id,
+            "evt/combat/end",
+            &CombatEnd {
+                reason: "цель недоступна".into(),
+            },
+        );
+        return;
+    };
+    // M17/F30e: нанесённый урон → ярость (применяется в tick_once).
+    plan.char_hits.push((char_id.clone(), cfg.base_damage));
+    let mob_name = world
+        .mob(&target)
+        .map(|m| m.name.clone())
+        .unwrap_or_default();
+    let mob_max = world.mob_max_hp(&target);
+    let source_name = world.char_name(&char_id).unwrap_or_default();
+
+    // M17/F30f: строка удара — «вы» атакующему, имя — наблюдателям;
+    // «чем бьёт» — кэш экипированного оружия в мире.
+    let hits_as = world.char_hits_as(&char_id);
+    let mk_hit = |text: String| CombatHit {
+        source: char_id.clone(),
+        source_name: source_name.clone(),
+        target: target.clone(),
+        target_name: mob_name.clone(),
+        kind: CombatKind::Melee,
+        amount: cfg.base_damage,
+        crit: false,
+        miss: false,
+        text,
+        extra: Default::default(),
+    };
+    push_event(
+        plan,
+        &char_id,
+        "evt/combat/hit",
+        &mk_hit(crate::combat_log::melee_hit_text(
+            &source_name,
+            &mob_name,
+            hits_as,
+            cfg.base_damage,
+            true,
+        )),
+    );
+    for addr in world.chars_in_location(&loc) {
+        if addr == char_id {
+            continue;
+        }
+        push_event(
+            plan,
+            &addr,
             "evt/combat/hit",
             &mk_hit(crate::combat_log::melee_hit_text(
                 &source_name,
                 &mob_name,
                 hits_as,
                 cfg.base_damage,
-                true,
+                false,
             )),
         );
-        for addr in world.chars_in_location(&loc) {
-            if addr == char_id {
+    }
+    push_event(
+        plan,
+        &char_id,
+        "evt/entity/hp",
+        &EntityHp {
+            entity_id: target.clone(),
+            hp: Hp {
+                cur: hp,
+                max: mob_max,
+            },
+        },
+    );
+
+    let (mob_hp, killed_by_rune) = rune_procs(
+        plan,
+        world,
+        &char_id,
+        &target,
+        &loc,
+        now_ms,
+        hp,
+        mob_max,
+        &source_name,
+        &mob_name,
+        skills_cfg,
+    );
+    if mob_hp == 0 && !killed_by_rune {
+        // Общий путь смерти моба (атака и заклинания, M12.5b).
+        if let Some(kill) =
+            mob_kill_effects(world, &mut plan.events, &target, &loc, &char_id, skills_cfg)
+        {
+            plan.xp.push(kill);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rune_procs(
+    plan: &mut Plan,
+    world: &mut World,
+    char_id: &str,
+    target: &str,
+    loc: &str,
+    now_ms: i64,
+    hp: i64,
+    mob_max: i64,
+    source_name: &str,
+    mob_name: &str,
+    skills_cfg: &SkillsSection,
+) -> (i64, bool) {
+    let char_id = char_id.to_string();
+    let target = target.to_string();
+    let loc = loc.to_string();
+    let source_name = source_name.to_string();
+    let mob_name = mob_name.to_string();
+    // M18/F58d (ADR-012 §5): авто-приёмы рун — шанс при ударе
+    // (кэш рун экипированного оружия); урон + отложенная работа
+    // (расход зарядов, бафф) в `Plan::rune_work` — БД в `tick_once`.
+    let mut mob_hp = hp;
+    let mut killed_by_rune = false;
+    if mob_hp > 0 {
+        let procs = world.char_runes(&char_id).to_vec();
+        for rune in procs {
+            if rune.charges < rune.cost {
+                continue; // нет зарядов → не срабатывает (ADR-012 §5)
+            }
+            let mut buf = [0u8; 8];
+            // [0,1): u64::MAX + 1.0 как знаменатель (иначе 1.0 ∈ диапазону).
+            let roll = if getrandom::fill(&mut buf).is_ok() {
+                (u64::from_le_bytes(buf) as f64) / (u64::MAX as f64 + 1.0)
+            } else {
+                1.0 // нет CSPRNG → не срабатывает
+            };
+            if !crate::systems::rune_proc_roll(rune.chance, roll) {
                 continue;
             }
+            // Сработало: заряды — сразу в кэш, БД/бафф — в tick_once.
+            let new_charges = rune.charges - rune.cost;
+            world.spend_char_rune(&char_id, rune.socket_index, new_charges);
+            plan.rune_work.push(RuneWork {
+                char_id: char_id.clone(),
+                staff_uid: rune.staff_uid.clone(),
+                socket_index: rune.socket_index,
+                new_charges,
+                buff: rune.buff.clone(),
+            });
+            // M18/F58d: эффект на цель (стен/кровотечение/корни) —
+            // состояние мира, применяется сразу в плане.
+            if let Some(effect) = &rune.effect {
+                world.apply_rune_effect(&target, effect, &char_id, now_ms);
+            }
+            let Some(new_hp) = world.damage_mob(&target, rune.damage) else {
+                break; // цель исчезла
+            };
+            mob_hp = new_hp;
+            // Строка рунного удара — как при касте (§8).
+            let rune_hit = |text: String| CombatHit {
+                source: char_id.clone(),
+                source_name: source_name.clone(),
+                target: target.clone(),
+                target_name: mob_name.clone(),
+                kind: CombatKind::Rune,
+                amount: rune.damage,
+                crit: false,
+                miss: false,
+                text,
+                extra: Default::default(),
+            };
             push_event(
                 plan,
-                &addr,
+                &char_id,
                 "evt/combat/hit",
-                &mk_hit(crate::combat_log::melee_hit_text(
+                &rune_hit(crate::combat_log::spell_hit_text(
+                    &rune.spell,
                     &source_name,
                     &mob_name,
-                    hits_as,
-                    cfg.base_damage,
-                    false,
+                    rune.damage,
+                    true,
                 )),
             );
-        }
-        push_event(
-            plan,
-            &char_id,
-            "evt/entity/hp",
-            &EntityHp {
-                entity_id: target.clone(),
-                hp: Hp {
-                    cur: hp,
-                    max: mob_max,
-                },
-            },
-        );
-
-        // M18/F58d (ADR-012 §5): авто-приёмы рун — шанс при ударе
-        // (кэш рун экипированного оружия); урон + отложенная работа
-        // (расход зарядов, бафф) в `Plan::rune_work` — БД в `tick_once`.
-        let mut mob_hp = hp;
-        let mut killed_by_rune = false;
-        if mob_hp > 0 {
-            let procs = world.char_runes(&char_id).to_vec();
-            for rune in procs {
-                if rune.charges < rune.cost {
-                    continue; // нет зарядов → не срабатывает (ADR-012 §5)
-                }
-                let mut buf = [0u8; 8];
-                // [0,1): u64::MAX + 1.0 как знаменатель (иначе 1.0 ∈ диапазону).
-                let roll = if getrandom::fill(&mut buf).is_ok() {
-                    (u64::from_le_bytes(buf) as f64) / (u64::MAX as f64 + 1.0)
-                } else {
-                    1.0 // нет CSPRNG → не срабатывает
-                };
-                if !crate::systems::rune_proc_roll(rune.chance, roll) {
+            for addr in world.chars_in_location(&loc) {
+                if addr == char_id {
                     continue;
                 }
-                // Сработало: заряды — сразу в кэш, БД/бафф — в tick_once.
-                let new_charges = rune.charges - rune.cost;
-                world.spend_char_rune(&char_id, rune.socket_index, new_charges);
-                plan.rune_work.push(RuneWork {
-                    char_id: char_id.clone(),
-                    staff_uid: rune.staff_uid.clone(),
-                    socket_index: rune.socket_index,
-                    new_charges,
-                    buff: rune.buff.clone(),
-                });
-                // M18/F58d: эффект на цель (стен/кровотечение/корни) —
-                // состояние мира, применяется сразу в плане.
-                if let Some(effect) = &rune.effect {
-                    world.apply_rune_effect(&target, effect, &char_id, now_ms);
-                }
-                let Some(new_hp) = world.damage_mob(&target, rune.damage) else {
-                    break; // цель исчезла
-                };
-                mob_hp = new_hp;
-                // Строка рунного удара — как при касте (§8).
-                let rune_hit = |text: String| CombatHit {
-                    source: char_id.clone(),
-                    source_name: source_name.clone(),
-                    target: target.clone(),
-                    target_name: mob_name.clone(),
-                    kind: CombatKind::Rune,
-                    amount: rune.damage,
-                    crit: false,
-                    miss: false,
-                    text,
-                    extra: Default::default(),
-                };
                 push_event(
                     plan,
-                    &char_id,
+                    &addr,
                     "evt/combat/hit",
                     &rune_hit(crate::combat_log::spell_hit_text(
                         &rune.spell,
                         &source_name,
                         &mob_name,
                         rune.damage,
-                        true,
+                        false,
                     )),
                 );
-                for addr in world.chars_in_location(&loc) {
-                    if addr == char_id {
-                        continue;
-                    }
-                    push_event(
-                        plan,
-                        &addr,
-                        "evt/combat/hit",
-                        &rune_hit(crate::combat_log::spell_hit_text(
-                            &rune.spell,
-                            &source_name,
-                            &mob_name,
-                            rune.damage,
-                            false,
-                        )),
-                    );
-                }
-                push_event(
-                    plan,
-                    &char_id,
-                    "evt/entity/hp",
-                    &EntityHp {
-                        entity_id: target.clone(),
-                        hp: Hp {
-                            cur: mob_hp,
-                            max: mob_max,
-                        },
-                    },
-                );
-                if mob_hp == 0 {
-                    // Руна добила — общий путь смерти (M12.5b).
-                    killed_by_rune = true;
-                    if let Some(kill) = mob_kill_effects(
-                        world,
-                        &mut plan.events,
-                        &target,
-                        &loc,
-                        &char_id,
-                        skills_cfg,
-                    ) {
-                        plan.xp.push(kill);
-                    }
-                    break;
-                }
             }
-        }
-
-        if mob_hp == 0 && !killed_by_rune {
-            // Общий путь смерти моба (атака и заклинания, M12.5b).
-            if let Some(kill) =
-                mob_kill_effects(world, &mut plan.events, &target, &loc, &char_id, skills_cfg)
-            {
-                plan.xp.push(kill);
+            push_event(
+                plan,
+                &char_id,
+                "evt/entity/hp",
+                &EntityHp {
+                    entity_id: target.clone(),
+                    hp: Hp {
+                        cur: mob_hp,
+                        max: mob_max,
+                    },
+                },
+            );
+            if mob_hp == 0 {
+                // Руна добила — общий путь смерти (M12.5b).
+                killed_by_rune = true;
+                if let Some(kill) =
+                    mob_kill_effects(world, &mut plan.events, &target, &loc, &char_id, skills_cfg)
+                {
+                    plan.xp.push(kill);
+                }
+                break;
             }
         }
     }
+
+    (mob_hp, killed_by_rune)
 }
 
 fn plan_bleed_ticks(plan: &mut Plan, world: &mut World, now_ms: i64, skills_cfg: &SkillsSection) {
@@ -437,82 +494,10 @@ fn plan_mob_attacks(
         );
         world.set_mob_next_attack(&mob_id, now_ms + interval_ms);
         world.set_mob_attack_interval(&mob_id, interval_ms);
-        // M25: навыки босса — каст (подготовка: босс не атакует) либо
-        // применение мгновенного/готового каста.
-        let (skill_tick, casting) = world.boss_skill_tick(&mob_id, now_ms);
-        let boss_name = world
-            .mob(&mob_id)
-            .map(|m| m.name.clone())
-            .unwrap_or_default();
-        match &skill_tick {
-            crate::world::BossSkillTick::Started(skill) => {
-                for addr in world.chars_in_location(&loc) {
-                    push_event(
-                        plan,
-                        &addr,
-                        "evt/mob/cast",
-                        &ld2_protocol::evt::MobCast {
-                            entity_id: mob_id.clone(),
-                            source_name: boss_name.clone(),
-                            name: skill.name.clone(),
-                            glyph: skill.glyph.clone(),
-                            ends_at: now_ms + skill.cast_s.max(1) * 1000,
-                        },
-                    );
-                }
-            }
-            crate::world::BossSkillTick::Applied(skill) => {
-                let skill_damage = ((skill.damage as f64) * damage_mult).round() as i64;
-                for addr in world.chars_in_location(&loc) {
-                    push_event(
-                        plan,
-                        &addr,
-                        "evt/mob/skill",
-                        &ld2_protocol::evt::MobSkill {
-                            entity_id: mob_id.clone(),
-                            source_name: boss_name.clone(),
-                            name: skill.name.clone(),
-                            glyph: skill.glyph.clone(),
-                        },
-                    );
-                    if skill_damage > 0 {
-                        plan.mob_hits.push(MobHit {
-                            char_id: addr,
-                            amount: skill_damage,
-                        });
-                    }
-                }
-                // M25: эффект приёма — контроль над игроками локации
-                // (стан/немота/ослепление) + событие на отображение.
-                if let Some(effect) = &skill.effect {
-                    for addr in world.chars_in_location(&loc) {
-                        let until = now_ms + effect.duration_s.max(1) * 1000;
-                        if world.set_char_effect(&addr, &effect.kind, until) {
-                            push_event(
-                                plan,
-                                &addr,
-                                "evt/char/afflict",
-                                &ld2_protocol::evt::CharAfflict {
-                                    kind: effect.kind.clone(),
-                                    title: crate::world::effect_title(&effect.kind),
-                                    until_ms: until,
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-            crate::world::BossSkillTick::None => {}
-        }
-        // Подготовка/применение навыка — без обычной атаки в такт.
-        if casting
-            || matches!(
-                skill_tick,
-                crate::world::BossSkillTick::Started(_) | crate::world::BossSkillTick::Applied(_)
-            )
-        {
+        if apply_boss_skill(plan, world, now_ms, &loc, &mob_id, damage_mult) {
             continue;
         }
+
         let Some(victim) = world.chars_in_location(&loc).into_iter().next() else {
             continue;
         };
@@ -865,4 +850,90 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
             pool_left: None,
         },
     ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_boss_skill(
+    plan: &mut Plan,
+    world: &mut World,
+    now_ms: i64,
+    loc: &str,
+    mob_id: &str,
+    damage_mult: f64,
+) -> bool {
+    let mob_id = mob_id.to_string();
+    let loc = loc.to_string();
+    // M25: навыки босса — каст (подготовка: босс не атакует) либо
+    // применение мгновенного/готового каста.
+    let (skill_tick, casting) = world.boss_skill_tick(&mob_id, now_ms);
+    let boss_name = world
+        .mob(&mob_id)
+        .map(|m| m.name.clone())
+        .unwrap_or_default();
+    match &skill_tick {
+        crate::world::BossSkillTick::Started(skill) => {
+            for addr in world.chars_in_location(&loc) {
+                push_event(
+                    plan,
+                    &addr,
+                    "evt/mob/cast",
+                    &ld2_protocol::evt::MobCast {
+                        entity_id: mob_id.clone(),
+                        source_name: boss_name.clone(),
+                        name: skill.name.clone(),
+                        glyph: skill.glyph.clone(),
+                        ends_at: now_ms + skill.cast_s.max(1) * 1000,
+                    },
+                );
+            }
+        }
+        crate::world::BossSkillTick::Applied(skill) => {
+            let skill_damage = ((skill.damage as f64) * damage_mult).round() as i64;
+            for addr in world.chars_in_location(&loc) {
+                push_event(
+                    plan,
+                    &addr,
+                    "evt/mob/skill",
+                    &ld2_protocol::evt::MobSkill {
+                        entity_id: mob_id.clone(),
+                        source_name: boss_name.clone(),
+                        name: skill.name.clone(),
+                        glyph: skill.glyph.clone(),
+                    },
+                );
+                if skill_damage > 0 {
+                    plan.mob_hits.push(MobHit {
+                        char_id: addr,
+                        amount: skill_damage,
+                    });
+                }
+            }
+            // M25: эффект приёма — контроль над игроками локации
+            // (стан/немота/ослепление) + событие на отображение.
+            if let Some(effect) = &skill.effect {
+                for addr in world.chars_in_location(&loc) {
+                    let until = now_ms + effect.duration_s.max(1) * 1000;
+                    if world.set_char_effect(&addr, &effect.kind, until) {
+                        push_event(
+                            plan,
+                            &addr,
+                            "evt/char/afflict",
+                            &ld2_protocol::evt::CharAfflict {
+                                kind: effect.kind.clone(),
+                                title: crate::world::effect_title(&effect.kind),
+                                until_ms: until,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        crate::world::BossSkillTick::None => {}
+    }
+    // Подготовка/применение навыка — без обычной атаки в такт.
+    casting
+        || matches!(
+            skill_tick,
+            crate::world::BossSkillTick::Started(_) | crate::world::BossSkillTick::Applied(_)
+        )
 }
