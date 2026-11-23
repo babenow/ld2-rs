@@ -1,0 +1,10 @@
+ack cmd/auth.register v=-
+evt/session.start v=-
+ack cmd/char.create v=-
+ack cmd/char.select v=1
+evt/state/snapshot v=1
+ack cmd/char.list v=-
+ack cmd/time.sync v=-
+evt/time.sync v=-
+ack cmd/ping v=-
+evt/pong v=-
