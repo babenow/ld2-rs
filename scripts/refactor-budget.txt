@@ -1,0 +1,41 @@
+# Бюджет рефакторинга (RF0e). Формат:
+#   <путь> <max прод-строк> <max строк в функции>
+#   tests <крейт> <минимум #[test]>
+# Ратчет: лимиты только уменьшать, минимум тестов только увеличивать.
+# Пересчёт: scripts/refactor-audit.sh --update
+
+# --- прод-лимиты (файлы > 600 строк и целевые модули) ---
+crates/ld2-client/src/root/admin.rs 684 417
+crates/ld2-client/src/root/backpack.rs 556 264
+crates/ld2-client/src/root/chars.rs 544 221
+crates/ld2-client/src/root/chat.rs 519 231
+crates/ld2-client/src/root/game.rs 3279 371
+crates/ld2-client/src/root/pickup.rs 488 285
+crates/ld2-client/src/root/sheet.rs 3839 432
+crates/ld2-client/src/root/social.rs 612 257
+crates/ld2-client/src/root.rs 4914 443
+crates/ld2-client/src/text_input.rs 699 150
+crates/ld2-content/src/validate.rs 974 278
+crates/ld2-core/src/l10n/en.rs 521 517
+crates/ld2-core/src/l10n/mod.rs 710 150
+crates/ld2-core/src/l10n/ru.rs 521 517
+crates/ld2-core/src/store.rs 3209 1240
+crates/ld2-editor/src/app.rs 8329 647
+crates/ld2-editor/src/project.rs 1975 150
+crates/ld2-protocol/src/cmd.rs 646 150
+crates/ld2-protocol/src/evt.rs 702 150
+crates/ld2-server/src/config.rs 978 306
+crates/ld2-server/src/db/items.rs 1011 150
+crates/ld2-server/src/session.rs 11299 343
+crates/ld2-server/src/tick.rs 1923 514
+crates/ld2-server/src/world.rs 1938 153
+crates/ld2-test-kit/src/fixtures.rs 628 150
+
+# --- минимум тестов по крейтам ---
+tests ld2-client 50
+tests ld2-content 17
+tests ld2-core 117
+tests ld2-editor 28
+tests ld2-protocol 20
+tests ld2-server 65
+tests ld2-test-kit 0
