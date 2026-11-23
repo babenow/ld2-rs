@@ -26,7 +26,7 @@ crates/ld2-protocol/src/cmd.rs 646 150
 crates/ld2-protocol/src/evt.rs 702 150
 crates/ld2-server/src/config.rs 978 306
 crates/ld2-server/src/db/items.rs 1011 150
-crates/ld2-server/src/session.rs 11299 343
+crates/ld2-server/src/session.rs 11052 343
 crates/ld2-server/src/tick.rs 1923 514
 crates/ld2-server/src/world.rs 1938 153
 crates/ld2-test-kit/src/fixtures.rs 628 150
@@ -37,5 +37,5 @@ tests ld2-content 17
 tests ld2-core 117
 tests ld2-editor 28
 tests ld2-protocol 20
-tests ld2-server 65
+tests ld2-server 80
 tests ld2-test-kit 0
