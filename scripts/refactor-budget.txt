@@ -27,8 +27,9 @@ crates/ld2-protocol/src/evt.rs 702 150
 crates/ld2-server/src/config.rs 978 306
 crates/ld2-server/src/db/items.rs 1011 150
 crates/ld2-server/src/session/chars.rs 655 231
+crates/ld2-server/src/session/combat.rs 747 268
 crates/ld2-server/src/session/entity.rs 443 230
-crates/ld2-server/src/session.rs 9202 343
+crates/ld2-server/src/session.rs 8474 343
 crates/ld2-server/src/tick.rs 1923 514
 crates/ld2-server/src/world.rs 1938 153
 crates/ld2-test-kit/src/fixtures.rs 628 150
