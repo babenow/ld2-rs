@@ -29,7 +29,29 @@ pub(super) fn plan_combat(
     let mut plan = Plan::default();
     let attack_interval_ms = ((cfg.attack_interval_s * 1000.0).round() as i64).max(1);
 
-    // ── атаки персонажей ────────────────────────────────────────────────
+    plan_char_attacks(
+        &mut plan,
+        world,
+        now_ms,
+        cfg,
+        skills_cfg,
+        attack_interval_ms,
+    );
+    plan_bleed_ticks(&mut plan, world, now_ms, skills_cfg);
+    plan_burn_ticks(&mut plan, world, now_ms, skills_cfg);
+    plan_mob_attacks(&mut plan, world, now_ms, cfg, attack_interval_ms);
+
+    plan
+}
+
+fn plan_char_attacks(
+    plan: &mut Plan,
+    world: &mut World,
+    now_ms: i64,
+    cfg: &CombatSection,
+    skills_cfg: &SkillsSection,
+    attack_interval_ms: i64,
+) {
     for (char_id, target, loc, next_at) in world.combat_list() {
         if now_ms < next_at {
             continue;
@@ -42,7 +64,7 @@ pub(super) fn plan_combat(
         if !target_alive_in_loc {
             world.end_combat(&char_id);
             push_event(
-                &mut plan,
+                plan,
                 &char_id,
                 "evt/combat/end",
                 &CombatEnd {
@@ -54,7 +76,7 @@ pub(super) fn plan_combat(
         let Some(hp) = world.damage_mob(&target, cfg.base_damage) else {
             world.end_combat(&char_id);
             push_event(
-                &mut plan,
+                plan,
                 &char_id,
                 "evt/combat/end",
                 &CombatEnd {
@@ -88,7 +110,7 @@ pub(super) fn plan_combat(
             extra: Default::default(),
         };
         push_event(
-            &mut plan,
+            plan,
             &char_id,
             "evt/combat/hit",
             &mk_hit(crate::combat_log::melee_hit_text(
@@ -104,7 +126,7 @@ pub(super) fn plan_combat(
                 continue;
             }
             push_event(
-                &mut plan,
+                plan,
                 &addr,
                 "evt/combat/hit",
                 &mk_hit(crate::combat_log::melee_hit_text(
@@ -117,7 +139,7 @@ pub(super) fn plan_combat(
             );
         }
         push_event(
-            &mut plan,
+            plan,
             &char_id,
             "evt/entity/hp",
             &EntityHp {
@@ -183,7 +205,7 @@ pub(super) fn plan_combat(
                     extra: Default::default(),
                 };
                 push_event(
-                    &mut plan,
+                    plan,
                     &char_id,
                     "evt/combat/hit",
                     &rune_hit(crate::combat_log::spell_hit_text(
@@ -199,7 +221,7 @@ pub(super) fn plan_combat(
                         continue;
                     }
                     push_event(
-                        &mut plan,
+                        plan,
                         &addr,
                         "evt/combat/hit",
                         &rune_hit(crate::combat_log::spell_hit_text(
@@ -212,7 +234,7 @@ pub(super) fn plan_combat(
                     );
                 }
                 push_event(
-                    &mut plan,
+                    plan,
                     &char_id,
                     "evt/entity/hp",
                     &EntityHp {
@@ -250,8 +272,9 @@ pub(super) fn plan_combat(
             }
         }
     }
+}
 
-    // ── M18/F58d: кровотечение (DoT рун) — тик раз в секунду ──────────
+fn plan_bleed_ticks(plan: &mut Plan, world: &mut World, now_ms: i64, skills_cfg: &SkillsSection) {
     for (mob_id, dps, _next_at, src) in world.bleeding_mobs(now_ms) {
         let Some((loc, mob_name)) = world.mob_loc_name(&mob_id) else {
             continue;
@@ -277,10 +300,10 @@ pub(super) fn plan_combat(
             extra: Default::default(),
         };
         for addr in world.chars_in_location(&loc) {
-            push_event(&mut plan, &addr, "evt/combat/hit", &dot_hit);
+            push_event(plan, &addr, "evt/combat/hit", &dot_hit);
         }
         push_event(
-            &mut plan,
+            plan,
             &src.clone().unwrap_or_default(),
             "evt/entity/hp",
             &EntityHp {
@@ -302,8 +325,9 @@ pub(super) fn plan_combat(
             }
         }
     }
+}
 
-    // ── «Горение» (DoT рун; период — из контента) ─────────────────────
+fn plan_burn_ticks(plan: &mut Plan, world: &mut World, now_ms: i64, skills_cfg: &SkillsSection) {
     for (mob_id, dps, src) in world.burning_mobs(now_ms) {
         let Some((loc, mob_name)) = world.mob_loc_name(&mob_id) else {
             continue;
@@ -328,10 +352,10 @@ pub(super) fn plan_combat(
             extra: Default::default(),
         };
         for addr in world.chars_in_location(&loc) {
-            push_event(&mut plan, &addr, "evt/combat/hit", &dot_hit);
+            push_event(plan, &addr, "evt/combat/hit", &dot_hit);
         }
         push_event(
-            &mut plan,
+            plan,
             &src.clone().unwrap_or_default(),
             "evt/entity/hp",
             &EntityHp {
@@ -353,8 +377,15 @@ pub(super) fn plan_combat(
             }
         }
     }
+}
 
-    // ── атаки агрессивных мобов (по локациям с персонажами) ────────────
+fn plan_mob_attacks(
+    plan: &mut Plan,
+    world: &mut World,
+    now_ms: i64,
+    cfg: &CombatSection,
+    attack_interval_ms: i64,
+) {
     let aggro_targets: Vec<(String, String)> = world
         .locations_with_players()
         .into_iter()
@@ -380,7 +411,7 @@ pub(super) fn plan_combat(
             if let Some(state) = world.boss_state(&mob_id) {
                 for addr in world.chars_in_location(&loc) {
                     push_event(
-                        &mut plan,
+                        plan,
                         &addr,
                         "evt/mob/phase",
                         &ld2_protocol::evt::MobPhase {
@@ -417,7 +448,7 @@ pub(super) fn plan_combat(
             crate::world::BossSkillTick::Started(skill) => {
                 for addr in world.chars_in_location(&loc) {
                     push_event(
-                        &mut plan,
+                        plan,
                         &addr,
                         "evt/mob/cast",
                         &ld2_protocol::evt::MobCast {
@@ -434,7 +465,7 @@ pub(super) fn plan_combat(
                 let skill_damage = ((skill.damage as f64) * damage_mult).round() as i64;
                 for addr in world.chars_in_location(&loc) {
                     push_event(
-                        &mut plan,
+                        plan,
                         &addr,
                         "evt/mob/skill",
                         &ld2_protocol::evt::MobSkill {
@@ -458,7 +489,7 @@ pub(super) fn plan_combat(
                         let until = now_ms + effect.duration_s.max(1) * 1000;
                         if world.set_char_effect(&addr, &effect.kind, until) {
                             push_event(
-                                &mut plan,
+                                plan,
                                 &addr,
                                 "evt/char/afflict",
                                 &ld2_protocol::evt::CharAfflict {
@@ -497,7 +528,7 @@ pub(super) fn plan_combat(
             .unwrap_or_default();
         let victim_name = world.char_name(&victim).unwrap_or_default();
         push_event(
-            &mut plan,
+            plan,
             &victim,
             "evt/combat/hit",
             &CombatHit {
@@ -516,7 +547,7 @@ pub(super) fn plan_combat(
         // M25: бар атаки — клиент узнаёт срок следующей атаки.
         for addr in world.chars_in_location(&loc) {
             push_event(
-                &mut plan,
+                plan,
                 &addr,
                 "evt/mob/attack",
                 &ld2_protocol::evt::MobAttack {
@@ -531,8 +562,6 @@ pub(super) fn plan_combat(
             amount,
         });
     }
-
-    plan
 }
 
 /// События смерти моба (деспан/труп всем в локации + бой окончен) и XP
