@@ -372,20 +372,11 @@ impl Session {
             }
         }
     }
-    // ── мир (ФР-03, M12.3) ─────────────────────────────────────────────────
 
     /// Выбранный персонаж (для отвязки от мира при дисконнекте, M12.5).
     pub fn selected_char(&self) -> Option<String> {
         self.selected_char_id.clone()
     }
-
-    // ── лист, инвентарь, опыт (ФР-04/07, M12.4) ────────────────────────────
-
-    // ── M24: админ-панель предметов ──────────────────────────────────────────
-
-    // ── сделка (ФР-15, M12.7c) ──────────────────────────────────────────────
-
-    // ── гильдия (ФР-16, M12.7d) ─────────────────────────────────────────────
 
     /// Передать лидерство первому участнику при выходе лидера.
     async fn promote_first_member(&self, leaving: &str) -> Result<(), sqlx::Error> {
@@ -403,8 +394,6 @@ impl Session {
         db::guilds::set_rank(&self.state.pool, &guild.0, &first, "leader").await?;
         Ok(())
     }
-
-    // ── группа (ФР-14, M12.7b) ──────────────────────────────────────────────
 
     /// Текущее имя персонажа (для участников группы §8).
     fn current_name(&self) -> String {
@@ -537,8 +526,6 @@ pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_i
     let mut world = state.world.lock().expect("мир");
     world.set_char_runes(char_id, runes);
 }
-
-impl Session {}
 
 /// Стартовые профили `char.create` (ADR-003: Воин/Лучник/Маг — M17/F30b
 /// «Вор» переименован в «Лучник»); расширение списка — capability (§7).
