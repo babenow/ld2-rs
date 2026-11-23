@@ -97,3 +97,14 @@ jobs:
 
       - name: test (с PostgreSQL)
         run: cargo test -p ld2-server
+
+  # RF0e: ратчет бюджета рефакторинга (PLAN-REFACTOR §12) — файлы/функции не
+  # растут, тесты не убывают. Без Rust и БД, пара секунд; блокирующий gate.
+  budget:
+    name: refactor budget (RF0)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: budget check
+        run: scripts/refactor-audit.sh --verify
