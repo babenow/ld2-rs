@@ -11297,3 +11297,257 @@ pub(crate) fn event_text(ty: &str, state_version: Option<u64>, payload: Value) -
 fn short_version(version: &str) -> &str {
     version.get(..12).unwrap_or(version)
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn item_def(item_type: &str, sockets: i32, rune_sockets: Option<i32>) -> db::items::ItemDefRow {
+        db::items::ItemDefRow {
+            id: "sword_1".into(),
+            item_type: item_type.into(),
+            name: "Меч".into(),
+            rarity: "common".into(),
+            upgrade: 1,
+            stats: json!({
+                "dmg": 5,
+                "param": { "str": 2, "dex": { "value": 3, "pct": true }, "vit": 0, "int": 0 }
+            }),
+            requires: Some(json!({ "str": 10 })),
+            gold_value: 100,
+            qty: 1,
+            sockets,
+            rune_sockets,
+            slot: Some("main_hand".into()),
+            hands: 1,
+            skill: Some("sword".into()),
+            cooldown_s: 1.5,
+            bonuses: Some(json!([{ "kind": "attr", "id": "str", "value": 1 }])),
+        }
+    }
+
+    fn item_row(sockets: Value, bonuses: Option<Value>) -> db::items::ItemRow {
+        db::items::ItemRow {
+            uid: "uid-1".into(),
+            def_id: "sword_1".into(),
+            qty: 2,
+            upgrade: 2,
+            equipped_slot: None,
+            sockets,
+            bonuses,
+        }
+    }
+
+    #[test]
+    fn attr_genitive_translates_core_stats() {
+        assert_eq!(attr_genitive("str"), "силы");
+        assert_eq!(attr_genitive("dex"), "ловкости");
+        assert_eq!(attr_genitive("vit"), "стойкости");
+        assert_eq!(attr_genitive("int"), "интеллекта");
+        assert_eq!(attr_genitive("luck"), "luck");
+    }
+
+    #[test]
+    fn location_snapshot_is_stub_by_id() {
+        let loc = location_snapshot("l_forest");
+        assert_eq!(loc.id, "l_forest");
+        assert_eq!(loc.name, "l_forest");
+        assert!(loc.flags.is_empty() && loc.exits.is_empty() && loc.entities.is_empty());
+        assert!(loc.text.is_empty());
+        assert_eq!(stub_location("l_forest"), loc);
+    }
+
+    #[test]
+    fn parse_bonuses_skips_broken_entries() {
+        let parsed = parse_bonuses(&json!([
+            { "kind": "attr", "id": "str", "value": 1 },
+            { "kind": 1 },
+            { "kind": "param", "id": "dmg", "value": -2, "pct": true }
+        ]));
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[1].id, "dmg");
+        assert!(parsed[1].pct);
+        assert!(parse_bonuses(&json!(null)).is_empty());
+        assert!(parse_bonuses(&json!({ "kind": "attr" })).is_empty());
+    }
+
+    #[test]
+    fn content_bonuses_merge_param_section() {
+        let def = item_def("weapon", 0, None);
+        let list = content_bonuses(&def);
+        // bonuses: 1; stats.param: str 2, dex {3, pct}, vit 0 — пропущен.
+        assert_eq!(list.len(), 3);
+        let dex = list.iter().find(|b| b.id == "dex").expect("dex");
+        assert_eq!(dex.value, 3);
+        assert!(dex.pct);
+        assert!(list.iter().all(|b| b.id != "vit"));
+        assert!(list.iter().all(|b| b.kind == "attr" || b.kind == "param"));
+    }
+
+    #[test]
+    fn rune_slots_explicit_and_defaults() {
+        assert_eq!(rune_slots(&item_def("weapon", 3, Some(1))), 1);
+        assert_eq!(rune_slots(&item_def("weapon", 3, Some(-2))), 0);
+        assert_eq!(rune_slots(&item_def("armor", 3, None)), 0);
+        assert_eq!(rune_slots(&item_def("weapon", 3, None)), 3);
+        assert_eq!(rune_slots(&item_def("staff", 2, None)), 2);
+    }
+
+    #[test]
+    fn socket_accepts_explicit_and_indexed() {
+        assert_eq!(
+            socket_accepts(&json!({ "index": 0, "accepts": "gem" }), 0, 3),
+            "gem"
+        );
+        assert_eq!(socket_accepts(&json!({ "index": 0 }), 0, 2), "rune");
+        assert_eq!(socket_accepts(&json!({ "index": 2 }), 2, 2), "gem");
+    }
+
+    #[test]
+    fn item_snapshot_lazily_initializes_sockets() {
+        let snap = item_snapshot(&item_row(json!([]), None), &item_def("weapon", 2, None));
+        let sockets = snap.sockets.expect("ленивые сокеты");
+        assert_eq!(sockets.len(), 2);
+        assert!(sockets.iter().all(|s| s.accepts.as_deref() == Some("rune")));
+        assert!(sockets.iter().all(|s| s.rune.is_none()));
+    }
+
+    #[test]
+    fn item_snapshot_defaults_socket_kinds_by_rune_slots() {
+        // Броня: 2 слота, рунных — 1.
+        let snap = item_snapshot(&item_row(json!([]), None), &item_def("armor", 2, Some(1)));
+        let sockets = snap.sockets.expect("сокеты");
+        assert_eq!(sockets[0].accepts.as_deref(), Some("rune"));
+        assert_eq!(sockets[1].accepts.as_deref(), Some("gem"));
+    }
+
+    #[test]
+    fn item_snapshot_keeps_existing_sockets_and_accepts() {
+        let row = item_row(
+            json!([{ "index": 0 }, { "index": 1, "accepts": "gem" }]),
+            None,
+        );
+        let snap = item_snapshot(&row, &item_def("weapon", 2, None));
+        let sockets = snap.sockets.expect("сокеты");
+        assert_eq!(sockets[0].accepts.as_deref(), Some("rune"));
+        assert_eq!(sockets[1].accepts.as_deref(), Some("gem"));
+    }
+
+    #[test]
+    fn item_snapshot_without_slots_has_no_sockets() {
+        let snap = item_snapshot(&item_row(json!([]), None), &item_def("money", 0, None));
+        assert!(snap.sockets.is_none());
+    }
+
+    #[test]
+    fn item_snapshot_merges_bonuses_and_upgrade() {
+        let row = item_row(
+            json!([]),
+            Some(json!([{ "kind": "skill", "id": "sword", "value": 1 }])),
+        );
+        let snap = item_snapshot(&row, &item_def("weapon", 0, None));
+        // upgrade: def 1 + item 2.
+        assert_eq!(snap.upgrade, 3);
+        assert_eq!(snap.qty, Some(2));
+        assert_eq!(snap.gold_value, Some(100));
+        assert_eq!(snap.def_id.as_deref(), Some("sword_1"));
+        assert_eq!(snap.slot.as_deref(), Some("main_hand"));
+        assert_eq!(snap.hands, Some(1));
+        assert_eq!(snap.stats.get("dmg"), Some(&json!(5)));
+        assert_eq!(
+            snap.extra.get("skill").and_then(|v| v.as_str()),
+            Some("sword")
+        );
+        let bonuses = snap.bonuses.expect("бонусы");
+        // Контент: attr str + param str + param dex; инстанс: skill sword.
+        assert_eq!(bonuses.len(), 4);
+        assert!(bonuses.iter().any(|b| b.kind == "skill" && b.id == "sword"));
+        assert_eq!(bonuses.iter().filter(|b| b.id == "str").count(), 2);
+        assert!(snap.requires.is_some());
+    }
+
+    #[test]
+    fn item_snapshot_without_bonuses_is_none() {
+        let mut def = item_def("weapon", 0, None);
+        def.bonuses = None;
+        def.stats = json!({ "dmg": 1 });
+        let snap = item_snapshot(&item_row(json!([]), None), &def);
+        assert!(snap.bonuses.is_none());
+        assert_eq!(snap.sockets, None);
+    }
+
+    #[test]
+    fn recipe_payload_maps_all_fields() {
+        let row = db::craft::RecipeRow {
+            id: "r_1".into(),
+            name: "Клинок".into(),
+            profession: "blacksmith".into(),
+            rank: 2,
+            station: Some("forge".into()),
+            tool_type: Some("hammer".into()),
+            requires: json!({ "blacksmith": 2 }),
+            inputs: json!([{ "id": "iron", "qty": 3 }]),
+            time_s: 10,
+            xp_profession: 5,
+            output_type: "weapon".into(),
+            output_qty: 1,
+            station_label: Some("Кузница".into()),
+        };
+        let payload = recipe_payload(&row);
+        assert_eq!(payload["id"], "r_1");
+        assert_eq!(payload["tool"], json!({ "type": "hammer" }));
+        assert_eq!(payload["inputs"][0]["qty"], 3);
+        assert_eq!(payload["xp"]["profession"], 5);
+        assert_eq!(payload["output"], json!({ "type": "weapon", "qty": 1 }));
+        assert_eq!(payload["station_label"], "Кузница");
+
+        let mut bare = row;
+        bare.tool_type = None;
+        bare.station = None;
+        let payload = recipe_payload(&bare);
+        assert_eq!(payload["tool"], Value::Null);
+        assert_eq!(payload["station"], Value::Null);
+    }
+
+    #[test]
+    fn entity_loot_defs_reads_extra_and_filters_non_strings() {
+        let entity: Entity = serde_json::from_value(json!({
+            "id": "mob_1",
+            "kind": "monster",
+            "name": "Волк",
+            "loot": ["fur", 3, "meat"]
+        }))
+        .expect("entity");
+        assert_eq!(entity_loot_defs(&entity), vec!["fur", "meat"]);
+
+        let no_loot: Entity =
+            serde_json::from_value(json!({ "id": "mob_2", "kind": "monster", "name": "Заяц" }))
+                .expect("entity");
+        assert!(entity_loot_defs(&no_loot).is_empty());
+    }
+
+    #[test]
+    fn summary_of_maps_row_and_location() {
+        let row = db::characters::CharacterRow {
+            id: "c_1".into(),
+            name: "Странник".into(),
+            profile: "warrior".into(),
+            gender: "male".into(),
+            location_id: "l_village".into(),
+            hp_cur: 10,
+            hp_max: 10,
+            mp_cur: 0,
+            mp_max: 0,
+            xp_pool: 0,
+            total_xp: 0,
+            state_version: 1,
+            attrs: json!({ "str": 10 }),
+        };
+        let summary = summary_of(&row, "Деревня".into());
+        assert_eq!(summary.id, "c_1");
+        assert_eq!(summary.profile.as_deref(), Some("warrior"));
+        assert_eq!(summary.location, "Деревня");
+        assert!(!summary.online);
+        assert!(summary.crime.is_empty());
+    }
+}
