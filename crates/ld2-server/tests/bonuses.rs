@@ -64,10 +64,9 @@ async fn item_bonuses_snapshot_equip_and_dev_command() {
 
     // 1) Снапшот предмета несёт контент-бонусы (drakkar_axe).
     let item = give_item(&mut c, "drakkar_axe").await;
-    let uid = item["uid"].as_str().expect("uid").to_string();
     let bonuses = item["bonuses"].as_array().expect("bonuses в снапшоте");
-    // 4 бонуса из `bonuses` + 1 из раздела `stats.param` (M18/F47).
-    assert_eq!(bonuses.len(), 5, "контент + stats.param: {bonuses:?}");
+    // 4 бонуса из `bonuses` + 2 из раздела `stats.param` (M18/F47).
+    assert_eq!(bonuses.len(), 6, "контент + stats.param: {bonuses:?}");
     assert!(
         bonuses
             .iter()
@@ -86,8 +85,19 @@ async fn item_bonuses_snapshot_equip_and_dev_command() {
             .any(|b| b["kind"] == "param" && b["id"] == "crit_chance" && b["value"] == 3),
         "Крит из stats.param: {bonuses:?}"
     );
+    assert!(
+        bonuses.iter().any(|b| b["kind"] == "param"
+            && b["id"] == "accuracy"
+            && b["value"] == 1
+            && b.get("pct").is_none()),
+        "Плоская точность из stats.param: {bonuses:?}"
+    );
 
     // 2) Надетый предмет применяет бонусы: атрибут и ранг навыка.
+    //    `drakkar_axe` теперь требует str 46 / dex 54 (§6 `requires`),
+    //    поэтому экипируем доступный `sword_1000_true`.
+    let weapon = give_item(&mut c, "sword_1000_true").await;
+    let weapon_uid = weapon["uid"].as_str().expect("uid").to_string();
     let before = snapshot(&mut c, &char_id).await;
     let str_before = before["payload"]["char"]["attrs"]["str"]
         .as_i64()
@@ -96,7 +106,7 @@ async fn item_bonuses_snapshot_equip_and_dev_command() {
     let seq = c
         .send(
             "cmd/item.equip",
-            json!({ "item_uid": uid, "slot": "main_hand" }),
+            json!({ "item_uid": weapon_uid, "slot": "main_hand" }),
         )
         .await;
     let ack = c.ack(seq).await;
@@ -104,7 +114,7 @@ async fn item_bonuses_snapshot_equip_and_dev_command() {
     let ch = &ack["payload"]["char"];
     assert_eq!(
         ch["attrs"]["str"].as_i64(),
-        Some(str_before + 3),
+        Some(str_before + 5),
         "бонус атрибута применён: {ch}"
     );
     let sword_rank = ch["skills"]
@@ -127,7 +137,7 @@ async fn item_bonuses_snapshot_equip_and_dev_command() {
     let accuracy_before = before["payload"]["char"]["derived"]["accuracy"]
         .as_i64()
         .expect("accuracy");
-    let ack = scenario(&mut c, &format!("bonus {uid} param accuracy 10 pct")).await;
+    let ack = scenario(&mut c, &format!("bonus {weapon_uid} param accuracy 10 pct")).await;
     assert_eq!(ack["result"], "ok", "bonus: {ack}");
     let state = c.wait_event("evt/item/state").await;
     assert_eq!(
@@ -135,8 +145,8 @@ async fn item_bonuses_snapshot_equip_and_dev_command() {
             .as_array()
             .expect("патч bonuses")
             .len(),
-        6,
-        "бонус dev-команды в эффективном списке (5 контентовых + 1): {state}"
+        7,
+        "бонус dev-команды в эффективном списке (6 контентовых + 1): {state}"
     );
     let after = snapshot(&mut c, &char_id).await;
     let accuracy_after = after["payload"]["char"]["derived"]["accuracy"]

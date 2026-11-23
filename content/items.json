@@ -7,7 +7,15 @@
       "rarity": "common",
       "upgrade": 0,
       "gold_value": 1,
-      "qty": 10
+      "qty": 10,
+      "stats": {
+        "buff": {
+          "param": "accuracy",
+          "value": 1,
+          "duration_s": 5,
+          "max_stacks": 1
+        }
+      }
     },
     {
       "id": "sword_knight",
@@ -20,7 +28,8 @@
       "upgrade": 0,
       "cooldown_s": 1.0,
       "stats": {
-        "dmg": "6..9"
+        "dmg": "6..9",
+        "class": "warrior"
       },
       "gold_value": 180,
       "skill": "sword"
@@ -299,7 +308,31 @@
       "stats": {
         "dmg": "13..26",
         "param": {
-          "crit_chance": 3
+          "crit_chance": 3,
+          "accuracy": 1
+        },
+        "class": "warrior",
+        "attr": "str",
+        "value": 5,
+        "buff": {
+          "param": "crit_damage",
+          "value": 5,
+          "duration_s": 5,
+          "max_stacks": 1,
+          "pct": true
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 1,
+          "duration_s": 5,
+          "max_stacks": 1,
+          "pct": true
+        },
+        "effect": {
+          "kind": "stun",
+          "value": 1,
+          "duration_s": 3,
+          "period_s": 1
         }
       },
       "bonuses": [
@@ -330,7 +363,14 @@
       "slot": "main_hand",
       "hands": 2,
       "sockets": 4,
-      "rune_sockets": 2
+      "rune_sockets": 2,
+      "requires": {
+        "attr": {
+          "str": 46,
+          "dex": 54
+        },
+        "level": 60
+      }
     },
     {
       "id": "sword_1000_true",
@@ -1609,6 +1649,18 @@
       },
       "gold_value": 60,
       "qty": 1
+    },
+    {
+      "id": "item_new_1",
+      "type": "gem",
+      "name": "Новый предмет",
+      "rarity": "common",
+      "upgrade": 0,
+      "gold_value": 0,
+      "stats": {
+        "dmg": "4..8"
+      },
+      "sockets": 0
     }
   ]
 }
