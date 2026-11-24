@@ -294,7 +294,17 @@ impl Root {
         sections = sections.child(bp_head);
         let bp_grid = self.container_grid(cx, pal, "ld2-bp", None);
         sections = sections.child(bp_grid);
-        if let Some(uid) = selected_bag.as_deref() {
+        // M28/B8: по умолчанию — содержимое всех надетых сумок, без
+        // выбора; в настройках можно вернуть режим «только выбранной».
+        if self.config.backpack_show_all_bags {
+            for bag in &bags {
+                let bag_head =
+                    self.container_header(cx, pal, Some(&bag.uid), bag.name.clone(), false);
+                sections = sections.child(bag_head);
+                let bag_grid = self.container_grid(cx, pal, "ld2-bp-in-bag", Some(&bag.uid));
+                sections = sections.child(bag_grid);
+            }
+        } else if let Some(uid) = selected_bag.as_deref() {
             let bag_name = bags
                 .iter()
                 .find(|b| b.uid == uid)

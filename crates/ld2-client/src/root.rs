@@ -155,6 +155,8 @@ pub(crate) enum Click {
     SetNotify(bool),
     /// Мат-фильтр исходящих (заказчик 2026-11-20).
     SetMuteFilter(bool),
+    /// M28: показывать в рюкзаке все надетые сумки (настройка).
+    SetBackpackShowAllBags(bool),
     ApplyHost,
     /// M14/F11: раскрыть ввод нового адреса сервера.
     EditHost,

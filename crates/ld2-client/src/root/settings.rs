@@ -224,6 +224,23 @@ impl Root {
             })],
         ));
 
+        // M28: рюкзак показывает все надетые сумки (по умолчанию).
+        body = body.child(row(
+            pal,
+            t(lang, Key::SettingsShowAllBags).to_string(),
+            vec![div().child({
+                let this = cx.entity();
+                Switch::new("ld2-show-all-bags", self.config.backpack_show_all_bags).on_change(
+                    move |on, _window, acx| {
+                        this.update(acx, |root, cx| {
+                            root.on_click(Click::SetBackpackShowAllBags(on), cx);
+                            cx.notify();
+                        });
+                    },
+                )
+            })],
+        ));
+
         // Путь конфига (ФР-19: импорт/экспорт — правка файла вручную).
         if let Ok(dirs) = ld2_core::config::project_dirs() {
             body = body.child(
