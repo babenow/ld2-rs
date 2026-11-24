@@ -6,7 +6,7 @@
 
 # --- прод-лимиты (файлы > 600 строк и целевые модули) ---
 crates/ld2-client/src/root/admin.rs 724 167
-crates/ld2-client/src/root/backpack.rs 1153 155
+crates/ld2-client/src/root/backpack.rs 1074 150
 crates/ld2-client/src/root/game/dialog.rs 848 161
 crates/ld2-client/src/root/game/entities.rs 656 187
 crates/ld2-client/src/root/game.rs 724 150
@@ -14,7 +14,7 @@ crates/ld2-client/src/root/settings.rs 780 183
 crates/ld2-client/src/root/sheet/character.rs 738 150
 crates/ld2-client/src/root/sheet/equip.rs 630 181
 crates/ld2-client/src/root/social.rs 613 150
-crates/ld2-client/src/root.rs 893 175
+crates/ld2-client/src/root.rs 898 175
 crates/ld2-client/src/text_input.rs 699 150
 crates/ld2-core/src/l10n/en.rs 530 526
 crates/ld2-core/src/l10n/mod.rs 726 150
@@ -38,7 +38,7 @@ crates/ld2-server/src/tick/combat.rs 939 150
 crates/ld2-test-kit/src/fixtures.rs 649 150
 
 # --- минимум тестов по крейтам ---
-tests ld2-client 52
+tests ld2-client 53
 tests ld2-content 17
 tests ld2-core 117
 tests ld2-editor 28

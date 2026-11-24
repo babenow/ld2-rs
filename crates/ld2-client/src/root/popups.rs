@@ -193,7 +193,8 @@ impl Root {
                 .absolute()
                 .top_0()
                 .left_0()
-                .size_full()
+                .right_0()
+                .bottom(px(crate::root::STATUS_BAR_H))
                 .child(
                     div()
                         .id("ld2-popup-scrim")

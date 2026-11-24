@@ -28,10 +28,6 @@ use crate::palette::Palette;
 const CONTAINER_BACKPACK: &str = "backpack";
 const CONTAINER_BAGS: &str = "bags";
 
-/// M28/B8: спец-слоты под сумки после общих — реагенты, колчан,
-/// ключница (те же индексы, что у сервера: `bag_slots + 0/1/2`).
-const SPECIAL_BAG_SLOTS: usize = 3;
-
 /// M28/B8: роль спец-слота в контейнере `bags` (`None` — обычный).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BagSlotRole {
@@ -110,6 +106,16 @@ fn bag_slot_tooltip(
         }
         None => tf(lang, Key::BpBagEmptyNamed, &[("{slot}", slot)]),
     }
+}
+
+/// M28/B8: порядок ячеек в статус-баре — сначала ключница и колчан,
+/// затем общие слоты. Слот реагентов в статус-бар не выводится.
+fn status_slot_order(general: usize) -> Vec<usize> {
+    let mut order = Vec::with_capacity(general + 2);
+    order.push(general + 2); // ключница
+    order.push(general + 1); // колчан
+    order.extend(0..general);
+    order
 }
 
 use super::sheet::{rarity_color, rarity_label};
@@ -306,9 +312,9 @@ impl Root {
             },
         );
 
-        // Тело: панель сумок и разделы «Рюкзак» / выбранная сумка
-        // (M28/B4) в прокрутке + строка валюты (всегда видна).
-        let bag_bar = self.bag_bar(cx, pal);
+        // Тело: разделы «Рюкзак» / выбранная сумка (M28/B4) в
+        // прокрутке + строка валюты (всегда видна). Панель слотов
+        // сумок перенесена в статус-бар (M28/B8).
         let bags = self.equipped_bags();
         let selected_bag = self
             .backpack_bag
@@ -355,7 +361,6 @@ impl Root {
             .min_h_0()
             .child(tabs)
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
-            .child(bag_bar)
             .child(scrollable_tab(
                 "ld2-backpack-scroll",
                 &self.backpack_scroll,
@@ -629,8 +634,9 @@ impl Root {
         Some((used, cap))
     }
 
-    /// M28/B8: сумки в статус-баре — иконки-кнопки левее ёмкости:
-    /// наведение — название/занятость, клик открывает окно рюкзака.
+    /// M28/B8: сумки в статус-баре — иконки без подписей в порядке
+    /// ключница → колчан → общие слоты. Ячейки постоянные, левее
+    /// счётчика занятости; их можно перетаскивать и принимать сумки.
     pub(crate) fn status_bags(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let general = self
@@ -639,7 +645,6 @@ impl Root {
             .as_ref()
             .map(|s| s.inventory.bag_slots as usize)
             .unwrap_or(0);
-        let total = general + SPECIAL_BAG_SLOTS;
         let bags = self.equipped_bags();
         let items: Vec<ItemSnapshot> = self
             .store
@@ -647,48 +652,123 @@ impl Root {
             .as_ref()
             .map(|s| s.char.inventory.clone())
             .unwrap_or_default();
+        let bag_uids: std::collections::HashSet<String> =
+            bags.iter().map(|b| b.uid.clone()).collect();
+        let selected = self.backpack_bag.clone();
         let mut row = div()
             .flex()
             .flex_row()
             .items_center()
             .gap_1()
             .flex_shrink_0();
-        for ix in 0..total {
+        for ix in status_slot_order(general) {
             let ix_i = i32::try_from(ix).unwrap_or(0);
             let bag = bags.iter().find(|b| b.slot_index == Some(ix_i)).cloned();
             let (icon, slot) = bag_slot_visual(ix, general, lang);
             let tip = bag_slot_tooltip(lang, &slot, bag.as_ref(), &items);
             let color = if bag.is_some() { pal.text } else { pal.muted };
             let bag_uid = bag.as_ref().map(|b| b.uid.clone());
-            row = row.child(
-                div()
-                    .id(format!("ld2-status-bag-{ix}"))
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .justify_center()
-                    .w(px(22.0))
-                    .h(px(20.0))
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(pal.border))
-                    .bg(rgb(if bag.is_some() {
-                        pal.selection
-                    } else {
-                        pal.panel
-                    }))
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(rgb(pal.selection)))
-                    .tooltip(Tooltip::text(tip))
-                    .child(Icon::new(icon).size(IconSize::Sm).color(rgb(color)))
-                    .on_click(cx.listener(move |root, _, _, cx| {
-                        if !root.backpack_popup.open {
-                            root.open_popup(PopupKind::Backpack);
-                        }
-                        root.backpack_bag = bag_uid.clone();
+            let bag_for_click = bag_uid.clone();
+            let is_sel = selected
+                .as_deref()
+                .zip(bag_uid.as_deref())
+                .is_some_and(|(a, b)| a == b);
+            let bag_cap = bag.as_ref().and_then(|b| b.bag_slots).unwrap_or(0);
+            let free = bag_uid
+                .as_deref()
+                .and_then(|uid| Self::first_free_slot(&items, Some(uid), bag_cap));
+            let this = cx.entity();
+            let this_drop = this.clone();
+            let bag_for_drop = bag_uid.clone();
+            let bags_drop = bag_uids.clone();
+            let free_drop = free;
+            let mut cell = div()
+                .id(format!("ld2-status-bag-{ix}"))
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .justify_center()
+                .w(px(22.0))
+                .h(px(20.0))
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(if is_sel { pal.accent } else { pal.border }))
+                .bg(rgb(if bag.is_some() {
+                    pal.selection
+                } else {
+                    pal.panel
+                }))
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(pal.selection)))
+                .tooltip(Tooltip::text(tip))
+                .child(Icon::new(icon).size(IconSize::Sm).color(rgb(color)))
+                .on_click(cx.listener(move |root, _, _, cx| {
+                    if !root.backpack_popup.open {
+                        root.open_popup(PopupKind::Backpack);
+                    }
+                    root.backpack_bag = bag_for_click.clone();
+                    cx.notify();
+                }))
+                .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
+                    if matches!(drag.from, DragSource::Equip(_)) {
+                        return;
+                    }
+                    this_drop.update(cx, |root, cx| {
+                        let cmd = if bags_drop.contains(&drag.uid) {
+                            ItemMove {
+                                item_uid: drag.uid.clone(),
+                                target_uid: String::new(),
+                                to_container: Some(CONTAINER_BAGS.to_string()),
+                                to_index: Some(ix_i),
+                            }
+                        } else if let (Some(target), Some(free_ix)) =
+                            (bag_for_drop.clone(), free_drop)
+                        {
+                            ItemMove {
+                                item_uid: drag.uid.clone(),
+                                target_uid: String::new(),
+                                to_container: Some(target),
+                                to_index: Some(free_ix),
+                            }
+                        } else {
+                            root.drag_item = None;
+                            cx.notify();
+                            return;
+                        };
+                        let _ = root.send_or_notice(&cmd, SendSlot::Notice);
+                        root.drag_item = None;
                         cx.notify();
-                    })),
-            );
+                    });
+                });
+            if let Some(b) = &bag {
+                let ghost = (
+                    b.name.clone(),
+                    rarity_color(&b.rarity, pal),
+                    self.config.theme.clone(),
+                );
+                let drag_this = this.clone();
+                cell = cell.on_drag(
+                    ItemDrag {
+                        uid: b.uid.clone(),
+                        from: DragSource::Bp,
+                        slot_req: None,
+                    },
+                    move |drag: &ItemDrag, _offset, _, cx| {
+                        drag_this.update(cx, |root, cx| {
+                            root.drag_item = Some(ItemDrag {
+                                uid: drag.uid.clone(),
+                                from: DragSource::Bp,
+                                slot_req: None,
+                            });
+                            root.popup_scrim_down = false;
+                            cx.notify();
+                        });
+                        let (name, color, theme) = ghost.clone();
+                        cx.new(move |_| crate::root::ItemDragGhost { name, color, theme })
+                    },
+                );
+            }
+            row = row.child(cell);
         }
         row
     }
@@ -812,165 +892,6 @@ impl Root {
                 cx.notify();
             });
         })
-    }
-
-    /// M28/B4: панель слотов под сумки. Клик — показать содержимое
-    /// вторым разделом; drop — надеть сумку или положить предмет
-    /// внутрь (первый свободный слот).
-    fn bag_bar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let Some(general) = self
-            .store
-            .session
-            .as_ref()
-            .map(|s| s.inventory.bag_slots as usize)
-        else {
-            return div();
-        };
-        let total = general + SPECIAL_BAG_SLOTS;
-        let lang = self.lang;
-        let bags = self.equipped_bags();
-        let items: Vec<ItemSnapshot> = self
-            .store
-            .snapshot
-            .as_ref()
-            .map(|s| s.char.inventory.clone())
-            .unwrap_or_default();
-        let bag_uids: std::collections::HashSet<String> =
-            bags.iter().map(|b| b.uid.clone()).collect();
-        let selected = self.backpack_bag.clone();
-        // 4 общих + 3 спец-слота не влезают в строку попапа при
-        // надетых сумках — переносим, иначе колчан/ключница
-        // остаются за правым краем и недоступны для drag&drop.
-        let mut row = div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap_2()
-            .px_2()
-            .py_1()
-            .child(
-                div()
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::BpTabBag)),
-            );
-        for ix in 0..total {
-            let ix_i = i32::try_from(ix).unwrap_or(0);
-            let bag = bags.iter().find(|b| b.slot_index == Some(ix_i)).cloned();
-            let (icon, empty_label) = bag_slot_visual(ix, general, lang);
-            let label = match &bag {
-                Some(b) => format!("{} · {}", b.name, b.bag_slots.unwrap_or(0)),
-                None => empty_label,
-            };
-            let is_sel = selected
-                .as_deref()
-                .zip(bag.as_ref().map(|b| b.uid.as_str()))
-                .is_some_and(|(a, b)| a == b);
-            let bag_uid = bag.as_ref().map(|b| b.uid.clone());
-            let bag_cap = bag.as_ref().and_then(|b| b.bag_slots).unwrap_or(0);
-            let free = bag_uid
-                .as_deref()
-                .and_then(|uid| Self::first_free_slot(&items, Some(uid), bag_cap));
-            let bag_for_click = bag_uid.clone();
-            let this = cx.entity();
-            let this_drop = this.clone();
-            let bag_for_drop = bag_uid.clone();
-            let bags_drop = bag_uids.clone();
-            let free_drop = free;
-            let cell_id = format!("ld2-bp-bagslot-{ix}");
-            let mut label_el = div().id(format!("ld2-bp-baglabel-{ix}")).child(label);
-            if let Some(b) = &bag {
-                let ghost = (
-                    b.name.clone(),
-                    rarity_color(&b.rarity, pal),
-                    self.config.theme.clone(),
-                );
-                let drag_this = this.clone();
-                label_el = label_el.on_drag(
-                    ItemDrag {
-                        uid: b.uid.clone(),
-                        from: DragSource::Bp,
-                        slot_req: None,
-                    },
-                    move |drag: &ItemDrag, _offset, _, cx| {
-                        drag_this.update(cx, |root, cx| {
-                            root.drag_item = Some(ItemDrag {
-                                uid: drag.uid.clone(),
-                                from: DragSource::Bp,
-                                slot_req: None,
-                            });
-                            root.popup_scrim_down = false;
-                            cx.notify();
-                        });
-                        let (name, color, theme) = ghost.clone();
-                        cx.new(move |_| crate::root::ItemDragGhost { name, color, theme })
-                    },
-                );
-            }
-            let cell = div()
-                .id(cell_id)
-                .flex()
-                .flex_col()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(if is_sel { pal.accent } else { pal.border }))
-                .bg(rgb(if is_sel { pal.selection } else { pal.panel }))
-                .cursor_pointer()
-                .hover(move |s| s.bg(rgb(pal.selection)))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .child(Icon::new(icon).size(IconSize::Sm))
-                        .child(label_el),
-                )
-                .on_click(cx.listener(move |root, _, _, cx| {
-                    root.backpack_bag = if root.backpack_bag.as_deref() == bag_for_click.as_deref()
-                    {
-                        None
-                    } else {
-                        bag_for_click.clone()
-                    };
-                    cx.notify();
-                }))
-                .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
-                    this_drop.update(cx, |root, cx| {
-                        if matches!(drag.from, DragSource::Equip(_)) {
-                            return;
-                        }
-                        let cmd = if bags_drop.contains(&drag.uid) {
-                            ItemMove {
-                                item_uid: drag.uid.clone(),
-                                target_uid: String::new(),
-                                to_container: Some(CONTAINER_BAGS.to_string()),
-                                to_index: Some(ix_i),
-                            }
-                        } else if let (Some(target), Some(free_ix)) =
-                            (bag_for_drop.clone(), free_drop)
-                        {
-                            ItemMove {
-                                item_uid: drag.uid.clone(),
-                                target_uid: String::new(),
-                                to_container: Some(target),
-                                to_index: Some(free_ix),
-                            }
-                        } else {
-                            root.drag_item = None;
-                            cx.notify();
-                            return;
-                        };
-                        let _ = root.send_or_notice(&cmd, SendSlot::Notice);
-                        root.drag_item = None;
-                        cx.notify();
-                    });
-                });
-            row = row.child(cell);
-        }
-        row
     }
 
     fn backpack_tile(
@@ -1286,5 +1207,14 @@ mod tests {
             bag_slot_tooltip(Lang::En, "Quiver", None, &[]),
             "Quiver: empty"
         );
+    }
+
+    /// M28/B8: в статус-баре сначала ключница и колчан, затем общие
+    /// слоты; слот реагентов не выводится.
+    #[test]
+    fn status_bar_orders_keyring_quiver_then_general_slots() {
+        assert_eq!(status_slot_order(4), vec![6, 5, 0, 1, 2, 3]);
+        assert_eq!(status_slot_order(1), vec![3, 2, 0]);
+        assert_eq!(status_slot_order(0), vec![2, 1]);
     }
 }
