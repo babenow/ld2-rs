@@ -22,6 +22,11 @@ use ld2_protocol::types::ItemSnapshot;
 
 use crate::palette::Palette;
 
+/// M28/B4: контейнеры предметов — те же строки, что и на сервере
+/// (`db::items::containers::BACKPACK/BAGS`).
+const CONTAINER_BACKPACK: &str = "backpack";
+const CONTAINER_BAGS: &str = "bags";
+
 use super::sheet::{rarity_color, rarity_label};
 use super::{scrollable_tab, BpHold, DragSource, ItemDrag, PopupKind, Root, SendSlot};
 
@@ -205,9 +210,37 @@ impl Root {
             },
         );
 
-        // Тело: сетка активной группы в прокрутке + строка валюты
-        // (всегда видна, независимо от вкладки).
-        let grid = self.backpack_grid(cx, pal, "ld2-bp");
+        // Тело: панель сумок и разделы «Рюкзак» / выбранная сумка
+        // (M28/B4) в прокрутке + строка валюты (всегда видна).
+        let bag_bar = self.bag_bar(cx, pal);
+        let bags = self.equipped_bags();
+        let selected_bag = self
+            .backpack_bag
+            .clone()
+            .filter(|uid| bags.iter().any(|b| &b.uid == uid));
+        self.backpack_bag = selected_bag.clone();
+        let mut sections = div().flex().flex_col().gap_1();
+        let bp_head = self.container_header(
+            cx,
+            pal,
+            None,
+            t(lang, Key::BpBackpackSection).to_string(),
+            false,
+        );
+        sections = sections.child(bp_head);
+        let bp_grid = self.container_grid(cx, pal, "ld2-bp", None);
+        sections = sections.child(bp_grid);
+        if let Some(uid) = selected_bag.as_deref() {
+            let bag_name = bags
+                .iter()
+                .find(|b| b.uid == uid)
+                .map(|b| b.name.clone())
+                .unwrap_or_default();
+            let bag_head = self.container_header(cx, pal, Some(uid), bag_name, true);
+            sections = sections.child(bag_head);
+            let bag_grid = self.container_grid(cx, pal, "ld2-bp-in-bag", Some(uid));
+            sections = sections.child(bag_grid);
+        }
         let body = div()
             .flex()
             .flex_col()
@@ -216,10 +249,11 @@ impl Root {
             .min_h_0()
             .child(tabs)
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
+            .child(bag_bar)
             .child(scrollable_tab(
                 "ld2-backpack-scroll",
                 &self.backpack_scroll,
-                grid,
+                sections,
             ));
 
         // M16/F29g: нижняя панель — по аналогии с верхней: иконка
@@ -238,12 +272,31 @@ impl Root {
         // M18/F58f (новая фича): заполненность в статус-баре —
         // занято записей-стаков (как серверный count) из лимита
         // `inventory.slots`; при полном — красным.
-        let usage: Option<(usize, u32)> = self
-            .store
-            .snapshot
-            .as_ref()
-            .map(|s| s.char.inventory.len())
-            .zip(self.store.session.as_ref().map(|s| s.inventory.slots));
+        // M28: занятость — предметы рюкзака и содержимое сумок (сами
+        // сумки не занимают ячейки); ёмкость — база + вместимость
+        // надетых сумок.
+        let usage: Option<(usize, u32)> = self.store.snapshot.as_ref().map(|s| {
+            let bags: Vec<&ItemSnapshot> = s
+                .char
+                .inventory
+                .iter()
+                .filter(|i| i.container.as_deref() == Some(CONTAINER_BAGS))
+                .collect();
+            let used = s
+                .char
+                .inventory
+                .iter()
+                .filter(|i| i.container.as_deref() != Some(CONTAINER_BAGS))
+                .count();
+            let base = self
+                .store
+                .session
+                .as_ref()
+                .map(|c| c.inventory.slots)
+                .unwrap_or(0);
+            let cap = base + bags.iter().map(|b| b.bag_slots.unwrap_or(0)).sum::<u32>();
+            (used, cap)
+        });
         let footer = div()
             .flex()
             .flex_row()
@@ -302,6 +355,19 @@ impl Root {
         pal: &Palette,
         id_prefix: &str,
     ) -> Div {
+        self.container_grid(cx, pal, id_prefix, None)
+    }
+
+    /// M28/B4: сетка контейнера — `None` — базовый рюкзак, иначе
+    /// содержимое сумки с этим uid (сами надетые сумки сюда не
+    /// попадают — у них своя панель).
+    fn container_grid(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        id_prefix: &str,
+        container: Option<&str>,
+    ) -> Div {
         let lang = self.lang;
         let tab = self.backpack_tab;
         let Some(snap) = self.store.snapshot.clone() else {
@@ -322,7 +388,17 @@ impl Root {
             .char
             .inventory
             .iter()
-            .filter(|item| tab.matches(item) && !equipped.contains(item.uid.as_str()))
+            .filter(|item| {
+                let is_bag = item.container.as_deref() == Some(CONTAINER_BAGS);
+                tab.matches(item)
+                    && !equipped.contains(item.uid.as_str())
+                    && if is_bag {
+                        // Сами сумки — только во вкладке «Сумки».
+                        container.is_none() && tab == BackpackTab::Bag
+                    } else {
+                        Self::in_container(item, container)
+                    }
+            })
             .collect();
         if items.is_empty() {
             return div()
@@ -345,6 +421,7 @@ impl Root {
         }
         let order_len = order.len();
         let order_drop = order.clone();
+        let list_uids: std::collections::HashSet<String> = order.iter().cloned().collect();
         let this_drop = this.clone();
         let list = div()
             .id("ld2-bp-list")
@@ -383,6 +460,14 @@ impl Root {
             // отпускание на подложке окна ловит карточка (on_drop).
             .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
                 this_drop.update(cx, |root, cx| {
+                    // M28/B4: предмет из другого контейнера кладётся
+                    // зонами разделов/слотов, а не reorder-ом списка.
+                    if !list_uids.contains(&drag.uid) {
+                        root.drag_item = None;
+                        root.bp_hold = None;
+                        cx.notify();
+                        return;
+                    }
                     if matches!(drag.from, DragSource::Bp) {
                         if let Some(hold) = root.bp_hold.take() {
                             if hold.index != hold.target {
@@ -412,6 +497,281 @@ impl Root {
     /// Плитка предмета в сетке рюкзака: фон, подпись в две строки,
     /// ПКМ-меню и переливание редкости на наведении. Вынесено из
     /// `backpack_grid` (RF3q), тело перенесено как есть.
+    /// M28/B4: предмет лежит в разделе `container` (`None` — рюкзак).
+    /// Надетые сумки (`bags`) не показываются ни в одной сетке.
+    fn in_container(item: &ItemSnapshot, container: Option<&str>) -> bool {
+        match container {
+            None => matches!(item.container.as_deref(), None | Some(CONTAINER_BACKPACK)),
+            Some(uid) => item.container.as_deref() == Some(uid),
+        }
+    }
+
+    /// M28/B4: надетые сумки, по порядку слотов.
+    fn equipped_bags(&self) -> Vec<ItemSnapshot> {
+        let Some(snap) = self.store.snapshot.as_ref() else {
+            return Vec::new();
+        };
+        let mut bags: Vec<ItemSnapshot> = snap
+            .char
+            .inventory
+            .iter()
+            .filter(|i| i.container.as_deref() == Some(CONTAINER_BAGS))
+            .cloned()
+            .collect();
+        bags.sort_by_key(|b| b.slot_index.unwrap_or(i32::MAX));
+        bags
+    }
+
+    /// M28/B4: первый свободный индекс контейнера (по снапшоту).
+    fn first_free_slot(items: &[ItemSnapshot], container: Option<&str>, cap: u32) -> Option<i32> {
+        let cap = i32::try_from(cap).unwrap_or(0);
+        (0..cap).find(|ix| {
+            !items
+                .iter()
+                .any(|i| Self::in_container(i, container) && i.slot_index == Some(*ix))
+        })
+    }
+
+    /// M28/B4: заголовок раздела — счётчик и зона приёма drag
+    /// («положить в этот контейнер»).
+    fn container_header(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        container: Option<&str>,
+        title: String,
+        closable: bool,
+    ) -> Div {
+        let lang = self.lang;
+        let items: Vec<ItemSnapshot> = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| s.char.inventory.clone())
+            .unwrap_or_default();
+        let cap = match container {
+            None => self
+                .store
+                .session
+                .as_ref()
+                .map(|s| s.inventory.slots)
+                .unwrap_or(0),
+            Some(uid) => items
+                .iter()
+                .find(|i| i.uid == uid)
+                .and_then(|i| i.bag_slots)
+                .unwrap_or(0),
+        };
+        let used = items
+            .iter()
+            .filter(|i| Self::in_container(i, container))
+            .count();
+        let free = Self::first_free_slot(&items, container, cap);
+        // Для drop-замыкания: None — базовый рюкзак.
+        let target = container
+            .map(str::to_string)
+            .unwrap_or_else(|| CONTAINER_BACKPACK.to_string());
+        let this = cx.entity();
+        let usage = tf(
+            lang,
+            Key::BackpackUsage,
+            &[("{used}", &used.to_string()), ("{total}", &cap.to_string())],
+        );
+        let mut head = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .bg(rgb(pal.selection))
+            .border_b_1()
+            .border_color(rgb(pal.border))
+            .child(div().font_weight(gpui::FontWeight::BOLD).child(title))
+            .child(div().text_color(rgb(pal.muted)).child(usage))
+            .child(div().flex_grow_1());
+        if closable {
+            let this_close = this.clone();
+            head = head.child(
+                div()
+                    .id("ld2-bp-bag-close")
+                    .cursor_pointer()
+                    .text_color(rgb(pal.muted))
+                    .child("×")
+                    .on_click(move |_, _, cx| {
+                        this_close.update(cx, |root, cx| {
+                            root.backpack_bag = None;
+                            cx.notify();
+                        });
+                    }),
+            );
+        }
+        head.on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
+            let (Some(index), false) = (free, matches!(drag.from, DragSource::Equip(_))) else {
+                return;
+            };
+            let target = target.clone();
+            this.update(cx, |root, cx| {
+                let cmd = ItemMove {
+                    item_uid: drag.uid.clone(),
+                    target_uid: String::new(),
+                    to_container: Some(target),
+                    to_index: Some(index),
+                };
+                let _ = root.send_or_notice(&cmd, SendSlot::Notice);
+                root.drag_item = None;
+                root.bp_hold = None;
+                cx.notify();
+            });
+        })
+    }
+
+    /// M28/B4: панель слотов под сумки. Клик — показать содержимое
+    /// вторым разделом; drop — надеть сумку или положить предмет
+    /// внутрь (первый свободный слот).
+    fn bag_bar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let slots = self
+            .store
+            .session
+            .as_ref()
+            .map(|s| s.inventory.bag_slots)
+            .unwrap_or(0);
+        if slots == 0 {
+            return div();
+        }
+        let lang = self.lang;
+        let bags = self.equipped_bags();
+        let items: Vec<ItemSnapshot> = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| s.char.inventory.clone())
+            .unwrap_or_default();
+        let bag_uids: std::collections::HashSet<String> =
+            bags.iter().map(|b| b.uid.clone()).collect();
+        let selected = self.backpack_bag.clone();
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .child(
+                div()
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::BpTabBag)),
+            );
+        for ix in 0..slots.min(4) {
+            let ix_i = i32::try_from(ix).unwrap_or(0);
+            let bag = bags.iter().find(|b| b.slot_index == Some(ix_i)).cloned();
+            let label = match &bag {
+                Some(b) => format!("{} · {}", b.name, b.bag_slots.unwrap_or(0)),
+                None => tf(lang, Key::BpBagSlot, &[("{n}", &(ix + 1).to_string())]),
+            };
+            let is_sel = selected
+                .as_deref()
+                .zip(bag.as_ref().map(|b| b.uid.as_str()))
+                .is_some_and(|(a, b)| a == b);
+            let bag_uid = bag.as_ref().map(|b| b.uid.clone());
+            let bag_cap = bag.as_ref().and_then(|b| b.bag_slots).unwrap_or(0);
+            let free = bag_uid
+                .as_deref()
+                .and_then(|uid| Self::first_free_slot(&items, Some(uid), bag_cap));
+            let bag_for_click = bag_uid.clone();
+            let this = cx.entity();
+            let this_drop = this.clone();
+            let bag_for_drop = bag_uid.clone();
+            let bags_drop = bag_uids.clone();
+            let free_drop = free;
+            let cell_id = format!("ld2-bp-bagslot-{ix}");
+            let mut label_el = div().id(format!("ld2-bp-baglabel-{ix}")).child(label);
+            if let Some(b) = &bag {
+                let ghost = (
+                    b.name.clone(),
+                    rarity_color(&b.rarity, pal),
+                    self.config.theme.clone(),
+                );
+                let drag_this = this.clone();
+                label_el = label_el.on_drag(
+                    ItemDrag {
+                        uid: b.uid.clone(),
+                        from: DragSource::Bp,
+                        slot_req: None,
+                    },
+                    move |drag: &ItemDrag, _offset, _, cx| {
+                        drag_this.update(cx, |root, cx| {
+                            root.drag_item = Some(ItemDrag {
+                                uid: drag.uid.clone(),
+                                from: DragSource::Bp,
+                                slot_req: None,
+                            });
+                            root.popup_scrim_down = false;
+                            cx.notify();
+                        });
+                        let (name, color, theme) = ghost.clone();
+                        cx.new(move |_| crate::root::ItemDragGhost { name, color, theme })
+                    },
+                );
+            }
+            let cell = div()
+                .id(cell_id)
+                .flex()
+                .flex_col()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(if is_sel { pal.accent } else { pal.border }))
+                .bg(rgb(if is_sel { pal.selection } else { pal.panel }))
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(pal.selection)))
+                .child(label_el)
+                .on_click(cx.listener(move |root, _, _, cx| {
+                    root.backpack_bag = if root.backpack_bag.as_deref() == bag_for_click.as_deref()
+                    {
+                        None
+                    } else {
+                        bag_for_click.clone()
+                    };
+                    cx.notify();
+                }))
+                .on_drop::<ItemDrag>(move |drag: &ItemDrag, _, cx| {
+                    this_drop.update(cx, |root, cx| {
+                        if matches!(drag.from, DragSource::Equip(_)) {
+                            return;
+                        }
+                        let cmd = if bags_drop.contains(&drag.uid) {
+                            ItemMove {
+                                item_uid: drag.uid.clone(),
+                                target_uid: String::new(),
+                                to_container: Some(CONTAINER_BAGS.to_string()),
+                                to_index: Some(ix_i),
+                            }
+                        } else if let (Some(target), Some(free_ix)) =
+                            (bag_for_drop.clone(), free_drop)
+                        {
+                            ItemMove {
+                                item_uid: drag.uid.clone(),
+                                target_uid: String::new(),
+                                to_container: Some(target),
+                                to_index: Some(free_ix),
+                            }
+                        } else {
+                            root.drag_item = None;
+                            cx.notify();
+                            return;
+                        };
+                        let _ = root.send_or_notice(&cmd, SendSlot::Notice);
+                        root.drag_item = None;
+                        cx.notify();
+                    });
+                });
+            row = row.child(cell);
+        }
+        row
+    }
+
     fn backpack_tile(
         &mut self,
         cx: &mut Context<'_, Self>,

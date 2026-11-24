@@ -405,6 +405,9 @@ pub struct Root {
     viewport: (f32, f32),
     /// M16/F29b: активная вкладка рюкзака (персистентна в config).
     backpack_tab: backpack::BackpackTab,
+    /// M28/B4: выбранная сумка (uid) — её содержимое показывается
+    /// вторым разделом окна рюкзака.
+    backpack_bag: Option<String>,
     /// M18/F36: вкладка окна квестов (текущие/выполненные) и выбор
     /// в левой колонке (показывается в правой).
     quests_tab: quests::QuestsTab,
@@ -622,6 +625,7 @@ impl Root {
                 ..PopupState::new((440.0, 360.0))
             },
             backpack_tab: backpack::BackpackTab::default(),
+            backpack_bag: None,
             quests_tab: quests::QuestsTab::default(),
             selected_quest: None,
             popup_scrim_down: false,
