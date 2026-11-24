@@ -2,4 +2,5 @@
 
 pub(crate) mod ack;
 pub(crate) mod combat;
+pub(crate) mod items;
 pub(crate) mod world;
