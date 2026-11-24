@@ -115,6 +115,9 @@ pub struct ContentItemDef {
     /// левую); `None` → 1.
     #[serde(default)]
     pub hands: Option<i32>,
+    /// M28: ёмкость сумки (число слотов); `None` — предмет не сумка.
+    #[serde(default)]
+    pub bag_slots: Option<u32>,
     /// M18/F47: бонусы предмета (ADR-010) — атрибут/параметр/навык.
     #[serde(default)]
     pub bonuses: Vec<ItemBonus>,

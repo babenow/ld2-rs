@@ -453,6 +453,7 @@ pub(super) fn t(key: Key) -> &'static str {
         BpTabMagic => "Магия",
         BpTabMaterial => "Материалы",
         BpTabTool => "Инструменты",
+        BpTabBag => "Сумки",
         BpTabOther => "Прочее",
         BpTabArtifact => "Артефакты",
         SpellFireDart => "Струя пламени",

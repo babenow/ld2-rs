@@ -45,6 +45,8 @@ pub(crate) enum BackpackTab {
     Material,
     /// Инструменты (flask, chisel, quill).
     Tool,
+    /// M28/B1: сумки-контейнеры (bag) — своя вкладка.
+    Bag,
     /// Неизвестные типы контента — будущие новые типы.
     Other,
     /// M17/F30b: артефакты (artifact) — 2 слота особых предметов.
@@ -56,7 +58,7 @@ pub(crate) enum BackpackTab {
 }
 
 impl BackpackTab {
-    pub(crate) fn all() -> [(BackpackTab, Key); 11] {
+    pub(crate) fn all() -> [(BackpackTab, Key); 12] {
         [
             (BackpackTab::All, Key::BpTabAll),
             (BackpackTab::Weapon, Key::BpTabWeapon),
@@ -65,6 +67,7 @@ impl BackpackTab {
             (BackpackTab::Magic, Key::BpTabMagic),
             (BackpackTab::Material, Key::BpTabMaterial),
             (BackpackTab::Tool, Key::BpTabTool),
+            (BackpackTab::Bag, Key::BpTabBag),
             (BackpackTab::Other, Key::BpTabOther),
             (BackpackTab::Artifact, Key::BpTabArtifact),
             (BackpackTab::Gem, Key::BpTabGem),
@@ -81,6 +84,7 @@ impl BackpackTab {
             BackpackTab::Magic => IconName::WandSparkles,
             BackpackTab::Material => IconName::Box,
             BackpackTab::Tool => IconName::Wrench,
+            BackpackTab::Bag => IconName::Archive,
             BackpackTab::Other => IconName::Package,
             BackpackTab::Artifact => IconName::Sparkles,
             BackpackTab::Gem => IconName::Hexagon,
@@ -97,6 +101,7 @@ impl BackpackTab {
             BackpackTab::Magic => "magic",
             BackpackTab::Material => "material",
             BackpackTab::Tool => "tool",
+            BackpackTab::Bag => "bag",
             BackpackTab::Other => "other",
             BackpackTab::Artifact => "artifact",
             BackpackTab::Gem => "gem",
@@ -112,6 +117,7 @@ impl BackpackTab {
             "magic" => BackpackTab::Magic,
             "material" => BackpackTab::Material,
             "tool" => BackpackTab::Tool,
+            "bag" => BackpackTab::Bag,
             "other" => BackpackTab::Other,
             "artifact" => BackpackTab::Artifact,
             "gem" => BackpackTab::Gem,
@@ -140,6 +146,7 @@ pub(crate) fn tab_for_type(item_type: &str) -> BackpackTab {
         // M20/F20b: инструменты добычи (топор/кирка/серп) — к инструментам.
         "flask" | "chisel" | "quill" | "upgrade_stone" | "axe" | "pickaxe" | "sickle"
         | "skinning_knife" => BackpackTab::Tool,
+        "bag" => BackpackTab::Bag,
         "money" => BackpackTab::Currencies,
         "armor" | "shield" => BackpackTab::Armor,
         "artifact" => BackpackTab::Artifact,
@@ -384,6 +391,8 @@ impl Root {
                                     let cmd = ItemMove {
                                         item_uid: hold.uid.clone(),
                                         target_uid: target_uid.clone(),
+                                        to_container: None,
+                                        to_index: None,
                                     };
                                     let _ = root.send_or_notice(&cmd, SendSlot::Notice);
                                 }
@@ -656,6 +665,9 @@ mod tests {
             qty: Some(qty),
             gold_value: Some(1),
             bonuses: None,
+            container: None,
+            slot_index: None,
+            bag_slots: None,
             extra: Default::default(),
         };
         let items = vec![

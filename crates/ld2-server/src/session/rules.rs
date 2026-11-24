@@ -188,6 +188,10 @@ pub(crate) fn item_snapshot(
             ));
             (!list.is_empty()).then_some(list)
         },
+        // M28: контейнер/позиция для сетки сумок (аддитивно §11).
+        container: Some(item.container.clone()),
+        slot_index: item.slot_index,
+        bag_slots: def.bag_slots.and_then(|v| u32::try_from(v).ok()),
         // M17/F30g: определение — ключ кулдауна использования.
         def_id: Some(item.def_id.clone()),
         slot: def.slot.clone(),
@@ -294,6 +298,7 @@ mod tests {
             skill: Some("sword".into()),
             cooldown_s: 1.5,
             bonuses: Some(json!([{ "kind": "attr", "id": "str", "value": 1 }])),
+            bag_slots: None,
         }
     }
 
@@ -306,6 +311,8 @@ mod tests {
             equipped_slot: None,
             sockets,
             bonuses,
+            container: "backpack".into(),
+            slot_index: None,
         }
     }
 
@@ -402,6 +409,20 @@ mod tests {
         let sockets = snap.sockets.expect("сокеты");
         assert_eq!(sockets[0].accepts.as_deref(), Some("rune"));
         assert_eq!(sockets[1].accepts.as_deref(), Some("gem"));
+    }
+
+    #[test]
+    fn item_snapshot_maps_container_slot_and_bag_capacity() {
+        // M28: контейнер/позиция и ёмкость сумки уходят в снапшот.
+        let mut def = item_def("weapon", 0, None);
+        def.bag_slots = Some(20);
+        let mut row = item_row(json!([]), None);
+        row.container = "bags".into();
+        row.slot_index = Some(2);
+        let snap = item_snapshot(&row, &def);
+        assert_eq!(snap.container.as_deref(), Some("bags"));
+        assert_eq!(snap.slot_index, Some(2));
+        assert_eq!(snap.bag_slots, Some(20));
     }
 
     #[test]

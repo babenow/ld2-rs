@@ -99,8 +99,10 @@ cooldown_s = 1.5
 channels = ["system", "location", "global", "party", "guild", "whisper"]
 
 [gameplay.inventory]
-slots = 100
+slots = 20
 equip_slots = ["head", "shoulders", "bracers", "gloves", "body", "legs", "feet", "cloak", "ring1", "ring2", "amulet", "main_hand", "off_hand", "artifact1", "artifact2"]
+# M28: слоты под сумки (сумки дают ёмкость; 0 — выключить).
+bag_slots = 4
 
 [gameplay.upgrade]
 max_level = 9

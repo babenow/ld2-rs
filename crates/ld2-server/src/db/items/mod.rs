@@ -5,11 +5,13 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 mod consume;
+mod containers;
 mod grant;
 mod mutate;
 mod query;
 
 pub use consume::*;
+pub use containers::*;
 pub use grant::*;
 pub use mutate::*;
 pub use query::*;
@@ -31,6 +33,10 @@ pub struct ItemRow {
     pub sockets: serde_json::Value,
     /// M18/F47: бонусы инстанса (ADR-010); `NULL` — нет своих бонусов.
     pub bonuses: Option<Value>,
+    /// M28: контейнер (`backpack`, `bags`, uid надетой сумки).
+    pub container: String,
+    /// M28: позиция внутри контейнера; `NULL` — старая строка без позиции.
+    pub slot_index: Option<i32>,
 }
 
 /// Определение из сида (`content/items.json` → `item_defs`).
@@ -62,6 +68,8 @@ pub struct ItemDefRow {
     pub cooldown_s: f64,
     /// M18/F47: бонусы из контента (ADR-010); `NULL` — их нет.
     pub bonuses: Option<Value>,
+    /// M28: ёмкость сумки, слотов; `NULL` — обычный предмет.
+    pub bag_slots: Option<i32>,
 }
 
 /// M24: инвентарь персонажа с данными определений (правая колонка

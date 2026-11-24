@@ -235,6 +235,16 @@ pub struct ItemSnapshot {
     /// M18/F47/ADR-010: бонусы предмета (контент + инстанс) — аддитивно §11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bonuses: Option<Vec<ItemBonus>>,
+    /// M28: контейнер инвентаря — `backpack`, `bags` (слоты под сумки)
+    /// или uid надетой сумки; аддитивно §11 (старый сервер не шлёт).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    /// M28: позиция внутри контейнера (`0..ёмкость-1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot_index: Option<i32>,
+    /// M28: ёмкость сумки (контент `bag_slots`) — только для `type=bag`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bag_slots: Option<u32>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }

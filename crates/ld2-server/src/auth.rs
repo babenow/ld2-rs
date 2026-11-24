@@ -202,6 +202,7 @@ pub fn session_config(
         inventory: InventoryConfig {
             slots: g.inventory.slots,
             equip_slots: g.inventory.equip_slots.clone(),
+            bag_slots: g.inventory.bag_slots,
         },
         upgrade: UpgradeConfig {
             max_level: g.upgrade.max_level,

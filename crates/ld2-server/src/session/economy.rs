@@ -173,6 +173,8 @@ impl Session {
                     upgrade: 0,
                     equipped_slot: None,
                     sockets: serde_json::json!([]),
+                    container: "backpack".into(),
+                    slot_index: None,
                     // M18/F47: карточка товара показывает бонусы (ADR-010).
                     bonuses: def.bonuses.clone(),
                 };

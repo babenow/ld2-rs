@@ -171,6 +171,7 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
                 "artifact1".into(),
                 "artifact2".into(),
             ],
+            bag_slots: 4,
         },
         upgrade: UpgradeConfig {
             max_level: UPGRADE_MAX,
@@ -368,6 +369,9 @@ pub fn staff_item() -> ItemSnapshot {
         gold_value: Some(120),
         extra: Default::default(),
         bonuses: None,
+        container: None,
+        slot_index: None,
+        bag_slots: None,
     }
 }
 
@@ -390,6 +394,9 @@ pub fn scroll_item() -> ItemSnapshot {
         gold_value: Some(30),
         extra: Default::default(),
         bonuses: None,
+        container: None,
+        slot_index: None,
+        bag_slots: None,
     }
 }
 
@@ -415,6 +422,9 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
         gold_value: Some(20),
         extra: Default::default(),
         bonuses: None,
+        container: None,
+        slot_index: None,
+        bag_slots: None,
     }
 }
 
@@ -443,6 +453,9 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
             qty: Some(3),
             gold_value: Some(5),
             bonuses: None,
+            container: None,
+            slot_index: None,
+            bag_slots: None,
             extra: Default::default(),
         })
         .collect()

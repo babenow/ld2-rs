@@ -291,6 +291,9 @@ mod tests {
             qty: None,
             gold_value: None,
             bonuses: None,
+            container: None,
+            slot_index: None,
+            bag_slots: None,
             extra: extra.as_object().cloned().unwrap_or_default(),
         }
     }

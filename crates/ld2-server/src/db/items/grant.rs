@@ -106,7 +106,7 @@ pub async fn grant_stacking_tx(
             .execute(&mut **tx)
             .await?;
         let row: ItemRow = sqlx::query_as(
-            "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses \
+            "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index \
              FROM items WHERE uid = $1",
         )
         .bind(&uid)
@@ -118,7 +118,7 @@ pub async fn grant_stacking_tx(
         "INSERT INTO items (character_id, def_id, qty, sort_order) \
          VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
          FROM items WHERE character_id = $1), 0)) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)
     .bind(def_id)

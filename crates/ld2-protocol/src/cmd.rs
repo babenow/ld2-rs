@@ -207,7 +207,15 @@ pub struct ItemDrop {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ItemMove {
     pub item_uid: String,
+    #[serde(default)]
     pub target_uid: String,
+    /// M28: целевой контейнер (`backpack`, `bags`, uid сумки);
+    /// `None` — старый обмен порядком по `target_uid`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_container: Option<String>,
+    /// M28: позиция внутри контейнера.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_index: Option<i32>,
 }
 
 // ─── магия (ФР-09; D4: руна = мана + заряд) ──────────────────────────────────

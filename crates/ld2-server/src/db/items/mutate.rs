@@ -13,7 +13,7 @@ pub async fn insert(
         "INSERT INTO items (character_id, def_id, qty, sort_order) \
          VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
          FROM items WHERE character_id = $1), 0)) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)
     .bind(def_id)
@@ -38,7 +38,7 @@ pub async fn insert_stateful(
         "INSERT INTO items (character_id, def_id, qty, upgrade, sockets, bonuses, sort_order) \
          VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT MAX(sort_order) + 1 \
          FROM items WHERE character_id = $1), 0)) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)
     .bind(def_id)
@@ -94,7 +94,7 @@ pub async fn delete(pool: &PgPool, uid: &str) -> Result<u64, sqlx::Error> {
 pub async fn delete_all(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
         "DELETE FROM items WHERE character_id = $1 \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)
     .fetch_all(pool)
@@ -186,7 +186,7 @@ pub async fn take_loot_tx(
             .execute(&mut *tx)
             .await?;
         let row = sqlx::query_as::<_, ItemRow>(
-            "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses \
+            "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index \
              FROM items WHERE uid = $1 AND character_id = $2",
         )
         .bind(&uid)
@@ -200,7 +200,7 @@ pub async fn take_loot_tx(
         "INSERT INTO items (character_id, def_id, qty, sort_order) \
          VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
          FROM items WHERE character_id = $1), 0)) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses",
+         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)
     .bind(def_id)
