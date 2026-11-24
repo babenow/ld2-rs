@@ -537,29 +537,34 @@ T_new = min(T_MAX, T + k · t · (1 − T / T_MAX)),  k = blend_k (пример:
 
 ```
 ld2-rs/
-├── Cargo.toml                      # [workspace]
+├── Cargo.toml                      # [workspace], [workspace.package], [workspace.dependencies]
+├── Dockerfile · docker-compose.yml # сервер: rust 1.100 (musl) → alpine, USER ld2
+├── rust-toolchain.toml             # 1.100.0 + rustfmt/clippy (пин)
 ├── crates/
-│   ├── ld2-protocol/               #serde-типы контракта §4, zero deps к UI/сети; golden-тесты
+│   ├── ld2-protocol/               # serde-типы контракта §4, zero deps к UI/сети; golden-тесты
 │   │   ├── src/{envelope.rs, cmd.rs, evt.rs, errors.rs, features.rs}
 │   │   └── tests/golden/           # снапшоты JSON
-│   ├── ld2-mock-server/            # §5 (bin)
-│   └── ld2-client/                 # eframe-приложение (bin)
-│       └── src/
-│           ├── main.rs
-│           ├── app.rs              # eframe::App, layout
-│           ├── transport/{ws.rs, reconnect.rs, queue.rs}
-│           ├── reducer/{mod.rs, location.rs, char.rs, crime.rs, chat.rs, trade.rs, ...}
-│           ├── store.rs            # AppStore + индексы
-│           ├── ui/{panels/, modals/, hotbar.rs, chat.rs, widgets.rs}
-│           ├── l10n/{mod.rs, ru.rs, en.rs}
-│           ├── config.rs, secrets.rs, time_sync.rs, notify.rs
-│           └── assets/fonts/, assets/icons/
-├── docs/                           # tz.md, protocol.md, skills.md + ADR (decisions/), руководство пользователя
+│   ├── ld2-content/                # схема/загрузка/валидация контента: одна для сервера и редактора
+│   ├── ld2-core/                   # ядро клиента без UI: store, transport, l10n, config, secrets, notify, update-check
+│   │   └── src/store/              # types.rs, npc.rs, patch.rs, reducers/{ack,world,combat,items,social,craft,misc}.rs
+│   ├── ld2-client/                 # desktop-клиент gpui + Ely (бинарь ld2-gpui)
+│   │   └── src/root/               # экраны и окна: game, sheet, backpack, chat, social, admin, pickup, chars, …
+│   ├── ld2-server/                 # реальный сервер (бинарь ld2-server): WS §1/§2, PostgreSQL (sqlx), seed/hot reload
+│   │   └── src/session/            # dispatch + домены команд (auth, chars, combat, items, trade, party, guild, …)
+│   ├── ld2-editor/                 # редактор контента gpui + Ely (бинарь ld2-editor), источник правды — content/*.json
+│   └── ld2-test-kit/               # WS-харнесс, контрактные проверки, фикстуры (dev-only)
+├── content/                        # рантайм-контент: 8 JSON (locations, skills, items, professions, recipes, quests, dialogs, shops)
+├── deploy/server.toml              # конфиг сервера для compose (dev-креды; прод — свой смонтированный файл)
+├── docs/                           # tz.md, protocol.md, skills.md, decisions/ (ADR), sources/ (архив источников карт)
+├── scripts/                        # refactor-audit.sh + бюджет, обновление иконок, бэкап
 ├── .github/workflows/{ci.yml, release.yml}
-└── rust-toolchain.toml             # стабильный зафиксированный
+└── README.md · ROADMAP.md · HISTORY.md · CHANGELOG.md · CONTRIBUTING.md
 ```
 
-Правила: `ld2-protocol` не зависит от egui/tokio; клиент читает протокол только через crate; клippy `-D warnings`, `rustfmt`, CI-воркфлоу с кросш-сборками.
+Правила: `ld2-protocol` не зависит от UI/сети (клиент читает протокол только через
+этот crate); `ld2-content` не зависит от gpui/БД (общая для сервера и редактора);
+clippy `-D warnings`, `rustfmt`, CI с кросс-сборками (Linux/macOS/Windows) и отдельным
+job'ом с PostgreSQL для серверных тестов.
 
 ---
 
