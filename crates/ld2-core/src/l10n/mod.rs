@@ -554,6 +554,9 @@ pub enum Key {
     BpTabTool,
     /// M28/B1: вкладка сумок-контейнеров.
     BpTabBag,
+    /// M28/B4: раздел «Рюкзак» и подпись пустого слота сумки.
+    BpBackpackSection,
+    BpBagSlot,
     BpTabOther,
     // M17/F30b: вкладка артефактов рюкзака
     BpTabArtifact,
@@ -1146,6 +1149,8 @@ mod tests {
         Key::BpTabMaterial,
         Key::BpTabTool,
         Key::BpTabBag,
+        Key::BpBackpackSection,
+        Key::BpBagSlot,
         Key::BpTabOther,
         // M17/F30b: вкладка артефактов
         Key::BpTabArtifact,

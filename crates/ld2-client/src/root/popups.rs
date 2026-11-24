@@ -63,7 +63,10 @@ impl Root {
         st.resize_anchor = None;
         match kind {
             PopupKind::Character => self.sheet_tab = sheet::SheetTab::Params,
-            PopupKind::Backpack => self.backpack_tab = backpack::BackpackTab::default(),
+            PopupKind::Backpack => {
+                self.backpack_tab = backpack::BackpackTab::default();
+                self.backpack_bag = None;
+            }
             // M18/F36: на «Текущих» при каждом открытии (паритет окон);
             // выбор квеста переживает закрытие — правая колонка
             // корректно откатывается на первой строке вкладки.
