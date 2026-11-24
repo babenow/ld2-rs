@@ -24,10 +24,8 @@ impl Root {
     /// история и ввод.
     pub(crate) fn chat_body(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
-        let dark = pal.bg == palette("dark").bg;
         let active = self.chat_channel.clone();
         let filter = self.ti(&self.chat_filter).read(cx).text().to_lowercase();
-        let reply_to = self.store.last_whisper_from.clone();
 
         // M14/fix: панель тянется на остаток блока журнала — история
         // забирает свободное место, строка ввода прижата к низу чата
@@ -35,8 +33,44 @@ impl Root {
         let mut panel = div().flex().flex_col().gap_1().flex_grow_1().min_h_0();
 
         // ── вкладки каналов (ФР-13): Tabs Ely + фильтр ──
-        // Заказчик 2026-11-20: в канал группы/гильдии писать нельзя,
-        // если не состоишь — метка 🔒 и отказ при переключении.
+        panel = panel.child(self.chat_channel_tabs(cx));
+        // M14/F2: фильтр — отдельной строкой: в узкой колонке (чат
+        // теперь внизу слева) одна строка под вкладки и поиск не влезает.
+        // M14/F18: строка фильтра БЕЗ flex_grow_1 — в flex-колонке она
+        // забирала вертикаль и толкала историю вниз (сообщения
+        // «висели по центру»); теперь история занимает остаток сверху.
+        panel = panel.child(SearchInput::new(
+            "ld2-chat-filter",
+            self.ti(&self.chat_filter),
+        ));
+
+        // ── история активного канала с фильтром ──
+        panel = panel.child(self.chat_history(cx, pal, &active, &filter));
+
+        // M14/F19: system-канал — ввод только для админ/модераторов
+        // (сервер и так режет E_PERMISSION, здесь — UX без обмана).
+        if active == "system" && !self.store.can_moderate() {
+            panel = panel.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(t(lang, Key::SystemChatLocked)),
+            );
+            return panel;
+        }
+
+        // ── ввод: Enter/кнопка, слэш-команды (ФР-13) ──
+        let reply_to = self.store.last_whisper_from.is_some();
+        panel = panel.child(self.chat_input_row(cx, pal, reply_to));
+        panel
+    }
+
+    /// Вкладки каналов чата (ФР-13): счётчик сообщений, метка 🔒 и
+    /// отказ при переключении на канал без группы/гильдии (заказчик
+    /// 2026-11-20). Вынесено из `chat_body` (RF3s), тело как есть.
+    fn chat_channel_tabs(&mut self, cx: &mut Context<'_, Self>) -> Div {
+        let lang = self.lang;
+        let active = self.chat_channel.clone();
         let choices: Vec<Choice> = CHAT_CHANNELS
             .iter()
             .map(|channel| {
@@ -77,35 +111,38 @@ impl Root {
                 },
             ),
         );
-        panel = panel.child(tabs);
-        // M14/F2: фильтр — отдельной строкой: в узкой колонке (чат
-        // теперь внизу слева) одна строка под вкладки и поиск не влезает.
-        // M14/F18: строка фильтра БЕЗ flex_grow_1 — в flex-колонке она
-        // забирала вертикаль и толкала историю вниз (сообщения
-        // «висели по центру»); теперь история занимает остаток сверху.
-        panel = panel.child(SearchInput::new(
-            "ld2-chat-filter",
-            self.ti(&self.chat_filter),
-        ));
+        tabs
+    }
 
-        // ── история активного канала с фильтром ──
+    /// История активного канала: фильтр, stick-to-bottom, строки с
+    /// удалением (админ/модераторы) и ScrollArea. Вынесено из
+    /// `chat_body` (RF3s), тело перенесено как есть.
+    fn chat_history(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        active: &str,
+        filter: &str,
+    ) -> Div {
+        let lang = self.lang;
         // M14/F19: (id, строка) — id нужен для cmd/chat.delete.
         let messages: Vec<(Option<u64>, String)> = self
             .store
             .chat
-            .get(&active)
+            .get(active)
             .map(|hist| {
                 hist.iter()
                     .filter(|m| {
                         filter.is_empty()
-                            || m.text.to_lowercase().contains(&filter)
-                            || m.name.to_lowercase().contains(&filter)
+                            || m.text.to_lowercase().contains(filter)
+                            || m.name.to_lowercase().contains(filter)
                     })
                     .map(|m| (m.id, format!("{}: {}", m.name, m.text)))
                     .collect()
             })
             .unwrap_or_default();
-        let color = channel_color(&active, dark);
+        let dark = pal.bg == palette("dark").bg;
+        let color = channel_color(active, dark);
         // M11.4: stick-to-bottom — новая строка доскроливается вниз
         // (ScrollHandle + ScrollArea; egui-паритет ФР-13).
         // Фикс M14: история — один ребёнок ScrollArea, поэтому
@@ -160,30 +197,21 @@ impl Root {
         // ScrollArea остаётся flex-элементом (а не дитя auto-высоты):
         // иначе у Ely `size_full()` схлопывается в auto и история
         // льётся наружу.
-        panel = panel.child(
-            div().flex().flex_col().flex_grow_1().min_h_0().child(
-                ScrollArea::new("ld2-chat-history")
-                    .vertical()
-                    .track_scroll(&self.chat_scroll)
-                    .flex_grow_1()
-                    .min_h_0()
-                    .child(history),
-            ),
-        );
+        div().flex().flex_col().flex_grow_1().min_h_0().child(
+            ScrollArea::new("ld2-chat-history")
+                .vertical()
+                .track_scroll(&self.chat_scroll)
+                .flex_grow_1()
+                .min_h_0()
+                .child(history),
+        )
+    }
 
-        // M14/F19: system-канал — ввод только для админ/модераторов
-        // (сервер и так режет E_PERMISSION, здесь — UX без обмана).
-        if active == "system" && !self.store.can_moderate() {
-            panel = panel.child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(rgb(pal.muted))
-                    .child(t(lang, Key::SystemChatLocked)),
-            );
-            return panel;
-        }
-
-        // ── ввод: Enter/кнопка, слэш-команды (ФР-13) ──
+    /// Строка ввода чата: поле, таймаут отправки, «Ответить» и
+    /// кнопка-иконка отправки. Вынесено из `chat_body` (RF3s),
+    /// тело перенесено как есть.
+    fn chat_input_row(&mut self, cx: &mut Context<'_, Self>, pal: &Palette, reply_to: bool) -> Div {
+        let lang = self.lang;
         // M14/F20: min_w_0 на строке и обёртке — поле сжимается вместе
         // с колонкой и не вылезает за рамку (в т.ч. с кнопкой «Ответить»).
         // Заказчик 2026-11-20: кнопка «отправить» — иконкой, высота
@@ -212,7 +240,7 @@ impl Root {
                     .child(format!("{:.0}с", cooldown_left.as_secs_f32().ceil())),
             );
         }
-        if reply_to.is_some() {
+        if reply_to {
             input_row = input_row.child(act_btn(
                 cx,
                 t(lang, Key::ChReply),
@@ -250,8 +278,7 @@ impl Root {
                 cx.listener(|this, _, _, cx| this.send_chat(cx)),
             );
         input_row = input_row.child(send_btn);
-        panel = panel.child(input_row);
-        panel
+        input_row
     }
 
     /// M14/F19: удаление сообщения из истории (`cmd/chat.delete`);
