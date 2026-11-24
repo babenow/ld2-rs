@@ -248,6 +248,10 @@ pub struct ItemSnapshot {
     /// M28: какие типы принимает сумка (пусто — любые).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bag_types: Option<Vec<String>>,
+    /// M28/B8: тип слота под сумку (`reagent`, `quiver`, `keyring`);
+    /// `None` — обычная сумка.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bag_kind: Option<String>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }

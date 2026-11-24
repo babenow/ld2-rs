@@ -372,6 +372,7 @@ mod tests {
             slot_index: None,
             bag_slots: None,
             bag_types: None,
+            bag_kind: None,
             extra: Default::default(),
         };
         let free = |accepts: Option<&str>, index: u32| Socket {

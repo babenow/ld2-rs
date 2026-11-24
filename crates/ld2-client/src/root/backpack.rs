@@ -9,7 +9,8 @@ use ely::forms::Choice;
 use ely::menus::ContextMenu;
 use ely::motion::Flip;
 use ely::navigation::Tabs;
-use ely::primitives::{Icon, IconName};
+use ely::primitives::{Icon, IconName, Tooltip};
+use ely::theme::IconSize;
 use gpui::{
     div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, MouseButton,
     SharedString, Window,
@@ -26,6 +27,58 @@ use crate::palette::Palette;
 /// (`db::items::containers::BACKPACK/BAGS`).
 const CONTAINER_BACKPACK: &str = "backpack";
 const CONTAINER_BAGS: &str = "bags";
+
+/// M28/B8: спец-слоты под сумки после общих — реагенты, колчан,
+/// ключница (те же индексы, что у сервера: `bag_slots + 0/1/2`).
+const SPECIAL_BAG_SLOTS: usize = 3;
+
+/// M28/B8: роль спец-слота в контейнере `bags` (`None` — обычный).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BagSlotRole {
+    Reagent,
+    Quiver,
+    Keyring,
+}
+
+impl BagSlotRole {
+    fn at(ix: usize, general: usize) -> Option<Self> {
+        match ix.checked_sub(general)? {
+            0 => Some(Self::Reagent),
+            1 => Some(Self::Quiver),
+            2 => Some(Self::Keyring),
+            _ => None,
+        }
+    }
+
+    fn icon(self) -> IconName {
+        match self {
+            Self::Reagent => IconName::Package,
+            Self::Quiver => IconName::Crosshair,
+            Self::Keyring => IconName::Key,
+        }
+    }
+
+    fn label(self, lang: Lang) -> String {
+        let key = match self {
+            Self::Reagent => Key::BpBagSlotReagent,
+            Self::Quiver => Key::BpBagSlotQuiver,
+            Self::Keyring => Key::BpBagSlotKeyring,
+        };
+        t(lang, key).to_string()
+    }
+}
+
+/// M28/B8: иконка и подпись слота сумки (общий вид для панели и
+/// статус-бара).
+fn bag_slot_visual(ix: usize, general: usize, lang: Lang) -> (IconName, String) {
+    match BagSlotRole::at(ix, general) {
+        Some(role) => (role.icon(), role.label(lang)),
+        None => (
+            IconName::Archive,
+            tf(lang, Key::BpBagSlot, &[("{n}", &(ix + 1).to_string())]),
+        ),
+    }
+}
 
 use super::sheet::{rarity_color, rarity_label};
 use super::{scrollable_tab, BpHold, DragSource, ItemDrag, PopupKind, Root, SendSlot};
@@ -147,7 +200,7 @@ pub(crate) fn tab_for_type(item_type: &str) -> BackpackTab {
         "potion" => BackpackTab::Potion,
         "rune" | "scroll" => BackpackTab::Magic,
         "herb" | "wood_oak" | "parchment" | "ink" | "ore_copper" | "branches" | "hide_scraps"
-        | "hide" | "meat" | "offal" | "ammo" => BackpackTab::Material,
+        | "hide" | "meat" | "offal" | "ammo" | "key" => BackpackTab::Material,
         // M20/F20b: инструменты добычи (топор/кирка/серп) — к инструментам.
         "flask" | "chisel" | "quill" | "upgrade_stone" | "axe" | "pickaxe" | "sickle"
         | "skinning_knife" => BackpackTab::Tool,
@@ -166,6 +219,7 @@ fn bag_type_label(lang: Lang, item_type: &str) -> String {
         "ammo" => t(lang, Key::BagTypeAmmo).to_string(),
         "herb" => t(lang, Key::BagTypeHerb).to_string(),
         "gem" => t(lang, Key::BagTypeGem).to_string(),
+        "key" => t(lang, Key::BagTypeKey).to_string(),
         other => other.to_string(),
     }
 }
@@ -279,34 +333,10 @@ impl Root {
                     .sum()
             })
             .unwrap_or(0);
-        // M18/F58f (новая фича): заполненность в статус-баре —
-        // занято записей-стаков (как серверный count) из лимита
-        // `inventory.slots`; при полном — красным.
         // M28: занятость — предметы рюкзака и содержимое сумок (сами
         // сумки не занимают ячейки); ёмкость — база + вместимость
-        // надетых сумок.
-        let usage: Option<(usize, u32)> = self.store.snapshot.as_ref().map(|s| {
-            let bags: Vec<&ItemSnapshot> = s
-                .char
-                .inventory
-                .iter()
-                .filter(|i| i.container.as_deref() == Some(CONTAINER_BAGS))
-                .collect();
-            let used = s
-                .char
-                .inventory
-                .iter()
-                .filter(|i| i.container.as_deref() != Some(CONTAINER_BAGS))
-                .count();
-            let base = self
-                .store
-                .session
-                .as_ref()
-                .map(|c| c.inventory.slots)
-                .unwrap_or(0);
-            let cap = base + bags.iter().map(|b| b.bag_slots.unwrap_or(0)).sum::<u32>();
-            (used, cap)
-        });
+        // надетых сумок. M28/B8: та же цифра — в статус-баре.
+        let usage = self.inventory_usage();
         let footer = div()
             .flex()
             .flex_row()
@@ -532,6 +562,98 @@ impl Root {
         bags
     }
 
+    /// M28: занято ячеек и общая ёмкость (рюкзак + надетые сумки).
+    pub(crate) fn inventory_usage(&self) -> Option<(usize, u32)> {
+        let snap = self.store.snapshot.as_ref()?;
+        let bags: Vec<&ItemSnapshot> = snap
+            .char
+            .inventory
+            .iter()
+            .filter(|i| i.container.as_deref() == Some(CONTAINER_BAGS))
+            .collect();
+        let used = snap
+            .char
+            .inventory
+            .iter()
+            .filter(|i| i.container.as_deref() != Some(CONTAINER_BAGS))
+            .count();
+        let base = self
+            .store
+            .session
+            .as_ref()
+            .map(|c| c.inventory.slots)
+            .unwrap_or(0);
+        let cap = base + bags.iter().map(|b| b.bag_slots.unwrap_or(0)).sum::<u32>();
+        Some((used, cap))
+    }
+
+    /// M28/B8: сумки в статус-баре — иконки-кнопки левее ёмкости:
+    /// наведение — название/занятость, клик открывает окно рюкзака.
+    pub(crate) fn status_bags(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
+        let lang = self.lang;
+        let general = self
+            .store
+            .session
+            .as_ref()
+            .map(|s| s.inventory.bag_slots as usize)
+            .unwrap_or(0);
+        let total = general + SPECIAL_BAG_SLOTS;
+        let bags = self.equipped_bags();
+        let items: Vec<ItemSnapshot> = self
+            .store
+            .snapshot
+            .as_ref()
+            .map(|s| s.char.inventory.clone())
+            .unwrap_or_default();
+        let mut row = div().flex().flex_row().items_center().gap_1();
+        for ix in 0..total {
+            let ix_i = i32::try_from(ix).unwrap_or(0);
+            let bag = bags.iter().find(|b| b.slot_index == Some(ix_i)).cloned();
+            let (icon, _) = bag_slot_visual(ix, general, lang);
+            let tip = match &bag {
+                Some(b) => {
+                    let used = items
+                        .iter()
+                        .filter(|i| i.container.as_deref() == Some(b.uid.as_str()))
+                        .count();
+                    tf(
+                        lang,
+                        Key::BpBagTip,
+                        &[
+                            ("{name}", b.name.as_str()),
+                            ("{used}", &used.to_string()),
+                            ("{total}", &b.bag_slots.unwrap_or(0).to_string()),
+                        ],
+                    )
+                }
+                None => t(lang, Key::BpBagEmptySlot).to_string(),
+            };
+            let color = if bag.is_some() { pal.text } else { pal.muted };
+            let bag_uid = bag.as_ref().map(|b| b.uid.clone());
+            row = row.child(
+                div()
+                    .id(format!("ld2-status-bag-{ix}"))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .px_1()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(rgb(pal.selection)))
+                    .tooltip(Tooltip::text(tip))
+                    .child(Icon::new(icon).size(IconSize::Sm).color(rgb(color)))
+                    .on_click(cx.listener(move |root, _, _, cx| {
+                        if !root.backpack_popup.open {
+                            root.open_popup(PopupKind::Backpack);
+                        }
+                        root.backpack_bag = bag_uid.clone();
+                        cx.notify();
+                    })),
+            );
+        }
+        row
+    }
+
     /// M28/B4: первый свободный индекс контейнера (по снапшоту).
     fn first_free_slot(items: &[ItemSnapshot], container: Option<&str>, cap: u32) -> Option<i32> {
         let cap = i32::try_from(cap).unwrap_or(0);
@@ -657,15 +779,15 @@ impl Root {
     /// вторым разделом; drop — надеть сумку или положить предмет
     /// внутрь (первый свободный слот).
     fn bag_bar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
-        let slots = self
+        let Some(general) = self
             .store
             .session
             .as_ref()
-            .map(|s| s.inventory.bag_slots)
-            .unwrap_or(0);
-        if slots == 0 {
+            .map(|s| s.inventory.bag_slots as usize)
+        else {
             return div();
-        }
+        };
+        let total = general + SPECIAL_BAG_SLOTS;
         let lang = self.lang;
         let bags = self.equipped_bags();
         let items: Vec<ItemSnapshot> = self
@@ -689,12 +811,13 @@ impl Root {
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::BpTabBag)),
             );
-        for ix in 0..slots.min(4) {
+        for ix in 0..total {
             let ix_i = i32::try_from(ix).unwrap_or(0);
             let bag = bags.iter().find(|b| b.slot_index == Some(ix_i)).cloned();
+            let (icon, empty_label) = bag_slot_visual(ix, general, lang);
             let label = match &bag {
                 Some(b) => format!("{} · {}", b.name, b.bag_slots.unwrap_or(0)),
-                None => tf(lang, Key::BpBagSlot, &[("{n}", &(ix + 1).to_string())]),
+                None => empty_label,
             };
             let is_sel = selected
                 .as_deref()
@@ -753,7 +876,15 @@ impl Root {
                 .bg(rgb(if is_sel { pal.selection } else { pal.panel }))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(pal.selection)))
-                .child(label_el)
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .child(Icon::new(icon).size(IconSize::Sm))
+                        .child(label_el),
+                )
                 .on_click(cx.listener(move |root, _, _, cx| {
                     root.backpack_bag = if root.backpack_bag.as_deref() == bag_for_click.as_deref()
                     {
@@ -1056,6 +1187,7 @@ mod tests {
             slot_index: None,
             bag_slots: None,
             bag_types: None,
+            bag_kind: None,
             extra: Default::default(),
         };
         let items = vec![

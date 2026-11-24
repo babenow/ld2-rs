@@ -13,6 +13,32 @@ pub const BAGS: &str = "bags";
 /// M28: определение стартовой сумки (content/items.json).
 pub const STARTER_BAG_DEF: &str = "traveler_bag";
 
+/// M28/B8: спец-слоты под сумки после общих — реагенты, колчан,
+/// ключница (индексы `bag_slots + 0/1/2`).
+pub const SPECIAL_BAG_SLOTS: i32 = 3;
+/// Обычная сумка (или без ограничения слота).
+pub const BAG_KIND_GENERAL: &str = "general";
+/// Сумка реагентов.
+pub const BAG_KIND_REAGENT: &str = "reagent";
+/// Колчан (только стрелы).
+pub const BAG_KIND_QUIVER: &str = "quiver";
+/// Ключница.
+pub const BAG_KIND_KEYRING: &str = "keyring";
+
+/// Тип сумки, допустимый в слоте `index` контейнера `bags`
+/// (`general_slots` — число обычных слотов из конфига).
+pub fn slot_kind(index: i32, general_slots: i32) -> &'static str {
+    if index < general_slots {
+        BAG_KIND_GENERAL
+    } else if index == general_slots {
+        BAG_KIND_REAGENT
+    } else if index == general_slots + 1 {
+        BAG_KIND_QUIVER
+    } else {
+        BAG_KIND_KEYRING
+    }
+}
+
 /// Есть ли предметы внутри сумки `uid` (снять/выбросить непустую нельзя).
 pub async fn bag_has_contents(pool: &PgPool, uid: &str) -> Result<bool, sqlx::Error> {
     let found: Option<String> =
@@ -73,6 +99,8 @@ pub enum PlaceError {
     BagBusy,
     /// Сумка не принимает этот тип предмета (`bag_types`).
     WrongType,
+    /// Сумка не подходит к спец-слоту (`bag_kind`).
+    WrongSlot,
     /// Внутренняя ошибка БД.
     Internal,
 }
@@ -187,7 +215,8 @@ pub async fn place(
         if moving_bag.is_none() {
             return Err(PlaceError::NotABag);
         }
-        bag_slots
+        // M28/B8: общие слоты + спец-слоты (реагенты/колчан/ключница).
+        bag_slots + SPECIAL_BAG_SLOTS
     } else if to_container == BACKPACK {
         i32::try_from(base).unwrap_or(i32::MAX)
     } else {
@@ -223,6 +252,23 @@ pub async fn place(
     .map_err(|_| PlaceError::Internal)?;
     if occupant.is_some() && to_container == BAGS {
         return Err(PlaceError::BagBusy);
+    }
+
+    // M28/B8: спец-слот принимает только сумку своего типа.
+    if to_container == BAGS {
+        let want = slot_kind(to_index, bag_slots);
+        let kind: Option<Option<String>> =
+            sqlx::query_scalar("SELECT bag_kind FROM item_defs WHERE id = $1")
+                .bind(&def_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| PlaceError::Internal)?;
+        let actual = kind
+            .flatten()
+            .unwrap_or_else(|| BAG_KIND_GENERAL.to_string());
+        if actual != want {
+            return Err(PlaceError::WrongSlot);
+        }
     }
 
     // M28: у сумки может быть список принимаемых типов (`bag_types`);

@@ -82,6 +82,9 @@ impl Session {
                             ErrorCode::BagType,
                             "эта сумка не принимает такой тип предметов",
                         ),
+                        db::items::PlaceError::WrongSlot => {
+                            (ErrorCode::BagSlot, "сумка не для этого слота")
+                        }
                         db::items::PlaceError::Internal => {
                             warn!("item.move: внутренняя ошибка контейнеров");
                             (ErrorCode::Internal, "внутренняя ошибка")

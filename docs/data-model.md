@@ -483,7 +483,10 @@ price        = max(round(price_gold × rate), 1)
 задают место; уникальный индекс `items_container_slot_uniq`
 `(character_id, container, slot_index)` (только при непустом `slot_index`);
 `item_defs.bag_slots` — ёмкость сумки, `item_defs.bag_types` (TEXT[])
-— какие типы предметов она принимает (`NULL`/пусто — любые);
+— какие типы предметов она принимает (`NULL`/пусто — любые),
+`item_defs.bag_kind` — вид слота панели (`general`/`reagent`/`quiver`/
+`keyring`; индексы `bags` от `bag_slots` до `bag_slots+2` — спец-слоты,
+соответствие проверяет `place`, отказ `E_BAG_SLOT`);
 `characters.bags_granted` — флаг
 разовой выдачи стартовых сумок. Ёмкость — базовые `inventory.slots` +
 сумма `bag_slots` надетых сумок. `items.character_id` допускает `NULL`

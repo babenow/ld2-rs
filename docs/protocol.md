@@ -248,9 +248,10 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
                                             // псевдослоты пар) и руки (2 — двуручник)
   "def_id": "dagger_knife",              // M17/F30g: ключ кулдауна использования
   "qty": 1, "gold_value": 120,
-  "container": "backpack", "slot_index": 3,  // M28: backpack | bags (слот под сумку) | uid сумки
+  "container": "backpack", "slot_index": 3,  // M28: backpack | bags (слот под сумку: 0..bag_slots−1 общие, +3 спец.) | uid сумки
   "bag_slots": 20,                           // M28: ёмкость сумки (только для type=bag)
-  "bag_types": ["herb"],                     // M28: какие типы принимает сумка (пусто/нет — любые)
+  "bag_types": ["herb"],                     // M28/B7: какие типы принимает сумка (пусто/нет — любые)
+  "bag_kind": "reagent",                     // M28/B8: general|reagent|quiver|keyring — слот панели
   "bonuses": [ { "kind": "attr",  "id": "str",      "value": 3 },   // M18/F47 (ADR-010):
                { "kind": "param", "id": "accuracy", "value": 4, "pct": true } ] }
                                             // бонусы: kind ∈ attr|param|skill; pct — только у
@@ -309,7 +310,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
-| `item.move` | `{item_uid, target_uid?}` или `{item_uid, to_container, to_index}` | `{}` / `{item_uid, container, slot_index}` | − | перемещение (M28): legacy `target_uid` — поменять местами в рюкзаке; `to_container` (`backpack`/`bags`/uid сумки) + `to_index` — положить в ячейку контейнера (ack несёт итоговое место); снятие/надевание сумки — перенос в `bags`/из `bags`; непустую сумку снять/выбросить нельзя (`E_INVENTORY_FULL`); сумка с `bag_types` принимает только эти типы (`E_BAG_TYPE`) |
+| `item.move` | `{item_uid, target_uid?}` или `{item_uid, to_container, to_index}` | `{}` / `{item_uid, container, slot_index}` | − | перемещение (M28): legacy `target_uid` — поменять местами в рюкзаке; `to_container` (`backpack`/`bags`/uid сумки) + `to_index` — положить в ячейку контейнера (ack несёт итоговое место); снятие/надевание сумки — перенос в `bags`/из `bags`; непустую сумку снять/выбросить нельзя (`E_INVENTORY_FULL`); сумка с `bag_types` принимает только эти типы (`E_BAG_TYPE`); спец-слоты панели (`bag_slots+0/1/2` — реагенты, колчан, ключница) принимают только сумку своего `bag_kind` (`E_BAG_SLOT`) |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны предмета с сокетами (M25 — не только посох); **M24**: `stats.class` руны (warrior\|archer\|mage) — каст только своему классу, иначе `E_REQUIREMENT_ATTR` (нет поля — любому классу) |
 | `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие); **M24**: инкрустация в **один** предмет — стак (qty>1) не заполняется целиком: целевая штука становится отдельной строкой (`evt/item/added`), старый стак −1 (`evt/item/state`), ack несёт `staff` уже новой строки |
@@ -473,6 +474,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_INVENTORY_FULL` | инвентарь заполнен |
 | `E_STUNNED` | M25: дебафф контроля (стан/немота/ослепление от приёмов босса) — команды заблокированы до `until_ms` |
 | `E_BAG_TYPE` | M28: сумка с ограничением `bag_types` не принимает этот тип предмета (`item.move`) |
+| `E_BAG_SLOT` | M28/B8: сумка не подходит к спец-слоту панели (реагенты/колчан/ключница) — нужен `bag_kind` слота |
 | `E_BUSY` | M24: персонаж занят разделкой — действия мира/развития отклоняются, пока идёт таймер (`item.*` — исключение, прерывает по M23) |
 | `E_BAD_QTY` | M24: количество в админ-диалоге вне допустимого диапазона (1..=999; для валюты `type=money` верхней границы нет — до INTEGER-стака) |
 | `E_ITEM_GONE` | предмета уже нет (двойное действие/обмен) |

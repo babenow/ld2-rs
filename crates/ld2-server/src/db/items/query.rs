@@ -82,7 +82,8 @@ pub async fn with_sockets(
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
         "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
-                rune_sockets, slot, hands, skill, cooldown_s, bonuses, bag_slots, bag_types \
+                rune_sockets, slot, hands, skill, cooldown_s, bonuses, bag_slots, bag_types, \
+                bag_kind \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)
@@ -109,7 +110,8 @@ pub async fn admin_inventory(
 pub async fn defs_all(pool: &PgPool) -> Result<Vec<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
         "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
-                rune_sockets, slot, hands, skill, cooldown_s, bonuses, bag_slots, bag_types \
+                rune_sockets, slot, hands, skill, cooldown_s, bonuses, bag_slots, bag_types, \
+                bag_kind \
          FROM item_defs ORDER BY item_type, name",
     )
     .fetch_all(pool)
