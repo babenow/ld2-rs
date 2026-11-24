@@ -6,7 +6,7 @@
 
 use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div};
-use ld2_core::l10n::{t, tf, Key};
+use ld2_core::l10n::{t, tf, Key, Lang};
 use ld2_core::store::Act;
 use ld2_protocol::cmd::{
     PartyAccept, PartyCreate, PartyDecline, PartyKick, PartyLeave, TradeAccept, TradeAddItem,
@@ -16,7 +16,7 @@ use ld2_protocol::cmd::{
 use crate::palette::Palette;
 use ely::forms::{Choice, NumberInput, Select};
 
-use ld2_protocol::types::PartyMember;
+use ld2_protocol::types::{ItemSnapshot, PartyMember};
 
 use super::{act_btn, Root, SendSlot};
 
@@ -384,68 +384,22 @@ impl Root {
                 .flex()
                 .flex_row()
                 .gap_3()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .w(px(240.0))
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgb(pal.panel))
-                        .border_1()
-                        .border_color(rgb(pal.accent))
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(t(lang, Key::TradeYou)),
-                        )
-                        .children(trade.you.iter().map(|item| {
-                            div().child(format!("• {} ×{}", item.name, item.qty.unwrap_or(1)))
-                        }))
-                        .child(div().text_color(rgb(pal.muted)).child(format!(
-                            "{}: {}",
-                            t(lang, Key::TradeGold),
-                            trade.you_gold
-                        )))
-                        .children((trade.you_locked).then(|| {
-                            div()
-                                .text_color(rgb(pal.success))
-                                .child(format!("✓ {}", t(lang, Key::TradeAccept)))
-                        })),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .w(px(240.0))
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgb(pal.panel))
-                        .border_1()
-                        .border_color(rgb(pal.border))
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(t(lang, Key::TradeThem)),
-                        )
-                        .children(trade.them.iter().map(|item| {
-                            div().child(format!("• {} ×{}", item.name, item.qty.unwrap_or(1)))
-                        }))
-                        .child(div().text_color(rgb(pal.muted)).child(format!(
-                            "{}: {}",
-                            t(lang, Key::TradeGold),
-                            trade.them_gold
-                        )))
-                        .children((trade.them_locked).then(|| {
-                            div()
-                                .text_color(rgb(pal.success))
-                                .child(format!("✓ {}", t(lang, Key::TradeAccept)))
-                        })),
-                ),
+                .child(self.trade_party(
+                    pal,
+                    Key::TradeYou,
+                    &trade.you,
+                    trade.you_gold,
+                    trade.you_locked,
+                    pal.accent,
+                ))
+                .child(self.trade_party(
+                    pal,
+                    Key::TradeThem,
+                    &trade.them,
+                    trade.them_gold,
+                    trade.them_locked,
+                    pal.border,
+                )),
         );
 
         // M11.3: добавление предмета — Select Ely + «+ предмет»
@@ -537,9 +491,68 @@ impl Root {
         col = col.child(gold_row);
 
         // Операции: фиксация/принятие/отмена (сверка версии — сервер, §9).
+        col = col.child(self.trade_ops(cx, lang, pal, &offer_id, version));
+        col
+    }
+
+    /// Колонка сделки (я/партнёр): заголовок, предметы, золото и
+    /// метка «принято»; зеркальные колонки собираются одним
+    /// хелпером (RF3r), тело перенесено как есть.
+    fn trade_party(
+        &self,
+        pal: &Palette,
+        title: Key,
+        items: &[ItemSnapshot],
+        gold: i64,
+        locked: bool,
+        border: u32,
+    ) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .w(px(240.0))
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .border_1()
+            .border_color(rgb(border))
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(t(self.lang, title)),
+            )
+            .children(
+                items
+                    .iter()
+                    .map(|item| div().child(format!("• {} ×{}", item.name, item.qty.unwrap_or(1)))),
+            )
+            .child(div().text_color(rgb(pal.muted)).child(format!(
+                "{}: {}",
+                t(self.lang, Key::TradeGold),
+                gold
+            )))
+            .children(locked.then(|| {
+                div()
+                    .text_color(rgb(pal.success))
+                    .child(format!("✓ {}", t(self.lang, Key::TradeAccept)))
+            }))
+    }
+
+    /// Кнопки операций сделки: фиксация/принятие/отмена (сверка
+    /// версии — на сервере, §9). Вынесено из `trade_view` (RF3r).
+    fn trade_ops(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        lang: Lang,
+        pal: &Palette,
+        offer_id: &str,
+        version: u64,
+    ) -> Div {
         let mut ops = div().flex().flex_row().gap_2();
         {
-            let oid = offer_id.clone();
+            let oid = offer_id.to_string();
             ops = ops.child(act_btn(
                 cx,
                 t(lang, Key::TradePropose),
@@ -558,7 +571,7 @@ impl Root {
             ));
         }
         {
-            let oid = offer_id.clone();
+            let oid = offer_id.to_string();
             ops = ops.child(act_btn(
                 cx,
                 t(lang, Key::TradeAccept),
@@ -577,7 +590,7 @@ impl Root {
             ));
         }
         {
-            let oid = offer_id.clone();
+            let oid = offer_id.to_string();
             ops = ops.child(act_btn(
                 cx,
                 t(lang, Key::TradeCancel),
@@ -594,8 +607,7 @@ impl Root {
                 },
             ));
         }
-        col = col.child(ops);
-        col
+        ops
     }
 }
 
