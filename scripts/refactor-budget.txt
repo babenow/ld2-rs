@@ -9,7 +9,9 @@ crates/ld2-client/src/root/admin.rs 684 417
 crates/ld2-client/src/root/backpack.rs 554 262
 crates/ld2-client/src/root/chars.rs 540 220
 crates/ld2-client/src/root/chat.rs 514 231
-crates/ld2-client/src/root/game.rs 3279 371
+crates/ld2-client/src/root/game/dialog.rs 848 161
+crates/ld2-client/src/root/game/entities.rs 656 187
+crates/ld2-client/src/root/game.rs 724 150
 crates/ld2-client/src/root/hotkeys.rs 337 215
 crates/ld2-client/src/root/pickup.rs 488 285
 crates/ld2-client/src/root/settings.rs 763 166
