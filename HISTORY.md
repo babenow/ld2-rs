@@ -5,6 +5,47 @@
 релизных заметок — [`CHANGELOG.md`](./CHANGELOG.md) (не дублировать сюда
 полные списки изменений, только дневник работ и решения).
 
+## 2026-11-24
+
+- **Рефакторинг RF3 закрыт (клиент)** — остаток функций >200 строк:
+  admin-окно → `admin_left`/`admin_right`/`admin_inv_body` (`e9ac5ca`),
+  `tick` → `tick_drag`/`tick_pumps`/`tick_timers` (`9977c65`), окно
+  подятия → `pickup_left`/`pickup_right` в `root/pickup/columns.rs`
+  (`309c1ee`), сетка рюкзака → `backpack_tile`/`backpack_row` (`d265eb4`),
+  сделка → `trade_party`/`trade_ops` (`69841d4`), чат → вкладки/история/
+  ввод (`e1bce7a`), экран персонажей → карточка/подвал (`03b0cb4`),
+  `handle_keystroke` → `esc_closes_top`/`popup_hotkeys` (`e7ee0f0`).
+  DoD RF3 выполнен: в `ld2-client/src` нет функций >200 и файлов >900.
+- **RF4 (ядро клиента)** — `ld2-core/src/store.rs` разложен на
+  `store/{types,npc,patch}.rs` и `store/reducers/{ack,world,combat,items,
+  social,craft,misc}.rs`; простые типы и `AppStore` вынесены, `apply_ack`
+  и `apply_event` стали диспетчерами по доменам. `store.rs` — 813
+  прод-строк (было 3 209), `apply_event` — 50 строк; 74 store-теста
+  перенесены без правок и зелёные. Шаги: `bcf8ef1`, `79d1e15`, `57e923c`,
+  `6aae599`, `71641c3`, `caa9794`, `caa677d`, `7afaedb`, `1aa77cb`,
+  `d321a76`.
+- **RF5 (зачистка)** — `HARVEST_BLOCKED`/`ITEM_ACTIONS` и `stun_blocked()`
+  в `session/gates.rs` вместо дублированной 41-строки (`02c7411`);
+  удалены мёртвые l10n-ключи M0 (`71ebc9a`); `time`/`tokio` — в workspace-
+  зависимостях, сужены features, `publish = false`, `repository`
+  (`07c2d13`); источники карт → `docs/sources/` (`2f4b300`); README
+  актуализирован (`9bf3223`); CHANGELOG: заполнены v0.8.0/v0.9.0, роли
+  с HISTORY разведены (`92cb72a`); CI/Docker/release: убран лишний
+  `cargo build`, `--locked`, PG 18, пин 1.100.0, `USER ld2`, SHA256SUMS
+  и `fail_on_unmatched_files` (`d7ac0ac`); dev-креды в
+  `deploy/server.toml` помечены учебными (`0c7811a`); проверено, что
+  `opencode.json`/`GITVERSE_TOKEN` в дереве и истории отсутствуют;
+  `docs/tz.md` §9 переписан под фактическое дерево (`49dbbb7`).
+- **Итог рефакторинга** — 65 596 прод-строк (после RF3m было 65 102), 3 файла >900
+  (`ld2-editor/src/app.rs` 8 329, `project.rs` 1 975,
+  `ld2-server/src/tick/combat.rs` 939), 21 функция >200, 313 src-тестов;
+  `scripts/refactor-audit.sh --verify` зелёный (194 файла, 313 тестов).
+  Разработка запушена: `315c49e..49dbbb7`.
+- **Решения**: RF6 (`ld2-editor`) не начат — ждём заморозку E-серии
+  (`app.rs` последний раз менялся 2026-11-22) и явное согласие владельца.
+  Идея второго wire-протокола на protobuf оценена (32–48 ч/д на полный
+  паритет) и отставлена — остаёмся на JSON-over-WebSocket.
+
 ## 2026-11-22
 
 - **M27: сид и доставка контента без перезагрузки (фаза 1)** — по запросу:
