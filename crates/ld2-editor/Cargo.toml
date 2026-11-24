@@ -2,6 +2,7 @@
 name = "ld2-editor"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 publish = false
 description = "Редактор контента ld2 (gpui + Ely): локации, мобы/НПС, предметы, диалоги, квесты, рецепты, магазины, навыки, профессии"
 

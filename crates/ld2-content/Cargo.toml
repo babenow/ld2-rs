@@ -2,6 +2,7 @@
 name = "ld2-content"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 publish = false
 description = "Схема контента ld2: типы, загрузка, валидация, версия (общая для сервера и редактора)"
 

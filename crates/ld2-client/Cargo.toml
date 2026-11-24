@@ -2,6 +2,7 @@
 name = "ld2-client"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 publish = false
 description = "Десктоп-клиент ld2 (gpui + Ely, единственный UI-слой)"
 
