@@ -177,7 +177,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
   "journal_ttl_s": 30,        // M25: жизнь строки журнала (Лог), с; 0 — не удаляются
-  "inventory": { "slots": 100, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
+  "inventory": { "slots": 20, "bag_slots": 4,   // M28: базовые ячейки и слоты под сумки (0 — выключить)
+                 "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
   "magic": { "rune_recharge": "time", "rune_recharge_s": 30, "scroll_requires_target": true,  // time|item (M18/F58c); с на один заряд (M24, без поля — 30)
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
@@ -232,7 +233,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "exits": [ Exit ], "entities": [ Entity ] }
 
 // ItemSnapshot
-{ "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest
+{ "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest|bag
   "name": "Ясеневый посох", "rarity": "rare",
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },
@@ -247,6 +248,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
                                             // псевдослоты пар) и руки (2 — двуручник)
   "def_id": "dagger_knife",              // M17/F30g: ключ кулдауна использования
   "qty": 1, "gold_value": 120,
+  "container": "backpack", "slot_index": 3,  // M28: backpack | bags (слот под сумку) | uid сумки
+  "bag_slots": 20,                           // M28: ёмкость сумки (только для type=bag)
   "bonuses": [ { "kind": "attr",  "id": "str",      "value": 3 },   // M18/F47 (ADR-010):
                { "kind": "param", "id": "accuracy", "value": 4, "pct": true } ] }
                                             // бонусы: kind ∈ attr|param|skill; pct — только у
@@ -305,7 +308,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
-| `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
+| `item.move` | `{item_uid, target_uid?}` или `{item_uid, to_container, to_index}` | `{}` / `{item_uid, container, slot_index}` | − | перемещение (M28): legacy `target_uid` — поменять местами в рюкзаке; `to_container` (`backpack`/`bags`/uid сумки) + `to_index` — положить в ячейку контейнера (ack несёт итоговое место); снятие/надевание сумки — перенос в `bags`/из `bags`; непустую сумку снять/выбросить нельзя (`E_INVENTORY_FULL`) |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны предмета с сокетами (M25 — не только посох); **M24**: `stats.class` руны (warrior\|archer\|mage) — каст только своему классу, иначе `E_REQUIREMENT_ATTR` (нет поля — любому классу) |
 | `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие); **M24**: инкрустация в **один** предмет — стак (qty>1) не заполняется целиком: целевая штука становится отдельной строкой (`evt/item/added`), старый стак −1 (`evt/item/state`), ack несёт `staff` уже новой строки |
