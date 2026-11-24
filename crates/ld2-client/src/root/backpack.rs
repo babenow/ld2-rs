@@ -838,9 +838,13 @@ impl Root {
         let bag_uids: std::collections::HashSet<String> =
             bags.iter().map(|b| b.uid.clone()).collect();
         let selected = self.backpack_bag.clone();
+        // 4 общих + 3 спец-слота не влезают в строку попапа при
+        // надетых сумках — переносим, иначе колчан/ключница
+        // остаются за правым краем и недоступны для drag&drop.
         let mut row = div()
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .gap_2()
             .px_2()
