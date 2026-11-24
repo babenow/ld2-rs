@@ -37,7 +37,10 @@
             "potion_heal",
             "armor_bronze",
             "sword_knight",
-            "dagger_knife"
+            "dagger_knife",
+            "linen_bag",
+            "wool_bag",
+            "silk_bag"
           ]
         }
       ]

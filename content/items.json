@@ -10,6 +10,33 @@
       "bag_slots": 20
     },
     {
+      "id": "linen_bag",
+      "type": "bag",
+      "name": "Льняная сумка",
+      "rarity": "uncommon",
+      "gold_value": 60,
+      "qty": 1,
+      "bag_slots": 8
+    },
+    {
+      "id": "wool_bag",
+      "type": "bag",
+      "name": "Шерстяная сумка",
+      "rarity": "rare",
+      "gold_value": 150,
+      "qty": 1,
+      "bag_slots": 12
+    },
+    {
+      "id": "silk_bag",
+      "type": "bag",
+      "name": "Шёлковая сумка",
+      "rarity": "epic",
+      "gold_value": 320,
+      "qty": 1,
+      "bag_slots": 16
+    },
+    {
       "id": "gold_coin",
       "type": "money",
       "name": "Золотая монета",
