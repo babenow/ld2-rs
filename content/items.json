@@ -1716,7 +1716,8 @@
       "bag_slots": 10,
       "bag_types": [
         "ammo"
-      ]
+      ],
+      "bag_kind": "quiver"
     },
     {
       "id": "herbalist_bag",
@@ -1728,7 +1729,52 @@
       "bag_slots": 12,
       "bag_types": [
         "herb"
-      ]
+      ],
+      "bag_kind": "reagent"
+    },
+    {
+      "id": "reagent_bag",
+      "type": "bag",
+      "name": "Сумка реагентов",
+      "rarity": "uncommon",
+      "gold_value": 100,
+      "qty": 1,
+      "bag_slots": 14,
+      "bag_types": [
+        "herb",
+        "ore_copper",
+        "wood_oak",
+        "hide",
+        "hide_scraps",
+        "meat",
+        "offal",
+        "branches",
+        "parchment",
+        "ink",
+        "flask"
+      ],
+      "bag_kind": "reagent"
+    },
+    {
+      "id": "keyring",
+      "type": "bag",
+      "name": "Ключница",
+      "rarity": "rare",
+      "gold_value": 120,
+      "qty": 1,
+      "bag_slots": 8,
+      "bag_types": [
+        "key"
+      ],
+      "bag_kind": "keyring"
+    },
+    {
+      "id": "old_key",
+      "type": "key",
+      "name": "Старый ключ",
+      "rarity": "common",
+      "gold_value": 5,
+      "qty": 1
     }
   ]
 }

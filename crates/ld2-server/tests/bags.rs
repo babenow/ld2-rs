@@ -261,3 +261,101 @@ async fn typed_bag_rejects_other_types() {
         .await
         .expect("sword в рюкзак");
 }
+
+/// M28/B8: спец-слоты — реагенты (bag_slots+0), колчан (+1),
+/// ключница (+2); обычная сумка туда не встаёт, спец-сумка — только
+/// в свой слот.
+#[tokio::test]
+async fn special_bag_slots_require_matching_kind() {
+    let Some(url) = test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let pool = db::connect(&DatabaseSection {
+        url,
+        max_connections: 4,
+    })
+    .await
+    .expect("connect");
+    let uniq = format!("sp_{}", std::process::id());
+    let (char_id, general_def, _mat) = setup(&pool, &uniq, 4).await;
+    let reagent_def = format!("t_reagent_{uniq}");
+    let quiver_def = format!("t_quiver_{uniq}");
+    let keyring_def = format!("t_keyring_{uniq}");
+    for (id, slots, kind) in [
+        (&reagent_def, 5, "reagent"),
+        (&quiver_def, 2, "quiver"),
+        (&keyring_def, 3, "keyring"),
+    ] {
+        sqlx::query(
+            "INSERT INTO item_defs (id, item_type, name, rarity, gold_value, bag_slots, bag_kind) \
+             VALUES ($1, 'bag', 'Тест', 'common', 1, $2, $3)",
+        )
+        .bind(id)
+        .bind(slots)
+        .bind(kind)
+        .execute(&pool)
+        .await
+        .expect("item_def");
+    }
+
+    let general = db::items::insert(&pool, &char_id, &general_def, 1)
+        .await
+        .expect("general");
+    let reagent = db::items::insert(&pool, &char_id, &reagent_def, 1)
+        .await
+        .expect("reagent");
+    let quiver = db::items::insert(&pool, &char_id, &quiver_def, 1)
+        .await
+        .expect("quiver");
+    let keyring = db::items::insert(&pool, &char_id, &keyring_def, 1)
+        .await
+        .expect("keyring");
+
+    // Общие слоты 0..3: подходит только обычная сумка.
+    db::items::place(&pool, &char_id, &general.uid, BAGS, 0, 20, 4)
+        .await
+        .expect("обычная сумка в общий слот");
+    assert_eq!(
+        db::items::place(&pool, &char_id, &reagent.uid, BAGS, 1, 20, 4)
+            .await
+            .unwrap_err(),
+        PlaceError::WrongSlot
+    );
+    // Спец-слоты: 4 — реагенты, 5 — колчан, 6 — ключница.
+    assert_eq!(
+        db::items::place(&pool, &char_id, &general.uid, BAGS, 4, 20, 4)
+            .await
+            .unwrap_err(),
+        PlaceError::WrongSlot
+    );
+    db::items::place(&pool, &char_id, &reagent.uid, BAGS, 4, 20, 4)
+        .await
+        .expect("сумка реагентов в свой слот");
+    // Занятый спец-слот сообщает BagBusy (свап сумок запрещён).
+    assert_eq!(
+        db::items::place(&pool, &char_id, &quiver.uid, BAGS, 4, 20, 4)
+            .await
+            .unwrap_err(),
+        PlaceError::BagBusy
+    );
+    db::items::place(&pool, &char_id, &quiver.uid, BAGS, 5, 20, 4)
+        .await
+        .expect("колчан в свой слот");
+    assert_eq!(
+        db::items::place(&pool, &char_id, &keyring.uid, BAGS, 5, 20, 4)
+            .await
+            .unwrap_err(),
+        PlaceError::BagBusy
+    );
+    db::items::place(&pool, &char_id, &keyring.uid, BAGS, 6, 20, 4)
+        .await
+        .expect("ключница в свой слот");
+    // Внешний индекс за спец-слотами — вне ёмкости.
+    assert_eq!(
+        db::items::place(&pool, &char_id, &reagent.uid, BAGS, 7, 20, 4)
+            .await
+            .unwrap_err(),
+        PlaceError::OutOfRange
+    );
+}

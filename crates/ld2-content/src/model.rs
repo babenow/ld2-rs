@@ -122,6 +122,10 @@ pub struct ContentItemDef {
     /// `["herb"]` — сумка травника); `None`/пусто — любые.
     #[serde(default)]
     pub bag_types: Option<Vec<String>>,
+    /// M28/B8: тип спец-слота под сумку (`general` — обычная,
+    /// `reagent`, `quiver`, `keyring`); `None` — обычная.
+    #[serde(default)]
+    pub bag_kind: Option<String>,
     /// M18/F47: бонусы предмета (ADR-010) — атрибут/параметр/навык.
     #[serde(default)]
     pub bonuses: Vec<ItemBonus>,

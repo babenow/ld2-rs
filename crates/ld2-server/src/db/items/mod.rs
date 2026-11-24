@@ -72,6 +72,8 @@ pub struct ItemDefRow {
     pub bag_slots: Option<i32>,
     /// M28: типы, которые принимает сумка (пусто — любые).
     pub bag_types: Option<Vec<String>>,
+    /// M28/B8: тип спец-слота сумки (`reagent`/`quiver`/`keyring`).
+    pub bag_kind: Option<String>,
 }
 
 /// M24: инвентарь персонажа с данными определений (правая колонка

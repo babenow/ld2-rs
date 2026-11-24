@@ -563,6 +563,13 @@ pub enum Key {
     BagTypeAmmo,
     BagTypeHerb,
     BagTypeGem,
+    /// M28/B8: спец-слоты под сумки и их подписи.
+    BpBagSlotReagent,
+    BpBagSlotQuiver,
+    BpBagSlotKeyring,
+    BpBagEmptySlot,
+    BpBagTip,
+    BagTypeKey,
     BpTabOther,
     // M17/F30b: вкладка артефактов рюкзака
     BpTabArtifact,
@@ -1161,6 +1168,12 @@ mod tests {
         Key::BagTypeAmmo,
         Key::BagTypeHerb,
         Key::BagTypeGem,
+        Key::BpBagSlotReagent,
+        Key::BpBagSlotQuiver,
+        Key::BpBagSlotKeyring,
+        Key::BpBagEmptySlot,
+        Key::BpBagTip,
+        Key::BagTypeKey,
         Key::BpTabOther,
         // M17/F30b: вкладка артефактов
         Key::BpTabArtifact,

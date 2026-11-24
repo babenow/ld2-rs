@@ -43,7 +43,10 @@
             "silk_bag",
             "arrow",
             "quiver",
-            "herbalist_bag"
+            "herbalist_bag",
+            "reagent_bag",
+            "keyring",
+            "old_key"
           ]
         }
       ]

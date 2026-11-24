@@ -51,6 +51,26 @@ impl Root {
                 )),
         );
         bar = bar.child(div().flex_grow_1());
+        // M28/B8: сумки и ёмкость — справа, левее значка связи
+        // (заказчик: иконки слотов под сумки, наведение — название и
+        // занятость; клик открывает окно рюкзака).
+        bar = bar.child(self.status_bags(cx, pal));
+        if let Some((used, total)) = self.inventory_usage() {
+            let full = used as u32 >= total;
+            bar = bar.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(if full { pal.danger } else { pal.muted }))
+                    .child(tf(
+                        lang,
+                        Key::BackpackUsage,
+                        &[
+                            ("{used}", &used.to_string()),
+                            ("{total}", &total.to_string()),
+                        ],
+                    )),
+            );
+        }
         let status = self.store.transport.clone();
         bar = bar.child(status_badge(pal, lang, &status, self.store.rtt_ms));
         bar

@@ -94,6 +94,8 @@ pub enum ErrorCode {
     /// M28: сумка с ограничением типов не принимает этот предмет
     /// (`E_BAG_TYPE`).
     BagType,
+    /// M28/B8: сумка не подходит к спец-слоту (`E_BAG_SLOT`).
+    BagSlot,
     Internal,
     /// Код, неизвестный этой версии клиента (новее контракта / расширение сервера).
     Unknown(String),
@@ -154,6 +156,7 @@ impl ErrorCode {
             Self::Busy => "E_BUSY",
             Self::Stunned => "E_STUNNED",
             Self::BagType => "E_BAG_TYPE",
+            Self::BagSlot => "E_BAG_SLOT",
 
             Self::Internal => "E_INTERNAL",
             Self::Unknown(raw) => raw,
@@ -216,6 +219,7 @@ impl FromStr for ErrorCode {
             "E_BUSY" => Self::Busy,
             "E_STUNNED" => Self::Stunned,
             "E_BAG_TYPE" => Self::BagType,
+            "E_BAG_SLOT" => Self::BagSlot,
 
             "E_INTERNAL" => Self::Internal,
             other => Self::Unknown(other.to_string()),
@@ -276,6 +280,7 @@ mod tests {
         "E_BAD_GENDER",
         "E_STUNNED",
         "E_BAG_TYPE",
+        "E_BAG_SLOT",
     ];
 
     #[test]
