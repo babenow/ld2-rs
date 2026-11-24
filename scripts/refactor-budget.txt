@@ -11,9 +11,10 @@ crates/ld2-client/src/root/chars.rs 540 220
 crates/ld2-client/src/root/chat.rs 514 231
 crates/ld2-client/src/root/game.rs 3279 371
 crates/ld2-client/src/root/pickup.rs 488 285
+crates/ld2-client/src/root/settings.rs 763 166
 crates/ld2-client/src/root/sheet.rs 3836 432
 crates/ld2-client/src/root/social.rs 601 252
-crates/ld2-client/src/root.rs 4888 412
+crates/ld2-client/src/root.rs 4139 412
 crates/ld2-client/src/text_input.rs 699 150
 crates/ld2-core/src/l10n/en.rs 521 517
 crates/ld2-core/src/l10n/mod.rs 710 150
