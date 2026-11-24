@@ -22,7 +22,7 @@ use ld2_protocol::types::ItemSnapshot;
 use crate::palette::Palette;
 
 use super::sheet::{rarity_color, rarity_label};
-use super::{scrollable_tab, BpHold, DragSource, ItemDrag, PopupKind, Root};
+use super::{scrollable_tab, BpHold, DragSource, ItemDrag, PopupKind, Root, SendSlot};
 
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
 /// всегда последняя (спека пользователя), остальные — по маппингу
@@ -536,9 +536,7 @@ impl Root {
                                         item_uid: hold.uid.clone(),
                                         target_uid: target_uid.clone(),
                                     };
-                                    if let Err(e) = root.transport.send(&cmd) {
-                                        root.store.notice = Some(format!("нет связи: {e}"));
-                                    }
+                                    let _ = root.send_or_notice(&cmd, SendSlot::Notice);
                                 }
                             }
                         }

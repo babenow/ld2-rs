@@ -16,7 +16,7 @@ use ely::layout::ScrollArea;
 use ely::navigation::Tabs;
 use ely::primitives::IconName;
 
-use super::{act_btn, Root};
+use super::{act_btn, Root, SendSlot};
 
 impl Root {
     /// M14/F7: тело чата **внутри блока журнала** (вкладка «Чат»):
@@ -258,9 +258,8 @@ impl Root {
     /// права проверяет сервер → ошибки тостом (Act::ChatDelete).
     pub(crate) fn delete_chat_msg(&mut self, id: u64) {
         let cmd = ChatDelete { id };
-        match self.transport.send(&cmd) {
-            Ok(_) => self.store.on_sheet_sent(Act::ChatDelete),
-            Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+        if self.send_or_notice(&cmd, SendSlot::Notice) {
+            self.store.on_sheet_sent(Act::ChatDelete)
         }
     }
 
@@ -313,34 +312,30 @@ impl Root {
         match parse_chat_input(&text, &channel, reply.as_deref()) {
             ChatDraft::Send { channel, to, text } => {
                 let cmd = ChatSend { channel, text, to };
-                match self.transport.send(&cmd) {
-                    Ok(_) => {
-                        self.store.on_sheet_sent(Act::Chat);
-                        // Ревью R-мелочь: очищаем ПОСЛЕ успешной
-                        // отправки — при Err набранный текст сохранён.
-                        if let Some(input) = self.chat_input.clone() {
-                            input.update(cx, |i, cx| i.set_text(String::new(), cx));
-                        }
-                        // История ввода (↑/↓ — заказчик).
-                        self.chat_history.push(typed);
-                        while self.chat_history.len() > 50 {
-                            self.chat_history.remove(0);
-                        }
-                        self.chat_history_pos = None;
-                        // Таймаут отправки: окно из §5 (chat.cooldown_s).
-                        let cd = self
-                            .store
-                            .session
-                            .as_ref()
-                            .map(|s| s.chat.cooldown_s)
-                            .unwrap_or(1.0);
-                        self.chat_cooldown_until = Some(
-                            std::time::Instant::now()
-                                + std::time::Duration::from_secs_f64(cd.max(0.0)),
-                        );
-                        Self::blur_typing(cx);
+                if self.send_or_notice(&cmd, SendSlot::Notice) {
+                    self.store.on_sheet_sent(Act::Chat);
+                    // Ревью R-мелочь: очищаем ПОСЛЕ успешной
+                    // отправки — при Err набранный текст сохранён.
+                    if let Some(input) = self.chat_input.clone() {
+                        input.update(cx, |i, cx| i.set_text(String::new(), cx));
                     }
-                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                    // История ввода (↑/↓ — заказчик).
+                    self.chat_history.push(typed);
+                    while self.chat_history.len() > 50 {
+                        self.chat_history.remove(0);
+                    }
+                    self.chat_history_pos = None;
+                    // Таймаут отправки: окно из §5 (chat.cooldown_s).
+                    let cd = self
+                        .store
+                        .session
+                        .as_ref()
+                        .map(|s| s.chat.cooldown_s)
+                        .unwrap_or(1.0);
+                    self.chat_cooldown_until = Some(
+                        std::time::Instant::now() + std::time::Duration::from_secs_f64(cd.max(0.0)),
+                    );
+                    Self::blur_typing(cx);
                 }
             }
             ChatDraft::Unknown(cmd) => {

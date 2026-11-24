@@ -18,7 +18,7 @@ use ely::forms::{Choice, NumberInput, Select};
 
 use ld2_protocol::types::PartyMember;
 
-use super::{act_btn, Root};
+use super::{act_btn, Root, SendSlot};
 
 /// M14/F2: окно группы показывается только когда участников ≥2 —
 /// инвайт сам создаёт группу (сервер, F5), но до принятия приглашения
@@ -43,7 +43,7 @@ impl Root {
                 let cmd = PartyDecline {
                     invite_id: id.clone(),
                 };
-                let _ = r.transport.send(&cmd);
+                let _ = r.try_send(&cmd);
                 r.store.party_invite = None;
             });
             return Some(
@@ -71,7 +71,7 @@ impl Root {
                 let cmd = TradeCancel {
                     offer_id: oid.clone(),
                 };
-                let _ = r.transport.send(&cmd);
+                let _ = r.try_send(&cmd);
             });
             return Some(
                 Dialog::new("ld2-trade", title, close)
@@ -129,9 +129,8 @@ impl Root {
                     pal.accent_text,
                     |this, cx| {
                         let cmd = PartyCreate {};
-                        match this.transport.send(&cmd) {
-                            Ok(_) => this.store.on_sheet_sent(Act::Party),
-                            Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                        if this.send_or_notice(&cmd, SendSlot::Notice) {
+                            this.store.on_sheet_sent(Act::Party)
                         }
                         let _ = cx;
                     },
@@ -143,9 +142,8 @@ impl Root {
                     pal.danger,
                     |this, cx| {
                         let cmd = PartyLeave {};
-                        match this.transport.send(&cmd) {
-                            Ok(_) => this.store.on_sheet_sent(Act::Party),
-                            Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                        if this.send_or_notice(&cmd, SendSlot::Notice) {
+                            this.store.on_sheet_sent(Act::Party)
                         }
                         let _ = cx;
                     },
@@ -212,9 +210,8 @@ impl Root {
                         let cmd = PartyKick {
                             player_id: pid.clone(),
                         };
-                        match this.transport.send(&cmd) {
-                            Ok(_) => this.store.on_sheet_sent(Act::Party),
-                            Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                        if this.send_or_notice(&cmd, SendSlot::Notice) {
+                            this.store.on_sheet_sent(Act::Party)
                         }
                         let _ = cx;
                     },
@@ -261,9 +258,8 @@ impl Root {
                                 let cmd = PartyAccept {
                                     invite_id: id.clone(),
                                 };
-                                match this.transport.send(&cmd) {
-                                    Ok(_) => this.store.on_sheet_sent(Act::Party),
-                                    Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                                if this.send_or_notice(&cmd, SendSlot::Notice) {
+                                    this.store.on_sheet_sent(Act::Party)
                                 }
                                 this.store.party_invite = None;
                                 let _ = cx;
@@ -281,9 +277,8 @@ impl Root {
                                 let cmd = PartyDecline {
                                     invite_id: id.clone(),
                                 };
-                                match this.transport.send(&cmd) {
-                                    Ok(_) => this.store.on_sheet_sent(Act::Party),
-                                    Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                                if this.send_or_notice(&cmd, SendSlot::Notice) {
+                                    this.store.on_sheet_sent(Act::Party)
                                 }
                                 this.store.party_invite = None;
                                 let _ = cx;
@@ -327,9 +322,8 @@ impl Root {
                                 let cmd = ld2_protocol::cmd::GuildJoin {
                                     guild_id: Some(gid.clone()),
                                 };
-                                match this.transport.send(&cmd) {
-                                    Ok(_) => this.store.on_sheet_sent(Act::Guild),
-                                    Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                                if this.send_or_notice(&cmd, SendSlot::Notice) {
+                                    this.store.on_sheet_sent(Act::Guild)
                                 }
                                 this.store.guild_invite = None;
                                 let _ = cx;
@@ -494,9 +488,8 @@ impl Root {
                             item_uid: uid.clone(),
                             qty: None,
                         };
-                        match this.transport.send(&cmd) {
-                            Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                            Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                        if this.send_or_notice(&cmd, SendSlot::Notice) {
+                            this.store.on_sheet_sent(Act::Trade)
                         }
                         let _ = cx;
                     },
@@ -535,9 +528,8 @@ impl Root {
                         offer_id: oid.clone(),
                         gold,
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Notice) {
+                        this.store.on_sheet_sent(Act::Trade)
                     }
                 },
             ));
@@ -558,9 +550,8 @@ impl Root {
                         offer_id: oid.clone(),
                         version,
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Notice) {
+                        this.store.on_sheet_sent(Act::Trade)
                     }
                     let _ = cx;
                 },
@@ -578,9 +569,8 @@ impl Root {
                         offer_id: oid.clone(),
                         version,
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Notice) {
+                        this.store.on_sheet_sent(Act::Trade)
                     }
                     let _ = cx;
                 },
@@ -597,9 +587,8 @@ impl Root {
                     let cmd = TradeCancel {
                         offer_id: oid.clone(),
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Notice) {
+                        this.store.on_sheet_sent(Act::Trade)
                     }
                     let _ = cx;
                 },

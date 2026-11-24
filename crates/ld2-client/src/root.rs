@@ -18,6 +18,7 @@ use ld2_core::store::{
 use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, TransportStatus};
 // R11/R16: StateResync (дельта неприменима), TimeSync (5 мин).
 use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove, StateResync, TimeSync};
+use ld2_protocol::Command;
 
 mod admin;
 mod backpack;
@@ -760,7 +761,43 @@ const TYPING_FIELDS: &[TypingField] = &[
     },
 ];
 
+/// Куда положить ошибку отправки команды.
+#[derive(Clone, Copy)]
+enum SendSlot {
+    Notice,
+    World,
+    Login,
+    Create,
+    Select,
+}
+
 impl Root {
+    /// Отправить команду серверу, вернув ошибку связи текстом.
+    fn try_send<C: Command>(&mut self, cmd: &C) -> Result<(), String> {
+        self.transport
+            .send(cmd)
+            .map(|_| ())
+            .map_err(|e| format!("нет связи: {e}"))
+    }
+
+    /// Отправить команду серверу; при обрыве связи — сообщение в нужный слот.
+    /// `true` — команда ушла, можно обновлять локальное состояние.
+    fn send_or_notice<C: Command>(&mut self, cmd: &C, slot: SendSlot) -> bool {
+        match self.try_send(cmd) {
+            Ok(()) => true,
+            Err(msg) => {
+                match slot {
+                    SendSlot::Notice => self.store.notice = Some(msg),
+                    SendSlot::World => self.store.world_error = Some(msg),
+                    SendSlot::Login => self.store.login_error = Some(msg),
+                    SendSlot::Create => self.store.create_error = Some(msg),
+                    SendSlot::Select => self.store.select_error = Some(msg),
+                }
+                false
+            }
+        }
+    }
+
     pub fn new(cx: &mut Context<'_, Self>, shell: Shell) -> Self {
         let sheet_tab = sheet::SheetTab::parse(&shell.config.sheet_tab);
         let party_collapsed = shell.config.party_collapsed;
@@ -996,7 +1033,7 @@ impl Root {
             .unwrap_or(true);
         if recalibrate {
             self.last_time_sync = Some(std::time::Instant::now());
-            let _ = self.transport.send(&TimeSync {});
+            let _ = self.try_send(&TimeSync {});
         }
         // M23: лут трупа обновился (разделка/создание трупа) —
         // перечитываем, пока окно подятия открыто.
@@ -1061,9 +1098,8 @@ impl Root {
                 let cmd = CharDelete {
                     char_id: char_id.clone(),
                 };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_delete_sent(&char_id),
-                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::Notice) {
+                    self.store.on_delete_sent(&char_id)
                 }
             }
             // Отсчёт на карточке — перерисовка каждый тик.
@@ -1300,9 +1336,8 @@ impl Root {
                         item_uid: p.uid,
                         qty: None,
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => this.store.on_sheet_sent(Act::Drop),
-                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Notice) {
+                        this.store.on_sheet_sent(Act::Drop)
                     }
                 }
             },
@@ -1465,7 +1500,7 @@ impl Root {
                         .as_ref()
                         .map(|s| s.state_version)
                         .unwrap_or(0);
-                    let _ = self.transport.send(&StateResync {
+                    let _ = self.try_send(&StateResync {
                         last_state_version: version,
                     });
                 }
@@ -1501,9 +1536,8 @@ impl Root {
             login: login.clone(),
             password,
         };
-        match self.transport.send(&cmd) {
-            Ok(_) => self.store.on_login_sent(&login),
-            Err(e) => self.store.login_error = Some(format!("нет связи: {e}")),
+        if self.send_or_notice(&cmd, SendSlot::Login) {
+            self.store.on_login_sent(&login)
         }
     }
 
@@ -1635,7 +1669,7 @@ impl Root {
     }
 
     fn logout(&mut self) {
-        let _ = self.transport.send(&ld2_protocol::cmd::AuthLogout {});
+        let _ = self.try_send(&ld2_protocol::cmd::AuthLogout {});
         let effects = self.store.logout();
         self.exec_effects(effects);
     }
@@ -2156,9 +2190,8 @@ impl Root {
             return;
         };
         let cmd = ld2_protocol::cmd::LocationMove { exit_id: exit };
-        match self.transport.send(&cmd) {
-            Ok(_) => self.store.on_world_sent(Act::Move),
-            Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+        if self.send_or_notice(&cmd, SendSlot::World) {
+            self.store.on_world_sent(Act::Move)
         }
     }
 
@@ -2297,17 +2330,11 @@ impl Root {
             return;
         };
         let cmd = ld2_protocol::cmd::EntityInfo { entity_id: id };
-        match self.transport.send(&cmd) {
-            Ok(_) => {
-                self.store.on_world_sent(Act::PickupInfo);
-                self.pickup_request = false;
-                cx.notify();
-            }
-            Err(e) => {
-                self.pickup_request = false;
-                self.store.world_error = Some(format!("нет связи: {e}"));
-            }
+        if self.send_or_notice(&cmd, SendSlot::World) {
+            self.store.on_world_sent(Act::PickupInfo);
+            cx.notify();
         }
+        self.pickup_request = false;
     }
 
     /// M23: очередь «Взять всё» — следующий `item.use`, когда
@@ -2326,16 +2353,12 @@ impl Root {
             item_uid: uid,
             target_id: None,
         };
-        match self.transport.send(&cmd) {
-            Ok(_) => {
-                self.store.on_world_sent(Act::Drop);
-                self.pickup_request = true;
-                cx.notify();
-            }
-            Err(e) => {
-                self.pickup_queue.clear();
-                self.store.world_error = Some(format!("нет связи: {e}"));
-            }
+        if self.send_or_notice(&cmd, SendSlot::World) {
+            self.store.on_world_sent(Act::Drop);
+            self.pickup_request = true;
+            cx.notify();
+        } else {
+            self.pickup_queue.clear();
         }
     }
 
@@ -2352,17 +2375,11 @@ impl Root {
         let cmd = ld2_protocol::cmd::MapWorld {
             offset: self.store.map_offset,
         };
-        match self.transport.send(&cmd) {
-            Ok(_) => {
-                self.store.on_world_sent(Act::MapWorld);
-                self.store.map_request = false;
-                cx.notify();
-            }
-            Err(e) => {
-                self.store.map_request = false;
-                self.store.notice = Some(format!("нет связи: {e}"));
-            }
+        if self.send_or_notice(&cmd, SendSlot::Notice) {
+            self.store.on_world_sent(Act::MapWorld);
+            cx.notify();
         }
+        self.store.map_request = false;
     }
 
     /// M24: каталог админ-окна — `cmd/admin.items` при свободном
@@ -2376,17 +2393,11 @@ impl Root {
             return; // ack-слот занят — ждём
         }
         let cmd = ld2_protocol::cmd::AdminItems {};
-        match self.transport.send(&cmd) {
-            Ok(_) => {
-                self.store.on_world_sent(Act::AdminCatalog);
-                self.admin_catalog_request = false;
-                cx.notify();
-            }
-            Err(e) => {
-                self.admin_catalog_request = false;
-                self.store.notice = Some(format!("нет связи: {e}"));
-            }
+        if self.send_or_notice(&cmd, SendSlot::Notice) {
+            self.store.on_world_sent(Act::AdminCatalog);
+            cx.notify();
         }
+        self.admin_catalog_request = false;
     }
 
     /// M24: содержимое цели правой колонки — `cmd/admin.target.info`
@@ -2401,17 +2412,11 @@ impl Root {
         let cmd = ld2_protocol::cmd::AdminTargetInfo {
             target: self.admin_target.clone(),
         };
-        match self.transport.send(&cmd) {
-            Ok(_) => {
-                self.store.on_world_sent(Act::AdminTarget);
-                self.admin_target_request = false;
-                cx.notify();
-            }
-            Err(e) => {
-                self.admin_target_request = false;
-                self.store.notice = Some(format!("нет связи: {e}"));
-            }
+        if self.send_or_notice(&cmd, SendSlot::Notice) {
+            self.store.on_world_sent(Act::AdminTarget);
+            cx.notify();
         }
+        self.admin_target_request = false;
     }
 
     fn open_popup(&mut self, kind: PopupKind) {
@@ -2793,39 +2798,31 @@ impl Root {
             }
             Click::MoveExit(exit_id) => {
                 let cmd = LocationMove { exit_id };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::Move),
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(Act::Move)
                 }
             }
             Click::OpenReleases => cx.open_url(ld2_core::update_check::RELEASES_PAGE),
             // ── M10.4: игровой экран ──
             Click::Attack(id) => {
                 let cmd = ld2_protocol::cmd::CombatAttack { target_id: id };
-                match self.transport.send(&cmd) {
-                    Ok(_) => {
-                        self.store.on_world_sent(Act::Attack);
-                        // M14/F4: любое боевое действие → глобальный кулдаун.
-                        self.store.begin_global_cooldown(self.now_ms());
-                    }
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(Act::Attack);
+                    // M14/F4: любое боевое действие → глобальный кулдаун.
+                    self.store.begin_global_cooldown(self.now_ms());
                 }
             }
             Click::Flee => {
                 let cmd = ld2_protocol::cmd::CombatFlee {};
-                match self.transport.send(&cmd) {
-                    Ok(_) => {
-                        self.store.on_world_sent(Act::Attack);
-                        self.store.begin_global_cooldown(self.now_ms());
-                    }
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(Act::Attack);
+                    self.store.begin_global_cooldown(self.now_ms());
                 }
             }
             Click::Examine(id) => {
                 let cmd = ld2_protocol::cmd::EntityInfo { entity_id: id };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::Examine),
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(Act::Examine)
                 }
             }
             // M23: ЛКМ по трупу — окно подятия (лут слева, рюкзак
@@ -2845,26 +2842,22 @@ impl Root {
             Click::NpcTalk(id) => {
                 tracing::debug!("вых. cmd/npc.talk {id}");
                 let cmd = ld2_protocol::cmd::NpcTalk { entity_id: id };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::NpcTalk),
-                    Err(e) => {
-                        tracing::debug!("cmd/npc.talk не ушла: {e}");
-                        self.store.world_error = Some(format!("нет связи: {e}"));
-                    }
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(Act::NpcTalk);
+                } else {
+                    tracing::debug!("cmd/npc.talk не ушла: нет связи");
                 }
             }
             Click::PartyInvite(player_id) => {
                 let cmd = ld2_protocol::cmd::PartyInvite { player_id };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_sheet_sent(Act::Party),
-                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::Notice) {
+                    self.store.on_sheet_sent(Act::Party)
                 }
             }
             Click::TradeOpen(player_id) => {
                 let cmd = ld2_protocol::cmd::TradeOpen { player_id };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_sheet_sent(Act::Trade),
-                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::Notice) {
+                    self.store.on_sheet_sent(Act::Trade)
                 }
             }
             Click::RuneCast {
@@ -2876,12 +2869,9 @@ impl Root {
                     socket_index,
                     target_id: self.store.target.clone(),
                 };
-                match self.transport.send(&cmd) {
-                    Ok(_) => {
-                        self.store.on_world_sent(Act::Cast);
-                        self.store.begin_global_cooldown(self.now_ms());
-                    }
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(Act::Cast);
+                    self.store.begin_global_cooldown(self.now_ms());
                 }
             }
             Click::UseItem(uid) => {
@@ -2907,28 +2897,25 @@ impl Root {
                     item_uid: uid,
                     target_id: None,
                 };
-                match self.transport.send(&cmd) {
-                    Ok(_) => {
-                        self.store.on_world_sent(if stone.is_some() {
-                            Act::Sharpen
-                        } else {
-                            Act::Drop
-                        });
-                        if is_loot && self.pickup_popup.open {
-                            self.pickup_request = true;
-                        }
-                        if combat_item {
-                            self.store.begin_global_cooldown(self.now_ms());
-                        }
-                        if stone.is_some() {
-                            // M18/F54: геометрия карточки; гейт рендера —
-                            // sharpen_stone, которое придёт в ack.
-                            self.open_popup(PopupKind::Upgrade);
-                        }
-                        self.store.entity_detail = None;
-                        self.store.clear_loot_confirm();
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(if stone.is_some() {
+                        Act::Sharpen
+                    } else {
+                        Act::Drop
+                    });
+                    if is_loot && self.pickup_popup.open {
+                        self.pickup_request = true;
                     }
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                    if combat_item {
+                        self.store.begin_global_cooldown(self.now_ms());
+                    }
+                    if stone.is_some() {
+                        // M18/F54: геометрия карточки; гейт рендера —
+                        // sharpen_stone, которое придёт в ack.
+                        self.open_popup(PopupKind::Upgrade);
+                    }
+                    self.store.entity_detail = None;
+                    self.store.clear_loot_confirm();
                 }
             }
             Click::PowerStrike => {
@@ -2936,12 +2923,9 @@ impl Root {
                     skill_id: "power_strike".into(),
                     target_id: self.store.target.clone(),
                 };
-                match self.transport.send(&cmd) {
-                    Ok(_) => {
-                        self.store.on_world_sent(Act::Cast);
-                        self.store.begin_global_cooldown(self.now_ms());
-                    }
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(Act::Cast);
+                    self.store.begin_global_cooldown(self.now_ms());
                 }
             }
             Click::ConfirmDeath => self.store.confirm_death(),
@@ -2992,9 +2976,8 @@ impl Root {
             }
             Click::Gather(id) => {
                 let cmd = ld2_protocol::cmd::ResourceGather { entity_id: id };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::Gather),
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(Act::Gather)
                 }
             }
             Click::Harvest(id, action) => {
@@ -3010,31 +2993,28 @@ impl Root {
                     entity_id: id.clone(),
                     action: action.clone(),
                 };
-                match self.transport.send(&cmd) {
-                    Ok(_) => {
-                        self.store.on_world_sent(Act::Harvest);
-                        // Прогресс-бар — с момента отправки (5 с);
-                        // отказ сервера чистит Act::Harvest (ошибка).
-                        // entity_id (M24): итог другого трупа бар не гасит.
-                        let label = format!(
-                            "{} · {}",
-                            if action == "skin" {
-                                t(self.lang, Key::SkinBtn)
-                            } else {
-                                t(self.lang, Key::GutBtn)
-                            },
-                            name
-                        );
-                        self.store.harvest = Some(ld2_core::store::HarvestProgress {
-                            started_ms: self.now_ms(),
-                            action,
-                            name,
-                            entity_id: id,
-                        });
-                        // M24: единый прогресс-бар (сервер-джоб5 с).
-                        self.start_progress(ProgressSource::Harvest, label, 5_000);
-                    }
-                    Err(e) => self.store.world_error = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::World) {
+                    self.store.on_world_sent(Act::Harvest);
+                    // Прогресс-бар — с момента отправки (5 с);
+                    // отказ сервера чистит Act::Harvest (ошибка).
+                    // entity_id (M24): итог другого трупа бар не гасит.
+                    let label = format!(
+                        "{} · {}",
+                        if action == "skin" {
+                            t(self.lang, Key::SkinBtn)
+                        } else {
+                            t(self.lang, Key::GutBtn)
+                        },
+                        name
+                    );
+                    self.store.harvest = Some(ld2_core::store::HarvestProgress {
+                        started_ms: self.now_ms(),
+                        action,
+                        name,
+                        entity_id: id,
+                    });
+                    // M24: единый прогресс-бар (сервер-джоб5 с).
+                    self.start_progress(ProgressSource::Harvest, label, 5_000);
                 }
             }
             // M24: админ-панель — роль гейтит сервер; кнопка в шапке
@@ -3049,9 +3029,8 @@ impl Root {
                     target: self.admin_target.clone(),
                     def_id,
                 };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::AdminAsk),
-                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::Notice) {
+                    self.store.on_world_sent(Act::AdminAsk)
                 }
             }
             Click::AdminRemove(item_ref) => {
@@ -3059,9 +3038,8 @@ impl Root {
                     target: self.admin_target.clone(),
                     item_ref,
                 };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::AdminAsk),
-                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::Notice) {
+                    self.store.on_world_sent(Act::AdminAsk)
                 }
             }
             Click::AdminTarget(target) => {
@@ -3074,21 +3052,17 @@ impl Root {
             // снапшота, чужие (не-self) перечитываем после ack.
             Click::AdminClear(target) => {
                 let cmd = ld2_protocol::cmd::AdminClear { target };
-                match self.transport.send(&cmd) {
-                    Ok(_) => {
-                        self.store.on_world_sent(Act::AdminClear);
-                        if self.admin_target != "self" {
-                            self.admin_target_request = true;
-                        }
+                if self.send_or_notice(&cmd, SendSlot::Notice) {
+                    self.store.on_world_sent(Act::AdminClear);
+                    if self.admin_target != "self" {
+                        self.admin_target_request = true;
                     }
-                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
                 }
             }
             Click::AdminGod(enabled) => {
                 let cmd = ld2_protocol::cmd::AdminGodMode { enabled };
-                match self.transport.send(&cmd) {
-                    Ok(_) => self.store.on_world_sent(Act::AdminGod),
-                    Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+                if self.send_or_notice(&cmd, SendSlot::Notice) {
+                    self.store.on_world_sent(Act::AdminGod)
                 }
             }
             Click::CloseDetail => self.store.entity_detail = None,
