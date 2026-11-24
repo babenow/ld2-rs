@@ -20,6 +20,11 @@ use ld2_core::transport::{self, IngressEvent, TransportConfig, TransportHandle, 
 use ld2_protocol::cmd::{AuthLogin, CharDelete, LocationMove, StateResync, TimeSync};
 use ld2_protocol::Command;
 
+/// Высота нижнего статус-бара игрового экрана. Скрим попапов не покрывает
+/// эту полосу: слоты сумок в статус-баре должны принимать drag&drop, пока
+/// открыт рюкзак (M28/B8).
+pub(crate) const STATUS_BAR_H: f32 = 28.0;
+
 mod admin;
 mod backpack;
 mod badges;

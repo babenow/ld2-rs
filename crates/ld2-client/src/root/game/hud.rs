@@ -15,6 +15,7 @@ impl Root {
             .gap_2()
             .px_2()
             .py_1()
+            .h(px(crate::root::STATUS_BAR_H))
             .border_t_1()
             .border_color(rgb(pal.border))
             .flex_shrink_0();
