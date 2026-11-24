@@ -146,8 +146,16 @@ pub struct ChatSection {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InventorySection {
+    /// Базовая ёмкость рюкзака (M28: без сумок; дефолт WoW-стиля — 20).
     pub slots: u32,
     pub equip_slots: Vec<String>,
+    /// M28: количество слотов под сумки (0 — система выключена).
+    #[serde(default = "default_bag_slots")]
+    pub bag_slots: u32,
+}
+
+fn default_bag_slots() -> u32 {
+    4
 }
 
 #[derive(Debug, Clone, Deserialize)]

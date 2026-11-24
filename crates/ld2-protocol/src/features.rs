@@ -106,6 +106,10 @@ pub struct InventoryConfig {
     pub slots: u32,
     #[serde(default)]
     pub equip_slots: Vec<String>,
+    /// M28: слотов под сумки (`0` — система сумок выключена; старый
+    /// сервер поле не шлёт → 0, клиент рисует один рюкзак).
+    #[serde(default)]
+    pub bag_slots: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

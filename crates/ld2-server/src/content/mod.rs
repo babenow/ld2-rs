@@ -114,15 +114,16 @@ async fn seed_content(
         let stats = serde_json::Value::Object(item.stats.clone());
         let requires = serde_json::to_value(&item.requires).unwrap_or(serde_json::Value::Null);
         sqlx::query(
-            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, rune_sockets, slot, hands, cooldown_s, bonuses) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
+            "INSERT INTO item_defs (id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, skill, sockets, rune_sockets, slot, hands, cooldown_s, bonuses, bag_slots) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
              ON CONFLICT (id) DO UPDATE SET \
                item_type = EXCLUDED.item_type, name = EXCLUDED.name, rarity = EXCLUDED.rarity, \
                upgrade = EXCLUDED.upgrade, stats = EXCLUDED.stats, requires = EXCLUDED.requires, \
                gold_value = EXCLUDED.gold_value, qty = EXCLUDED.qty, skill = EXCLUDED.skill, \
                sockets = EXCLUDED.sockets, rune_sockets = EXCLUDED.rune_sockets, \
                slot = EXCLUDED.slot, hands = EXCLUDED.hands, \
-               cooldown_s = EXCLUDED.cooldown_s, bonuses = EXCLUDED.bonuses",
+               cooldown_s = EXCLUDED.cooldown_s, bonuses = EXCLUDED.bonuses, \
+               bag_slots = EXCLUDED.bag_slots",
         )
         .bind(&item.id)
         .bind(&item.item_type)
@@ -140,6 +141,7 @@ async fn seed_content(
         .bind(item.hands.unwrap_or(1))
         .bind(item.cooldown_s.unwrap_or(1.0))
         .bind(serde_json::to_value(&item.bonuses).unwrap_or(serde_json::Value::Null))
+        .bind(item.bag_slots.map(i64::from))
         .execute(&mut *tx)
         .await?;
     }

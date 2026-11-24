@@ -552,6 +552,8 @@ pub enum Key {
     BpTabMagic,
     BpTabMaterial,
     BpTabTool,
+    /// M28/B1: вкладка сумок-контейнеров.
+    BpTabBag,
     BpTabOther,
     // M17/F30b: вкладка артефактов рюкзака
     BpTabArtifact,
@@ -1143,6 +1145,7 @@ mod tests {
         Key::BpTabMagic,
         Key::BpTabMaterial,
         Key::BpTabTool,
+        Key::BpTabBag,
         Key::BpTabOther,
         // M17/F30b: вкладка артефактов
         Key::BpTabArtifact,

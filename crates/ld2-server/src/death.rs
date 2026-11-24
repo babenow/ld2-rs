@@ -17,7 +17,8 @@ use crate::state::SharedState;
 pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, String)> {
     let pool = &state.pool;
 
-    // Весь инвентарь теряется (ФР-06) — имена для lost_items.
+    // Весь лут теряется (ФР-06); надетые сумки (M28) остаются —
+    // теряется только их содержимое. Имена — для lost_items.
     let lost_rows = match crate::db::items::delete_all(pool, char_id).await {
         Ok(rows) => rows,
         Err(e) => {

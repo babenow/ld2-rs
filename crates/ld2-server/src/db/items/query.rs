@@ -5,7 +5,7 @@ use super::*;
 /// Инвентарь персонажа в порядке получения (стабильный порядок UI).
 pub async fn inventory(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses FROM items \
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index FROM items \
          WHERE character_id = $1 ORDER BY sort_order NULLS LAST, created_at, uid",
     )
     .bind(char_id)
@@ -34,9 +34,11 @@ pub async fn with_sockets(
             Option<String>,
             Value,
             Option<Value>,
+            String,
+            Option<i32>,
         ),
     >(
-        "SELECT character_id, uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses \
+        "SELECT character_id, uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index \
          FROM items WHERE character_id = ANY($1) AND sockets <> '[]'",
     )
     .bind(char_ids)
@@ -45,7 +47,18 @@ pub async fn with_sockets(
     Ok(rows
         .into_iter()
         .map(
-            |(char_id, uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses)| {
+            |(
+                char_id,
+                uid,
+                def_id,
+                qty,
+                upgrade,
+                equipped_slot,
+                sockets,
+                bonuses,
+                container,
+                slot_index,
+            )| {
                 (
                     char_id,
                     ItemRow {
@@ -56,6 +69,8 @@ pub async fn with_sockets(
                         equipped_slot,
                         sockets,
                         bonuses,
+                        container,
+                        slot_index,
                     },
                 )
             },
@@ -67,7 +82,7 @@ pub async fn with_sockets(
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
         "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
-                rune_sockets, slot, hands, skill, cooldown_s, bonuses \
+                rune_sockets, slot, hands, skill, cooldown_s, bonuses, bag_slots \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)
@@ -94,7 +109,7 @@ pub async fn admin_inventory(
 pub async fn defs_all(pool: &PgPool) -> Result<Vec<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
         "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
-                rune_sockets, slot, hands, skill, cooldown_s, bonuses \
+                rune_sockets, slot, hands, skill, cooldown_s, bonuses, bag_slots \
          FROM item_defs ORDER BY item_type, name",
     )
     .fetch_all(pool)
@@ -104,7 +119,7 @@ pub async fn defs_all(pool: &PgPool) -> Result<Vec<ItemDefRow>, sqlx::Error> {
 /// Инстанс в инвентаре конкретного персонажа; `None` — чужой/несуществующий.
 pub async fn find(pool: &PgPool, uid: &str, char_id: &str) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses FROM items \
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index FROM items \
          WHERE uid = $1 AND character_id = $2",
     )
     .bind(uid)
@@ -120,7 +135,7 @@ pub async fn find_equipped_in_slot(
     slot: &str,
 ) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses FROM items \
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index FROM items \
          WHERE character_id = $1 AND equipped_slot = $2",
     )
     .bind(char_id)
@@ -141,7 +156,7 @@ pub async fn count(pool: &PgPool, char_id: &str) -> Result<i64, sqlx::Error> {
 /// ещё у стороны-владельца, но читаем для зеркала §8).
 pub async fn find_any(pool: &PgPool, uid: &str) -> Result<Option<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses FROM items WHERE uid = $1",
+        "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index FROM items WHERE uid = $1",
     )
     .bind(uid)
     .fetch_optional(pool)

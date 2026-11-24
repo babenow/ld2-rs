@@ -72,6 +72,8 @@ impl Session {
                     upgrade: 0,
                     equipped_slot: None,
                     sockets: serde_json::json!([]),
+                    container: "backpack".into(),
+                    slot_index: None,
                     // M18/F47: лут несёт контент-бонусы (ADR-010).
                     bonuses: def.bonuses.clone(),
                 };
@@ -105,6 +107,8 @@ impl Session {
                     upgrade: 0,
                     equipped_slot: None,
                     sockets: serde_json::json!([]),
+                    container: "backpack".into(),
+                    slot_index: None,
                     bonuses: def.bonuses.clone(),
                 };
                 inner.push(item_snapshot(&row, &def));
@@ -200,6 +204,8 @@ impl Session {
                 upgrade: 0,
                 equipped_slot: None,
                 sockets: serde_json::json!([]),
+                container: "backpack".into(),
+                slot_index: None,
                 // M18/F47: лут несёт контент-бонусы (ADR-010).
                 bonuses: def.bonuses.clone(),
             };
@@ -234,6 +240,8 @@ impl Session {
                 upgrade: 0,
                 equipped_slot: None,
                 sockets: serde_json::json!([]),
+                container: "backpack".into(),
+                slot_index: None,
                 bonuses: def.bonuses.clone(),
             };
             loot.push(item_snapshot(&row, &def));
@@ -297,8 +305,8 @@ impl Session {
         // не складывается, иначе камни теряются — заказчик).
         let stateful = ground.stateful();
         let fits = if stateful {
-            match db::items::count(pool, char_id).await {
-                Ok(n) => n < i64::from(slots),
+            match db::items::has_space(pool, char_id, i64::from(slots)).await {
+                Ok(fits) => fits,
                 Err(e) => {
                     warn!("подбор (слоты): {e}");
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];

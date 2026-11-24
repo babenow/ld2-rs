@@ -1,6 +1,15 @@
 {
   "items": [
     {
+      "id": "traveler_bag",
+      "type": "bag",
+      "name": "Походный рюкзак",
+      "rarity": "common",
+      "gold_value": 25,
+      "qty": 1,
+      "bag_slots": 20
+    },
+    {
       "id": "gold_coin",
       "type": "money",
       "name": "Золотая монета",

@@ -194,14 +194,18 @@ async fn inventory_loot_equip_use_drop() {
     // M18/F58f: подбираем деф БЕЗ стака в рюкзаке (potion_heal) —
     // однотипное dagger_knife в стак сложилось бы (новая фича: рюкзак
     // вмещает стаки; покрыто в tests/stacking.rs).
-    // Столько, сколько slots в шаблоне конфига (M18: база 100 стаков).
-    let slots = i32::try_from(cfg.gameplay.inventory.slots).unwrap_or(100);
+    // M28: ёмкость = базовые слоты + вместимость надетых сумок (старым
+    // персонажам выдаются стартовые сумки) — забиваем её всю.
+    let base_slots = i64::from(cfg.gameplay.inventory.slots);
+    let capacity = ld2_server::db::items::capacity(&pool, &char_id, base_slots)
+        .await
+        .expect("ёмкость инвентаря");
     sqlx::query(
         "INSERT INTO items (character_id, def_id) \
          SELECT $1, 'dagger_knife' FROM generate_series(1, $2)",
     )
     .bind(&char_id)
-    .bind(slots)
+    .bind(capacity)
     .execute(&pool)
     .await
     .expect("заполнить слоты");
@@ -342,9 +346,12 @@ async fn inventory_loot_equip_use_drop() {
         .await;
     let _ = c.ack(seq).await;
     let snap = c.wait_event("evt/state/snapshot").await;
-    let inv = snap["payload"]["char"]["inventory"]
+    let inv: Vec<&serde_json::Value> = snap["payload"]["char"]["inventory"]
         .as_array()
-        .expect("инвентарь");
+        .expect("инвентарь")
+        .iter()
+        .filter(|i| i["container"].as_str() != Some(ld2_server::db::items::BAGS))
+        .collect();
     assert!(inv.is_empty(), "инвентарь пуст: {inv:?}");
 
     // Обычный текст: чат работает с M12.7 — ack + evt/chat/message.
@@ -446,9 +453,12 @@ async fn death_loses_lut_but_keeps_progress() {
         .await;
     let _ = c.ack(seq).await;
     let snap = c.wait_event("evt/state/snapshot").await;
-    let inv = snap["payload"]["char"]["inventory"]
+    let inv: Vec<&serde_json::Value> = snap["payload"]["char"]["inventory"]
         .as_array()
-        .expect("инвентарь");
+        .expect("инвентарь")
+        .iter()
+        .filter(|i| i["container"].as_str() != Some(ld2_server::db::items::BAGS))
+        .collect();
     assert!(inv.is_empty(), "инвентарь пуст после смерти: {inv:?}");
     assert_eq!(snap["payload"]["char"]["xp_pool"], 990, "пул сохранён");
     let sword = snap["payload"]["char"]["skills"]
@@ -536,7 +546,16 @@ async fn progress_survives_restart() {
         .as_array()
         .expect("инвентарь");
     // F29a: наряду с лутом инвентарь переживает рестарт и стак монет.
+    let bags = inv
+        .iter()
+        .filter(|i| i["container"].as_str() == Some(ld2_server::db::items::BAGS))
+        .count();
+    let inv: Vec<&serde_json::Value> = inv
+        .iter()
+        .filter(|i| i["container"].as_str() != Some(ld2_server::db::items::BAGS))
+        .collect();
     assert_eq!(inv.len(), 2, "инвентарь пережил рестарт: {inv:?}");
+    assert_eq!(bags, 4, "стартовые сумки пережили рестарт");
     assert!(
         inv.iter().any(|i| i["type"] == "money" && i["qty"] == 900),
         "монеты пережили рестарт: {inv:?}"
