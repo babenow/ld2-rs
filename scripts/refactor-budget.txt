@@ -16,7 +16,7 @@ crates/ld2-client/src/root/settings.rs 763 166
 crates/ld2-client/src/root/sheet.rs 3836 432
 crates/ld2-client/src/root/social.rs 601 252
 crates/ld2-client/src/root/tick.rs 513 304
-crates/ld2-client/src/root.rs 1780 174
+crates/ld2-client/src/root.rs 1618 174
 crates/ld2-client/src/text_input.rs 699 150
 crates/ld2-core/src/l10n/en.rs 521 517
 crates/ld2-core/src/l10n/mod.rs 710 150
