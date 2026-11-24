@@ -13,12 +13,14 @@ members = [
 [workspace.package]
 version = "0.22.0"
 edition = "2021"
+repository = "https://github.com/babenow/ld2-rs"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 tokio-tungstenite = "0.30"
+time = { version = "0.3", features = ["formatting"] }
 # Реальный сервер (PLAN-M12): D23 — axum (WS + /healthz + graceful shutdown),
 # D24 — sqlx: runtime-запросы (сборка без DATABASE_URL), авто-миграции, rustls
 # без системного OpenSSL (важно для Windows-сборки и Docker). ws — транспорт §1.
