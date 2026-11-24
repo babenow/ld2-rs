@@ -24,7 +24,6 @@ crates/ld2-editor/src/app.rs 8329 647
 crates/ld2-editor/src/project.rs 1975 150
 crates/ld2-protocol/src/cmd.rs 646 150
 crates/ld2-protocol/src/evt.rs 702 150
-crates/ld2-server/src/config.rs 978 306
 crates/ld2-server/src/session/chars.rs 655 231
 crates/ld2-server/src/session/combat.rs 747 268
 crates/ld2-server/src/session/dev.rs 592 289
