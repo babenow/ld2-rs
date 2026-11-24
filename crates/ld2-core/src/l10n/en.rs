@@ -465,6 +465,7 @@ pub(super) fn t(key: Key) -> &'static str {
         BpBagSlotQuiver => "Quiver",
         BpBagSlotKeyring => "Keyring",
         BpBagEmptySlot => "Empty bag slot",
+        BpBagEmptyNamed => "{slot}: empty",
         BpBagTip => "{name} · {used} of {total} slots used",
         BagTypeKey => "Keys",
         BpTabOther => "Other",
