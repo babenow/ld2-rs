@@ -2,6 +2,7 @@
 name = "ld2-protocol"
 version.workspace = true
 edition.workspace = true
+publish = false
 description = "Типы контракта «клиент ↔ сервер» ld2 (docs/protocol.md)"
 
 [dependencies]
