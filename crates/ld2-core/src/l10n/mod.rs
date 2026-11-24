@@ -570,6 +570,8 @@ pub enum Key {
     BpBagSlotQuiver,
     BpBagSlotKeyring,
     BpBagEmptySlot,
+    /// M28/B8: пустой слот с названием роли/номера (тултип статус-бара).
+    BpBagEmptyNamed,
     BpBagTip,
     BagTypeKey,
     BpTabOther,
@@ -1175,6 +1177,7 @@ mod tests {
         Key::BpBagSlotQuiver,
         Key::BpBagSlotKeyring,
         Key::BpBagEmptySlot,
+        Key::BpBagEmptyNamed,
         Key::BpBagTip,
         Key::BagTypeKey,
         Key::BpTabOther,

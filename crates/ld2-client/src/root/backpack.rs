@@ -80,6 +80,38 @@ fn bag_slot_visual(ix: usize, general: usize, lang: Lang) -> (IconName, String) 
     }
 }
 
+/// M28/B8: текст тултипа слота сумки в статус-баре — всегда называет
+/// сам слот (в т.ч. колчан/ключницу), а для занятого — сумку и
+/// занятость.
+fn bag_slot_tooltip(
+    lang: Lang,
+    slot: &str,
+    bag: Option<&ItemSnapshot>,
+    items: &[ItemSnapshot],
+) -> String {
+    match bag {
+        Some(b) => {
+            let used = items
+                .iter()
+                .filter(|i| i.container.as_deref() == Some(b.uid.as_str()))
+                .count();
+            format!(
+                "{slot} · {}",
+                tf(
+                    lang,
+                    Key::BpBagTip,
+                    &[
+                        ("{name}", b.name.as_str()),
+                        ("{used}", &used.to_string()),
+                        ("{total}", &b.bag_slots.unwrap_or(0).to_string()),
+                    ],
+                )
+            )
+        }
+        None => tf(lang, Key::BpBagEmptyNamed, &[("{slot}", slot)]),
+    }
+}
+
 use super::sheet::{rarity_color, rarity_label};
 use super::{scrollable_tab, BpHold, DragSource, ItemDrag, PopupKind, Root, SendSlot};
 
@@ -615,39 +647,36 @@ impl Root {
             .as_ref()
             .map(|s| s.char.inventory.clone())
             .unwrap_or_default();
-        let mut row = div().flex().flex_row().items_center().gap_1();
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .flex_shrink_0();
         for ix in 0..total {
             let ix_i = i32::try_from(ix).unwrap_or(0);
             let bag = bags.iter().find(|b| b.slot_index == Some(ix_i)).cloned();
-            let (icon, _) = bag_slot_visual(ix, general, lang);
-            let tip = match &bag {
-                Some(b) => {
-                    let used = items
-                        .iter()
-                        .filter(|i| i.container.as_deref() == Some(b.uid.as_str()))
-                        .count();
-                    tf(
-                        lang,
-                        Key::BpBagTip,
-                        &[
-                            ("{name}", b.name.as_str()),
-                            ("{used}", &used.to_string()),
-                            ("{total}", &b.bag_slots.unwrap_or(0).to_string()),
-                        ],
-                    )
-                }
-                None => t(lang, Key::BpBagEmptySlot).to_string(),
-            };
+            let (icon, slot) = bag_slot_visual(ix, general, lang);
+            let tip = bag_slot_tooltip(lang, &slot, bag.as_ref(), &items);
             let color = if bag.is_some() { pal.text } else { pal.muted };
             let bag_uid = bag.as_ref().map(|b| b.uid.clone());
             row = row.child(
                 div()
                     .id(format!("ld2-status-bag-{ix}"))
                     .flex()
+                    .flex_shrink_0()
                     .items_center()
                     .justify_center()
-                    .px_1()
+                    .w(px(22.0))
+                    .h(px(20.0))
                     .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(pal.border))
+                    .bg(rgb(if bag.is_some() {
+                        pal.selection
+                    } else {
+                        pal.panel
+                    }))
                     .cursor_pointer()
                     .hover(move |s| s.bg(rgb(pal.selection)))
                     .tooltip(Tooltip::text(tip))
@@ -1122,6 +1151,31 @@ impl Root {
 mod tests {
     use super::*;
 
+    fn item(name: &str, item_type: &str, qty: i64) -> ItemSnapshot {
+        ItemSnapshot {
+            slot: None,
+            hands: None,
+            def_id: None,
+            uid: format!("i_{name}_{qty}"),
+            item_type: item_type.into(),
+            name: name.into(),
+            rarity: "common".into(),
+            upgrade: 0,
+            stats: Default::default(),
+            requires: None,
+            sockets: None,
+            qty: Some(qty),
+            gold_value: Some(1),
+            bonuses: None,
+            container: None,
+            slot_index: None,
+            bag_slots: None,
+            bag_types: None,
+            bag_kind: None,
+            extra: Default::default(),
+        }
+    }
+
     /// M16/F29b: все типы текущего контента ложатся в группы (в
     /// «Прочее» для них пусто), деньги — в «Валюты».
     #[test]
@@ -1178,28 +1232,6 @@ mod tests {
     /// не берёт не-валютные предметы.
     #[test]
     fn currency_row_sums_money_stacks() {
-        let item = |name: &str, item_type: &str, qty: i64| ItemSnapshot {
-            slot: None,
-            hands: None,
-            def_id: None,
-            uid: format!("i_{name}_{qty}"),
-            item_type: item_type.into(),
-            name: name.into(),
-            rarity: "common".into(),
-            upgrade: 0,
-            stats: Default::default(),
-            requires: None,
-            sockets: None,
-            qty: Some(qty),
-            gold_value: Some(1),
-            bonuses: None,
-            container: None,
-            slot_index: None,
-            bag_slots: None,
-            bag_types: None,
-            bag_kind: None,
-            extra: Default::default(),
-        };
         let items = vec![
             item("Золотая монета", "money", 30),
             item("Золотая монета", "money", 70),
@@ -1211,5 +1243,44 @@ mod tests {
             "стаки монет сложились, не-валюта отсеяна"
         );
         assert!(money_totals(&[]).is_empty(), "пусто без монет");
+    }
+
+    /// M28/B8: индексы спец-слотов идут сразу после общих — реагенты,
+    /// колчан, ключница; подписи слотов различаются.
+    #[test]
+    fn status_bag_slots_have_roles_and_labels() {
+        assert_eq!(BagSlotRole::at(0, 4), None, "обычный слот");
+        assert_eq!(BagSlotRole::at(3, 4), None, "последний обычный");
+        assert_eq!(BagSlotRole::at(4, 4), Some(BagSlotRole::Reagent));
+        assert_eq!(BagSlotRole::at(5, 4), Some(BagSlotRole::Quiver));
+        assert_eq!(BagSlotRole::at(6, 4), Some(BagSlotRole::Keyring));
+        assert_eq!(BagSlotRole::at(7, 4), None, "дальше спец-слотов нет");
+        assert_eq!(bag_slot_visual(0, 4, Lang::Ru).1, "Слот сумки 1");
+        assert_eq!(bag_slot_visual(4, 4, Lang::Ru).1, "Реагенты");
+        assert_eq!(bag_slot_visual(5, 4, Lang::Ru).1, "Колчан");
+        assert_eq!(bag_slot_visual(6, 4, Lang::Ru).1, "Ключница");
+    }
+
+    /// M28/B8: тултип статус-бара называет слот и для занятого —
+    /// сумку/занятость; пустой слот не остаётся безымянным.
+    #[test]
+    fn status_bag_tooltip_names_slot_and_bag() {
+        let mut bag = item("Колчан охотника", "bag", 1);
+        bag.uid = "bag1".into();
+        bag.container = Some("bags".into());
+        bag.slot_index = Some(5);
+        bag.bag_slots = Some(10);
+        let mut arrow = item("Стрела", "material", 20);
+        arrow.container = Some("bag1".into());
+        let tip = bag_slot_tooltip(Lang::Ru, "Колчан", Some(&bag), &[bag.clone(), arrow]);
+        assert_eq!(tip, "Колчан · Колчан охотника · занято 1 из 10");
+        assert_eq!(
+            bag_slot_tooltip(Lang::Ru, "Ключница", None, &[]),
+            "Ключница: пусто"
+        );
+        assert_eq!(
+            bag_slot_tooltip(Lang::En, "Quiver", None, &[]),
+            "Quiver: empty"
+        );
     }
 }
