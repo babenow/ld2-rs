@@ -15,6 +15,60 @@ use serde_json::Value;
 use super::{out_ack, out_event, Out, Session};
 use crate::db;
 
+/// M24: команды, блокируемые активной разделкой (RF5a: один источник правды).
+pub(super) const HARVEST_BLOCKED: &[&str] = &[
+    "cmd/location.move",
+    "cmd/combat.attack",
+    "cmd/combat.stop",
+    "cmd/combat.flee",
+    "cmd/skill.use",
+    "cmd/magic.rune_cast",
+    "cmd/magic.scroll_cast",
+    "cmd/resource.gather",
+    "cmd/craft.start",
+    "cmd/quest.accept",
+    "cmd/quest.turn_in",
+    "cmd/quest.abandon",
+    "cmd/trade.open",
+    "cmd/trade.add_item",
+    "cmd/trade.set_gold",
+    "cmd/trade.propose",
+    "cmd/trade.accept",
+    "cmd/trade.cancel",
+    "cmd/party.create",
+    "cmd/party.invite",
+    "cmd/party.accept",
+    "cmd/party.decline",
+    "cmd/party.leave",
+    "cmd/party.kick",
+    "cmd/guild.create",
+    "cmd/guild.join",
+    "cmd/guild.leave",
+    "cmd/guild.invite",
+    "cmd/guild.kick",
+    "cmd/guild.rank_set",
+    "cmd/shop.buy",
+    "cmd/upgrade.preview",
+    "cmd/upgrade.start",
+    "cmd/socket.insert",
+    "cmd/socket.extract",
+];
+
+/// M25: команды предметов и трупа — в стан блокируются сверх разделки.
+pub(super) const ITEM_ACTIONS: &[&str] = &[
+    "cmd/item.use",
+    "cmd/item.drop",
+    "cmd/item.equip",
+    "cmd/item.unequip",
+    "cmd/item.move",
+    "cmd/corpse.harvest",
+];
+
+/// M25: стан блокирует `HARVEST_BLOCKED ∪ ITEM_ACTIONS` (RF5a: без дублей списка).
+pub(super) fn stun_blocked(msg_type: &str) -> bool {
+    HARVEST_BLOCKED.contains(&msg_type) || ITEM_ACTIONS.contains(&msg_type)
+}
+
 impl Session {
     /// Текущий персонаж для команд мира (§3: без него «не в мире»).
     pub(super) fn require_char_id(&self, seq: u32) -> Result<String, Out> {
@@ -27,49 +81,6 @@ impl Session {
     /// M25: активные дебаффы контроля → (код, сообщение) по типу
     /// команды; блокируемые списки — внутри (const в fn).
     pub(super) fn char_effect_gate(&self, msg_type: &str) -> Option<(ErrorCode, String)> {
-        const STUN_BLOCKED: &[&str] = &[
-            "cmd/location.move",
-            "cmd/combat.attack",
-            "cmd/combat.stop",
-            "cmd/combat.flee",
-            "cmd/skill.use",
-            "cmd/magic.rune_cast",
-            "cmd/magic.scroll_cast",
-            "cmd/resource.gather",
-            "cmd/craft.start",
-            "cmd/quest.accept",
-            "cmd/quest.turn_in",
-            "cmd/quest.abandon",
-            "cmd/trade.open",
-            "cmd/trade.add_item",
-            "cmd/trade.set_gold",
-            "cmd/trade.propose",
-            "cmd/trade.accept",
-            "cmd/trade.cancel",
-            "cmd/party.create",
-            "cmd/party.invite",
-            "cmd/party.accept",
-            "cmd/party.decline",
-            "cmd/party.leave",
-            "cmd/party.kick",
-            "cmd/guild.create",
-            "cmd/guild.join",
-            "cmd/guild.leave",
-            "cmd/guild.invite",
-            "cmd/guild.kick",
-            "cmd/guild.rank_set",
-            "cmd/shop.buy",
-            "cmd/upgrade.preview",
-            "cmd/upgrade.start",
-            "cmd/socket.insert",
-            "cmd/socket.extract",
-            "cmd/item.use",
-            "cmd/item.drop",
-            "cmd/item.equip",
-            "cmd/item.unequip",
-            "cmd/item.move",
-            "cmd/corpse.harvest",
-        ];
         const SILENCE_BLOCKED: &[&str] = &["cmd/magic.rune_cast", "cmd/magic.scroll_cast"];
         const BLIND_BLOCKED: &[&str] = &["cmd/combat.attack", "cmd/skill.use"];
         let now = crate::time::now_ms();
@@ -82,7 +93,7 @@ impl Session {
                 world.char_effect_active(char_id, "blind", now),
             )
         };
-        if stunned && STUN_BLOCKED.contains(&msg_type) {
+        if stunned && stun_blocked(msg_type) {
             return Some((ErrorCode::Stunned, "оглушён".to_string()));
         }
         if silenced && SILENCE_BLOCKED.contains(&msg_type) {
@@ -236,5 +247,41 @@ impl Session {
             })
             .unwrap_or_default(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RF5a: стан покрывает разделку и сверх неё — ровно команды предметов.
+    #[test]
+    fn stun_covers_harvest_plus_item_actions() {
+        for c in HARVEST_BLOCKED {
+            assert!(
+                stun_blocked(c),
+                "{c} из HARVEST_BLOCKED должен блокироваться станом"
+            );
+        }
+        for c in ITEM_ACTIONS {
+            assert!(
+                stun_blocked(c),
+                "{c} из ITEM_ACTIONS должен блокироваться станом"
+            );
+            assert!(
+                !HARVEST_BLOCKED.contains(c),
+                "{c} не должен дублироваться в HARVEST_BLOCKED"
+            );
+        }
+        let mut all: Vec<&str> = HARVEST_BLOCKED
+            .iter()
+            .chain(ITEM_ACTIONS.iter())
+            .copied()
+            .collect();
+        all.sort_unstable();
+        let n = all.len();
+        all.dedup();
+        assert_eq!(all.len(), n, "в объединении есть дубли");
+        assert_eq!(n, 41, "стан блокирует 35 + 6 команд");
     }
 }
