@@ -6,7 +6,7 @@
 # Кеш-маунты BuildKit: target/ и реестр cargo живут вне слоёв и переживают
 # повторные сборки — правки кода компилируются инкрементально, а не с нуля.
 # Хранятся только локально в builder'е (в CI не попадают в --cache-to/from).
-FROM rust:1-alpine AS build
+FROM rust:1.100-alpine AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
@@ -19,8 +19,11 @@ RUN --mount=type=cache,target=/src/target \
     cp target/release/ld2-server /tmp/ld2-server
 
 FROM alpine:3.24
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates \
+    && addgroup -S ld2 \
+    && adduser -S -G ld2 -H -s /sbin/nologin ld2
 COPY --from=build /tmp/ld2-server /usr/local/bin/ld2-server
+USER ld2
 EXPOSE 24817
 ENTRYPOINT ["ld2-server"]
 # Конфиг монтируется compose-файлом (deploy/server.toml) или своим:

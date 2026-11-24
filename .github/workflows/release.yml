@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
 
       - uses: Swatinem/rust-cache@v2
 
@@ -43,7 +43,7 @@ jobs:
             libx11-dev libxcb1-dev
 
       - name: build (release)
-        run: cargo build --release -p ld2-client
+        run: cargo build --release --locked -p ld2-client
 
       # ── Linux: .tar.gz + .deb (AppImage — P1, см. PLAN-M9) ──
       - name: package (linux)
@@ -84,7 +84,8 @@ jobs:
            Text online MMORPG client (gpui) with real game server.
           EOF
           dpkg-deb --build pkg "ld2-${VER}_amd64.deb"
-          echo "ASSETS=${DIR}.tar.gz,ld2-${VER}_amd64.deb" >> "$GITHUB_ENV"
+          sha256sum "${DIR}.tar.gz" "ld2-${VER}_amd64.deb" > SHA256SUMS-linux.txt
+          echo "ASSETS=${DIR}.tar.gz,ld2-${VER}_amd64.deb,SHA256SUMS-linux.txt" >> "$GITHUB_ENV"
 
       # ── macOS: universal .app → .dmg (lipo; код-подпись ad-hoc = dev-only) ──
       - name: package (macos)
@@ -125,7 +126,8 @@ jobs:
           codesign --force --sign - "$APP" || true
           hdiutil create -volname "ld2 ${VER}" -srcfolder "$APP" -ov -format UDZO "ld2-${VER}-macos.dmg"
           tar -czf "ld2-${VER}-macos-universal.tar.gz" "$APP"
-          echo "ASSETS=ld2-${VER}-macos.dmg,ld2-${VER}-macos-universal.tar.gz" >> "$GITHUB_ENV"
+          shasum -a 256 "ld2-${VER}-macos.dmg" "ld2-${VER}-macos-universal.tar.gz" > SHA256SUMS-macos.txt
+          echo "ASSETS=ld2-${VER}-macos.dmg,ld2-${VER}-macos-universal.tar.gz,SHA256SUMS-macos.txt" >> "$GITHUB_ENV"
 
       # ── Windows: portable .zip (exe) ──
       - name: package (windows)
@@ -141,10 +143,13 @@ jobs:
           Copy-Item crates/ld2-client/assets/icons/icon.ico $dir/
           if (Test-Path README.md) { Copy-Item README.md $dir/ }
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
-          "ASSETS=$dir.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $hash = (Get-FileHash -Algorithm SHA256 "$dir.zip").Hash.ToLower()
+          "$hash  $dir.zip" | Set-Content SHA256SUMS-windows.txt
+          "ASSETS=$dir.zip,SHA256SUMS-windows.txt" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: publish release assets
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.ASSETS }}
+          fail_on_unmatched_files: true
           generate_release_notes: true

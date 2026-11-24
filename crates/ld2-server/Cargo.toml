@@ -2,6 +2,7 @@
 name = "ld2-server"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 description = "Реальный игровой сервер ld2: docs/protocol.md + PostgreSQL (PLAN-M12)"
 publish = false
 

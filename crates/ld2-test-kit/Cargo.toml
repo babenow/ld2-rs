@@ -2,6 +2,7 @@
 name = "ld2-test-kit"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 description = "Тестовая поддержка ld2: WS-харнесс, контрактные проверки, фикстуры (D32, PLAN-M12)"
 publish = false
 

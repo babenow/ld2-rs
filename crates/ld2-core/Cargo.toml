@@ -2,6 +2,7 @@
 name = "ld2-core"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 publish = false
 description = "Ядро десктоп-клиента ld2: store, transport, l10n, config, secrets, notify, update-check (без UI)"
 
