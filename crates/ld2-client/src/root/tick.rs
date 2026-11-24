@@ -3,11 +3,124 @@
 
 use super::*;
 
+/// Флаги активности таймеров клиента (RF3c).
+#[derive(Default)]
+struct TickActive {
+    exit: bool,
+    inscribe: bool,
+    upgrade: bool,
+    harvest: bool,
+    rune_bar: bool,
+    rune_buffs: bool,
+    attack_bar: bool,
+    stun: bool,
+    log: bool,
+}
+
 impl Root {
     /// Один шаг фонового цикла: дренаж ingress (≤64), исполнение эффектов,
     /// Enter в полях входа, бейдж обновлений. Возвращает задержку до
     /// следующего шага (НФР §8: события → 50 мс, idle → 200 мс ≤ 5 fps).
     pub(crate) fn tick(&mut self, cx: &mut Context<'_, Self>) -> Duration {
+        let mut had_events = false;
+        for _ in 0..64 {
+            match self.ingress.try_recv() {
+                Ok(ev) => {
+                    had_events = true;
+                    let effects = self.store.apply(ev);
+                    self.exec_effects(effects);
+                }
+                Err(_) => break,
+            }
+        }
+        self.tick_drag(cx);
+        self.tick_pumps(cx);
+        // Результат фоновой проверки обновлений (§12).
+        while let Ok(version) = self.update_rx.try_recv() {
+            if ld2_core::update_check::is_newer(&version, env!("CARGO_PKG_VERSION")) {
+                tracing::info!("доступна версия v{version}");
+                self.update_available = Some(version);
+            }
+        }
+
+        let t = self.tick_timers(cx);
+        // M11.4: новый notice → всплывающий тост Ely (текст в экране
+        // остаётся до замены — на время жизни тоста возможен дубль).
+        if let Some(notice) = self.store.notice.clone() {
+            if self.last_notice.as_deref() != Some(notice.as_str()) {
+                self.last_notice = Some(notice.clone());
+                let toast = Toast::new(notice);
+                self.toaster.update(cx, |t, cx| {
+                    t.push(toast, cx);
+                });
+            }
+        } else {
+            self.last_notice = None;
+        }
+
+        // M14/F4: пока есть активный кулдаун (глобальный или любой
+        // собственный) — тик 50 мс, чтобы отсчёт на кнопках шёл плавно.
+        let now_ms = self.now_ms();
+        let cd_active = self.store.global_cooldown_left(now_ms) > 0
+            || self
+                .store
+                .combat_cooldowns
+                .values()
+                .any(|until_s| until_s.saturating_mul(1000) > now_ms)
+            // M17/F30g: анимация прогресс-баров предметных кнопок.
+            || self
+                .store
+                .item_cooldowns
+                .values()
+                .any(|(until_ms, _)| *until_ms > now_ms)
+            // M18/F42: живой отсчёт таймеров реплик на кулдауне.
+            || self.store.npc_dialog.as_ref().is_some_and(|dialog| {
+                dialog.node.as_ref().is_some_and(|node| {
+                    node.replies.iter().any(|reply| {
+                        reply
+                            .wait_until_ms
+                            .is_some_and(|until| until > now_ms)
+                    })
+                })
+            })
+            // M18/F53: прогресс улучшения в диалоге.
+            || self.upgrade_progress.is_some();
+
+        if had_events
+            || cd_active
+            || t.exit
+            || t.inscribe
+            || t.upgrade
+            || t.harvest
+            || t.rune_bar
+            || t.rune_buffs
+            || t.attack_bar
+            || t.stun
+            || t.log
+        {
+            // gpui перерисовывается только по notify (аналог request_repaint).
+            cx.notify();
+        }
+        Duration::from_millis(
+            if had_events
+                || cd_active
+                || t.exit
+                || t.inscribe
+                || t.upgrade
+                || t.harvest
+                || t.rune_bar
+                || t.rune_buffs
+                || t.attack_bar
+            {
+                50
+            } else {
+                200
+            },
+        )
+    }
+
+    /// R-dnd: завершение drag вне зон → подтверждение выброса (RF3c).
+    fn tick_drag(&mut self, cx: &mut Context<'_, Self>) {
         // R-dnd: drag закончился и НИ ОДНА зона не поглотила его своим
         // on_drop (hover hit-test — работает для drag из любого места,
         // в отличие от on_drag_move, который срабатывает только у
@@ -42,18 +155,11 @@ impl Root {
                 self.drag_item = Some(drag);
             }
         }
-        let mut had_events = false;
-        for _ in 0..64 {
-            match self.ingress.try_recv() {
-                Ok(ev) => {
-                    had_events = true;
-                    let effects = self.store.apply(ev);
-                    self.exec_effects(effects);
-                }
-                Err(_) => break,
-            }
-        }
+    }
 
+    /// Догрузки при свободном ack-слоте: лут, админ-каталог, карта
+    /// мира, перекалибровка часов (RF3c).
+    fn tick_pumps(&mut self, cx: &mut Context<'_, Self>) {
         // R16 (§1.1): перекалибровка часов каждые 5 мин — сервер
         // отвечает evt/time.sync; медиану держит стор.
         let recalibrate = self
@@ -109,15 +215,12 @@ impl Root {
         if self.admin_target_request {
             self.pump_admin_target(cx);
         }
+    }
 
-        // Результат фоновой проверки обновлений (§12).
-        while let Ok(version) = self.update_rx.try_recv() {
-            if ld2_core::update_check::is_newer(&version, env!("CARGO_PKG_VERSION")) {
-                tracing::info!("доступна версия v{version}");
-                self.update_available = Some(version);
-            }
-        }
-
+    /// Активные таймеры/прогресс-бары: возвращает, что нужно
+    /// перерисовать и держать быстрый тик 50 мс (RF3c).
+    fn tick_timers(&mut self, cx: &mut Context<'_, Self>) -> TickActive {
+        let mut a = TickActive::default();
         // M11.7: таймер удаления (D20): тикает только на экране персонажей;
         // вход в игру/логаут (смена экрана) → отмена; истёк → char.delete.
         if self.store.pending_delete.is_some() {
@@ -137,7 +240,7 @@ impl Root {
 
         // M14/F16: таймер выхода — полоса анимируется (тик 50 мс),
         // по истечении 20 с действие выполняется автоматически.
-        let exit_active = self.exit_timer.is_some();
+        a.exit = self.exit_timer.is_some();
         if let Some((kind, deadline)) = self.exit_timer {
             if self.now_ms() >= deadline {
                 self.perform_exit(kind);
@@ -146,7 +249,7 @@ impl Root {
 
         // M17/F30a: каст-бар инкрустации (3 с, без отмены) — по
         // завершении отправляем socket.insert в первый свободный сокет.
-        let inscribe_active = self.cast_inscribe.is_some();
+        a.inscribe = self.cast_inscribe.is_some();
         if let Some((rune_uid, target_uid, ends)) = self.cast_inscribe.clone() {
             if self.now_ms() >= ends {
                 self.cast_inscribe = None;
@@ -157,24 +260,24 @@ impl Root {
         // M18/F53: прогресс улучшения в диалоге — по истечении 3 с
         // (из настроек сервера) отправляем cmd/upgrade.start; модалка
         // закроется по evt/upgrade/result.
-        let upgrade_progress_active = self.upgrade_progress.is_some();
+        a.upgrade = self.upgrade_progress.is_some();
         // M22: прогресс-бар разделки (5 с) должен идти плавно —
         // держим быстрый тик (50 мс) с notify, пока он активен.
-        let harvest_active = self.store.harvest.is_some();
+        a.harvest = self.store.harvest.is_some();
         // M24: прогрессбары зарядов рун живут по времени — тик,
         // пока хотя бы одна руна в надетом снаряжении не заполнена.
-        let rune_bar_active = self.rune_bar_active();
+        a.rune_bar = self.rune_bar_active();
         // M24: индикаторы бафов рун — живой отсчёт и моргание.
-        let rune_buffs_active = self.rune_buffs_active();
+        a.rune_buffs = self.rune_buffs_active();
         // M25: бары атак монстров — живая заливка до следующей атаки.
-        let attack_bar_active = self.attack_bars_active();
+        a.attack_bar = self.attack_bars_active();
         // M25: стан истёк — закрываем всплывающее окно.
-        let stun_expired = self
+        a.stun = self
             .store
             .stun
             .as_ref()
             .is_some_and(|s| self.now_ms() >= s.until_ms);
-        if stun_expired {
+        if a.stun {
             self.store.stun = None;
         }
         // M25: журнал локации исчезающий — строки старше TTL сервера
@@ -185,7 +288,7 @@ impl Root {
             .as_ref()
             .map(|s| s.journal_ttl_s)
             .unwrap_or(30);
-        let log_expired = self.store.expire_log(local_epoch_ms(), log_ttl_s);
+        a.log = self.store.expire_log(local_epoch_ms(), log_ttl_s);
         // M24 фикс: 4-й элемент — **длительность** (док поля), но
         // сравнивался с epoch-мс как дедлайн → старт уходил мгновенно
         // и прогресс-бар заточки не был виден. Теперь: старт + длительность.
@@ -237,79 +340,7 @@ impl Root {
             self.send_cmd(&cmd, Act::Preview);
         }
 
-        // M11.4: новый notice → всплывающий тост Ely (текст в экране
-        // остаётся до замены — на время жизни тоста возможен дубль).
-        if let Some(notice) = self.store.notice.clone() {
-            if self.last_notice.as_deref() != Some(notice.as_str()) {
-                self.last_notice = Some(notice.clone());
-                let toast = Toast::new(notice);
-                self.toaster.update(cx, |t, cx| {
-                    t.push(toast, cx);
-                });
-            }
-        } else {
-            self.last_notice = None;
-        }
-
-        // M14/F4: пока есть активный кулдаун (глобальный или любой
-        // собственный) — тик 50 мс, чтобы отсчёт на кнопках шёл плавно.
-        let now_ms = self.now_ms();
-        let cd_active = self.store.global_cooldown_left(now_ms) > 0
-            || self
-                .store
-                .combat_cooldowns
-                .values()
-                .any(|until_s| until_s.saturating_mul(1000) > now_ms)
-            // M17/F30g: анимация прогресс-баров предметных кнопок.
-            || self
-                .store
-                .item_cooldowns
-                .values()
-                .any(|(until_ms, _)| *until_ms > now_ms)
-            // M18/F42: живой отсчёт таймеров реплик на кулдауне.
-            || self.store.npc_dialog.as_ref().is_some_and(|dialog| {
-                dialog.node.as_ref().is_some_and(|node| {
-                    node.replies.iter().any(|reply| {
-                        reply
-                            .wait_until_ms
-                            .is_some_and(|until| until > now_ms)
-                    })
-                })
-            })
-            // M18/F53: прогресс улучшения в диалоге.
-            || self.upgrade_progress.is_some();
-
-        if had_events
-            || cd_active
-            || exit_active
-            || inscribe_active
-            || upgrade_progress_active
-            || harvest_active
-            || rune_bar_active
-            || rune_buffs_active
-            || attack_bar_active
-            || stun_expired
-            || log_expired
-        {
-            // gpui перерисовывается только по notify (аналог request_repaint).
-            cx.notify();
-        }
-        Duration::from_millis(
-            if had_events
-                || cd_active
-                || exit_active
-                || inscribe_active
-                || upgrade_progress_active
-                || harvest_active
-                || rune_bar_active
-                || rune_buffs_active
-                || attack_bar_active
-            {
-                50
-            } else {
-                200
-            },
-        )
+        a
     }
 
     pub(super) fn exec_effects(&mut self, effects: Vec<Effect>) {
