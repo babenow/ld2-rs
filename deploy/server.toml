@@ -3,8 +3,11 @@
 # Отличается от crates/ld2-server/server.example.toml ровно одной строкой —
 # database.url (хост БД `postgres` — имя сервиса в compose); состав ключей
 # контролируется тестом tests/config.rs::deploy_config_matches_example_except_db_url.
-# Секреты: в compose — POSTGRES_PASSWORD сервиса postgres; для прода меняется
-# здесь (файл можно монтировать свой: ./my-server.toml:/etc/ld2/server.toml:ro).
+#
+# ВНИМАНИЕ: это dev-шаблон для локального `docker compose up`. Креды ниже
+# (`ld2:ld2`) — учебные и НЕ секрет; для прода смонтируйте свой конфиг с
+# реальным паролем и не используйте POSTGRES_PASSWORD из compose:
+#   -v ./prod-server.toml:/etc/ld2/server.toml:ro
 
 [server]
 bind = "0.0.0.0:24817"     # WS-слушатель (в M12.1 отдаётся только /healthz)
@@ -15,7 +18,7 @@ log_level = "info"         # EnvFilter-директива: "info", "info,sqlx=wa
 allow_scenario = false     # M24: /scenario только для админа (прод)
 
 [database]
-# Секрет: не коммитить (server.toml в .gitignore), chmod 600.
+# dev-креды compose (см. предупреждение выше); прод: свой файл, chmod 600.
 url = "postgres://ld2:ld2@postgres:5432/ld2"
 max_connections = 10
 
