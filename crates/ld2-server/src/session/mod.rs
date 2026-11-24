@@ -157,44 +157,7 @@ impl Session {
         // (осмотр/снапшот/чат/диалоги), admin-панель, corpse.harvest
         // (переключение на другой труп разрешено; E_COOLDOWN — только
         // повторный старт на том же трупе).
-        const HARVEST_BLOCKED: &[&str] = &[
-            "cmd/location.move",
-            "cmd/combat.attack",
-            "cmd/combat.stop",
-            "cmd/combat.flee",
-            "cmd/skill.use",
-            "cmd/magic.rune_cast",
-            "cmd/magic.scroll_cast",
-            "cmd/resource.gather",
-            "cmd/craft.start",
-            "cmd/quest.accept",
-            "cmd/quest.turn_in",
-            "cmd/quest.abandon",
-            "cmd/trade.open",
-            "cmd/trade.add_item",
-            "cmd/trade.set_gold",
-            "cmd/trade.propose",
-            "cmd/trade.accept",
-            "cmd/trade.cancel",
-            "cmd/party.create",
-            "cmd/party.invite",
-            "cmd/party.accept",
-            "cmd/party.decline",
-            "cmd/party.leave",
-            "cmd/party.kick",
-            "cmd/guild.create",
-            "cmd/guild.join",
-            "cmd/guild.leave",
-            "cmd/guild.invite",
-            "cmd/guild.kick",
-            "cmd/guild.rank_set",
-            "cmd/shop.buy",
-            "cmd/upgrade.preview",
-            "cmd/upgrade.start",
-            "cmd/socket.insert",
-            "cmd/socket.extract",
-        ];
-        if HARVEST_BLOCKED.contains(&env.msg_type.as_str()) && self.char_is_harvesting() {
+        if gates::HARVEST_BLOCKED.contains(&env.msg_type.as_str()) && self.char_is_harvesting() {
             return vec![Self::err(seq, ErrorCode::Busy, "персонаж занят разделкой")];
         }
         // M25: дебаффы контроля (эффекты приёмов босса): стан — ничего,
@@ -205,7 +168,8 @@ impl Session {
         // R15: per-session rate-limit на мутирующие команды (D25: лимит
         // `[gameplay] cmd_rate_per_min`, 0 — выключен). auth/chat — свои
         // лимиты; каждая итерация берёт mutex мира и ходит в БД.
-        if HARVEST_BLOCKED.contains(&env.msg_type.as_str()) || env.msg_type == "cmd/item.use" {
+        if gates::HARVEST_BLOCKED.contains(&env.msg_type.as_str()) || env.msg_type == "cmd/item.use"
+        {
             if let Some(out) = self.cmd_rate_gate(seq) {
                 return vec![out];
             }
