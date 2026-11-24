@@ -9,7 +9,7 @@
 
 - **VCS:** git. Репозиторий — единственный источник правды по коду, контракту и истории.
 - **Язык/сборка:** Rust, workspace Cargo (`rust-toolchain.toml` фиксирует стабильный toolchain — не менять без ADR).
-- **CI:** GitHub Actions (fmt → clippy → test → build, матрица Win/macOS/Linux).
+- **CI:** GitHub Actions (fmt → clippy → test; сборка редактора и релизных артефактов, матрица Win/macOS/Linux).
 - **Кодинг-конвенции:** `cargo fmt` + `cargo clippy -- -D warnings` — обязательны; стиль именования модулей/фич — по `docs/tz.md` (ФР-xx/NFR-xx ID, snake_case модули, `evt/`–`cmd/` домены).
 - **Язык проекта — русский:** все коммиты (subject и body), все комментарии кода (включая doc-комментарии `///`, `//!`), описания PR, ADR и документация — **пишутся на русском языке**.
   - Английский допускается только в структурных идентификаторах и служебных маркерах: `type`/`scope` коммитов (`feat`, `fix`, `client`…), маркеры Conventional Commits (`BREAKING CHANGE:`, `Refs:`, `FR:`, `Milestone:`), имена API/типов/кодов ошибок (`E_…`, `cmd/`, `evt/`, имена crate'ов), а также названия инструментов (git, cargo, CI) и общепринятых терминов без точного эквивалента (reconnect, milestone, snapshot — по желанию можно русифицировать в тексте, идентификаторы — нет).
@@ -35,7 +35,7 @@ git remote add origin git@github.com:<org>/ld2-rs.git
 `.gitignore` обязателен с первого коммита: `target/`, `**/*.rs.bk`, IDE-артефакты (`.idea/`, `.vscode/` кроме общих `settings.json` по согласованию), ОС-мусор (`.DS_Store`), локальные конфиги (`*.local.toml`), логи и кэши клиента (`client-data/`).
 `Cargo.lock` — **коммитится** (у нас приложение, не библиотека).
 
-> **Секреты коммитить запрещено:** ключи, токены, `.env*`, `*.pem`, `*.p12` не коммитятся никогда. Тестовые креды мока (`demo/demo123`) — фикстуры, не секреты.
+> **Секреты коммитить запрещено:** ключи, токены, `.env*`, `*.pem`, `*.p12` не коммитятся никогда. Dev-креды контейнера (`ld2/ld2` в `deploy/server.toml`) — учебная заготовка, не секрет; прод-конфиг монтируется отдельно и не коммитится.
 
 ---
 
@@ -111,7 +111,7 @@ git checkout develop && git merge hotfix/0.3.1
 ```
 
 - **type:** `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `style`, `build`, `ci`, `chore`, `revert`.
-- **scope (обязателен):** `protocol` (`ld2-protocol`), `client` (общий UI/логика), `transport`, `reducer`, `ui`, `mock`, `build`, `ci`, `docs`.
+- **scope (обязателен):** `protocol` (`ld2-protocol`), `content` (`ld2-content`), `core` (`ld2-core`), `client` (UI/логика), `server` (`ld2-server`), `editor` (`ld2-editor`), `test-kit`, `transport`, `reducer`, `ui`, `build`, `ci`, `docs`, `history`, `budget`.
 - **Breaking:** `type!` или `!` в scope + `BREAKING CHANGE:` в футере. Правку контракта протокола считать breaking, только если поднимается `v` конверта (§4.11 ТЗ) — иначе это additive capability.
 - **Связь с ТЗ:** в footer указывать `FR: ФР-11`, `Milestone: M6`, при изменении контракта/структуры — префикс subject `[tz-amend]` (требование §15.1 ТЗ).
 
@@ -138,13 +138,13 @@ Refs: ADR-004, FR: ФР-09
 
 ### 5.1 Приложение и crate-ы — SemVer 2.0, lockstep
 
-Все crate-ы workspace (`ld2-protocol`, `ld2-client`, `ld2-mock-server`) версионируются **единой версией** `X.Y.Z` во всех `Cargo.toml` — синхронно, bump только на `release/*`-ветке одним коммитом `chore(build): релиз v0.3.0`.
+Все crate-ы workspace (`ld2-protocol`, `ld2-content`, `ld2-core`, `ld2-client`, `ld2-server`, `ld2-editor`, `ld2-test-kit`) версионируются **единой версией** `X.Y.Z` во всех `Cargo.toml` — синхронно, bump только на `release/*`-ветке одним коммитом `chore(build): релиз vX.Y.Z`. Публикуются только клиент/сервер/редактор (`publish = false` у остальных).
 
 | Изменение | Bump |
 |---|---|
 | Ломает UX/совместимость сохранённых конфигов, протокол `v` меняется | **major** (`X+1.0.0`) |
 | Новая игровая фича / новые команды-события (additive) / новые capability | **minor** (`Y+1.0`) |
-| Исправления, внутренние рефакторинги, балансировочные значения мока | **patch** (`Z+1`) |
+| Исправления, внутренние рефакторинги, балансировочные значения контента/сервера | **patch** (`Z+1`) |
 
 - `0.x.y` — пре-1.0: minor считается «стабильность фичи», major стартует с релизом M9 (клиент v1.0.0 для публичного доступа).
 - Теги релизов: `v<X.Y.Z>` (annotated; крипто-подпись — по желанию, ADR-001). Пре-релизы: `v0.4.0-rc.1`.
@@ -155,7 +155,7 @@ Refs: ADR-004, FR: ФР-09
 
 ### 5.3 Milestone-теги
 
-По §10 ТЗ каждый завершённый milestone тегируется: `m<n>-done` на merge-коммите `develop` (например `m3-done`). Это контрольные точки, не релизы.
+Каждый завершённый milestone тегируется `m<n>-done` на merge-коммите `develop` (например `m3-done`). Это контрольные точки, не релизы. Проставлены `m1-done`…`m27-done` (у M22, M24, M25 теги не проставлены — их закрытие зафиксировано в `HISTORY.md` и ROADMAP).
 
 ### 5.4 CHANGELOG
 
@@ -169,7 +169,7 @@ Refs: ADR-004, FR: ФР-09
 2. Обязательные поля описания PR (текст описания — **на русском языке**):
    - `Ties to:` ФР/NFR/§ ТЗ; milestone;
    - What/Why/How — кратко;
-   - Checklist: `fmt+clippy+test locally`, unit-тесты редукторов на новые домены, e2e-прогон мока (для геймплейных фич), UI-фича без reducer-теста **не мёржится** (§15.5 ТЗ).
+   - Checklist: `fmt+clippy+test locally` (тесты с БД — при `LD2_TEST_DATABASE_URL`), unit-тесты редукторов на новые домены, e2e-прогон против `ld2-server` (для геймплейных фич), UI-фича без reducer-теста **не мёржится** (§15.5 ТЗ). Для рефакторинга — `scripts/refactor-audit.sh --verify` и неизменный/уменьшенный бюджет.
 3. Минимум 1 одобрение (2 для `protocol`-crate и `[tz-amend]`).
 4. Squash-merge в `develop` (сохраняем атомарность milestone-шагов), `--no-ff` merge в `main` (история релизов явная).
 5. CI green — блокирующее; подписи коммитов/тегов — рекомендация (ADR-001).
@@ -183,8 +183,13 @@ Refs: ADR-004, FR: ФР-09
 ```bash
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+LD2_TEST_DATABASE_URL=postgres://ld2:ld2@127.0.0.1:5432/ld2_test cargo test --workspace
+scripts/refactor-audit.sh --verify   # бюджет рефакторинга не растёт
 ```
+
+> Toolchain зафиксирован в `rust-toolchain.toml` (1.100.0). Если локальный rustup не может
+> переключиться (например, песочница), используйте `RUSTUP_TOOLCHAIN=stable` при той же версии.
+> Pre-commit хук (`.githooks/pre-commit`) выполняет те же три проверки и наследует окружение.
 
 Хуки не обязательны к настройке, но CI не пускает нарушителя. Подключаем через `git config core.hooksPath .githooks` (папка `.githooks/` с `pre-commit` скриптом выше) по выбору контрибьютора.
 
@@ -201,7 +206,7 @@ cargo test --workspace
 
 ## 9. Соответствие milestone-плану
 
-См. таблицу §10 ТЗ: milestone → ветки → PR → tag `m<n>-done` → DoD.
+См. таблицу §10 ТЗ (исходный план M0–M9) и [`ROADMAP.md`](./ROADMAP.md) (фактические M0–M27): milestone → ветки → PR → tag `m<n>-done` → DoD.
 Начальный коммит M0 должен содержать: `Cargo.toml` workspace, `rust-toolchain.toml`, `.gitignore`, `README.md`, `CONTRIBUTING.md`, `ROADMAP.md`, `docs/tz.md`, `docs/protocol.md`, `docs/skills.md`, CI-воркфлоу.
 
 ---
