@@ -245,6 +245,9 @@ pub struct ItemSnapshot {
     /// M28: ёмкость сумки (контент `bag_slots`) — только для `type=bag`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bag_slots: Option<u32>,
+    /// M28: какие типы принимает сумка (пусто — любые).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bag_types: Option<Vec<String>>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }

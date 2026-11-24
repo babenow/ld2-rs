@@ -118,6 +118,10 @@ pub struct ContentItemDef {
     /// M28: ёмкость сумки (число слотов); `None` — предмет не сумка.
     #[serde(default)]
     pub bag_slots: Option<u32>,
+    /// M28: типы предметов, которые принимает сумка (например,
+    /// `["herb"]` — сумка травника); `None`/пусто — любые.
+    #[serde(default)]
+    pub bag_types: Option<Vec<String>>,
     /// M18/F47: бонусы предмета (ADR-010) — атрибут/параметр/навык.
     #[serde(default)]
     pub bonuses: Vec<ItemBonus>,

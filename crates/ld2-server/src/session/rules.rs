@@ -192,6 +192,7 @@ pub(crate) fn item_snapshot(
         container: Some(item.container.clone()),
         slot_index: item.slot_index,
         bag_slots: def.bag_slots.and_then(|v| u32::try_from(v).ok()),
+        bag_types: def.bag_types.clone(),
         // M17/F30g: определение — ключ кулдауна использования.
         def_id: Some(item.def_id.clone()),
         slot: def.slot.clone(),
@@ -299,6 +300,7 @@ mod tests {
             cooldown_s: 1.5,
             bonuses: Some(json!([{ "kind": "attr", "id": "str", "value": 1 }])),
             bag_slots: None,
+            bag_types: None,
         }
     }
 

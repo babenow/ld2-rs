@@ -14,7 +14,7 @@ use gpui::{
     div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, MouseButton,
     SharedString, Window,
 };
-use ld2_core::l10n::{t, tf, Key};
+use ld2_core::l10n::{t, tf, Key, Lang};
 use ld2_core::store::Screen;
 use ld2_protocol::cmd::ItemMove;
 use ld2_protocol::types::CharacterState;
@@ -147,7 +147,7 @@ pub(crate) fn tab_for_type(item_type: &str) -> BackpackTab {
         "potion" => BackpackTab::Potion,
         "rune" | "scroll" => BackpackTab::Magic,
         "herb" | "wood_oak" | "parchment" | "ink" | "ore_copper" | "branches" | "hide_scraps"
-        | "hide" | "meat" | "offal" => BackpackTab::Material,
+        | "hide" | "meat" | "offal" | "ammo" => BackpackTab::Material,
         // M20/F20b: инструменты добычи (топор/кирка/серп) — к инструментам.
         "flask" | "chisel" | "quill" | "upgrade_stone" | "axe" | "pickaxe" | "sickle"
         | "skinning_knife" => BackpackTab::Tool,
@@ -157,6 +157,16 @@ pub(crate) fn tab_for_type(item_type: &str) -> BackpackTab {
         "artifact" => BackpackTab::Artifact,
         "gem" => BackpackTab::Gem,
         _ => BackpackTab::Other,
+    }
+}
+
+/// M28: подпись типа предмета для `bag_types` (неизвестный — как есть).
+fn bag_type_label(lang: Lang, item_type: &str) -> String {
+    match item_type {
+        "ammo" => t(lang, Key::BagTypeAmmo).to_string(),
+        "herb" => t(lang, Key::BagTypeHerb).to_string(),
+        "gem" => t(lang, Key::BagTypeGem).to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -567,6 +577,16 @@ impl Root {
             .filter(|i| Self::in_container(i, container))
             .count();
         let free = Self::first_free_slot(&items, container, cap);
+        let accepts: Option<String> = container
+            .and_then(|uid| items.iter().find(|i| i.uid == uid))
+            .and_then(|i| i.bag_types.clone())
+            .filter(|list| !list.is_empty())
+            .map(|list| {
+                list.iter()
+                    .map(|ty| bag_type_label(lang, ty))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            });
         // Для drop-замыкания: None — базовый рюкзак.
         let target = container
             .map(str::to_string)
@@ -588,8 +608,15 @@ impl Root {
             .border_b_1()
             .border_color(rgb(pal.border))
             .child(div().font_weight(gpui::FontWeight::BOLD).child(title))
-            .child(div().text_color(rgb(pal.muted)).child(usage))
-            .child(div().flex_grow_1());
+            .child(div().text_color(rgb(pal.muted)).child(usage));
+        if let Some(accepts) = accepts {
+            head = head.child(div().text_color(rgb(pal.muted)).child(tf(
+                lang,
+                Key::BpBagAccepts,
+                &[("types", accepts.as_str())],
+            )));
+        }
+        head = head.child(div().flex_grow_1());
         if closable {
             let this_close = this.clone();
             head = head.child(
@@ -1028,6 +1055,7 @@ mod tests {
             container: None,
             slot_index: None,
             bag_slots: None,
+            bag_types: None,
             extra: Default::default(),
         };
         let items = vec![

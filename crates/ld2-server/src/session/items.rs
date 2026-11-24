@@ -78,6 +78,10 @@ impl Session {
                         db::items::PlaceError::BagBusy => {
                             (ErrorCode::InventoryFull, "слот сумки занят")
                         }
+                        db::items::PlaceError::WrongType => (
+                            ErrorCode::BagType,
+                            "эта сумка не принимает такой тип предметов",
+                        ),
                         db::items::PlaceError::Internal => {
                             warn!("item.move: внутренняя ошибка контейнеров");
                             (ErrorCode::Internal, "внутренняя ошибка")

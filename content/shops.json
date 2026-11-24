@@ -40,7 +40,10 @@
             "dagger_knife",
             "linen_bag",
             "wool_bag",
-            "silk_bag"
+            "silk_bag",
+            "arrow",
+            "quiver",
+            "herbalist_bag"
           ]
         }
       ]

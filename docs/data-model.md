@@ -482,7 +482,9 @@ price        = max(round(price_gold × rate), 1)
 `items.container` (`backpack`/`bags`/uid сумки) и `items.slot_index`
 задают место; уникальный индекс `items_container_slot_uniq`
 `(character_id, container, slot_index)` (только при непустом `slot_index`);
-`item_defs.bag_slots` — ёмкость сумки; `characters.bags_granted` — флаг
+`item_defs.bag_slots` — ёмкость сумки, `item_defs.bag_types` (TEXT[])
+— какие типы предметов она принимает (`NULL`/пусто — любые);
+`characters.bags_granted` — флаг
 разовой выдачи стартовых сумок. Ёмкость — базовые `inventory.slots` +
 сумма `bag_slots` надетых сумок. `items.character_id` допускает `NULL`
 (предметы вне инвентаря).
