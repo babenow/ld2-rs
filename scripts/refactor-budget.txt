@@ -9,7 +9,6 @@ crates/ld2-client/src/root/admin.rs 724 167
 crates/ld2-client/src/root/game/dialog.rs 848 161
 crates/ld2-client/src/root/game/entities.rs 656 187
 crates/ld2-client/src/root/game.rs 724 150
-crates/ld2-client/src/root/hotkeys.rs 337 215
 crates/ld2-client/src/root/settings.rs 763 166
 crates/ld2-client/src/root/sheet/character.rs 738 150
 crates/ld2-client/src/root/sheet/equip.rs 630 181

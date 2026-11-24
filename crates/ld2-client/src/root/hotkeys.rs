@@ -82,103 +82,130 @@ impl Root {
         }
         // M15/F25/M16: Esc закрывает верхнее из окон — но не поверх
         // настроек/диалога выхода (они ловят Esc сами).
-        if !self.settings_open && self.exit_timer.is_none() && ks.key == "escape" {
-            // M23: окно подятия — верхний слой группы попапов (рисуется
-            // последним поверх всех попапов): Esc закрывает его первым.
-            if self.pickup_popup.open {
-                tracing::debug!("закрытие окна подятия: Esc");
-                self.close_pickup();
-                cx.notify();
-                return;
-            }
-            // M18/F54: окно заточки (список предметов или сама заточка) —
-            // верхний слой группы окон; Esc закрывает оба экрана разом.
-            if self.store.sharpen_stone.is_some() || self.store.upgrade.is_some() {
-                tracing::debug!("закрытие окна заточки: Esc");
-                self.store.close_upgrade();
-                self.store.sharpen_stone = None;
-                self.store.sharpen_list = false;
-                self.upgrade_progress = None;
-                cx.notify();
-                return;
-            }
-            // M20: окно количества — верхний слой.
-            if self.quantity_pick.is_some() {
-                self.quantity_pick = None;
-                self.quantity_popup.open = false;
-                cx.notify();
-                return;
-            }
-            // M18: окно сокетов — верхний слой группы попапов; Esc
-            // сначала возвращает со второй страницы к списку слотов.
-            if self.store.socketing.is_some() {
-                if self.socket_pick.is_some() {
-                    self.socket_pick = None;
-                    cx.notify();
-                    return;
-                }
-                tracing::info!("закрытие окна сокетов: Esc");
-                self.store.close_socketing();
-                self.socket_popup.open = false;
-                cx.notify();
-                return;
-            }
-            // M18/F53: описание предмета — поверх окна заточки.
-            if self.store.item_detail.is_some() {
-                tracing::debug!("закрытие описания предмета: Esc");
-                self.store.item_detail = None;
-                cx.notify();
-                return;
-            }
-            // M20: игровой диалог — верхний слой (заготовка).
-            if self.store.dialog.is_some() {
-                tracing::debug!("закрытие игрового диалога: Esc");
-                self.close_game_dialog();
-                cx.notify();
-                return;
-            }
-            // M21: окно профессий (заготовка сброса гаснет вместе).
-            if self.professions_popup.open {
-                tracing::debug!("закрытие окна профессий: Esc");
-                self.professions_popup.open = false;
-                self.prof_reset_armed = None;
-                cx.notify();
-                return;
-            }
-            // M24: админ-панель — ниже диалога/профессий в стеке слоёв.
-            if self.admin_popup.open {
-                tracing::debug!("закрытие админ-панели: Esc");
-                self.close_admin();
-                cx.notify();
-                return;
-            }
-            // M18/F38: диалог NPC — верхний слой группы окон.
-            if self.store.npc_dialog.is_some() {
-                tracing::debug!("закрытие диалога NPC: Esc");
-                self.store.npc_dialog = None;
-                self.npc_popup.open = false;
-                cx.notify();
-                return;
-            }
-            // M18/F36: квесты рисуются поверх рюкзака — Esc закрывает
-            // верхнее (после рассуждений порядок: диалог → квесты →
-            // рюкзак → персонаж).
-            if self.quests_popup.open {
-                self.quests_popup.open = false;
-                cx.notify();
-                return;
-            }
-            if self.backpack_popup.open {
-                self.backpack_popup.open = false;
-                cx.notify();
-                return;
-            }
-            if self.char_popup.open {
-                self.char_popup.open = false;
-                cx.notify();
-                return;
-            }
+        if self.esc_closes_top(ks, cx) {
+            return;
         }
+        // M15/F25: хоткей окна персонажа (кнопка в шапке дублирует);
+        // M16/F29b: окна открываются одновременно (общий scrim).
+        if self.popup_hotkeys(ks, cx) {
+            return;
+        }
+        // M14/F4: боевые действия панели — те же действия, что кнопки
+        // (цифры 1–6; Esc занят диалогами → «Побег» = 4).
+        if self.action_hotkey(ks, cx) {
+            cx.notify();
+        }
+    }
+
+    /// Esc: закрыть верхнее окно из стека попапов (M15/F25, M18/F53/54,
+    /// M20, M21, M23, M24, M26). `true` — нажатие обработано.
+    /// Вынесено из `handle_keystroke` (RF3u), тело перенесено как есть.
+    fn esc_closes_top(&mut self, ks: &gpui::Keystroke, cx: &mut Context<'_, Self>) -> bool {
+        if self.settings_open || self.exit_timer.is_some() || ks.key != "escape" {
+            return false;
+        }
+        // M23: окно подятия — верхний слой группы попапов (рисуется
+        // последним поверх всех попапов): Esc закрывает его первым.
+        if self.pickup_popup.open {
+            tracing::debug!("закрытие окна подятия: Esc");
+            self.close_pickup();
+            cx.notify();
+            return true;
+        }
+        // M18/F54: окно заточки (список предметов или сама заточка) —
+        // верхний слой группы окон; Esc закрывает оба экрана разом.
+        if self.store.sharpen_stone.is_some() || self.store.upgrade.is_some() {
+            tracing::debug!("закрытие окна заточки: Esc");
+            self.store.close_upgrade();
+            self.store.sharpen_stone = None;
+            self.store.sharpen_list = false;
+            self.upgrade_progress = None;
+            cx.notify();
+            return true;
+        }
+        // M20: окно количества — верхний слой.
+        if self.quantity_pick.is_some() {
+            self.quantity_pick = None;
+            self.quantity_popup.open = false;
+            cx.notify();
+            return true;
+        }
+        // M18: окно сокетов — верхний слой группы попапов; Esc
+        // сначала возвращает со второй страницы к списку слотов.
+        if self.store.socketing.is_some() {
+            if self.socket_pick.is_some() {
+                self.socket_pick = None;
+                cx.notify();
+                return true;
+            }
+            tracing::info!("закрытие окна сокетов: Esc");
+            self.store.close_socketing();
+            self.socket_popup.open = false;
+            cx.notify();
+            return true;
+        }
+        // M18/F53: описание предмета — поверх окна заточки.
+        if self.store.item_detail.is_some() {
+            tracing::debug!("закрытие описания предмета: Esc");
+            self.store.item_detail = None;
+            cx.notify();
+            return true;
+        }
+        // M20: игровой диалог — верхний слой (заготовка).
+        if self.store.dialog.is_some() {
+            tracing::debug!("закрытие игрового диалога: Esc");
+            self.close_game_dialog();
+            cx.notify();
+            return true;
+        }
+        // M21: окно профессий (заготовка сброса гаснет вместе).
+        if self.professions_popup.open {
+            tracing::debug!("закрытие окна профессий: Esc");
+            self.professions_popup.open = false;
+            self.prof_reset_armed = None;
+            cx.notify();
+            return true;
+        }
+        // M24: админ-панель — ниже диалога/профессий в стеке слоёв.
+        if self.admin_popup.open {
+            tracing::debug!("закрытие админ-панели: Esc");
+            self.close_admin();
+            cx.notify();
+            return true;
+        }
+        // M18/F38: диалог NPC — верхний слой группы окон.
+        if self.store.npc_dialog.is_some() {
+            tracing::debug!("закрытие диалога NPC: Esc");
+            self.store.npc_dialog = None;
+            self.npc_popup.open = false;
+            cx.notify();
+            return true;
+        }
+        // M18/F36: квесты рисуются поверх рюкзака — Esc закрывает
+        // верхнее (после рассуждений порядок: диалог → квесты →
+        // рюкзак → персонаж).
+        if self.quests_popup.open {
+            self.quests_popup.open = false;
+            cx.notify();
+            return true;
+        }
+        if self.backpack_popup.open {
+            self.backpack_popup.open = false;
+            cx.notify();
+            return true;
+        }
+        if self.char_popup.open {
+            self.char_popup.open = false;
+            cx.notify();
+            return true;
+        }
+        false
+    }
+
+    /// Хоткеи окон персонажа/рюкзака/квестов/профессий/карты (M15/F25,
+    /// M16/F29b, M18/F36, M21, M26). `true` — нажатие обработано.
+    /// Вынесено из `handle_keystroke` (RF3u), тело перенесено как есть.
+    fn popup_hotkeys(&mut self, ks: &gpui::Keystroke, cx: &mut Context<'_, Self>) -> bool {
         // M15/F25: хоткей окна персонажа (кнопка в шапке дублирует);
         // M16/F29b: окна открываются одновременно (общий scrim).
         if keystroke_matches(&self.config.hotkeys.open_character, ks) {
@@ -190,7 +217,7 @@ impl Root {
                 self.open_popup(PopupKind::Character);
             }
             cx.notify();
-            return;
+            return true;
         }
         // M16/F29b: хоткей рюкзака (кнопка в шапке дублирует).
         if keystroke_matches(&self.config.hotkeys.open_backpack, ks) {
@@ -200,7 +227,7 @@ impl Root {
                 self.open_popup(PopupKind::Backpack);
             }
             cx.notify();
-            return;
+            return true;
         }
         // M18/F36: хоткей окна квестов (кнопка в шапке дублирует).
         if keystroke_matches(&self.config.hotkeys.open_quests, ks) {
@@ -210,7 +237,7 @@ impl Root {
                 self.open_popup(PopupKind::Quests);
             }
             cx.notify();
-            return;
+            return true;
         }
         // M21: хоткей окна профессий («p» — кнопка в шапке дублирует).
         if keystroke_matches(&self.config.hotkeys.open_professions, ks) {
@@ -221,7 +248,7 @@ impl Root {
             }
             self.prof_reset_armed = None;
             cx.notify();
-            return;
+            return true;
         }
         // M26: хоткей окна карты («m» — кнопка в шапке дублирует).
         if keystroke_matches(&self.config.hotkeys.open_map, ks) {
@@ -231,13 +258,9 @@ impl Root {
                 self.open_popup(PopupKind::Map);
             }
             cx.notify();
-            return;
+            return true;
         }
-        // M14/F4: боевые действия панели — те же действия, что кнопки
-        // (цифры 1–6; Esc занят диалогами → «Побег» = 4).
-        if self.action_hotkey(ks, cx) {
-            cx.notify();
-        }
+        false
     }
 
     /// M14/F4: боевой хоткей → то же действие, что кнопка панели.
