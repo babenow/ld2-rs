@@ -12,7 +12,7 @@ use ld2_protocol::cmd::{CharCreate, CharSelect};
 
 use crate::palette::{palette, Palette};
 
-use super::{act_btn, Root};
+use super::{act_btn, Root, SendSlot};
 
 impl Root {
     /// M11.2: диалоги экрана персонажей (ФР-02): создание/удаление.
@@ -196,9 +196,8 @@ impl Root {
                             let cmd = CharSelect {
                                 char_id: cid2.clone(),
                             };
-                            match this.transport.send(&cmd) {
-                                Ok(_) => this.store.on_select_sent(),
-                                Err(e) => this.store.select_error = Some(format!("нет связи: {e}")),
+                            if this.send_or_notice(&cmd, SendSlot::Select) {
+                                this.store.on_select_sent()
                             }
                         }
                         let _ = cx;
@@ -384,12 +383,9 @@ impl Root {
                         // M18/F34: пол из селектора формы.
                         gender: Some(this.create_gender.value().to_string()),
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => {
-                            this.store.on_create_sent();
-                            this.create_submitted = true;
-                        }
-                        Err(e) => this.store.create_error = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Create) {
+                        this.store.on_create_sent();
+                        this.create_submitted = true;
                     }
                 },
             ));

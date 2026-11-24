@@ -41,7 +41,7 @@ use ely::primitives::{IconName, Tooltip, TooltipTrigger};
 use super::quests::goals_summary;
 use super::{
     act_btn, char_card_origin, clamp_char_size, scrollable_tab, DragSource, ItemDrag, PopupDrag,
-    PopupKind, PopupResize, Root,
+    PopupKind, PopupResize, Root, SendSlot,
 };
 
 /// Вкладки окна персонажа (M15/F25; персистентно строкой в config).
@@ -870,9 +870,7 @@ impl Root {
                         if let DragSource::Equip(slot) = &drag.from {
                             tracing::info!("dnd: drop в окно рюкзака → снять в рюкзак");
                             let cmd = ItemUnequip { slot: slot.clone() };
-                            if let Err(e) = root.transport.send(&cmd) {
-                                root.store.notice = Some(format!("нет связи: {e}"));
-                            }
+                            let _ = root.send_or_notice(&cmd, SendSlot::Notice);
                         } else {
                             // Предмет из рюкзака в своё же окно — без
                             // действия (не «выбросить»).
@@ -1155,9 +1153,8 @@ impl Root {
 
     /// Отправка команды листа (паритет egui `send`).
     pub(crate) fn send_cmd<C: ld2_protocol::Command>(&mut self, cmd: &C, act: Act) {
-        match self.transport.send(cmd) {
-            Ok(_) => self.store.on_sheet_sent(act),
-            Err(e) => self.store.notice = Some(format!("нет связи: {e}")),
+        if self.send_or_notice(cmd, SendSlot::Notice) {
+            self.store.on_sheet_sent(act)
         }
     }
 

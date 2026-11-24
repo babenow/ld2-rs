@@ -87,18 +87,15 @@ impl Root {
             password: form.password,
             email,
         };
-        match self.transport.send(&cmd) {
-            Ok(_) => {
-                self.store.on_register_sent(&form.login);
-                self.register_submitted = true;
-            }
-            Err(e) => {
-                self.store.register_error = Some(RegisterError {
-                    field: RegisterField::Form,
-                    message: format!("нет связи: {e}"),
-                    retry_after_s: None,
-                })
-            }
+        if let Err(message) = self.try_send(&cmd) {
+            self.store.register_error = Some(RegisterError {
+                field: RegisterField::Form,
+                message,
+                retry_after_s: None,
+            })
+        } else {
+            self.store.on_register_sent(&form.login);
+            self.register_submitted = true;
         }
     }
 
