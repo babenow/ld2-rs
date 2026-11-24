@@ -195,6 +195,7 @@ pub(super) fn t(key: Key) -> &'static str {
         StateUnknown => "неизвестно",
         ChCollapse => "свернуть",
         MuteFilterLabel => "Фильтр мата",
+        SettingsShowAllBags => "Показывать все сумки",
         ChNeedParty => "Вы не в группе — канал недоступен",
         ChNeedGuild => "Вы не в гильдии — канал недоступен",
         StatusBarAuthor => "Автор: {author} · версия {v}",

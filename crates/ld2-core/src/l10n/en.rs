@@ -195,6 +195,7 @@ pub(super) fn t(key: Key) -> &'static str {
         StateUnknown => "unknown",
         ChCollapse => "collapse",
         MuteFilterLabel => "Profanity filter",
+        SettingsShowAllBags => "Show all bags",
         ChNeedParty => "You are not in a party — channel unavailable",
         ChNeedGuild => "You are not in a guild — channel unavailable",
         StatusBarAuthor => "Author: {author} · v{v}",

@@ -255,6 +255,8 @@ pub enum Key {
     ChCollapse,
     /// R-чат (заказчик 2026-11-20): мат-фильтр исходящих (настройки).
     MuteFilterLabel,
+    /// M28: рюкзак показывает содержимое всех надетых сумок.
+    SettingsShowAllBags,
     /// R-чат (заказчик 2026-11-20): канал группы без группы.
     ChNeedParty,
     /// R-чат (заказчик 2026-11-20): канал гильдии без гильдии.
@@ -911,6 +913,7 @@ mod tests {
         Key::StateUnknown,
         Key::ChCollapse,
         Key::MuteFilterLabel,
+        Key::SettingsShowAllBags,
         Key::ChNeedParty,
         Key::ChNeedGuild,
         Key::EffectBurn,

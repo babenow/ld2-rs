@@ -135,6 +135,10 @@ impl Root {
                 self.config.chat_mute_filter = on;
                 self.save_config();
             }
+            Click::SetBackpackShowAllBags(on) => {
+                self.config.backpack_show_all_bags = on;
+                self.save_config();
+            }
             Click::EditHost => {
                 // Предзаполнение текущим адресом (как при открытии
                 // настроек) и раскрытие ввода.

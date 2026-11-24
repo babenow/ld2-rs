@@ -88,6 +88,10 @@ pub struct Config {
     /// Мат-фильтр исходящих сообщений (заказчик; вкл/выкл в настройках).
     #[serde(default)]
     pub chat_mute_filter: bool,
+    /// M28: рюкзак показывает содержимое **всех** надетых сумок
+    /// (по умолчанию), а не только выбранной; переключается в настройках.
+    #[serde(default = "default_true")]
+    pub backpack_show_all_bags: bool,
     /// Горячие клавиши — ремаппинг (ФР-19): см. [`Hotkeys`].
     #[serde(default)]
     pub hotkeys: Hotkeys,
@@ -405,6 +409,7 @@ impl Default for Config {
             chat_collapsed: false,
             chat_height_pct: default_chat_height_pct(),
             chat_mute_filter: false,
+            backpack_show_all_bags: true,
             hotkeys: Hotkeys::default(),
         }
     }
@@ -530,6 +535,8 @@ mod tests {
         // M26: окно карты мира.
         assert_eq!(cfg.hotkeys.open_map, "m", "окно карты (M26)");
         assert_eq!(cfg.backpack_tab, "all");
+        // M28: в старом конфиге сумки показываются все (поведение по умолчанию).
+        assert!(cfg.backpack_show_all_bags);
         // M16/F29j: «запомнить пароль» в старом конфиге выключено.
         assert!(!cfg.remember_password);
         // M14/F8: шрифты чата/лога в старом конфиге — дефолт 12 px.
