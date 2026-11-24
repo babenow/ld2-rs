@@ -478,9 +478,14 @@ price        = max(round(price_gold × rate), 1)
 `item_defs.cooldown_s` — `NOT NULL DEFAULT 1.0`; `bonuses` — JSONB
 `[{kind,id,value,pct?}]`; `rune_sockets` — `NULL` означает дефолт по типу.
 `items.sockets` — JSONB-массив слотов; `sort_order` задаёт порядок в
-инвентаре (`ORDER BY sort_order NULLS LAST, created_at, uid`); лимит
-инвентаря — 100 слотов. `items.character_id` допускает `NULL` (предметы
-вне инвентаря).
+инвентаре (`ORDER BY sort_order NULLS LAST, created_at, uid`). M28:
+`items.container` (`backpack`/`bags`/uid сумки) и `items.slot_index`
+задают место; уникальный индекс `items_container_slot_uniq`
+`(character_id, container, slot_index)` (только при непустом `slot_index`);
+`item_defs.bag_slots` — ёмкость сумки; `characters.bags_granted` — флаг
+разовой выдачи стартовых сумок. Ёмкость — базовые `inventory.slots` +
+сумма `bag_slots` надетых сумок. `items.character_id` допускает `NULL`
+(предметы вне инвентаря).
 
 `loot_taken.uid` — `loot:<entity>:<idx>` для базового лута и
 `inner:<corpse>:<idx>` для внутренностей; уникальность на персонажа
