@@ -6,6 +6,7 @@
 
 # --- прод-лимиты (файлы > 600 строк и целевые модули) ---
 crates/ld2-client/src/root/admin.rs 724 167
+crates/ld2-client/src/root/backpack.rs 952 161
 crates/ld2-client/src/root/game/dialog.rs 848 161
 crates/ld2-client/src/root/game/entities.rs 656 187
 crates/ld2-client/src/root/game.rs 724 150
@@ -13,29 +14,28 @@ crates/ld2-client/src/root/settings.rs 763 166
 crates/ld2-client/src/root/sheet/character.rs 738 150
 crates/ld2-client/src/root/sheet/equip.rs 630 181
 crates/ld2-client/src/root/social.rs 613 150
-crates/ld2-client/src/root.rs 887 174
+crates/ld2-client/src/root.rs 891 175
 crates/ld2-client/src/text_input.rs 699 150
-crates/ld2-core/src/l10n/en.rs 521 517
-crates/ld2-core/src/l10n/mod.rs 710 150
-crates/ld2-core/src/l10n/ru.rs 521 517
+crates/ld2-core/src/l10n/en.rs 518 514
+crates/ld2-core/src/l10n/mod.rs 709 150
+crates/ld2-core/src/l10n/ru.rs 518 514
 crates/ld2-core/src/store.rs 813 150
 crates/ld2-editor/src/app.rs 8329 647
 crates/ld2-editor/src/project.rs 1975 150
-crates/ld2-protocol/src/cmd.rs 646 150
+crates/ld2-protocol/src/cmd.rs 654 150
 crates/ld2-protocol/src/evt.rs 702 150
-crates/ld2-server/src/session/chars.rs 655 231
+crates/ld2-server/src/session/chars.rs 667 231
 crates/ld2-server/src/session/combat.rs 747 268
-crates/ld2-server/src/session/dev.rs 592 289
-crates/ld2-server/src/session/entity.rs 443 230
+crates/ld2-server/src/session/dev.rs 597 289
+crates/ld2-server/src/session/entity.rs 451 238
 crates/ld2-server/src/session/harvest.rs 396 204
-crates/ld2-server/src/session/items.rs 879 250
+crates/ld2-server/src/session/items.rs 956 250
 crates/ld2-server/src/session/magic.rs 601 329
-crates/ld2-server/src/session/mod.rs 587 222
 crates/ld2-server/src/session/quests.rs 320 253
 crates/ld2-server/src/session/socketing.rs 509 310
 crates/ld2-server/src/session/upgrade.rs 475 343
 crates/ld2-server/src/tick/combat.rs 939 150
-crates/ld2-test-kit/src/fixtures.rs 628 150
+crates/ld2-test-kit/src/fixtures.rs 641 150
 
 # --- минимум тестов по крейтам ---
 tests ld2-client 50
@@ -43,5 +43,5 @@ tests ld2-content 17
 tests ld2-core 117
 tests ld2-editor 28
 tests ld2-protocol 20
-tests ld2-server 80
+tests ld2-server 82
 tests ld2-test-kit 0
