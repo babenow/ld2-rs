@@ -113,6 +113,18 @@ impl Session {
                         warn!("char.create (ресурс): {e}");
                     }
                 }
+                // M28/B2: стартовые сумки (4 слота) — сразу при создании.
+                let inv = &self.state.config.gameplay.inventory;
+                if let Err(e) = db::items::grant_bags(
+                    pool,
+                    &row.id,
+                    i32::try_from(inv.bag_slots).unwrap_or(0),
+                    db::items::STARTER_BAG_DEF,
+                )
+                .await
+                {
+                    warn!("char.create (сумки): {e}");
+                }
                 let character = self.summary_for(&row).await;
                 vec![Self::ack_payload(
                     seq,

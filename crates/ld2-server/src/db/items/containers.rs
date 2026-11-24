@@ -10,6 +10,18 @@ use sqlx::PgPool;
 pub const BACKPACK: &str = "backpack";
 /// Слоты под надетые сумки.
 pub const BAGS: &str = "bags";
+/// M28: определение стартовой сумки (content/items.json).
+pub const STARTER_BAG_DEF: &str = "traveler_bag";
+
+/// Есть ли предметы внутри сумки `uid` (снять/выбросить непустую нельзя).
+pub async fn bag_has_contents(pool: &PgPool, uid: &str) -> Result<bool, sqlx::Error> {
+    let found: Option<String> =
+        sqlx::query_scalar("SELECT uid FROM items WHERE container = $1 LIMIT 1")
+            .bind(uid)
+            .fetch_optional(pool)
+            .await?;
+    Ok(found.is_some())
+}
 
 /// Ёмкость: база из конфига + `bag_slots` всех надетых сумок.
 pub async fn capacity(pool: &PgPool, char_id: &str, base: i64) -> Result<i64, sqlx::Error> {

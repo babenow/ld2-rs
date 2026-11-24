@@ -90,10 +90,11 @@ pub async fn delete(pool: &PgPool, uid: &str) -> Result<u64, sqlx::Error> {
     Ok(result.rows_affected())
 }
 
-/// Удалить весь инвентарь (смерть, ФР-06) → строки для `lost_items`.
+/// Удалить весь лут (смерть, ФР-06) → строки для `lost_items`.
+/// M28: сами сумки остаются надетыми — теряется только их содержимое.
 pub async fn delete_all(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
-        "DELETE FROM items WHERE character_id = $1 \
+        "DELETE FROM items WHERE character_id = $1 AND container <> 'bags' \
          RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)

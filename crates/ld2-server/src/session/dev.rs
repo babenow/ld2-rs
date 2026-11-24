@@ -509,8 +509,13 @@ impl Session {
                 "нет такого определения",
             )];
         };
-        if db::items::count(pool, &char_id).await.unwrap_or(i64::MAX)
-            >= i64::from(self.state.config.gameplay.inventory.slots)
+        if !db::items::has_space(
+            pool,
+            &char_id,
+            i64::from(self.state.config.gameplay.inventory.slots),
+        )
+        .await
+        .unwrap_or(false)
         {
             return vec![Self::err(
                 seq,

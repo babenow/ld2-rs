@@ -32,6 +32,61 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
+        // M28/B2: перемещение по контейнерам (рюкзак/сумки/сумка-uid).
+        if let (Some(to_container), Some(to_index)) = (cmd.to_container.as_deref(), cmd.to_index) {
+            let inv = &self.state.config.gameplay.inventory;
+            return match db::items::place(
+                &self.state.pool,
+                &char_id,
+                &cmd.item_uid,
+                to_container,
+                to_index,
+                i64::from(inv.slots),
+                i32::try_from(inv.bag_slots).unwrap_or(0),
+            )
+            .await
+            {
+                Ok(()) => vec![Self::ack_payload(
+                    seq,
+                    &serde_json::json!({
+                        "item_uid": cmd.item_uid,
+                        "container": to_container,
+                        "slot_index": to_index,
+                    }),
+                )],
+                Err(e) => {
+                    let (code, msg) = match e {
+                        db::items::PlaceError::Gone => (ErrorCode::ItemGone, "предмета нет"),
+                        db::items::PlaceError::Equipped => {
+                            (ErrorCode::InventoryFull, "предмет надет — сначала снимите")
+                        }
+                        db::items::PlaceError::NoSuchBag => {
+                            (ErrorCode::InventoryFull, "надетой сумки нет")
+                        }
+                        db::items::PlaceError::NotABag => {
+                            (ErrorCode::InventoryFull, "в слот сумки кладут не сумку")
+                        }
+                        db::items::PlaceError::BagNotEmpty => {
+                            (ErrorCode::InventoryFull, "сумка не пуста")
+                        }
+                        db::items::PlaceError::BagInBag => {
+                            (ErrorCode::InventoryFull, "сумку в сумку класть нельзя")
+                        }
+                        db::items::PlaceError::OutOfRange => {
+                            (ErrorCode::InventoryFull, "вне ёмкости контейнера")
+                        }
+                        db::items::PlaceError::BagBusy => {
+                            (ErrorCode::InventoryFull, "слот сумки занят")
+                        }
+                        db::items::PlaceError::Internal => {
+                            warn!("item.move: внутренняя ошибка контейнеров");
+                            (ErrorCode::Internal, "внутренняя ошибка")
+                        }
+                    };
+                    vec![Self::err(seq, code, msg)]
+                }
+            };
+        }
         match db::items::swap_order(&self.state.pool, &char_id, &cmd.item_uid, &cmd.target_uid)
             .await
         {
@@ -493,8 +548,8 @@ impl Session {
         if db::items::stackable_exists(pool, char_id, def_id).await? {
             return Ok(true);
         }
-        let n = db::items::count(pool, char_id).await?;
-        Ok(n < i64::from(slots))
+        // M28: ёмкость = база + надетые сумки; надетое место не занимает.
+        db::items::has_space(pool, char_id, i64::from(slots)).await
     }
 
     /// `cmd/item.equip` (§7): слот — из конфига (D25), требования — из
@@ -749,6 +804,28 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
         };
+        // M28: непустую сумку выбрасывать нельзя (содержимое осиротеет).
+        let is_bag = db::items::def(pool, &item.def_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|d| d.bag_slots.is_some());
+        if is_bag {
+            match db::items::bag_has_contents(pool, &item.uid).await {
+                Ok(true) => {
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::InventoryFull,
+                        "сумка не пуста — сначала выложите содержимое",
+                    )];
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    warn!("item.drop (сумка): {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+        }
         let qty = cmd.qty.unwrap_or(i64::from(item.qty));
         if qty <= 0 {
             return vec![Self::err(

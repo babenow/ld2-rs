@@ -193,6 +193,19 @@ async fn run() -> Result<(), AppError> {
         &seed.version[..12]
     );
 
+    // M28/B2: стартовые сумки существующим персонажам (идемпотентно).
+    match ld2_server::db::items::ensure_bags(
+        &pool,
+        i32::try_from(cfg.gameplay.inventory.bag_slots).unwrap_or(0),
+        ld2_server::db::items::STARTER_BAG_DEF,
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("сумки: выдан стартовый набор {n} персонажам"),
+        Err(e) => tracing::warn!("сумки: не удалось выдать стартовый набор: {e}"),
+    }
+
     let listener = tokio::net::TcpListener::bind(&cfg.server.bind).await?;
     let addr = listener.local_addr()?;
     tracing::info!(

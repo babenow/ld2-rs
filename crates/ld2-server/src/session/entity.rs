@@ -305,8 +305,8 @@ impl Session {
         // не складывается, иначе камни теряются — заказчик).
         let stateful = ground.stateful();
         let fits = if stateful {
-            match db::items::count(pool, char_id).await {
-                Ok(n) => n < i64::from(slots),
+            match db::items::has_space(pool, char_id, i64::from(slots)).await {
+                Ok(fits) => fits,
                 Err(e) => {
                     warn!("подбор (слоты): {e}");
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
