@@ -22,13 +22,19 @@ use ld2_protocol::Command;
 
 mod admin;
 mod backpack;
+mod badges;
 mod chars;
 mod chat;
 mod chrome;
 mod clicks;
 mod dialog;
+mod drag;
+mod helpers;
+
+pub(crate) use drag::{BpHold, ItemDragGhost, MapPan, PopupDrag, PopupResize, TitlebarDrag};
 mod game;
 mod hotkeys;
+mod lifecycle;
 mod pickup;
 mod popups;
 mod professions;
@@ -41,6 +47,21 @@ mod settings;
 mod sheet;
 mod social;
 mod tick;
+mod typing;
+mod view;
+
+pub(crate) use typing::TYPING_FIELDS;
+mod popup_types;
+
+pub(crate) use badges::{
+    badge, badge_label, guarded_zone, location_badges, status_badge, BadgeTone,
+};
+pub(crate) use helpers::{char_card_origin, clamp_char_size, scrim_closes_on_up};
+pub(crate) use popup_types::{
+    DialogTextFields, ExitKind, PopupKind, PopupState, SendSlot, EXIT_DELAY_MS,
+};
+
+use helpers::{host_os, is_cyrillic_layout, physical_key_char, spec_from_keystroke};
 
 pub(crate) use settings::hex_to_u32;
 use settings::SettingsTab;
@@ -89,123 +110,10 @@ pub(crate) struct DropPending {
     pub qty: i64,
 }
 
-/// R-dnd: «карточка» предмета под курсором при перетаскивании
-/// (ghost-вид on_drag — следует за мышью).
-pub(crate) struct ItemDragGhost {
-    pub name: String,
-    /// Цвет рамки/текста — цвет редкости.
-    pub color: u32,
-    pub theme: String,
-}
-
-impl gpui::Render for ItemDragGhost {
-    fn render(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
-        let pal = crate::palette::palette(&self.theme);
-        div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(pal.panel))
-            .border_1()
-            .border_color(rgb(self.color))
-            .text_size(px(13.0))
-            .text_color(rgb(self.color))
-            .child(self.name.clone())
-            .opacity(0.9)
-    }
-}
-
-/// R-dnd: состояние удерживаемой строки списка рюкзака.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct BpHold {
-    pub uid: String,
-    /// Индекс удерживаемой строки в исходном порядке.
-    pub index: usize,
-    /// Целевой индекс (landing).
-    pub target: usize,
-    /// Смещение строки под курсором, px.
-    pub top: f32,
-    /// Захват внутри строки (offset.y при старте), px.
-    pub grab: f32,
-}
-
 use ely::theme::{Mode, Theme};
 
 /// Release-сборка: внешний `ws://` запрещён (НФР безопасность, guard M10.1).
 const RELEASE: bool = !cfg!(debug_assertions);
-
-/// M14/F15: перетаскивание окна за TitleBar (payload drag gpui).
-#[derive(Debug)]
-struct TitlebarDrag;
-
-/// M16/F29b: перетаскивание карточки всплывающего окна (персонаж/
-/// рюкзак) за шапку — общий payload drag оболочки `popup_window`.
-#[derive(Debug)]
-struct PopupDrag;
-
-/// M16/F29b: изменение размера карточки всплывающего окна (уголок).
-#[derive(Debug)]
-struct PopupResize;
-
-/// M26: панорама карты мира — перетаскивание внутри окна карты
-/// (левый drag без действия; общий payload как у PopupDrag).
-#[derive(Debug)]
-struct MapPan;
-
-/// M16/F29b: какое всплывающее окно рисуем: оболочка берёт
-/// геометрию/флаги из `PopupState` по этому виду.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PopupKind {
-    Character,
-    Backpack,
-    /// M18/F36: окно квестов (2 вкладки: текущие/выполненные).
-    Quests,
-    /// M18/F38: окно диалога NPC — как окно персонажа (попап).
-    Npc,
-    /// M18: описание предмета — как окно персонажа (попап).
-    Item,
-    /// M18/F53: окно заточки — попап (карточка с шапкой, без затемнения).
-    Upgrade,
-    /// M18: окно сокетов (инкрустация через меню оружия) — popup.
-    Socketing,
-    /// M20: окно выбора количества (переиспользуемое: выброс…).
-    Quantity,
-    /// M20: окно игрового диалога (заготовка: страницы/ввод).
-    Dialog,
-    /// M21: окно профессий (отдельное, подобно квестам).
-    Professions,
-    /// M23: окно подятия предмета — лут трупа слева, рюкзак справа.
-    LootPickup,
-    /// M24: админ-панель — листы по кнопкам шапки («Предметы»).
-    AdminPanel,
-    /// M26: окно карты мира (весь мир, зум/панорама) — заказчик.
-    Map,
-}
-
-impl PopupKind {
-    /// Суффикс id виджетов карточки (уникальность gpui-виджетов).
-    fn id(self) -> &'static str {
-        match self {
-            PopupKind::Character => "ld2-char",
-            PopupKind::Backpack => "ld2-bp",
-            PopupKind::Quests => "ld2-quests",
-            PopupKind::Npc => "ld2-npc",
-            PopupKind::Item => "ld2-item",
-            PopupKind::Upgrade => "ld2-upgrade",
-            PopupKind::Socketing => "ld2-socket",
-            PopupKind::Quantity => "ld2-quantity",
-            PopupKind::Dialog => "ld2-dialog",
-            PopupKind::Professions => "ld2-professions",
-            PopupKind::LootPickup => "ld2-pickup",
-            PopupKind::AdminPanel => "ld2-admin",
-            PopupKind::Map => "ld2-map",
-        }
-    }
-}
 
 /// M18/F33/M24: открытие окна сбрасывает контекстные меню **обеих**
 /// сторон (`bp_menu` + `equip_menu`). Иначе закрытие окна с открытым
@@ -220,38 +128,6 @@ impl PopupKind {
 fn clear_popup_menu<T>(bp_menu: &mut Option<T>, equip_menu: &mut Option<T>) {
     *bp_menu = None;
     *equip_menu = None;
-}
-
-/// M20: text-поля execute-диалога — (id поля, поле ввода).
-type DialogTextFields = Vec<(String, Entity<TextInput>)>;
-
-/// M16/F29b: состояние всплывающего окна — геометрия drag/resize и
-/// флаг «жест начат на scrim» (M15/F25e: закрыть может только
-/// полный клик, целиком прошедший по scrim).
-#[derive(Debug)]
-struct PopupState {
-    /// Окно открыто (рендер дополнительно гейтится `Screen::Game`).
-    open: bool,
-    /// Размер карточки (px): (ширина, высота).
-    size: (f32, f32),
-    /// Смещение от центра (px) — drag.
-    delta: (f32, f32),
-    /// Смещение указателя в шапке в момент захвата (drag).
-    drag_offset: Option<(f32, f32)>,
-    /// Якорь resize — (курсор_x, курсор_y, w, h, delta_x, delta_y).
-    resize_anchor: Option<(f32, f32, f32, f32, f32, f32)>,
-}
-
-impl PopupState {
-    fn new(size: (f32, f32)) -> Self {
-        Self {
-            open: false,
-            size,
-            delta: (0.0, 0.0),
-            drag_offset: None,
-            resize_anchor: None,
-        }
-    }
 }
 
 /// Что делать по клику (замыкания в listener должны быть `Fn` — действуем
@@ -333,17 +209,6 @@ pub(crate) enum Click {
     SwitchChar,
 }
 
-/// M14/F16: какое действие выполнит таймер выхода.
-#[derive(Clone, Copy)]
-enum ExitKind {
-    /// Из мира — на экран персонажей.
-    SwitchChar,
-    /// На логин-экран (дисконнект).
-    Logout,
-}
-
-/// M14/F16: длина таймера выхода, мс.
-const EXIT_DELAY_MS: i64 = 20_000;
 /// M17/F30a: длительность каст-бара инкрустации, мс (спека: 3 с,
 /// без отмены — движение/урон не прерывают).
 /// M24: единый прогресс-бар левой колонки (указание заказчика) —
@@ -639,163 +504,7 @@ pub struct Root {
     delete_target: Option<(String, String)>,
 }
 
-/// M15/F25i: поле ввода, чей фокус блокирует хоткеи на экране:
-/// (экран, имя поля для теста, доступ к полю Root).
-struct TypingField {
-    screen: Screen,
-    /// Имя поля — только для теста покрытия (в рендере не читается).
-    #[allow(dead_code)]
-    name: &'static str,
-    get: fn(&Root) -> &Option<Entity<TextInput>>,
-}
-
-/// M15/F25i: поля ввода по экранам — источник истины
-/// `Root::typing_focused` (тест покрывает все TextInput Root): на
-/// экране проверяются только его поля — после смены экрана фокус
-/// формально остаётся на неотрисованном поле (пароль на Login →
-/// Game), и все хоткеи «залипали».
-const TYPING_FIELDS: &[TypingField] = &[
-    TypingField {
-        screen: Screen::Login,
-        name: "login",
-        get: |r| &r.login_input,
-    },
-    TypingField {
-        screen: Screen::Login,
-        name: "password",
-        get: |r| &r.password_input,
-    },
-    TypingField {
-        screen: Screen::Login,
-        name: "reg_login",
-        get: |r| &r.reg_login,
-    },
-    TypingField {
-        screen: Screen::Login,
-        name: "reg_email",
-        get: |r| &r.reg_email,
-    },
-    TypingField {
-        screen: Screen::Login,
-        name: "reg_password",
-        get: |r| &r.reg_password,
-    },
-    TypingField {
-        screen: Screen::Login,
-        name: "reg_password2",
-        get: |r| &r.reg_password2,
-    },
-    TypingField {
-        screen: Screen::Login,
-        name: "host",
-        get: |r| &r.host_input,
-    },
-    TypingField {
-        screen: Screen::Login,
-        name: "domain",
-        get: |r| &r.domain_input,
-    },
-    TypingField {
-        screen: Screen::Characters,
-        name: "create_name",
-        get: |r| &r.create_name,
-    },
-    TypingField {
-        screen: Screen::Characters,
-        name: "delete_name",
-        get: |r| &r.delete_name,
-    },
-    TypingField {
-        screen: Screen::Characters,
-        name: "host",
-        get: |r| &r.host_input,
-    },
-    TypingField {
-        screen: Screen::Characters,
-        name: "domain",
-        get: |r| &r.domain_input,
-    },
-    TypingField {
-        screen: Screen::Game,
-        name: "chat",
-        get: |r| &r.chat_input,
-    },
-    TypingField {
-        screen: Screen::Game,
-        name: "chat_filter",
-        get: |r| &r.chat_filter,
-    },
-    TypingField {
-        screen: Screen::Game,
-        name: "guild",
-        get: |r| &r.guild_input,
-    },
-    TypingField {
-        screen: Screen::Game,
-        name: "host",
-        get: |r| &r.host_input,
-    },
-    TypingField {
-        screen: Screen::Game,
-        name: "domain",
-        get: |r| &r.domain_input,
-    },
-    // M24: поля фильтров админ-панели — при наборе не должны
-    // срабатывать горячие клавиши (C/I/… открывали окна).
-    TypingField {
-        screen: Screen::Game,
-        name: "admin_search",
-        get: |r| &r.admin_search,
-    },
-    TypingField {
-        screen: Screen::Game,
-        name: "admin_inv_search",
-        get: |r| &r.admin_inv_search,
-    },
-    TypingField {
-        screen: Screen::Game,
-        name: "admin_player",
-        get: |r| &r.admin_player,
-    },
-];
-
-/// Куда положить ошибку отправки команды.
-#[derive(Clone, Copy)]
-enum SendSlot {
-    Notice,
-    World,
-    Login,
-    Create,
-    Select,
-}
-
 impl Root {
-    /// Отправить команду серверу, вернув ошибку связи текстом.
-    fn try_send<C: Command>(&mut self, cmd: &C) -> Result<(), String> {
-        self.transport
-            .send(cmd)
-            .map(|_| ())
-            .map_err(|e| format!("нет связи: {e}"))
-    }
-
-    /// Отправить команду серверу; при обрыве связи — сообщение в нужный слот.
-    /// `true` — команда ушла, можно обновлять локальное состояние.
-    fn send_or_notice<C: Command>(&mut self, cmd: &C, slot: SendSlot) -> bool {
-        match self.try_send(cmd) {
-            Ok(()) => true,
-            Err(msg) => {
-                match slot {
-                    SendSlot::Notice => self.store.notice = Some(msg),
-                    SendSlot::World => self.store.world_error = Some(msg),
-                    SendSlot::Login => self.store.login_error = Some(msg),
-                    SendSlot::Create => self.store.create_error = Some(msg),
-                    SendSlot::Select => self.store.select_error = Some(msg),
-                }
-                false
-            }
-        }
-    }
-
     pub fn new(cx: &mut Context<'_, Self>, shell: Shell) -> Self {
         let sheet_tab = sheet::SheetTab::parse(&shell.config.sheet_tab);
         let party_collapsed = shell.config.party_collapsed;
@@ -975,189 +684,7 @@ impl Root {
 
     // ── действия ───────────────────────────────────────────────────────────
 
-    fn send_login(&mut self, cx: &Context<'_, Self>) {
-        let login = self.ti(&self.login_input).read(cx).text().to_string();
-        let password = self.ti(&self.password_input).read(cx).text().to_string();
-        if login.trim().is_empty() || password.is_empty() {
-            self.store.login_error = Some(t(self.lang, Key::ErrFillFields).to_string());
-            return;
-        }
-        // M16/F29j: пароль до move в cmd — для keyring при успешном
-        // входе (PersistSession).
-        self.pending_password = Some(password.clone());
-        let cmd = AuthLogin {
-            login: login.clone(),
-            password,
-        };
-        if self.send_or_notice(&cmd, SendSlot::Login) {
-            self.store.on_login_sent(&login)
-        }
-    }
-
-    fn logout(&mut self) {
-        let _ = self.try_send(&ld2_protocol::cmd::AuthLogout {});
-        let effects = self.store.logout();
-        self.exec_effects(effects);
-    }
-
-    /// Смена хоста в настройках (ФР-19): переподключение транспорта.
-    /// Токены keyring привязаны к адресу — на новом сервере чистый вход.
-    fn reconnect(&mut self) {
-        tracing::info!("смена сервера → переподключение: {}", self.config.host);
-        self.transport.close();
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.transport = transport::spawn(
-            TransportConfig::new(self.config.host.clone()).with_domain(self.config.domain.clone()),
-            tx,
-        );
-        self.ingress = rx;
-        self.store.to_login_screen();
-    }
-
-    /// Поле, созданное на первом кадре (паникующий доступ: render всегда
-    /// идёт после инициализации).
-    pub(crate) fn ti<'s>(&self, slot: &'s Option<Entity<TextInput>>) -> &'s Entity<TextInput> {
-        slot.as_ref().expect("поле создано на первом кадре")
-    }
-
-    /// M18/F41: снять фокус со всех полей ввода окна (`Window::blur`).
-    ///
-    /// gpui не blur'ит поле само: после набора текста фокус «залипал»
-    /// в чате, и гейт [`Self::typing_focused`] глушил **все** глобальные
-    /// хоткеи (C/I/квесты не открывались, в т.ч. параллельно). Прямой
-    /// `handle.update` из обработчика ввода недоступен: событие
-    /// обрабатывается внутри `update_window`, где окно временно снято
-    /// с карты `App` (вернётся «window not found»). Откладываем blur
-    /// до конца цикла эффектов — к `flush_effects` окно уже на месте.
-    pub(crate) fn blur_typing(cx: &mut Context<'_, Self>) {
-        cx.defer(|cx| {
-            let Some(handle) = cx.active_window() else {
-                return;
-            };
-            let _ = handle.update(cx, |_, window, cx| window.blur(cx));
-        });
-    }
-
-    fn save_config(&mut self) {
-        if let Err(e) = self.config_store.save(&self.config) {
-            tracing::warn!("не удалось сохранить конфиг: {e:#}");
-        }
-    }
-
     // ── элементы ───────────────────────────────────────────────────────────
-}
-
-/// Текущая ОС — для разрешения `secondary-` в Keystroke::parse_with_os.
-/// M14/F21: русская/кириллическая раскладка по TIS-id и локализованному
-/// имени (macOS: `com.apple.keylayout.Russian` + «Русская»/«Russian»;
-/// Linux: id `ru`). Чистая функция — юнит-тест.
-fn is_cyrillic_layout(id: &str, name: &str) -> bool {
-    let id = id.to_lowercase();
-    let name = name.to_lowercase();
-    id == "ru" || id.contains("russ") || name.contains("russ") || name.contains("русск")
-}
-
-fn host_os() -> gpui::OperatingSystem {
-    if cfg!(target_os = "macos") {
-        gpui::OperatingSystem::Mac
-    } else if cfg!(windows) {
-        gpui::OperatingSystem::Windows
-    } else {
-        gpui::OperatingSystem::Linux
-    }
-}
-
-/// M15/F25e: закрыть окно по mouse-up на scrim можно, только если
-/// жест **начался** на scrim (настоящий «клик мимо») и это не
-/// завершение перетаскивания/resize (gpui ещё держит active_drag).
-pub(crate) fn scrim_closes_on_up(scrim_down: bool, has_active_drag: bool) -> bool {
-    scrim_down && !has_active_drag
-}
-
-/// M15/F25d: верхний левый угол карточки окна персонажа — центр
-/// вьюпорта + смещение drag (absolute-позиционирование как в F14:
-/// без марджинов, «половинных» сдвигов центрирования нет).
-pub(crate) fn char_card_origin(vw: f32, vh: f32, w: f32, h: f32, delta: (f32, f32)) -> (f32, f32) {
-    (
-        ((vw - w) / 2.0).max(0.0) + delta.0,
-        ((vh - h) / 2.0).max(0.0) + delta.1,
-    )
-}
-
-/// M15/F25c: кламп размера карточки окна персонажа — min 560×400,
-/// max = вьюпорт − 40 px (но не уже min).
-pub(crate) fn clamp_char_size(w: f32, h: f32, vw: f32, vh: f32) -> (f32, f32) {
-    (
-        w.clamp(560.0, (vw - 40.0).max(560.0)),
-        h.clamp(400.0, (vh - 40.0).max(400.0)),
-    )
-}
-
-/// Нажатие → спецификация (`alt+up`) для записи в config (ФР-19).
-fn spec_from_keystroke(ks: &gpui::Keystroke) -> Option<String> {
-    let name = ks.key.to_lowercase();
-    if name.is_empty() {
-        return None;
-    }
-    let mut spec = String::new();
-    if ks.modifiers.alt {
-        spec.push_str("alt+");
-    }
-    if ks.modifiers.control {
-        spec.push_str("ctrl+");
-    }
-    if ks.modifiers.shift {
-        spec.push_str("shift+");
-    }
-    if ks.modifiers.platform {
-        spec.push_str("cmd+");
-    }
-    spec.push_str(&name);
-    Some(spec)
-}
-
-/// M15: раскладки QWERTY ↔ ЙЦУКЕН (26 букв; одиночные символы хоткеев).
-const QWERTY_CYRILLIC: [(char, char); 26] = [
-    ('q', 'й'),
-    ('w', 'ц'),
-    ('e', 'у'),
-    ('r', 'к'),
-    ('t', 'е'),
-    ('y', 'н'),
-    ('u', 'г'),
-    ('i', 'ш'),
-    ('o', 'щ'),
-    ('p', 'з'),
-    ('a', 'ф'),
-    ('s', 'ы'),
-    ('d', 'в'),
-    ('f', 'а'),
-    ('g', 'п'),
-    ('h', 'р'),
-    ('j', 'о'),
-    ('k', 'л'),
-    ('l', 'д'),
-    ('z', 'я'),
-    ('x', 'ч'),
-    ('c', 'с'),
-    ('v', 'м'),
-    ('b', 'и'),
-    ('n', 'т'),
-    ('m', 'ь'),
-];
-
-/// M15: приводит одиночный символ к «физическому» виду — кириллица
-/// ЙЦУКЕН → латиница QWERTY, регистр не важен; прочие символы — как есть.
-fn physical_key_char(ch: char) -> char {
-    let lower = ch.to_ascii_lowercase();
-    if lower.is_ascii_alphabetic() {
-        return lower;
-    }
-    QWERTY_CYRILLIC
-        .iter()
-        .find(|(_, cyr)| *cyr == lower)
-        .map(|(lat, _)| *lat)
-        .unwrap_or(lower)
 }
 
 /// M15: совпадение одиночных клавиш с учётом раскладки: «c» ↔ «с».
@@ -1355,264 +882,6 @@ fn status_text(lang: Lang, status: &TransportStatus) -> String {
             format!("{base} (попытка {attempt}, {delay:?})")
         }
         _ => base.to_string(),
-    }
-}
-
-/// Тон бейджа (M14/F1): предупреждение/успех/нейтральный.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BadgeTone {
-    Warn,
-    Success,
-    Muted,
-}
-
-/// Бейджи у названия локации в шапке: всегда либо `pvp` (warn), либо
-/// `safe` (success) — по флагу локации; прочие флаги — muted-бейджи с их
-/// сырым текстом. Токены локализует рендер ([`badge_label`]).
-/// Чистая функция — юнит-тест в конце файла.
-fn location_badges(flags: &[String]) -> Vec<(BadgeTone, String)> {
-    let pvp = flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"));
-    let mut out = vec![if pvp {
-        (BadgeTone::Warn, "pvp".to_string())
-    } else {
-        (BadgeTone::Success, "safe".to_string())
-    }];
-    for flag in flags {
-        let known = flag.eq_ignore_ascii_case("pvp") || flag.eq_ignore_ascii_case("safe");
-        if !known {
-            out.push((BadgeTone::Muted, flag.clone()));
-        }
-    }
-    out
-}
-
-/// M14/F16: охраняемая зона — нет PvP-флага (вне мира риска нет → true).
-/// Чистая функция — юнит-тест в конце файла.
-fn guarded_zone(flags: &[String]) -> bool {
-    !flags.iter().any(|f| f.eq_ignore_ascii_case("pvp"))
-}
-
-/// Подпись бейджа: известные токены → ключи l10n, прочее — как есть.
-fn badge_label(lang: Lang, token: &str) -> String {
-    match token {
-        "pvp" => t(lang, Key::BadgePvp).to_string(),
-        "safe" => t(lang, Key::BadgeSafe).to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// Плашка в шапке: рамка и текст в тоне, фон — цвет фона окна.
-fn badge(label: String, color: u32, pal: &Palette) -> Div {
-    div()
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(color))
-        .bg(rgb(pal.bg))
-        .text_size(px(11.0))
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(rgb(color))
-        .child(label)
-}
-
-/// Бейдж статуса сервера в шапке (M14/F1): цветная точка + текст + RTT
-/// (раньше жил в нижнем status_bar, из render убран).
-pub(crate) fn status_badge(
-    pal: &Palette,
-    lang: Lang,
-    status: &TransportStatus,
-    rtt: Option<u64>,
-) -> Div {
-    let (color, _) = status_color(pal, status);
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .child(div().w(px(8.0)).h(px(8.0)).rounded_full().bg(rgb(color)))
-        .child(
-            div()
-                .text_size(px(12.0))
-                .text_color(rgb(pal.text))
-                .child(status_text(lang, status)),
-        )
-        .children(rtt.map(|ms| {
-            div()
-                .text_size(px(12.0))
-                .text_color(rgb(pal.muted))
-                .child(format!("{ms} мс"))
-        }))
-}
-
-/// Меню шапки (M14/F1, Ely `Menu`): сменить персонажа, выйти из
-/// аккаунта, закрыть приложение. Пункты вне контекста отключены:
-/// «сменить персонажа» — только в мире, «выйти» — только после входа.
-impl Root {
-    /// M11.2: on_close диалога — мутация состояния Root и перерисовка
-    /// (диалог рендерится из состояния, поэтому «закрыть» = снять флаг).
-    pub(crate) fn dismiss(
-        &self,
-        cx: &mut Context<'_, Self>,
-        f: impl Fn(&mut Self) + 'static,
-    ) -> impl Fn(&mut Window, &mut App) + 'static {
-        let this = cx.entity();
-        move |_window, acx| {
-            this.update(acx, |root, rcx| {
-                f(root);
-                rcx.notify();
-            });
-        }
-    }
-
-    /// M14/F16: выполнить выход — по истечении таймера или «Выйти сейчас».
-    fn perform_exit(&mut self, kind: ExitKind) {
-        self.exit_timer = None;
-        match kind {
-            ExitKind::SwitchChar => self.store.back_to_characters(),
-            ExitKind::Logout => self.logout(),
-        }
-    }
-}
-
-impl Render for Root {
-    fn render(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) -> impl gpui::IntoElement {
-        let pal = palette(&self.config.theme);
-        // M16/F29f: вьюпорт кэшируется — базовый размер окна
-        // клампится под экран при открытии (в обработчиках нет Window).
-        let vp = window.viewport_size();
-        self.viewport = (f32::from(vp.width), f32::from(vp.height));
-        // Автофокус поля логина на первом кадре (экран входа).
-        if self.first_frame {
-            self.first_frame = false;
-            self.init_inputs(window, cx);
-            if self.store.screen == Screen::Login {
-                let handle = self.ti(&self.login_input).read(cx).focus_handle(cx);
-                window.focus(&handle, cx);
-            }
-        }
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(rgb(pal.bg))
-            .text_color(rgb(pal.text))
-            // M18/F41: клик мимо поля ввода снимает с него фокус
-            // (capture-фаза корня — до bubble-фокусировки самого поля:
-            // клик по полю вернёт фокус ему, клик мимо оставит снятым).
-            // Без этого фокус «залипал» в чате и гейт typing_focused
-            // глушил все хоткеи окон после набора текста.
-            .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                if this.typing_focused(window, cx) {
-                    tracing::debug!("клик мимо поля → снятие фокуса");
-                    window.blur(cx);
-                    cx.notify();
-                }
-            }))
-            .child(self.titlebar(cx, &pal))
-            .child(self.header(cx, &pal))
-            .child(
-                // Экран — на остаток высоты между шапкой и статус-баром:
-                // size_full внутри даёт 100 % этого контейнера, а не окна
-                // (иначе низ уходил за границу, баг M11).
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_grow_1()
-                    .min_h_0()
-                    .child(match self.store.screen {
-                        Screen::Login => self.login_screen(window, cx, &pal),
-                        Screen::Characters => self.characters_screen(cx, &pal),
-                        Screen::Game => self.game_screen(cx, &pal),
-                    })
-                    // Статус-бар логина/выбора: автор+версия в центре,
-                    // статус сервера справа (у игры — свой бар с чатом).
-                    .when(self.store.screen != Screen::Game, |d| {
-                        d.child(self.meta_status_bar(cx, &pal))
-                    }),
-            )
-            // M14/F1: статус сервера живёт в шапке (status_badge).
-            // M11.2: всплывающий диалог поверх контента (скрим + панель).
-            // M14/F17: карточка навыка — под игровыми диалогами,
-            // но над контентом (настройки/выход рисуются позже).
-            .when_some(self.skill_info_dialog(cx, &pal), |d, dialog| {
-                d.child(dialog)
-            })
-            // M16/F29b: общий scrim всплывающих окон — под карточками
-            // (персонаж и рюкзак могут быть открыты одновременно).
-            .when_some(self.popup_scrim(cx), |d, layer| d.child(layer))
-            // M15/F25b: окно персонажа — всплывающий диалог;
-            // игровые диалоги/настройки/выход рисуются позже — выше.
-            .when_some(self.character_dialog(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M16/F29b: окно рюкзака (открывается вместе с персонажем).
-            .when_some(self.backpack_dialog(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M18/F36: окно квестов — поверх рюкзака (порядок слоёв =
-            // порядок закрытия по Esc/scrim).
-            .when_some(self.quests_dialog(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M26: окно карты мира — поверх квестов (заказчик: кнопка
-            // в шапке + клавиша «m»).
-            .when_some(self.map_dialog(window, cx, &pal), |d, layer| d.child(layer))
-            // M18/F38: окно диалога NPC — верхний слой группы попапов
-            // (модалки смерти/осмотра/луута рисуются позже — выше).
-            .when_some(self.npc_window(window, cx, &pal), |d, layer| d.child(layer))
-            // M18/F53: описание предмета и окно заточки — попапы
-            // (карточка с шапкой и крестиком, без затемнения).
-            // Порядок слоёв = порядок Esc/scrim: заточка — верхняя.
-            .when_some(self.item_window(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            .when_some(self.upgrade_window(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M18: окно сокетов (инкрустация через меню оружия) —
-            // popup-диалог, как другие окна (карточка с крестиком).
-            .when_some(self.socket_window(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M20: окно выбора количества — поверх окна сокетов.
-            .when_some(self.quantity_window(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M24: админ-панель — под окном диалога (execute-диалог
-            // количества должен открываться поверх).
-            .when_some(self.admin_window(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M20: окно игрового диалога (заготовка) — поверх окна
-            // количества.
-            .when_some(self.dialog_window(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M21: окно профессий — поверх окна диалога.
-            .when_some(self.professions_window(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            // M23: окно подятия предмета — верхний слой группы попапов.
-            .when_some(self.pickup_window(window, cx, &pal), |d, layer| {
-                d.child(layer)
-            })
-            .when_some(self.dialog_layer(cx, &pal), |d, dialog| d.child(dialog))
-            // M14/F14: настройки — диалог поверх экрана (скрим + Esc).
-            .when_some(self.settings_dialog(cx, &pal), |d, layer| d.child(layer))
-            .when_some(self.exit_dialog(cx, &pal), |d, dialog| d.child(dialog))
-            // R-dnd: подтверждение выброса (поверх всего).
-            .when_some(self.drop_confirm_dialog(cx, &pal), |d, dialog| {
-                d.child(dialog)
-            })
-            // M16/F29h: системные уведомления — вверху по центру
-            // (ely ToastViewport показывает внизу справа и не
-            // позиционируется — заменён; тайминг у Toaster).
-            .child(self.toast_stack(window, cx, &pal))
     }
 }
 
