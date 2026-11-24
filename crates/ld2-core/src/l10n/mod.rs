@@ -557,6 +557,12 @@ pub enum Key {
     /// M28/B4: раздел «Рюкзак» и подпись пустого слота сумки.
     BpBackpackSection,
     BpBagSlot,
+    /// M28: какие типы предметов принимает сумка.
+    BpBagAccepts,
+    /// M28: подписи типов для ограничений сумок.
+    BagTypeAmmo,
+    BagTypeHerb,
+    BagTypeGem,
     BpTabOther,
     // M17/F30b: вкладка артефактов рюкзака
     BpTabArtifact,
@@ -1151,6 +1157,10 @@ mod tests {
         Key::BpTabBag,
         Key::BpBackpackSection,
         Key::BpBagSlot,
+        Key::BpBagAccepts,
+        Key::BagTypeAmmo,
+        Key::BagTypeHerb,
+        Key::BagTypeGem,
         Key::BpTabOther,
         // M17/F30b: вкладка артефактов
         Key::BpTabArtifact,

@@ -71,8 +71,54 @@ pub enum PlaceError {
     OutOfRange,
     /// Слот занят другой сумкой (клиент сначала освобождает).
     BagBusy,
+    /// Сумка не принимает этот тип предмета (`bag_types`).
+    WrongType,
     /// Внутренняя ошибка БД.
     Internal,
+}
+
+/// Тип предмета (контент `type`) по uid — для проверки `bag_types`.
+async fn item_type(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    char_id: &str,
+    uid: &str,
+) -> Result<Option<String>, PlaceError> {
+    sqlx::query_scalar(
+        "SELECT d.item_type FROM items i JOIN item_defs d ON d.id = i.def_id \
+         WHERE i.uid = $1 AND i.character_id = $2",
+    )
+    .bind(uid)
+    .bind(char_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|_| PlaceError::Internal)
+}
+
+/// Принимает ли контейнер тип предмета: рюкзак и слоты сумок — любые,
+/// сумка — по списку `bag_types` (пусто — любые).
+async fn container_accepts(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    char_id: &str,
+    container: &str,
+    item_type: &str,
+) -> Result<bool, PlaceError> {
+    if container == BACKPACK || container == BAGS {
+        return Ok(true);
+    }
+    let types: Option<Option<Vec<String>>> = sqlx::query_scalar(
+        "SELECT d.bag_types FROM items b JOIN item_defs d ON d.id = b.def_id \
+         WHERE b.uid = $1 AND b.character_id = $2 AND b.container = 'bags'",
+    )
+    .bind(container)
+    .bind(char_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|_| PlaceError::Internal)?;
+    Ok(match types {
+        None => false,
+        Some(None) => true,
+        Some(Some(list)) => list.is_empty() || list.iter().any(|t| t == item_type),
+    })
 }
 
 /// Переместить предмет в контейнер `to_container` на позицию `to_index`.
@@ -177,6 +223,24 @@ pub async fn place(
     .map_err(|_| PlaceError::Internal)?;
     if occupant.is_some() && to_container == BAGS {
         return Err(PlaceError::BagBusy);
+    }
+
+    // M28: у сумки может быть список принимаемых типов (`bag_types`);
+    // при свопе вытесняемый предмет уезжает в исходный контейнер —
+    // он тоже должен его принимать.
+    let moving_type = item_type(&mut tx, char_id, uid)
+        .await?
+        .ok_or(PlaceError::Gone)?;
+    if !container_accepts(&mut tx, char_id, to_container, &moving_type).await? {
+        return Err(PlaceError::WrongType);
+    }
+    if let Some(occ) = &occupant {
+        let occ_type = item_type(&mut tx, char_id, occ)
+            .await?
+            .ok_or(PlaceError::Gone)?;
+        if !container_accepts(&mut tx, char_id, &from_container, &occ_type).await? {
+            return Err(PlaceError::WrongType);
+        }
     }
 
     // Освобождаем текущую позицию (уникальный индекс не терпит дублей).

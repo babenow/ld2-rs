@@ -372,6 +372,7 @@ pub fn staff_item() -> ItemSnapshot {
         container: None,
         slot_index: None,
         bag_slots: None,
+        bag_types: None,
     }
 }
 
@@ -397,6 +398,7 @@ pub fn scroll_item() -> ItemSnapshot {
         container: None,
         slot_index: None,
         bag_slots: None,
+        bag_types: None,
     }
 }
 
@@ -425,6 +427,7 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
         container: None,
         slot_index: None,
         bag_slots: None,
+        bag_types: None,
     }
 }
 
@@ -456,6 +459,7 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
             container: None,
             slot_index: None,
             bag_slots: None,
+            bag_types: None,
             extra: Default::default(),
         })
         .collect()

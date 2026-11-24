@@ -193,3 +193,71 @@ async fn place_swaps_and_bounds() {
         PlaceError::BagBusy
     );
 }
+
+/// M28: сумка с `bag_types` принимает только перечисленные типы.
+#[tokio::test]
+async fn typed_bag_rejects_other_types() {
+    let Some(url) = test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let pool = db::connect(&DatabaseSection {
+        url,
+        max_connections: 4,
+    })
+    .await
+    .expect("connect");
+    let uniq = format!("ty_{}", std::process::id());
+    let (char_id, bag_def, _mat) = setup(&pool, &uniq, 10).await;
+    sqlx::query("UPDATE item_defs SET bag_types = ARRAY['herb']::text[] WHERE id = $1")
+        .bind(&bag_def)
+        .execute(&pool)
+        .await
+        .expect("bag_types");
+
+    let herb_def = format!("t_herb_{uniq}");
+    let sword_def = format!("t_sword_{uniq}");
+    for (id, ty) in [(&herb_def, "herb"), (&sword_def, "weapon")] {
+        sqlx::query(
+            "INSERT INTO item_defs (id, item_type, name, rarity, gold_value) \
+             VALUES ($1, $2, 'Тест', 'common', 1)",
+        )
+        .bind(id)
+        .bind(ty)
+        .execute(&pool)
+        .await
+        .expect("item_def");
+    }
+
+    db::items::grant_bags(&pool, &char_id, 1, &bag_def)
+        .await
+        .expect("grant_bags");
+    let bag_uid: String = sqlx::query_scalar(
+        "SELECT uid FROM items WHERE character_id = $1 AND container = 'bags' LIMIT 1",
+    )
+    .bind(&char_id)
+    .fetch_one(&pool)
+    .await
+    .expect("bag uid");
+    let herb = db::items::insert(&pool, &char_id, &herb_def, 1)
+        .await
+        .expect("herb");
+    let sword = db::items::insert(&pool, &char_id, &sword_def, 1)
+        .await
+        .expect("sword");
+
+    // Траву — можно, оружие — нет (E_BAG_TYPE → WrongType).
+    db::items::place(&pool, &char_id, &herb.uid, &bag_uid, 0, 20, 4)
+        .await
+        .expect("herb в сумку травника");
+    assert_eq!(
+        db::items::place(&pool, &char_id, &sword.uid, &bag_uid, 1, 20, 4)
+            .await
+            .unwrap_err(),
+        PlaceError::WrongType
+    );
+    // В обычный рюкзак оружие кладётся.
+    db::items::place(&pool, &char_id, &sword.uid, BACKPACK, 3, 20, 4)
+        .await
+        .expect("sword в рюкзак");
+}

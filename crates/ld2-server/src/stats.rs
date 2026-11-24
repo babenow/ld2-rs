@@ -294,6 +294,7 @@ mod tests {
             container: None,
             slot_index: None,
             bag_slots: None,
+            bag_types: None,
             extra: extra.as_object().cloned().unwrap_or_default(),
         }
     }

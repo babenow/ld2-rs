@@ -70,6 +70,8 @@ pub struct ItemDefRow {
     pub bonuses: Option<Value>,
     /// M28: ёмкость сумки, слотов; `NULL` — обычный предмет.
     pub bag_slots: Option<i32>,
+    /// M28: типы, которые принимает сумка (пусто — любые).
+    pub bag_types: Option<Vec<String>>,
 }
 
 /// M24: инвентарь персонажа с данными определений (правая колонка
