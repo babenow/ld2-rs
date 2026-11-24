@@ -94,6 +94,39 @@ impl Root {
                 },
             ));
 
+        let left = self.admin_left(cx, pal, lang, this.clone());
+        let right = self.admin_right(cx, pal, lang, this);
+        let body = div()
+            .flex()
+            .flex_row()
+            .gap_3()
+            .flex_grow_1()
+            .min_h_0()
+            .child(left)
+            .child(div().w(px(1.0)).bg(rgb(pal.border)))
+            .child(right);
+
+        Some(self.popup_window_full(
+            window,
+            cx,
+            pal,
+            PopupKind::AdminPanel,
+            t(lang, Key::AdminPanelTitle),
+            Some(leading.into_any_element()),
+            body,
+            None,
+            Some(trailing.into_any_element()),
+        ))
+    }
+
+    /// Левая колонка админ-окна: поиск, группы, каталог (RF3n).
+    fn admin_left(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        lang: ld2_core::l10n::Lang,
+        _this: gpui::Entity<Root>,
+    ) -> gpui::Div {
         // ── лево: поиск + группы + каталог (uniform_list) ────────
         let query = self.ti(&self.admin_search).read(cx).text().to_lowercase();
         let tab = self.backpack_tab;
@@ -153,14 +186,6 @@ impl Root {
             "ld2-admin-rarity",
             |root, v| root.admin_rarity = v,
         );
-        let inv_rarity_row = rarity_filter_row(
-            cx,
-            *pal,
-            lang,
-            &self.admin_inv_rarity,
-            "ld2-admin-inv-rarity",
-            |root, v| root.admin_inv_rarity = v,
-        );
 
         let left_body = if self.store.admin_catalog.is_none() {
             div()
@@ -207,6 +232,26 @@ impl Root {
             .child(div().h(px(1.0)).bg(rgb(pal.border)))
             .child(left_body);
 
+        left
+    }
+
+    /// Правая колонка админ-окна: цель, фильтры своего рюкзака,
+    /// инвентарь цели (RF3n).
+    fn admin_right(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        lang: ld2_core::l10n::Lang,
+        this: gpui::Entity<Root>,
+    ) -> gpui::Div {
+        let inv_rarity_row = rarity_filter_row(
+            cx,
+            *pal,
+            lang,
+            &self.admin_inv_rarity,
+            "ld2-admin-inv-rarity",
+            |root, v| root.admin_inv_rarity = v,
+        );
         // ── право: цель (свой рюкзак) — СВОИ фильтры предметов ───
         // (вкладки независимы от левого каталога, поиск — своё поле;
         // указание заказчика: фильтры в правом окне тоже нужны).
@@ -282,84 +327,8 @@ impl Root {
                 },
             ));
 
-        // Содержимое: self — снапшот (события инвентаря), прочие
-        // цели — `cmd/admin.target.info` (кэш в сторе).
-        let target_loading = self.admin_target != "self" && self.store.admin_target_items.is_none();
-        let target_items: Vec<TargetItem> = if self.admin_target == "self" {
-            self.store
-                .snapshot
-                .as_ref()
-                .map(|s| {
-                    s.char
-                        .inventory
-                        .iter()
-                        .map(|i| TargetItem {
-                            r#ref: i.uid.clone(),
-                            def_id: i.def_id.clone(),
-                            name: i.name.clone(),
-                            item_type: i.item_type.clone(),
-                            rarity: i.rarity.clone(),
-                            qty: i.qty.unwrap_or(1),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            self.store
-                .admin_target_items
-                .as_ref()
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|i| {
-                            Some(TargetItem {
-                                r#ref: i["ref"].as_str()?.to_string(),
-                                def_id: i["id"].as_str().map(str::to_string),
-                                name: i["name"].as_str()?.to_string(),
-                                item_type: i["type"].as_str().unwrap_or("").to_string(),
-                                rarity: i["rarity"].as_str().unwrap_or("").to_string(),
-                                qty: i["qty"].as_i64().unwrap_or(1),
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        // Свои фильтры (вкладки/поиск/раритет) действуют и на цель.
-        let filtered: Vec<&TargetItem> = target_items
-            .iter()
-            .filter(|it| {
-                let in_tab = inv_tab == BackpackTab::All || tab_for_type(&it.item_type) == inv_tab;
-                let matches_query =
-                    inv_query.is_empty() || it.name.to_lowercase().contains(&inv_query);
-                let matches_rarity = inv_rarity == "all" || it.rarity == inv_rarity;
-                in_tab && matches_query && matches_rarity
-            })
-            .collect();
-        let empty_key = if self.admin_target == "self" {
-            Key::InventoryEmpty
-        } else {
-            Key::AdminNothing
-        };
-        let inv_body = if target_loading {
-            div()
-                .px_2()
-                .py_1()
-                .text_color(rgb(pal.muted))
-                .child(t(lang, Key::Loading))
-        } else if filtered.is_empty() {
-            div()
-                .px_2()
-                .py_1()
-                .text_color(rgb(pal.muted))
-                .child(t(lang, empty_key))
-        } else {
-            let mut col = div().flex().flex_col().gap_1();
-            for item in &filtered {
-                col = col.child(target_row(this.clone(), *pal, lang, item));
-            }
-            col
-        };
+        let inv_body =
+            self.admin_inv_body(pal, lang, inv_tab, &inv_query, &inv_rarity, this.clone());
         let accent = pal.accent;
         let drop_this = cx.entity();
         let drop_target = div()
@@ -433,27 +402,98 @@ impl Root {
                 },
             )));
 
-        let body = div()
-            .flex()
-            .flex_row()
-            .gap_3()
-            .flex_grow_1()
-            .min_h_0()
-            .child(left)
-            .child(div().w(px(1.0)).bg(rgb(pal.border)))
-            .child(right);
+        right
+    }
 
-        Some(self.popup_window_full(
-            window,
-            cx,
-            pal,
-            PopupKind::AdminPanel,
-            t(lang, Key::AdminPanelTitle),
-            Some(leading.into_any_element()),
-            body,
-            None,
-            Some(trailing.into_any_element()),
-        ))
+    /// Содержимое инвентаря цели: снапшот или кэш `admin.target.info`
+    /// плюс свои фильтры вкладки/поиска/раритета (RF3n).
+    fn admin_inv_body(
+        &mut self,
+        pal: &Palette,
+        lang: ld2_core::l10n::Lang,
+        inv_tab: BackpackTab,
+        inv_query: &str,
+        inv_rarity: &str,
+        this: gpui::Entity<Root>,
+    ) -> gpui::Div {
+        // Содержимое: self — снапшот (события инвентаря), прочие
+        // цели — `cmd/admin.target.info` (кэш в сторе).
+        let target_loading = self.admin_target != "self" && self.store.admin_target_items.is_none();
+        let target_items: Vec<TargetItem> = if self.admin_target == "self" {
+            self.store
+                .snapshot
+                .as_ref()
+                .map(|s| {
+                    s.char
+                        .inventory
+                        .iter()
+                        .map(|i| TargetItem {
+                            r#ref: i.uid.clone(),
+                            def_id: i.def_id.clone(),
+                            name: i.name.clone(),
+                            item_type: i.item_type.clone(),
+                            rarity: i.rarity.clone(),
+                            qty: i.qty.unwrap_or(1),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            self.store
+                .admin_target_items
+                .as_ref()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|i| {
+                            Some(TargetItem {
+                                r#ref: i["ref"].as_str()?.to_string(),
+                                def_id: i["id"].as_str().map(str::to_string),
+                                name: i["name"].as_str()?.to_string(),
+                                item_type: i["type"].as_str().unwrap_or("").to_string(),
+                                rarity: i["rarity"].as_str().unwrap_or("").to_string(),
+                                qty: i["qty"].as_i64().unwrap_or(1),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        // Свои фильтры (вкладки/поиск/раритет) действуют и на цель.
+        let filtered: Vec<&TargetItem> = target_items
+            .iter()
+            .filter(|it| {
+                let in_tab = inv_tab == BackpackTab::All || tab_for_type(&it.item_type) == inv_tab;
+                let matches_query =
+                    inv_query.is_empty() || it.name.to_lowercase().contains(inv_query);
+                let matches_rarity = inv_rarity == "all" || it.rarity == inv_rarity;
+                in_tab && matches_query && matches_rarity
+            })
+            .collect();
+        let empty_key = if self.admin_target == "self" {
+            Key::InventoryEmpty
+        } else {
+            Key::AdminNothing
+        };
+        if target_loading {
+            div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, Key::Loading))
+        } else if filtered.is_empty() {
+            div()
+                .px_2()
+                .py_1()
+                .text_color(rgb(pal.muted))
+                .child(t(lang, empty_key))
+        } else {
+            let mut col = div().flex().flex_col().gap_1();
+            for item in &filtered {
+                col = col.child(target_row(this.clone(), *pal, lang, item));
+            }
+            col
+        }
     }
 }
 

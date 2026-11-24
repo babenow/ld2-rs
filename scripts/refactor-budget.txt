@@ -5,7 +5,7 @@
 # Пересчёт: scripts/refactor-audit.sh --update
 
 # --- прод-лимиты (файлы > 600 строк и целевые модули) ---
-crates/ld2-client/src/root/admin.rs 684 417
+crates/ld2-client/src/root/admin.rs 724 167
 crates/ld2-client/src/root/backpack.rs 554 262
 crates/ld2-client/src/root/chars.rs 540 220
 crates/ld2-client/src/root/chat.rs 514 231
