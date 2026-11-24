@@ -18,7 +18,7 @@ crates/ld2-client/src/text_input.rs 699 150
 crates/ld2-core/src/l10n/en.rs 521 517
 crates/ld2-core/src/l10n/mod.rs 710 150
 crates/ld2-core/src/l10n/ru.rs 521 517
-crates/ld2-core/src/store.rs 972 209
+crates/ld2-core/src/store.rs 813 150
 crates/ld2-editor/src/app.rs 8329 647
 crates/ld2-editor/src/project.rs 1975 150
 crates/ld2-protocol/src/cmd.rs 646 150
