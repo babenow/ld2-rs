@@ -231,6 +231,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 // LocationSnapshot (в снапшоте или в ack payload)
 { "id": "l_forest", "name": "Черный лес", "flags": ["pvp"], "text": "Сосны давят тьмою…",
   "exits": [ Exit ], "entities": [ Entity ] }
+// M29: entities содержит онлайн-игроков этой локации строками kind: player
+// (hp не передаётся; свой персонаж в список не входит). Вход/переход/выход
+// соседа приходят адресными evt/entity/spawn и evt/entity/despawn.
 
 // ItemSnapshot
 { "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest|bag

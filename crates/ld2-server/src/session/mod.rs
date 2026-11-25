@@ -33,6 +33,7 @@ mod location;
 mod magic;
 mod npc;
 mod party;
+pub(crate) mod presence;
 mod quests;
 mod rules;
 mod socketing;

@@ -270,6 +270,49 @@ mod tests {
             .entities
     }
 
+    /// Присутствие (M29): `build_location` отдаёт онлайн-персонажей
+    /// только своей локации, без HP (мир его не хранит) и без дублей.
+    #[test]
+    fn build_location_lists_online_players() {
+        let mut world = World::default();
+        let (tx_a, _rx_a) = tokio::sync::mpsc::channel(4);
+        let (tx_b, _rx_b) = tokio::sync::mpsc::channel(4);
+        let (tx_c, _rx_c) = tokio::sync::mpsc::channel(4);
+        assert!(world.bind_char("c_a", "Аня", tx_a, "p1"));
+        assert!(world.bind_char("c_b", "Боря", tx_b, "p2"));
+        assert!(world.bind_char("c_c", "Вера", tx_c, "p3"));
+        world.set_char_location("c_a", "l_village");
+        world.set_char_location("c_b", "l_village");
+        world.set_char_location("c_c", "l_forest");
+
+        let entities = loc_entities(&world, "l_village");
+        let players: Vec<&ld2_protocol::types::Entity> = entities
+            .iter()
+            .filter(|e| e.kind == ld2_protocol::types::EntityKind::Player)
+            .collect();
+        assert_eq!(players.len(), 2, "двое в деревне: {players:?}");
+        assert!(players.iter().any(|e| e.id == "c_a" && e.name == "Аня"));
+        assert!(players.iter().any(|e| e.id == "c_b" && e.name == "Боря"));
+        assert!(
+            !players.iter().any(|e| e.id == "c_c"),
+            "игрок другой локации не виден"
+        );
+        assert!(
+            players.iter().all(|e| e.hp.is_none()),
+            "чужой HP не передаём"
+        );
+
+        // Отвязка (выход из мира) убирает строку из снапшота.
+        assert!(world.unbind_char("c_a", "p1"));
+        let after = loc_entities(&world, "l_village");
+        assert!(
+            !after
+                .iter()
+                .any(|e| e.kind == ld2_protocol::types::EntityKind::Player && e.id == "c_a"),
+            "отвязанный игрок исчез"
+        );
+    }
+
     /// M20/F20b: ресурс убывает по 1 за добычу; при 0 — респавн
     /// min..max; трава (despawn_when_empty) скрывается, жила остаётся
     /// видимой и исчерпанной до возобновления.

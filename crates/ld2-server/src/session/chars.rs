@@ -212,6 +212,12 @@ impl Session {
             let mut world = self.state.world.lock().expect("мир");
             world.set_char_location(&row.id, &location_id);
         }
+        // Присутствие: соседи по локации видят вход в игру.
+        super::presence::announce_spawn(
+            &self.state,
+            &location_id,
+            super::presence::player_entity(&row.id, &row.name),
+        );
         // M17/F30f: чем бьёт — по экипированному оружию (кэш мира).
         self.refresh_char_hits_as(&row.id).await;
         if let Some(account_id) = self.account_id {
@@ -354,6 +360,12 @@ impl Session {
                                 let mut world = self.state.world.lock().expect("мир");
                                 world.set_char_location(&row.id, &location_id);
                             }
+                            // Присутствие: соседи видят авто-вход в игру.
+                            super::presence::announce_spawn(
+                                &self.state,
+                                &location_id,
+                                super::presence::player_entity(&row.id, &row.name),
+                            );
                             // M17/F30f: чем бьёт — по экипированному оружию.
                             self.refresh_char_hits_as(&row.id).await;
                         }

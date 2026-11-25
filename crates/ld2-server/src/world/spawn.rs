@@ -190,6 +190,35 @@ impl World {
         for corpse in corpses {
             snapshot.entities.push(corpse.entity());
         }
+        // Присутствие игроков: онлайн-персонажи локации — строки
+        // `kind: player` (§6). Клиент рисует их в блоке «Игроки»;
+        // свой персонаж отфильтровывается в `Session::location_with_world`.
+        let mut players: Vec<(&String, &String)> = self
+            .char_loc
+            .iter()
+            .filter(|(id, loc)| loc.as_str() == loc_id && self.conns.contains_key(*id))
+            .filter_map(|(id, _)| self.char_names.get(id).map(|name| (id, name)))
+            .collect();
+        players.sort_by(|a, b| a.1.cmp(b.1).then(a.0.cmp(b.0)));
+        for (id, name) in players {
+            if snapshot.entities.iter().any(|e| e.id == **id) {
+                continue;
+            }
+            snapshot.entities.push(Entity {
+                id: id.clone(),
+                kind: EntityKind::Player,
+                name: name.clone(),
+                hp: None,
+                tags: None,
+                was_player: None,
+                aggro: None,
+                boss: None,
+                attacking: None,
+                next_attack_at: None,
+                attack_interval: None,
+                extra: Default::default(),
+            });
+        }
         // M20: предметы, лежащие в локации (выбросы) — как объекты с
         // маркером ground (подбор через `cmd/item.use` по id).
         let mut ground: Vec<&GroundItem> = self

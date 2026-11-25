@@ -337,11 +337,26 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
+        let previous = self.location_id.clone().unwrap_or_default();
         self.location_id = Some(loc_id.to_string());
         {
             let mut world = self.state.world.lock().expect("мир");
             world.set_char_location(&char_id, loc_id);
             world.end_combat(&char_id);
+        }
+        // Присутствие: телепорт = уход из старой и появление в новой.
+        if previous != loc_id && !previous.is_empty() {
+            let name = self
+                .char
+                .as_ref()
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
+            super::presence::announce_despawn(&self.state, &previous, &char_id);
+            super::presence::announce_spawn(
+                &self.state,
+                loc_id,
+                super::presence::player_entity(&char_id, &name),
+            );
         }
         let location = match db::locations::get(&self.state.pool, loc_id).await {
             Ok(Some(row)) => self.location_with_world(row.snapshot()),

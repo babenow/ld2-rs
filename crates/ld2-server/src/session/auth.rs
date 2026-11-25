@@ -12,7 +12,7 @@ use tracing::warn;
 
 use crate::{auth, db};
 
-use super::{out_ack, out_event, Out, Session};
+use super::{out_ack, out_event, presence, Out, Session};
 
 impl Session {
     /// Регистрация = немедленный вход (ADR-006); лимиты — из конфига (D25).
@@ -186,8 +186,20 @@ impl Session {
         }
         // Сессия выходит из мира: бой и рассылка (M12.5).
         if let Some(char_id) = self.selected_char_id.take() {
-            let mut world = self.state.world.lock().expect("мир");
-            world.unbind_char(&char_id, &self.peer.to_string());
+            let gone = {
+                let world = self.state.world.lock().expect("мир");
+                world.char_location(&char_id)
+            };
+            let mine = {
+                let mut world = self.state.world.lock().expect("мир");
+                world.unbind_char(&char_id, &self.peer.to_string())
+            };
+            // Присутствие: соседи видят уход из мира (только наша сессия).
+            if mine {
+                if let Some(location_id) = gone {
+                    presence::announce_despawn(&self.state, &location_id, &char_id);
+                }
+            }
         }
         self.char = None;
         self.location_id = None;
