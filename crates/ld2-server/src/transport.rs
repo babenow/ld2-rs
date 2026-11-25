@@ -124,10 +124,20 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
     if let Some(char_id) = session.selected_char() {
         // R10: отвязка и соц-чистка — только если это была наша сессия
         // (умершая старая сессия позже новой не отменяет сделку новой).
+        let gone = {
+            let world = state.world.lock().expect("мир");
+            world.char_location(&char_id)
+        };
         let mine = {
             let mut world = state.world.lock().expect("мир");
             world.unbind_char(&char_id, &peer.to_string())
         };
+        // Присутствие: соседи видят уход из мира (только наша сессия).
+        if mine {
+            if let Some(location_id) = gone {
+                crate::session::presence::announce_despawn(&state, &location_id, &char_id);
+            }
+        }
         let closed = if mine {
             {
                 let mut social = state.social.lock().expect("соц");

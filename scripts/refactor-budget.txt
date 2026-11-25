@@ -24,9 +24,9 @@ crates/ld2-editor/src/app.rs 8329 647
 crates/ld2-editor/src/project.rs 1975 150
 crates/ld2-protocol/src/cmd.rs 654 150
 crates/ld2-protocol/src/evt.rs 702 150
-crates/ld2-server/src/session/chars.rs 667 231
+crates/ld2-server/src/session/chars.rs 679 231
 crates/ld2-server/src/session/combat.rs 747 268
-crates/ld2-server/src/session/dev.rs 597 289
+crates/ld2-server/src/session/dev.rs 612 289
 crates/ld2-server/src/session/entity.rs 451 238
 crates/ld2-server/src/session/harvest.rs 396 204
 crates/ld2-server/src/session/items.rs 963 250
@@ -43,5 +43,5 @@ tests ld2-content 17
 tests ld2-core 117
 tests ld2-editor 28
 tests ld2-protocol 20
-tests ld2-server 82
+tests ld2-server 83
 tests ld2-test-kit 0

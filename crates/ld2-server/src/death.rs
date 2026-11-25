@@ -62,13 +62,20 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
             .flatten()
             .unwrap_or_default(),
     };
-    let current = crate::db::characters::get(pool, char_id)
+    let current_row = crate::db::characters::get(pool, char_id)
         .await
         .ok()
-        .flatten()
-        .map(|r| r.location_id)
+        .flatten();
+    let current = current_row
+        .as_ref()
+        .map(|r| r.location_id.clone())
         .unwrap_or_default();
-    let target = if spawn.is_empty() { current } else { spawn };
+    let char_name = current_row.map(|r| r.name).unwrap_or_default();
+    let target = if spawn.is_empty() {
+        current.clone()
+    } else {
+        spawn
+    };
     let Some((hp_cur, hp_max, sv)) =
         (match crate::db::characters::respawn(pool, char_id, &target).await {
             Ok(row) => row,
@@ -85,7 +92,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     let addr = char_id.to_string();
 
     // Локация спавна (снимок §6).
-    let location = match crate::db::locations::get(pool, &target).await {
+    let mut location = match crate::db::locations::get(pool, &target).await {
         Ok(Some(row)) => {
             // Оверлей живого мира (M20): ресурсы/трупы/наземные — из
             // памяти, контент-строка только как сид.
@@ -94,6 +101,19 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
         }
         _ => crate::session::stub_location(&target),
     };
+    // Присутствие: погибший не должен видеть себя в «Игроках» своей же
+    // локации (соседи увидят его по событиям ниже).
+    location
+        .entities
+        .retain(|e| !(e.kind == ld2_protocol::types::EntityKind::Player && e.id == char_id));
+    if current != target && !current.is_empty() {
+        crate::session::presence::announce_despawn(state, &current, char_id);
+        crate::session::presence::announce_spawn(
+            state,
+            &target,
+            crate::session::presence::player_entity(char_id, &char_name),
+        );
+    }
 
     let death = CharDeath {
         victim_char: true,

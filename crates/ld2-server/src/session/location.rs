@@ -8,12 +8,12 @@
 use ld2_protocol::cmd::{LocationMove, MapWorld, StateResync};
 use ld2_protocol::envelope::{Ack, Envelope};
 use ld2_protocol::evt::{LocationChanged, StateSnapshot};
-use ld2_protocol::types::LocationSnapshot;
+use ld2_protocol::types::{EntityKind, LocationSnapshot};
 use ld2_protocol::ErrorCode;
 use tracing::warn;
 
 use super::rules::location_snapshot;
-use super::{out_ack, out_event, Out, Session};
+use super::{out_ack, out_event, presence, Out, Session};
 use crate::db;
 
 impl Session {
@@ -26,6 +26,13 @@ impl Session {
             let world = self.state.world.lock().expect("мир");
             world.build_location(snapshot)
         };
+        // Присутствие: свой персонаж — не «рядом», из списка убираем
+        // (у остальных он уже есть в снапшоте как `kind: player`).
+        if let Some(me) = self.selected_char_id.as_deref() {
+            snapshot
+                .entities
+                .retain(|e| !(e.kind == EntityKind::Player && e.id == me));
+        }
         // M24: NPC с магазином — маркер `extra.shop` для чипов целей
         // админ-панели (клиент не знает content/shops.json).
         for entity in &mut snapshot.entities {
@@ -174,6 +181,22 @@ impl Session {
             let mut world = self.state.world.lock().expect("мир");
             world.set_char_location(&char_id, &target);
             world.end_combat(&char_id); // смена локации прерывает бой (M12.5)
+        }
+        // Присутствие: соседи по старой локации видят уход, по новой —
+        // появление (снапшот себе строим ниже, себя из него убираем).
+        if current != target && !current.is_empty() {
+            let name = self
+                .char
+                .as_ref()
+                .map(|c| c.name.clone())
+                .or_else(|| presence::char_name(&self.state, &char_id))
+                .unwrap_or_default();
+            presence::announce_despawn(&self.state, &current, &char_id);
+            presence::announce_spawn(
+                &self.state,
+                &target,
+                presence::player_entity(&char_id, &name),
+            );
         }
         let location = match db::locations::get(&self.state.pool, &target).await {
             Ok(Some(row)) => self.location_with_world(row.snapshot()),
