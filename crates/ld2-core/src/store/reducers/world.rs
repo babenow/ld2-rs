@@ -75,7 +75,7 @@ impl AppStore {
                 }
                 if let Some((name, text)) = added {
                     // M29 (заказчик): приход соседа — готовая строка
-                    // сервера («Сара пришла»); без неё — шаблон.
+                    // сервера («пришла Сара»); без неё — шаблон.
                     match text.as_deref().filter(|l| !l.is_empty()) {
                         Some(line) => self.push_log(LogKind::Location, line),
                         None => self.push_log(LogKind::System, format!("{name} появляется")),
