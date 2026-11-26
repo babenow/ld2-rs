@@ -48,8 +48,10 @@ impl Root {
         // самой длинной (flex stretch), ширины равны (flex_grow).
         let two_cols = |items: Vec<AnyElement>| -> Div {
             let half = items.len().div_ceil(2);
-            let mut left = div().flex().flex_col().gap_1().min_w_0().flex_grow_1();
-            let mut right = div().flex().flex_col().gap_1().min_w_0().flex_grow_1();
+            // flex_1 (basis 0) — колонки строго по 50 %: длинное
+            // название не расширяет свою ячейку (заказчик 2026-11-27).
+            let mut left = div().flex().flex_col().gap_1().min_w_0().flex_1();
+            let mut right = div().flex().flex_col().gap_1().min_w_0().flex_1();
             for (i, row) in items.into_iter().enumerate() {
                 if i < half {
                     left = left.child(row);
@@ -429,6 +431,9 @@ impl Root {
             // Одинаковые высота и ширина карточек (указание
             // заказчика): min_h + stretch поперёк колонки.
             .min_h(px(76.0))
+            // Длинное название не расширяет ячейку: карточка — не
+            // больше своей половины колонки (заказчик 2026-11-27).
+            .min_w_0()
             .self_stretch()
             .flex()
             .flex_col()
@@ -597,13 +602,25 @@ impl Root {
         // ниже названия слота идёт **название предмета**, ниже —
         // **столбцы самоцветов/рун** (иконки слотов отдельной
         // строкой, левым краем).
+        // Заказчик 2026-11-27: название предмета — в пределах
+        // ячейки (не более половины колонки): не влезло — многоточие.
+        // Бейджи +N/×N остаются видимыми, название ужимается первым.
         let mut name_line = div()
             .flex()
             .flex_row()
             .gap_1()
             .items_baseline()
+            .min_w_0()
             .text_color(rgb(color))
-            .child(div().child(item.name.clone()));
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_initial()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(item.name.clone()),
+            );
         if item.upgrade > 0 {
             name_line = name_line.child(div().child(format!("+{}", item.upgrade)));
         }

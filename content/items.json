@@ -411,7 +411,7 @@
     {
       "id": "sword_1000_true",
       "type": "weapon",
-      "name": "Меч тысячи истин",
+      "name": "Клеймор тысячи истин",
       "rarity": "legendary",
       "upgrade": 10,
       "cooldown_s": 3.0,
@@ -460,6 +460,76 @@
       "rune_sockets": 2
     },
     {
+      "id": "sword_1000_true_1h",
+      "type": "weapon",
+      "name": "Клинок тысячи истин",
+      "rarity": "legendary",
+      "upgrade": 10,
+      "cooldown_s": 2.5,
+      "stats": {
+        "dmg": "15..24"
+      },
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 4
+        },
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 4
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 5
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 4,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 10,
+          "pct": true
+        },
+        {
+          "kind": "skill",
+          "id": "sword",
+          "value": 1
+        }
+      ],
+      "gold_value": 3000,
+      "skill": "sword",
+      "slot": "main_hand",
+      "hands": 1,
+      "sockets": 4,
+      "rune_sockets": 2
+    },
+    {
+      "id": "shield_1000_true",
+      "type": "shield",
+      "name": "Щит тысячи истин",
+      "rarity": "legendary",
+      "upgrade": 10,
+      "stats": {
+        "armor": 15,
+        "param": {
+          "block_min": 12,
+          "block_max": 18,
+          "block_chance": 12
+        }
+      },
+      "gold_value": 2400,
+      "slot": "off_hand",
+      "sockets": 5,
+      "rune_sockets": 2
+    },
+    {
       "id": "hammer_battle",
       "type": "weapon",
       "name": "Боевой молот",
@@ -496,7 +566,10 @@
       "rarity": "common",
       "upgrade": 0,
       "stats": {
-        "armor": 3
+        "armor": 3,
+        "param": {
+          "block_chance": 5
+        }
       },
       "gold_value": 40,
       "slot": "off_hand"
@@ -508,7 +581,10 @@
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {
-        "armor": 6
+        "armor": 6,
+        "param": {
+          "block_chance": 8
+        }
       },
       "gold_value": 160,
       "slot": "off_hand"

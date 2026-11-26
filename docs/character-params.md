@@ -138,8 +138,8 @@ hp_max = hp_max_base + vit × hp_per_vit + level × hp_per_level
 | `dodge` | `round(3 + dex×0.4 + rank(evasion) + rank(armor_light) + оружейный_уклон_%).clamp(0..60)` |
 | `parry_chance` | `(5 + rank(parring) + dex/10).clamp(0..60)` |
 | `parry_min/max` | `оружие/2 + str/4` |
-| `block_chance` | `(rank(block) × 2).clamp(0..60)` |
-| `block_min/max` | `0` (щит-предмет в контенте пока отсутствует) |
+| `block_chance` | `(rank(block) × 2 + (str + dex)/10 + базовый шанс щита).clamp(0..60)` |
+| `block_min/max` | `Σ stats.param.block_min/max` надетых предметов (щит: «Щит тысячи истин» — `12..18`) |
 
 Оружейные `%` за ранг (`WEAPON_EFFECTS`, M32 — **точность**, не урон): sword/axe/polearm +2 точности,
 bow +2/+0.5 (точность/крит), dagger +1.5/+0.7, twohand +3 точности/−0.3 уклон, unarmed +2/+0.5 уклон —

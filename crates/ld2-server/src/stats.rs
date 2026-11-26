@@ -133,9 +133,11 @@ pub fn derive(
     let parry_chance = (5 + rank(skills, "parring") + dex / 10).clamp(0, 60);
     let parry_min = w_min / 2 + strg / 4;
     let parry_max = w_max / 2 + strg / 4;
-    // Блок: §B «+2% шанса полного блока за ранг»; снижение урона —
-    // щит-предмет (в контенте пока нет → 0..0).
-    let block_chance = (rank(skills, "block") * 2).clamp(0, 60);
+    // Блок: §B «+2% шанса полного блока за ранг»; сила и ловкость
+    // тоже дают шанс (заказчик), а базовый шанс — у щита
+    // (`stats.param.block_chance`). `block_min/max` — сколько урона
+    // блокирует щит.
+    let block_chance = (rank(skills, "block") * 2 + (strg + dex) / 10).clamp(0, 60);
 
     // ── магические ──
     let staff_magic: i64 = equipped
@@ -444,7 +446,8 @@ mod tests {
         assert_eq!((d.armor, d.dodge), (0, 7), "без брони / 3+dex·0.4");
         assert_eq!((d.parry_min, d.parry_max), (5, 5), "w/2 + str/4");
         assert_eq!(d.parry_chance, 6, "5 + dex/10");
-        assert_eq!((d.block_min, d.block_max, d.block_chance), (0, 0, 0));
+        // str+dex 20 → +2% шанса блока (щита нет, навыка нет).
+        assert_eq!((d.block_min, d.block_max, d.block_chance), (0, 0, 2));
         assert_eq!(
             (
                 d.magic_defense,
@@ -483,7 +486,7 @@ mod tests {
         // (бонус +0.5/ранг — у `unarmed`, не у кинжала).
         assert_eq!(d.dodge, 12, "уклон с evasion");
         assert_eq!(d.parry_chance, 6, "parring не изучен");
-        assert_eq!(d.block_chance, 4, "block +2%/ранг");
+        assert_eq!(d.block_chance, 6, "block +2%/ранг + str/dex");
         assert_eq!(d.magic_dispel, 9, "int/2 + m_dispel 4");
         assert_eq!(d.magic_crit_chance, 9, "5 + 3 + arcana/2");
     }

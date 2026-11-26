@@ -29,7 +29,7 @@
 | Файл | Содержимое | Куда попадает |
 |---|---|---|
 | `locations.json` | 1189 локаций | `locations` |
-| `items.json` | 108 определений | `item_defs` |
+| `items.json` | 121 определение | `item_defs` |
 | `skills.json` | 34 навыка | `skills` |
 | `professions.json` | 14 профессий | `professions` |
 | `recipes.json` | 3 рецепта | `recipes` |
@@ -67,7 +67,7 @@
 сохраняются, редактор их не теряет. Валидация проверяет обязательные поля
 и типы, но не запрещает расширения.
 
-### 1.1 `items.json` → предметы (108, сид в `item_defs`)
+### 1.1 `items.json` → предметы (121, сид в `item_defs`)
 
 | Поле | Тип | Смысл |
 |---|---|---|
@@ -88,14 +88,14 @@
 | `bonuses` | list | `[{kind, id, value, pct?}]`, `kind ∈ attr \| param \| skill` |
 | `extra` | obj | неизвестные поля |
 
-Типы (108): `armor` 23, `gem` 20, `rune` 18, `weapon` 10,
-`hide_scraps` 5, `hide` 5, `upgrade_stone` 3, `staff` 2, `shield` 2,
+Типы (121): `armor` 23, `gem` 21, `rune` 18, `weapon` 11, `bag` 8,
+`hide_scraps` 5, `hide` 5, `upgrade_stone` 3, `shield` 3, `staff` 2,
 `artifact` 2; `wood_oak`, `skinning_knife`, `sickle`, `scroll`, `quill`,
 `potion`, `pickaxe`, `parchment`, `ore_copper`, `offal`, `money`, `meat`,
-`ink`, `herb`, `flask`, `chisel`, `branches`, `axe` — по 1.
+`ink`, `herb`, `flask`, `chisel`, `branches`, `axe`, `ammo`, `key` — по 1.
 
-Редкости: `common` 47, `uncommon` 25, `rare` 16, `epic` 15,
-`legendary` 5.
+Редкости: `common` 51, `uncommon` 29, `rare` 18, `epic` 16,
+`legendary` 7.
 
 Слоты (13): `main_hand`, `off_hand`, `head`, `body`, `legs`, `feet`,
 `gloves`, `shoulders`, `bracers`, `cloak`, `ring`, `amulet`, `artifact`.
@@ -139,7 +139,10 @@
 |---|---|
 | `gold_coin` | `type: money`, `gold_value: 1`, `qty: 10`; деньги — предметы, отдельного `characters.gold` нет |
 | `drakkar_axe` | `epic`, `dmg: "13..26"`, `param.crit_chance: 3`, бонусы `str+3`/`damage+2`/`accuracy+4%`/`sword+1`, `twohand`, `main_hand`, 2 руки, 4 сокета (2 рунных) |
-| `sword_1000_true` | `legendary`, базовый `upgrade: 10`, `dmg: "19..31"`, бонусы `str+5`/`dex+5`/`damage+6`/`accuracy+4%`/`crit_chance+12%`/`sword+1` |
+| `sword_1000_true` | «Клеймор тысячи истин», `legendary`, двуручный, базовый `upgrade: 10`, `dmg: "19..31"`, бонусы `str+5`/`dex+5`/`damage+6`/`accuracy+4%`/`crit_chance+12%`/`sword+1` |
+| `sword_1000_true_1h` | «Клинок тысячи истин», `legendary`, одноручный, `upgrade: 10`, `dmg: "15..24"`, 4 сокета (2 рунных) — в паре со щитом |
+| `shield_1000_true` | «Щит тысячи истин», `legendary`, `off_hand`, `armor: 15`, `block 12..18`, `block_chance 12%`, 5 сокетов (2 рунных + 3 самоцветных) |
+| `shield_wood` / `shield_iron` | базовый шанс блока `5%` / `8%` (`stats.param.block_chance`); сила и ловкость добавляют `(str+dex)/10` к общему шансу |
 
 ### 1.2 `skills.json` → навыки (34, сид в `skills`)
 
