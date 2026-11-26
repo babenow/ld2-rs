@@ -207,6 +207,9 @@ bow +2/+0.5 (точность/крит), dagger +1.5/+0.7, twohand +3 точно
 ## 6. Конфиг (все ключи формул)
 
 ```toml
+[gameplay]                     # M36: бездействие персонажа
+afk_timeout_s = 300            # 0 — выключено; предупреждение — последние 5 %
+
 [gameplay.health]              # M30: здоровье и его регенерация
 hp_max_base = 40               # hp_max = base + vit×hp_per_vit + level×hp_per_level
 hp_per_vit = 5.0

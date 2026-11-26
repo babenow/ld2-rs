@@ -84,7 +84,9 @@ impl Root {
                 })
             })
             // M18/F53: прогресс улучшения в диалоге.
-            || self.upgrade_progress.is_some();
+            || self.upgrade_progress.is_some()
+            // M36: обратный отсчёт AFK-предупреждения.
+            || self.store.afk_until_ms.is_some();
 
         if had_events
             || cd_active

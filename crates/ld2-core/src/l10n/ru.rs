@@ -87,6 +87,8 @@ pub(super) fn t(key: Key) -> &'static str {
         InspectProfessions => "Профессии",
         InspectNoProfessions => "Профессий нет",
         InspectRank => "ранг",
+        AfkWarning => "Персонаж бездействует и будет переведён в оффлайн через {s} с",
+        AfkOffline => "Персонаж переведён в оффлайн из-за бездействия",
         BtnTalk => "Поговорить",
         Attack => "Атаковать",
         EntityDetailTitle => "Осмотр",

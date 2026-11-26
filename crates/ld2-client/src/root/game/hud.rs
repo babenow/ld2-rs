@@ -6,6 +6,35 @@ use super::*;
 impl Root {
     /// Статус-бар игрового экрана: слева — кнопка «Чат» (когда чат
     /// свёрнут), справа — бейдж статуса сервера (+ RTT).
+    /// M36: предупреждение AFK — на последних 5 % времени: текст с
+    /// обратным отсчётом и красный прогрессбар.
+    fn afk_warning(&self, pal: &Palette) -> Option<Div> {
+        let until = self.store.afk_until_ms?;
+        let now = local_epoch_ms() + self.store.time_offset * 1000;
+        let left = until - now;
+        if left <= 0 {
+            return None;
+        }
+        let lang = self.lang;
+        let secs = ((left + 999) / 1000).max(1);
+        let window = (self.store.afk_window_s.max(1) * 1000) as f32;
+        let frac = (left as f32 / window).clamp(0.0, 1.0);
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .mt_1()
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(rgb(pal.danger))
+                        .child(tf(lang, Key::AfkWarning, &[("{s}", &secs.to_string())])),
+                )
+                .child(bar(frac, format!("{secs} с"), pal.danger, pal)),
+        )
+    }
+
     pub(crate) fn status_bar(&mut self, cx: &mut Context<'_, Self>, pal: &Palette) -> Div {
         let lang = self.lang;
         let mut bar = div()
@@ -122,6 +151,8 @@ impl Root {
             16.0,
             pal,
         ));
+        // M36: предупреждение о бездействии — под шкалой HP.
+        col = col.when_some(self.afk_warning(pal), |d, warn| d.child(warn));
         // M18: ресурс по профилю — адреналин (красный), энергия
         // (тёмно-жёлтый), мана (акцентный); длина бара — общая
         // константа со шкалой здоровья.
