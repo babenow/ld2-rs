@@ -64,6 +64,15 @@ pub struct RuneBuff {
     pub max_stacks: i32,
 }
 
+/// M37: кровотечение персонажа от приёма моба («Укус» белого волка):
+/// урон в секунду, срок и следующая секунда.
+#[derive(Debug, Clone, Copy)]
+pub struct CharBleed {
+    pub dps: i64,
+    pub until_ms: i64,
+    pub next_at: i64,
+}
+
 /// M32: снимок боевых параметров персонажа для синхронного тика боя
 /// (без похода в БД на каждый удар). Источник — `stats::derive`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +131,52 @@ impl World {
     /// M25: активен ли эффект контроля сейчас.
     pub fn char_effect_active(&self, char_id: &str, kind: &str, now_ms: i64) -> bool {
         self.char_effect_until(char_id, kind, now_ms).is_some()
+    }
+    /// M37: наложить кровотечение (сильнее/дольше — обновляет).
+    pub fn set_char_bleed(&mut self, char_id: &str, dps: i64, until_ms: i64, now_ms: i64) {
+        let dps = dps.max(1);
+        let entry = self
+            .char_bleed
+            .entry(char_id.to_string())
+            .or_insert(CharBleed {
+                dps,
+                until_ms,
+                next_at: now_ms + 1000,
+            });
+        if entry.until_ms <= now_ms {
+            *entry = CharBleed {
+                dps,
+                until_ms,
+                next_at: now_ms + 1000,
+            };
+        } else {
+            entry.dps = entry.dps.max(dps);
+            entry.until_ms = entry.until_ms.max(until_ms);
+        }
+    }
+    /// M37: персонажи, у которых пора тикнуть кровотечение.
+    pub fn bleeding_chars(&self, now_ms: i64) -> Vec<(String, i64)> {
+        self.char_bleed
+            .iter()
+            .filter(|(_, b)| b.until_ms > now_ms && b.next_at <= now_ms)
+            .map(|(id, b)| (id.clone(), b.dps))
+            .collect()
+    }
+    /// M37: сдвинуть тик кровотечения (истёкшее — снять).
+    pub fn advance_char_bleed(&mut self, char_id: &str, now_ms: i64) {
+        let expired = self
+            .char_bleed
+            .get(char_id)
+            .is_none_or(|b| b.until_ms <= now_ms);
+        if expired {
+            self.char_bleed.remove(char_id);
+        } else if let Some(b) = self.char_bleed.get_mut(char_id) {
+            b.next_at = now_ms + 1000;
+        }
+    }
+    /// M37: снять кровотечение (смерть/выход).
+    pub fn clear_char_bleed(&mut self, char_id: &str) {
+        self.char_bleed.remove(char_id);
     }
     /// M17/F30f: чем бьёт персонаж — творительный из экипированного
     /// оружия; без данных (до входа) — кулаки.
@@ -256,6 +311,8 @@ impl World {
         self.char_loc.remove(char_id);
         self.combat.remove(char_id);
         self.ability_cd.retain(|(c, _), _| c != char_id);
+        self.char_bleed.remove(char_id);
+        self.char_effects.remove(char_id);
         self.char_owner.remove(char_id);
         true
     }

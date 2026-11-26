@@ -113,10 +113,25 @@ pub(super) fn plan_combat(
     );
     plan_bleed_ticks(&mut plan, world, now_ms, skills_cfg);
     plan_burn_ticks(&mut plan, world, now_ms, skills_cfg);
+    plan_char_bleed_ticks(&mut plan, world, now_ms);
     plan_mob_attacks(&mut plan, world, now_ms, cfg, attack_interval_ms);
 
     plan
 }
+/// M37: кровотечение персонажа от приёмов мобов (Белый волк) —
+/// раз в секунду урон через общий `MobHit` (HP/смерть/ярость).
+fn plan_char_bleed_ticks(plan: &mut Plan, world: &mut World, now_ms: i64) {
+    for (char_id, dps) in world.bleeding_chars(now_ms) {
+        world.advance_char_bleed(&char_id, now_ms);
+        if dps > 0 {
+            plan.mob_hits.push(MobHit {
+                char_id,
+                amount: dps,
+            });
+        }
+    }
+}
+
 fn plan_char_attacks(
     plan: &mut Plan,
     world: &mut World,
@@ -553,18 +568,21 @@ fn plan_mob_attacks(
     cfg: &CombatSection,
     attack_interval_ms: i64,
 ) {
-    let aggro_targets: Vec<(String, String)> = world
-        .locations_with_players()
-        .into_iter()
-        .flat_map(|loc| {
-            world
-                .aggro_mobs_in(&loc)
-                .into_iter()
-                .map(|mob| (mob, loc.clone()))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    for (mob_id, loc) in aggro_targets {
+    let mut targets: Vec<(String, String)> = Vec::new();
+    for loc in world.locations_with_players() {
+        let mut mobs = world.aggro_mobs_in(&loc);
+        // M37: моб, выбранный целью боя, отвечает даже без `aggro`
+        // (элита Белый волк); дедуп с агрессивными.
+        for mob in world.combat_mobs_in(&loc) {
+            if !mobs.contains(&mob) {
+                mobs.push(mob);
+            }
+        }
+        for mob in mobs {
+            targets.push((mob, loc.clone()));
+        }
+    }
+    for (mob_id, loc) in targets {
         if world.mob_next_attack(&mob_id).unwrap_or(0) > now_ms {
             continue;
         }
@@ -868,6 +886,7 @@ pub(super) async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(Str
             let mut world = state.world.lock().expect("мир");
             world.set_char_location(&hit.char_id, &row.location_id);
             world.end_combat(&hit.char_id);
+            world.clear_char_bleed(&hit.char_id);
         }
         // M24: прерванная уроном разделка — итог клиенту и при смерти.
         if let Some(text) = harvest_evt {
@@ -1113,11 +1132,18 @@ fn apply_boss_skill(
                 }
             }
             // M25: эффект приёма — контроль над игроками локации
-            // (стан/немота/ослепление) + событие на отображение.
+            // (стан/немота/ослепление) + событие на отображение;
+            // M37: кровотечение — периодический урон (Белый волк).
             if let Some(effect) = &skill.effect {
                 for addr in world.chars_in_location(&loc) {
                     let until = now_ms + effect.duration_s.max(1) * 1000;
-                    if world.set_char_effect(&addr, &effect.kind, until) {
+                    let applied = if effect.kind == "bleed" {
+                        world.set_char_bleed(&addr, effect.value.unwrap_or(1), until, now_ms);
+                        true
+                    } else {
+                        world.set_char_effect(&addr, &effect.kind, until)
+                    };
+                    if applied {
                         push_event(
                             plan,
                             &addr,
@@ -1128,6 +1154,22 @@ fn apply_boss_skill(
                                 until_ms: until,
                             },
                         );
+                    }
+                }
+            }
+            // M37: призыв мобов («Громкий вой»): клоны шаблона в
+            // локацию + evt/entity/spawn всем присутствующим.
+            if let Some(summon) = &skill.summon {
+                let spawned = world.summon_mobs(&summon.mob, summon.count, &loc, now_ms);
+                let addrs = world.chars_in_location(&loc);
+                for (i, mob) in spawned.into_iter().enumerate() {
+                    let spawn = ld2_protocol::evt::EntitySpawn {
+                        entity: mob.entity(),
+                        location_id: loc.clone(),
+                        text: (i == 0).then(|| format!("{boss_name} призывает волков")),
+                    };
+                    for addr in &addrs {
+                        push_event(plan, addr, "evt/entity/spawn", &spawn);
                     }
                 }
             }
