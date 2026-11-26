@@ -330,6 +330,30 @@ pub(crate) fn attr_tip(lang: Lang, key: &str) -> Option<String> {
     Some(t(lang, tip).to_string())
 }
 
+/// M32: тултип-описание производного параметра по ключу его названия
+/// (формулы — `character-params.md` §4).
+pub(crate) fn param_tip(key: Key) -> Option<Key> {
+    Some(match key {
+        Key::ParAccuracy => Key::ParAccuracyTip,
+        Key::ParDamage => Key::ParDamageTip,
+        Key::ParCritChance => Key::ParCritChanceTip,
+        Key::ParCritDamage => Key::ParCritDamageTip,
+        Key::ParArmor => Key::ParArmorTip,
+        Key::ParDodge => Key::ParDodgeTip,
+        Key::ParParry => Key::ParParryTip,
+        Key::ParParryChance => Key::ParParryChanceTip,
+        Key::ParBlock => Key::ParBlockTip,
+        Key::ParBlockChance => Key::ParBlockChanceTip,
+        Key::ParMagicDefense => Key::ParMagicDefenseTip,
+        Key::ParMagicDodge => Key::ParMagicDodgeTip,
+        Key::ParMagicResist => Key::ParMagicResistTip,
+        Key::ParMagicDispel => Key::ParMagicDispelTip,
+        Key::ParMagicCritDamage => Key::ParMagicCritDamageTip,
+        Key::ParMagicCritChance => Key::ParMagicCritChanceTip,
+        _ => return None,
+    })
+}
+
 /// M16/F29e: слот экипировки (конфиг открытый — fallback сырой).
 pub(crate) fn slot_label(lang: Lang, slot: &str) -> String {
     match slot {

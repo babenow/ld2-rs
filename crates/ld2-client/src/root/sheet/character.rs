@@ -277,16 +277,21 @@ impl Root {
                     .child(t(lang, *header)),
             );
             for (label, value) in rows {
+                // M32: тултип-описание с формулой параметра.
+                let mut row = div()
+                    .id(format!("ld2-param-{label:?}"))
+                    .flex()
+                    .flex_row()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(pal.panel));
+                if let Some(tip) = param_tip(*label) {
+                    row = row.tooltip(Tooltip::text(t(lang, tip)));
+                }
                 col = col.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .justify_between()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgb(pal.panel))
-                        .child(div().text_color(rgb(pal.muted)).child(t(lang, *label)))
+                    row.child(div().text_color(rgb(pal.muted)).child(t(lang, *label)))
                         .child(div().font_weight(gpui::FontWeight::BOLD).child(value)),
                 );
             }
