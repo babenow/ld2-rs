@@ -152,6 +152,19 @@ pub fn level_for_total(total_xp: i64, cfg: &LevelSection) -> (u32, i64, i64) {
     }
 }
 
+/// M33/M34: итоговый множитель опыта профессии: премиум × дополнительные
+/// множители (события/акции/дебаффы) — все положительные перемножаются,
+/// ≤ 0 отбрасываются; премиум-множитель клампится ≥ 1.
+pub fn profession_xp_multiplier(premium: bool, premium_mult: f64, extra: &[f64]) -> f64 {
+    let mut mult = if premium { premium_mult.max(1.0) } else { 1.0 };
+    for m in extra {
+        if *m > 0.0 {
+            mult *= *m;
+        }
+    }
+    mult
+}
+
 /// M33: начисление опыта с множителем премиума (round; <1 не режем —
 /// множитель валидируется ≥ 1). Ноль/отрицательное — без изменений.
 pub fn premium_gain(amount: i64, mult: f64) -> i64 {

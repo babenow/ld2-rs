@@ -289,6 +289,8 @@ impl AppStore {
             }
             m if m == "evt/time.sync"
                 || m == "evt/session.start"
+                || m == "evt/session/replaced"
+                || m == "evt/account/premium"
                 || m == "evt/state/snapshot"
                 || m == "evt/state/delta"
                 || m == "evt/dialog/open"
@@ -1682,6 +1684,38 @@ mod tests {
         );
         assert_eq!(store.screen, Screen::Login);
         assert!(store.pending.is_none());
+    }
+
+    /// M34: повторный вход в аккаунт — старая сессия на экране входа,
+    /// тост-ошибка, токен забыт.
+    #[test]
+    fn session_replaced_logs_out_with_toast() {
+        let mut store = store_with_session();
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session/replaced".into(),
+            seq: None,
+            payload: Some(serde_json::json!({})),
+            state_version: None,
+            ts: None,
+        }));
+        assert_eq!(store.screen, Screen::Login, "разлогинен");
+        assert!(store.session.is_none(), "сессия очищена");
+        assert!(
+            store
+                .notice
+                .as_deref()
+                .unwrap_or_default()
+                .contains("другого окна"),
+            "тост: {:?}",
+            store.notice
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ForgetSession { .. })),
+            "токен из keyring забыт"
+        );
     }
 
     #[test]

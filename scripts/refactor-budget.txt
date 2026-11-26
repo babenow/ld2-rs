@@ -16,10 +16,10 @@ crates/ld2-client/src/root/sheet/equip.rs 630 181
 crates/ld2-client/src/root/social.rs 613 150
 crates/ld2-client/src/root.rs 898 175
 crates/ld2-client/src/text_input.rs 699 150
-crates/ld2-core/src/l10n/en.rs 558 554
-crates/ld2-core/src/l10n/mod.rs 759 150
-crates/ld2-core/src/l10n/ru.rs 558 554
-crates/ld2-core/src/store.rs 813 150
+crates/ld2-core/src/l10n/en.rs 559 555
+crates/ld2-core/src/l10n/mod.rs 761 150
+crates/ld2-core/src/l10n/ru.rs 559 555
+crates/ld2-core/src/store.rs 815 150
 crates/ld2-editor/src/app.rs 8336 648
 crates/ld2-editor/src/project.rs 1975 150
 crates/ld2-protocol/src/cmd.rs 654 150

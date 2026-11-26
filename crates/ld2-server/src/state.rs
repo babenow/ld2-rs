@@ -47,6 +47,9 @@ pub struct AppState {
     /// M26: кэш карты мира (`cmd/map.world`) — строится лениво; hot reload
     /// сбрасывает в `None`, следующий запрос построит заново.
     pub map_cache: tokio::sync::RwLock<Option<Arc<crate::map::MapCache>>>,
+    /// M34: активные сессии аккаунтов (account_id → (owner, канал)) —
+    /// повторный вход вытесняет старую сессию (заказчик).
+    pub account_sessions: Mutex<HashMap<i64, (String, tokio::sync::mpsc::Sender<String>)>>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -79,6 +82,7 @@ impl AppState {
             social: Mutex::new(SocialState::default()),
             content: RwLock::new(Arc::new(content)),
             map_cache: tokio::sync::RwLock::new(None),
+            account_sessions: Mutex::new(HashMap::new()),
         }
     }
 

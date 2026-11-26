@@ -235,6 +235,15 @@ impl World {
             .insert(char_id.to_string(), owner.to_string());
         true
     }
+    /// M34: персонажи, привязанные к сессии-владельцу (вытеснение
+    /// аккаунта вторым входом).
+    pub fn char_ids_owned_by(&self, owner: &str) -> Vec<String> {
+        self.char_owner
+            .iter()
+            .filter(|(_, o)| o.as_str() == owner)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
     /// R10: отвязка — только своего биндинга (умершая старая сессия
     /// позже новой не отвязывает мир у новой). `true` — отвязано
     /// (тогда соединение чистит и социум).

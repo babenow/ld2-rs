@@ -11,6 +11,7 @@ pub(super) fn t(key: Key) -> &'static str {
         PremiumDayOne => "день",
         PremiumDayFew => "дня",
         PremiumDayMany => "дней",
+        SessionReplaced => "Вход в аккаунт выполнен из другого окна — эта сессия завершена",
         Subtitle => "текстовая онлайн-MMORPG",
         Exit => "Выход",
         Language => "Язык",
