@@ -396,6 +396,7 @@ mod tests {
             rank,
             xp: 0,
             xp_to_next: 0,
+            rank_cap: None,
         }
     }
 

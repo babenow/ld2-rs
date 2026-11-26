@@ -331,6 +331,9 @@ impl Config {
         if self.skills.rank_max == 0 {
             out.push("skills.rank_max: должен быть ≥ 1".into());
         }
+        if self.skills.ranks_per_level == 0 {
+            out.push("skills.ranks_per_level: должен быть ≥ 1".into());
+        }
         let mut gate_ranks = HashSet::new();
         for (i, gate) in self.skills.gates.iter().enumerate() {
             if gate.rank == 0 || gate.rank > self.skills.rank_max {

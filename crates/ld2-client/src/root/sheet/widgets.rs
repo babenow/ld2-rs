@@ -316,6 +316,20 @@ pub(crate) fn attr_label(lang: Lang, key: &str) -> String {
     .to_string()
 }
 
+/// M31: описание атрибута для тултипа (character-params.md §1);
+/// неизвестный ключ — без тултипа.
+pub(crate) fn attr_tip(lang: Lang, key: &str) -> Option<String> {
+    let tip = match key {
+        "str" => Key::AttrStrTip,
+        "dex" => Key::AttrDexTip,
+        "vit" => Key::AttrVitTip,
+        "int" => Key::AttrIntTip,
+        "spir" => Key::AttrSpirTip,
+        _ => return None,
+    };
+    Some(t(lang, tip).to_string())
+}
+
 /// M16/F29e: слот экипировки (конфиг открытый — fallback сырой).
 pub(crate) fn slot_label(lang: Lang, slot: &str) -> String {
     match slot {

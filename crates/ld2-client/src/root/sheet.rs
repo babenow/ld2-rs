@@ -489,6 +489,16 @@ mod tests {
         assert_eq!(attr_label(en, "int"), "Intellect");
         assert_eq!(attr_label(en, "spir"), "Spirit", "M30: духовность");
         assert_eq!(attr_label(ru, "cha"), "cha", "харизма убрана");
+        // M31: тултипы-описания атрибутов.
+        let str_tip = attr_tip(ru, "str").expect("у силы есть тултип");
+        assert!(str_tip.contains("урон"), "{str_tip}");
+        assert!(
+            attr_tip(en, "spir")
+                .expect("у духа есть тултип")
+                .contains("mana"),
+            "EN-описание духовности"
+        );
+        assert_eq!(attr_tip(ru, "cha"), None, "у удалённой харизмы тултипа нет");
     }
 
     /// M15/F28: группы — в порядке GDD §3, иды уникальны.

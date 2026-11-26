@@ -483,7 +483,7 @@ async fn scroll_cast_needs_target_and_kills() {
     assert_eq!(end["payload"]["reason"], "цель уничтожена");
     let xp = c.wait_event("evt/char/xp").await;
     assert_eq!(xp["payload"]["skill_id"], "frost", "школа заклинания");
-    assert_eq!(xp["payload"]["amount"], 26, "8 + difficulty(3) × 6");
+    assert_eq!(xp["payload"]["amount"], 13, "4 + difficulty(3) × 3 (M31)");
 
     // Дальше свиток кончился → E_ITEM_GONE.
     let seq = c

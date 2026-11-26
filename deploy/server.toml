@@ -169,8 +169,9 @@ content_poll_s = 30         # M27: hot reload контента — период 
 base_xp = 120
 growth = 1.32
 rank_max = 30
-kill_xp_base = 8
-kill_xp_per_difficulty = 6
+ranks_per_level = 2       # M31: боевые/защитные/магические — не более 2 рангов за уровень
+kill_xp_base = 4          # M31: снижено с 8 (заказчик)
+kill_xp_per_difficulty = 3  # M31: снижено с 6
 
 # M14: активные способности cmd/skill.use (skills.md §4; D25)
 [gameplay.resource]

@@ -808,6 +808,13 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         _ => return None,
     };
 
+    // M31: уровень после начисления — им же ограничен ранг навыка
+    // (не более 2 за уровень), он же нужен для анонса level-up.
+    let level_cfg = &state.config.gameplay.level;
+    let (old_level, ..) = crate::systems::level_for_total(total_xp, level_cfg);
+    let (level_after, ..) =
+        crate::systems::level_for_total(total_xp + work.amount.max(0), level_cfg);
+
     // M15/F24: общий опыт растёт при каждом убийстве — даже когда
     // навык на гейте и его XP не изменился.
     if work.amount > 0 {
@@ -817,13 +824,10 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         }
         // M22: новый уровень персонажа — анонс в локации (своему
         // персонажу клиент пишет «Вы получили…» по char_id).
-        let level_cfg = &state.config.gameplay.level;
-        let (old_level, ..) = crate::systems::level_for_total(total_xp, level_cfg);
-        let (new_level, ..) = crate::systems::level_for_total(total_xp + work.amount, level_cfg);
-        if new_level > old_level {
+        if level_after > old_level {
             // M30: максимум HP растёт с уровнем (character-params.md
             // §2.1) — пересчёт кэша колонки + границ текущего значения.
-            let hp_max = crate::stats::max_hp(&attrs, new_level, &state.config);
+            let hp_max = crate::stats::max_hp(&attrs, level_after, &state.config);
             if let Err(e) =
                 crate::db::characters::set_max(pool, &work.char_id, hp_max, i64::from(mp_max)).await
             {
@@ -833,7 +837,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
                 char_id: work.char_id.clone(),
                 name: char_name.clone(),
                 gender: gender.clone(),
-                level: new_level,
+                level: level_after,
             };
             let text = crate::session::event_text(
                 "evt/char/level_up",
@@ -851,8 +855,25 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         }
     }
 
-    let (new_xp, new_rank) =
-        crate::systems::apply_kill_xp(xp, rank, work.amount, &state.config.skills, max_attr);
+    // M31: потолок ранга боевых/защитных/магических навыков — не более
+    // 2 за уровень персонажа; группа берётся из контента (skills.md §3).
+    let group = match crate::db::skills::content_skill(pool, &skill_id).await {
+        Ok(Some(row)) => row.skill_group,
+        Ok(None) => String::new(),
+        Err(e) => {
+            warn!("тик (группа навыка {skill_id}): {e}");
+            String::new()
+        }
+    };
+    let rank_cap = crate::systems::skill_rank_cap(&state.config.skills, &group, level_after);
+    let (new_xp, new_rank) = crate::systems::apply_kill_xp(
+        xp,
+        rank,
+        work.amount,
+        &state.config.skills,
+        max_attr,
+        rank_cap,
+    );
     if new_xp == xp && new_rank == rank {
         return None; // без изменений — не пишем
     }

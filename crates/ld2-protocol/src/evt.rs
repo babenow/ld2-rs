@@ -756,6 +756,7 @@ mod tests {
             rank: 3,
             xp: 612,
             xp_to_next: 480,
+            rank_cap: None,
         };
         assert_eq!(serde_json::to_value(s).expect("ok")["rank"], 3);
     }

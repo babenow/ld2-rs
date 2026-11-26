@@ -407,6 +407,11 @@ impl Session {
         let mut attrs: BTreeMap<String, i64> =
             serde_json::from_value(row.attrs.clone()).unwrap_or_default();
 
+        // M15/F24: уровень и шкала опыта (окно персонажа) — до навыков:
+        // уровень задаёт потолок ранга (M31).
+        let (level, xp_in_level, xp_to_next) =
+            crate::systems::level_for_total(row.total_xp, &self.state.config.gameplay.level);
+
         let mut learned = HashMap::new();
         for skill in db::skills::learned(pool, &row.id).await? {
             learned.insert(skill.skill_id, (skill.xp, skill.rank));
@@ -415,16 +420,22 @@ impl Session {
         for skill in db::skills::content_skills(pool).await? {
             let (xp, rank) = learned.get(&skill.id).copied().unwrap_or((0, 0));
             let rank_u32 = rank.max(0) as u32;
+            // M31: потолок ранга по уровню — только когда он ниже
+            // rank_max (иначе ограничение неинформативно → None).
+            let group = skill.skill_group;
+            let cap = crate::systems::skill_rank_cap(&self.state.config.skills, &group, level);
+            let rank_cap = (cap < self.state.config.skills.rank_max).then_some(cap);
             skills.push(SkillSnapshot {
                 id: skill.id,
                 name: Some(skill.name),
                 // M14/F17: пустое описание старого сида → None (без поля).
                 description: (!skill.description.is_empty()).then_some(skill.description),
                 // M15/F28: группа (skills.md §3) — группировка вкладки.
-                group: (!skill.skill_group.is_empty()).then_some(skill.skill_group),
+                group: (!group.is_empty()).then_some(group),
                 rank: rank_u32,
                 xp,
                 xp_to_next: crate::systems::xp_to_next(rank_u32, &self.state.config.skills),
+                rank_cap,
             });
         }
 
@@ -482,10 +493,6 @@ impl Session {
                 *attrs.entry(attr.to_string()).or_insert(0) += value;
             }
         }
-
-        // M15/F24: уровень и шкала опыта (окно персонажа).
-        let (level, xp_in_level, xp_to_next) =
-            crate::systems::level_for_total(row.total_xp, &self.state.config.gameplay.level);
 
         // M15/F26: производные характеристики (вкладка «Параметры») —
         // из атрибутов, навыков и именно снаряжённых предметов.

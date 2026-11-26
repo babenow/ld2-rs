@@ -100,13 +100,14 @@ mod tests {
             base_xp: 120,
             growth: 1.32,
             rank_max: 30,
+            ranks_per_level: 2,
             gates: vec![
                 SkillGate { rank: 10, attr: 12 },
                 SkillGate { rank: 20, attr: 18 },
                 SkillGate { rank: 30, attr: 25 },
             ],
-            kill_xp_base: 8,
-            kill_xp_per_difficulty: 6,
+            kill_xp_base: 4,
+            kill_xp_per_difficulty: 3,
             active: Default::default(),
         }
     }
@@ -274,27 +275,59 @@ mod tests {
     fn kill_xp_levels_up_until_gate() {
         let c = cfg();
         // Атрибутов 10 < 12 → гейт ранга 10 останавливает рост, XP копится.
-        let (xp, rank) = apply_kill_xp(0, 0, 10_000, &c, 10);
+        let cap = c.rank_max;
+        let (xp, rank) = apply_kill_xp(0, 0, 10_000, &c, 10, cap);
         assert_eq!(rank, 9, "остановился на ранге 9 — дальше гейт 10/12");
         assert!(xp >= xp_to_next(9, &c), "XP накоплен в ранге 9");
         assert!(xp < xp_to_next(9, &c) + 10_000);
 
         // С атрибутом 12 гейт 10/12 пройден: 10000 XP хватает до ранга 11
         // (Σ(0..9)=5647, дальше need растёт быстрее остатка).
-        let (_, rank) = apply_kill_xp(0, 0, 10_000, &c, 12);
+        let (_, rank) = apply_kill_xp(0, 0, 10_000, &c, 12, cap);
         assert_eq!(rank, 11, "гейт 10/12 пройден, рост до 11");
 
         // Потолок 30: XP копится, ранг не растёт.
-        let (xp, rank) = apply_kill_xp(0, 30, 100_000, &c, 100);
+        let (xp, rank) = apply_kill_xp(0, 30, 100_000, &c, 100, cap);
         assert_eq!(rank, 30);
         assert!(xp >= 100_000, "XP на потолке копится");
     }
 
     #[test]
     fn kill_xp_amount_from_difficulty() {
-        // skills.md §2.3: xp = base + difficulty × per
-        let base = 8 + 3 * 6;
-        assert_eq!(base, 26, "пример: difficulty 3 → 26 XP");
+        // skills.md §2.3: xp = base + difficulty × per (M31: 4 + 3×3)
+        let base = 4 + 3 * 3;
+        assert_eq!(base, 13, "пример: difficulty 3 → 13 XP");
+    }
+
+    /// M31: боевые/защитные/магические навыки — не более 2 рангов за
+    /// уровень персонажа; остальные группы не ограничены уровнем.
+    #[test]
+    fn skill_rank_cap_follows_level_for_combat_groups() {
+        let c = cfg();
+        assert_eq!(skill_rank_cap(&c, "weapon", 1), 2, "уровень 1 → 2 ранга");
+        assert_eq!(skill_rank_cap(&c, "defense", 5), 10);
+        assert_eq!(skill_rank_cap(&c, "magic", 10), 20);
+        assert_eq!(skill_rank_cap(&c, "weapon", 60), 30, "не выше rank_max");
+        assert_eq!(
+            skill_rank_cap(&c, "stealth", 1),
+            c.rank_max,
+            "воровские уровнем не ограничены"
+        );
+        assert_eq!(skill_rank_cap(&c, "practice", 1), c.rank_max);
+    }
+
+    /// M31: XP сверх потолка по уровню копится, ранг не растёт — при
+    /// следующем уровне рост продолжится со накопленным опытом.
+    #[test]
+    fn level_cap_holds_rank_but_keeps_xp() {
+        let c = cfg();
+        let cap = skill_rank_cap(&c, "weapon", 1); // 2
+        let (xp, rank) = apply_kill_xp(0, 0, 10_000, &c, 100, cap);
+        assert_eq!(rank, 2);
+        assert!(xp >= xp_to_next(2, &c), "XP копится на потолке");
+        // Уровень вырос → тот же XP добирает ранги дальше.
+        let (_, rank) = apply_kill_xp(xp, rank, 0, &c, 100, skill_rank_cap(&c, "weapon", 10));
+        assert!(rank > 2, "после роста уровня ранг растёт: {rank}");
     }
 
     fn upgrade_cfg() -> crate::config::UpgradeSection {

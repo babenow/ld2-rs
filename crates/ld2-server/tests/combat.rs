@@ -57,11 +57,11 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     let end = c.wait_event("evt/combat/end").await;
     assert_eq!(end["payload"]["reason"], "цель уничтожена");
 
-    // XP убийства: base 8 + difficulty 3 × per 6 = 26, навык оружия не
-    // экипирован → unarmed (skills.md §2.3).
+    // XP убийства: base 4 + difficulty 3 × per 3 = 13, навык оружия не
+    // экипирован → unarmed (skills.md §2.3; M31 — опыт снижен вдвое).
     let xp = c.wait_event("evt/char/xp").await;
     assert_eq!(xp["payload"]["skill_id"], "unarmed");
-    assert_eq!(xp["payload"]["amount"], 26, "8 + difficulty(3) × 6");
+    assert_eq!(xp["payload"]["amount"], 13, "4 + difficulty(3) × 3");
     assert!(xp["payload"]["xp_to_next"].is_i64());
 
     // Труп с лутом: осмотр → взятие → в инвентаре (M12.4-механика).
@@ -95,7 +95,7 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     assert_eq!(added["payload"]["item"]["name"], "Золотая монета");
     assert_eq!(added["payload"]["item"]["qty"], 10, "стак монет из def");
 
-    // M15/F24: общий опыт и шкала уровня в свежем снапшоте (26 XP).
+    // M15/F24: общий опыт и шкала уровня в свежем снапшоте (13 XP, M31).
     let seq = c
         .send("cmd/char.select", json!({ "char_id": char_id }))
         .await;
@@ -111,9 +111,9 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
         "F29a: монеты в инвентаре: {}",
         ch["inventory"]
     );
-    assert_eq!(ch["total_xp"], 26, "total_xp = XP убийства: {ch}");
-    assert_eq!(ch["level"], 1, "26 < 200 → уровень 1");
-    assert_eq!(ch["xp_in_level"], 26, "прогресс в уровне");
+    assert_eq!(ch["total_xp"], 13, "total_xp = XP убийства: {ch}");
+    assert_eq!(ch["level"], 1, "13 < 100 → уровень 1");
+    assert_eq!(ch["xp_in_level"], 13, "прогресс в уровне");
     assert_eq!(ch["xp_to_next"], 100, "порог 1-го уровня: 50+50+0");
 
     // M15/F26: производные параметры в том же снапшоте.
@@ -388,7 +388,7 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     // Кулдаун 0.5 с → до 1 с в гранулярности epoch-секунд; ждём с запасом.
     tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
 
-    // Второй удар добивает (11 ≥ 7) → труп + XP убийства (26 = 8 + 3×6).
+    // Второй удар добивает (11 ≥ 7) → труп + XP убийства (13 = 4 + 3×3, M31).
     let seq = c
         .send(
             "cmd/skill.use",
@@ -402,7 +402,7 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     let corpse = c.wait_event("evt/corpse/created").await;
     assert_eq!(corpse["payload"]["entity"]["kind"], "corpse");
     let xp = c.wait_event("evt/char/xp").await;
-    assert_eq!(xp["payload"]["amount"], 26, "XP убийства: {xp}");
+    assert_eq!(xp["payload"]["amount"], 13, "XP убийства: {xp}");
     assert_eq!(
         xp["payload"]["skill_id"], "unarmed",
         "оружие не экипировано"

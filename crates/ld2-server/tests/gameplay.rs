@@ -117,6 +117,35 @@ async fn skill_train_gates_and_cap() {
     assert_eq!(sword["rank"], 1);
     assert_eq!(sword["name"], "Владение мечом");
 
+    // M31: потолок по уровню — уровень 1 → не более 2 рангов. Ранг 2 +
+    // шкала 100 % → E_RANK_CAP; в сообщении уровень и потолок.
+    common::set_skill(&pool, &char_id, "sword", xp_to_next(2), 2).await;
+    let seq = c
+        .send(
+            "cmd/skill.train",
+            json!({ "entity_id": "npc_elder", "skill_id": "sword" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_RANK_CAP",
+        "потолок по уровню: {ack}"
+    );
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("уровень 1"),
+        "сообщение называет уровень: {ack}"
+    );
+    // Следующие гейты проверяем на персонаже, которому уровень позволяет
+    // ранги 10/30 (M31: 2 ранга за уровень).
+    sqlx::query("UPDATE characters SET total_xp = 100000 WHERE id = $1")
+        .bind(&char_id)
+        .execute(&pool)
+        .await
+        .expect("уровень персонажа");
+
     // Не хватает очков опыта → E_XP_POOL (шкала полная, пул не тронут).
     sqlx::query("UPDATE characters SET xp_pool = 5 WHERE id = $1")
         .bind(&char_id)
