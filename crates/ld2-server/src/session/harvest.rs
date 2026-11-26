@@ -367,6 +367,7 @@ impl Session {
                     kind: Some(ld2_protocol::types::EntityKind::Resource),
                     picked_by: None,
                     picked_gender: None,
+                    text: None,
                 },
             )
         } else {

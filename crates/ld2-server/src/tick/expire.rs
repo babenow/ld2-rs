@@ -50,6 +50,7 @@ pub(super) async fn respawn_step(state: &SharedState) {
                             kind: Some(ld2_protocol::types::EntityKind::Corpse),
                             picked_by: None,
                             picked_gender: None,
+                            text: None,
                         },
                     );
                     for addr in world.chars_in_location(&entry.location_id) {
@@ -174,6 +175,7 @@ pub(super) async fn corpse_expire_step(state: &SharedState) {
             kind: Some(ld2_protocol::types::EntityKind::Corpse),
             picked_by: None,
             picked_gender: None,
+            text: None,
         };
         let text = event_text("evt/entity/despawn", &payload);
         let world = state.world.lock().expect("мир");

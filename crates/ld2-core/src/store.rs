@@ -2388,6 +2388,52 @@ mod tests {
     }
 
     #[test]
+    fn despawn_server_text_goes_to_journal() {
+        let mut store = in_game(); // персонаж «Ким» в l_village
+                                   // Сосед-игрок уходит: сервер прислал готовую строку — она в журнале.
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "p_friend", "location_id": "l_village",
+                "kind": "player", "text": "Марк ушел — тропа на север"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Марк ушел — тропа на север", "{}", last.text);
+        assert_eq!(store.log.back().expect("строка").kind, LogKind::Location);
+
+        // Пустая строка — не пишем ничего нового (последняя — от прошлого
+        // шага): сервер не должен портить журнал заглушками.
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "p_other", "location_id": "l_village",
+                "kind": "player", "text": ""
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Марк ушел — тропа на север", "{}", last.text);
+
+        // Без text — прежний шаблон «{name} исчезает».
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "p_friend2", "kind": "player", "name": "Сара" },
+                "location_id": "l_village"
+            }),
+        ));
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "p_friend2", "location_id": "l_village",
+                "kind": "player"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Сара исчезает", "{}", last.text);
+    }
+
+    #[test]
     fn dropped_log_is_uniform_for_everyone() {
         let mut store = in_game();
         // ЧУЖОЙ выброс — «{имя} выбросил …» (не «Вы выбросили»).

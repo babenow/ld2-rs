@@ -574,6 +574,7 @@ pub(crate) fn mob_kill_effects(
                 kind: Some(ld2_protocol::types::EntityKind::Monster),
                 picked_by: None,
                 picked_gender: None,
+                text: None,
             },
         );
         if let Some(corpse_id) = &corpse_id {

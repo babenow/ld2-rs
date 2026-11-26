@@ -197,7 +197,7 @@ impl Session {
             // Присутствие: соседи видят уход из мира (только наша сессия).
             if mine {
                 if let Some(location_id) = gone {
-                    presence::announce_despawn(&self.state, &location_id, &char_id);
+                    presence::announce_despawn(&self.state, &location_id, &char_id, None);
                 }
             }
         }
