@@ -409,6 +409,51 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     );
 }
 
+/// M33: премиум-аккаунт — +50 % опыта за убийство (13 → 20).
+#[tokio::test]
+async fn premium_account_boosts_kill_xp() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+
+    // Премиум на 30 дней аккаунту персонажа.
+    let cfg = common::test_config(&db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("время")
+        .as_secs() as i64;
+    sqlx::query(
+        "UPDATE accounts SET premium_until = $2 \
+          WHERE id = (SELECT account_id FROM characters WHERE id = $1)",
+    )
+    .bind(&char_id)
+    .bind(now + 30 * 86_400)
+    .execute(&pool)
+    .await
+    .expect("премиум");
+    pool.close().await;
+
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "атака");
+
+    let xp = c.wait_event("evt/char/xp").await;
+    assert_eq!(xp["payload"]["skill_id"], "unarmed");
+    assert_eq!(
+        xp["payload"]["amount"], 20,
+        "13 × 1.5 = 19.5 → 20 (премиум): {xp}"
+    );
+}
+
 /// M17/F30e: ярость воина копится за нанесённый урон — первый удар
 /// даёт патч `evt/char/stats` с `mp.cur > 0` (указание заказчика:
 /// «накопление ресурса у воина не происходит» — проверяем на живом

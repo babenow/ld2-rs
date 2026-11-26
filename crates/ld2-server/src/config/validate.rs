@@ -40,6 +40,7 @@ impl Config {
         self.check_level(&mut out);
         self.check_world(&mut out);
         self.check_skills(&mut out);
+        self.check_premium(&mut out);
         self.check_resources(&mut out);
         self.check_combat(&mut out);
         out
@@ -351,6 +352,16 @@ impl Config {
         }
         if self.skills.kill_xp_base < 0 || self.skills.kill_xp_per_difficulty < 0 {
             out.push("skills.kill_xp_*: не может быть отрицательным".into());
+        }
+    }
+
+    fn check_premium(&self, out: &mut Vec<String>) {
+        // M33: множители премиума — положительные и не меньше 1.
+        if self.gameplay.premium.xp_mult < 1.0 {
+            out.push("gameplay.premium.xp_mult: должен быть ≥ 1.0".into());
+        }
+        if self.gameplay.premium.profession_mult < 1.0 {
+            out.push("gameplay.premium.profession_mult: должен быть ≥ 1.0".into());
         }
     }
 

@@ -160,6 +160,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "char_slot_limit": 8,
   "profession_limit": 2,
   "role": "player",                       // player|admin|moderator (M14/F19)
+  "premium_until": 1798761600,            // M33: премиум до (epoch-с); нет поля — без премиума
   "features": {
     "loot.roll": false, "respawn.inn": true, "guild.bank": false,
     "upgrade.rules": "break_on_fail", "trade.value_hint": true, "chat.slash": true
@@ -374,6 +375,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | Событие | Payload | Назначение |
 |---|---|---|
 | `evt/session.start` | §5 | конфиг + токены + список персонажей |
+| `evt/account/premium` | `{ premium_until: i64 \| null }` | M33: срок премиума изменился (покупка/админ) — title bar клиента |
 | `evt/state/snapshot` | `{ state_version, char, location, party, guild, server_ts }` | полное состояние |
 | `evt/state/delta` | §3 | патч состояния |
 | `evt/pong` | `{ ts, rtt_ms }` | эхо пинга |

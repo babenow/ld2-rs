@@ -275,7 +275,15 @@ impl Session {
                 "player".to_string()
             });
         self.role = role.clone();
-        let config = auth::session_config(&cfg, access.clone(), refresh, chars, role);
+        // M33: срок премиума — в session.start (title bar клиента).
+        let premium_until = db::accounts::premium_until(&self.state.pool, account_id)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("премиум аккаунта: {e}");
+                None
+            });
+        let config =
+            auth::session_config(&cfg, access.clone(), refresh, chars, role, premium_until);
         vec![
             Self::ack_payload(
                 seq,

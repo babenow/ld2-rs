@@ -40,6 +40,12 @@ impl Lang {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     AppTitle,
+    // M33: премиум-аккаунт в title bar (золотым) и формы слова «день».
+    PremiumLabel,
+    PremiumTooltip,
+    PremiumDayOne,
+    PremiumDayFew,
+    PremiumDayMany,
     Subtitle,
     Exit,
     Language,
@@ -757,6 +763,11 @@ mod tests {
 
     const ALL_KEYS: &[Key] = &[
         Key::AppTitle,
+        Key::PremiumLabel,
+        Key::PremiumTooltip,
+        Key::PremiumDayOne,
+        Key::PremiumDayFew,
+        Key::PremiumDayMany,
         Key::Subtitle,
         Key::Exit,
         Key::Language,

@@ -960,18 +960,30 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         _ => return None,
     };
 
+    // M33: премиум-аккаунт — +50 % опыта (навык и уровень персонажа).
+    let premium =
+        crate::db::accounts::premium_for_char(pool, &work.char_id, crate::time::now_epoch())
+            .await
+            .unwrap_or_else(|e| {
+                warn!("премиум (XP {}): {e}", work.char_id);
+                false
+            });
+    let gain = if premium {
+        crate::systems::premium_gain(work.amount, state.config.gameplay.premium.xp_mult)
+    } else {
+        work.amount
+    };
+
     // M31: уровень после начисления — им же ограничен ранг навыка
     // (не более 2 за уровень), он же нужен для анонса level-up.
     let level_cfg = &state.config.gameplay.level;
     let (old_level, ..) = crate::systems::level_for_total(total_xp, level_cfg);
-    let (level_after, ..) =
-        crate::systems::level_for_total(total_xp + work.amount.max(0), level_cfg);
+    let (level_after, ..) = crate::systems::level_for_total(total_xp + gain.max(0), level_cfg);
 
     // M15/F24: общий опыт растёт при каждом убийстве — даже когда
     // навык на гейте и его XP не изменился.
     if work.amount > 0 {
-        if let Err(e) = crate::db::characters::add_total_xp(pool, &work.char_id, work.amount).await
-        {
+        if let Err(e) = crate::db::characters::add_total_xp(pool, &work.char_id, gain).await {
             warn!("тик (total_xp {}): {e}", work.char_id);
         }
         // M22: новый уровень персонажа — анонс в локации (своему
@@ -1018,14 +1030,8 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         }
     };
     let rank_cap = crate::systems::skill_rank_cap(&state.config.skills, &group, level_after);
-    let (new_xp, new_rank) = crate::systems::apply_kill_xp(
-        xp,
-        rank,
-        work.amount,
-        &state.config.skills,
-        max_attr,
-        rank_cap,
-    );
+    let (new_xp, new_rank) =
+        crate::systems::apply_kill_xp(xp, rank, gain, &state.config.skills, max_attr, rank_cap);
     if new_xp == xp && new_rank == rank {
         return None; // без изменений — не пишем
     }
@@ -1041,7 +1047,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         "evt/char/xp",
         &ld2_protocol::evt::CharXp {
             skill_id,
-            amount: work.amount,
+            amount: gain,
             skill_xp: new_xp,
             rank: Some(new_rank.max(0) as u32),
             xp_to_next: Some(need),

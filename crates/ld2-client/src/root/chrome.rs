@@ -3,6 +3,32 @@
 
 use super::*;
 
+/// M33: остаток премиума в днях (округление вверх; истёк → `None`).
+pub(crate) fn premium_days_left(until: i64, now: i64) -> Option<i64> {
+    let left = until - now;
+    (left > 0).then(|| (left + 86_399) / 86_400)
+}
+
+/// M33: «12 дней» с русскими формами (1 день / 2–4 дня / 5+ дней);
+/// английский — day/days.
+pub(crate) fn premium_days_text(lang: Lang, days: i64) -> String {
+    let key = match lang {
+        Lang::Ru => match (days % 10, days % 100) {
+            (1, n) if n != 11 => Key::PremiumDayOne,
+            (2..=4, n) if !(12..=14).contains(&n) => Key::PremiumDayFew,
+            _ => Key::PremiumDayMany,
+        },
+        Lang::En => {
+            if days == 1 {
+                Key::PremiumDayOne
+            } else {
+                Key::PremiumDayMany
+            }
+        }
+    };
+    format!("{days} {}", t(lang, key))
+}
+
 impl Root {
     /// M14/F15: **TitleBar** — своя верхняя строка окна (системный
     /// скрыт): слева название приложения внутри drag-региона (тянем
@@ -18,6 +44,28 @@ impl Root {
         } else {
             12.0
         };
+        // M33: премиум-аккаунт — золотым в title bar с остатком в днях.
+        let premium_label = self
+            .store
+            .session
+            .as_ref()
+            .and_then(|s| s.premium_until)
+            .and_then(|until| premium_days_left(until, local_epoch() + self.store.time_offset))
+            .map(|days| {
+                div()
+                    .id("ld2-titlebar-premium")
+                    .ml_2()
+                    .px_1()
+                    .rounded(px(4.0))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(rgb(pal.gold))
+                    .tooltip(Tooltip::text(t(lang, Key::PremiumTooltip)))
+                    .child(format!(
+                        "{} ({})",
+                        t(lang, Key::PremiumLabel),
+                        premium_days_text(lang, days)
+                    ))
+            });
         div()
             .flex()
             .flex_row()
@@ -45,6 +93,8 @@ impl Root {
                             .font_weight(gpui::FontWeight::BOLD)
                             .child(t(lang, Key::AppTitle)),
                     )
+                    // M33: премиум — золотым рядом с названием.
+                    .children(premium_label)
                     // Drag-регион: кнопки лежат вне его и не мешают.
                     .on_drag(TitlebarDrag, |_value, _offset, window, acx| {
                         window.start_window_move();
@@ -287,5 +337,35 @@ impl Root {
             )
             .child(div().flex_grow_1())
             .child(status_badge(pal, lang, &status, self.store.rtt_ms))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M33: остаток премиума — округление вверх, истёкший скрыт.
+    #[test]
+    fn premium_days_left_rounds_up_and_expires() {
+        assert_eq!(premium_days_left(1_000, 999), Some(1));
+        assert_eq!(premium_days_left(86_400, 0), Some(1));
+        assert_eq!(premium_days_left(86_401, 0), Some(2));
+        assert_eq!(premium_days_left(100, 100), None, "истёк");
+        assert_eq!(premium_days_left(99, 100), None, "просрочен");
+    }
+
+    /// M33: формы «день/дня/дней» (1, 2–4, 5+, 11, 21).
+    #[test]
+    fn premium_days_text_plural() {
+        let ru = Lang::Ru;
+        assert_eq!(premium_days_text(ru, 1), "1 день");
+        assert_eq!(premium_days_text(ru, 2), "2 дня");
+        assert_eq!(premium_days_text(ru, 4), "4 дня");
+        assert_eq!(premium_days_text(ru, 5), "5 дней");
+        assert_eq!(premium_days_text(ru, 11), "11 дней");
+        assert_eq!(premium_days_text(ru, 21), "21 день");
+        assert_eq!(premium_days_text(ru, 22), "22 дня");
+        assert_eq!(premium_days_text(Lang::En, 1), "1 day");
+        assert_eq!(premium_days_text(Lang::En, 3), "3 days");
     }
 }

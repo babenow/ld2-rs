@@ -49,6 +49,55 @@ pub async fn shop_discount_bp(pool: &PgPool, account_id: i64) -> Result<i64, sql
         .await
 }
 
+/// M33: срок премиум-аккаунта (epoch-секунды; `None` — не активирован).
+pub async fn premium_until(pool: &PgPool, account_id: i64) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar("SELECT premium_until FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(pool)
+        .await
+}
+
+/// M33: активен ли премиум у персонажа (по его аккаунту) на `now`.
+pub async fn premium_for_char(pool: &PgPool, char_id: &str, now: i64) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM characters c \
+           JOIN accounts a ON a.id = c.account_id \
+          WHERE c.id = $1 AND a.premium_until IS NOT NULL AND a.premium_until > $2)",
+    )
+    .bind(char_id)
+    .bind(now)
+    .fetch_one(pool)
+    .await
+}
+
+/// M33: продлить премиум на `seconds` от `now`/текущего срока (что
+/// позже) — возвращает новый срок (epoch-секунды).
+pub async fn grant_premium(
+    pool: &PgPool,
+    account_id: i64,
+    now: i64,
+    seconds: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE accounts SET premium_until = GREATEST(COALESCE(premium_until, $2), $2) + $3 \
+          WHERE id = $1 RETURNING premium_until",
+    )
+    .bind(account_id)
+    .bind(now)
+    .bind(seconds)
+    .fetch_one(pool)
+    .await
+}
+
+/// M33: сбросить премиум (dev/админ).
+pub async fn clear_premium(pool: &PgPool, account_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE accounts SET premium_until = NULL WHERE id = $1")
+        .bind(account_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+}
+
 /// Занят ли email (дешёвая проверка до argon2, D33).
 pub async fn email_exists(pool: &PgPool, email: &str) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM accounts WHERE email = $1)")
