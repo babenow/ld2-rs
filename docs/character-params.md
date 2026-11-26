@@ -130,8 +130,8 @@ hp_max = hp_max_base + vit × hp_per_vit + level × hp_per_level
 
 | Параметр | Формула |
 |---|---|
-| `damage_min/max` | `round( (оружие_min/max + str/2 + руны_оружия) × (1 + оружейный_% / 100) )` |
-| `accuracy` | `(75 + dex/2).clamp(1..99)` |
+| `damage_min/max` | `оружие_min/max + str/2 + руны_оружия` (M32: навык оружия урон не множит — только сила) |
+| `accuracy` | `(75 + dex/2 + оружейная_точность_%).clamp(1..99)` |
 | `crit_chance` | `round(5 + dex×0.3 + оружейный_крит_%).clamp(0..100)` |
 | `crit_damage` | `50 + dex/5` |
 | `armor` | `Σ stats.armor` надетых предметов |
@@ -141,9 +141,9 @@ hp_max = hp_max_base + vit × hp_per_vit + level × hp_per_level
 | `block_chance` | `(rank(block) × 2).clamp(0..60)` |
 | `block_min/max` | `0` (щит-предмет в контенте пока отсутствует) |
 
-Оружейные `%` за ранг (`WEAPON_EFFECTS`): sword/axe/polearm +2 % урона, bow +2/+0.5 (урон/крит),
-dagger +1.5/+0.7, twohand +3 урон/−0.3 уклон, unarmed +2/+0.5 уклон — вклад активируется,
-когда надето оружие с `extra.skill`.
+Оружейные `%` за ранг (`WEAPON_EFFECTS`, M32 — **точность**, не урон): sword/axe/polearm +2 точности,
+bow +2/+0.5 (точность/крит), dagger +1.5/+0.7, twohand +3 точности/−0.3 уклон, unarmed +2/+0.5 уклон —
+вклад активируется, когда надето оружие с `extra.skill`. Урон удара даёт только оружие и `str`.
 
 ### 4.2 Магические
 
