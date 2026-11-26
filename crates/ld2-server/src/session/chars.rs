@@ -99,6 +99,16 @@ impl Session {
         };
         match db::characters::create(pool, account_id, &cmd.name, &cmd.profile, gender).await {
             Ok(Some(row)) => {
+                // M30: стартовые максимумы по формулам
+                // (character-params.md §2.1/§1.1) — до ресурса профиля,
+                // чтобы ярость/энергия перекрыли ману колонкой.
+                let attrs: std::collections::BTreeMap<String, i64> =
+                    serde_json::from_value(row.attrs.clone()).unwrap_or_default();
+                let hp_max = crate::stats::max_hp(&attrs, 1, &self.state.config);
+                let mp_max = crate::stats::max_mp(&attrs, &[], &self.state.config);
+                if let Err(e) = db::characters::set_max(pool, &row.id, hp_max, mp_max).await {
+                    warn!("char.create (максимумы): {e}");
+                }
                 // M17/F30e: стартовый ресурс по профилю (WoW): воин —
                 // ярость с нуля, лучник — полная энергия; мана (маг) —
                 // дефолт колонок.
@@ -504,12 +514,26 @@ impl Session {
                 skill.rank = (i64::from(skill.rank) + *bonus).max(0) as u32;
             }
         }
-        let mut derived = crate::stats::derive(
-            &attrs,
-            &skills,
-            &equipped,
-            self.state.config.gameplay.combat.base_damage,
-        );
+        // M30: фасад пересчёта всех параметров — максимумы HP/MP
+        // (формулы character-params.md §2.1/§1.1) и производные тем
+        // же `derive`. Кэш колонок hp_max/mp_max синхронизируется
+        // write-through'ем (только при расхождении).
+        let recalc = crate::stats::recalculate(crate::stats::RecalcInput {
+            attrs: &attrs,
+            skills: &skills,
+            equipped: &equipped,
+            level,
+            profile: row.profile.as_str(),
+            cfg: &self.state.config,
+        });
+        if recalc.hp_max != i64::from(row.hp_max) || recalc.mp_max != i64::from(row.mp_max) {
+            if let Err(e) =
+                db::characters::set_max(pool, &row.id, recalc.hp_max, recalc.mp_max).await
+            {
+                warn!("set_max {}: {e}", row.id);
+            }
+        }
+        let mut derived = recalc.derived;
         // M18/F58d (ADR-012 §6): активные баффы рун — из БД; применяются
         // к параметрам той же механикой, что бонусы предметов.
         let now = crate::time::now_epoch();
@@ -566,16 +590,13 @@ impl Session {
                 }
             },
             hp: Hp {
-                cur: i64::from(row.hp_cur),
-                max: i64::from(row.hp_max),
+                cur: i64::from(row.hp_cur).clamp(0, recalc.hp_max),
+                max: recalc.hp_max,
             },
-            // M17/F30e: ресурс по профилю — ярость/энергия/мана.
+            // M17/F30e: ресурс по профилю — ярость/энергия/мана (M30 —
+            // максимум из фасада, уже учёшь духовность).
             mp: {
-                let max = crate::systems::resource_max(
-                    row.profile.as_str(),
-                    &self.state.config.gameplay.resource,
-                    i64::from(row.mp_max),
-                );
+                let max = recalc.resource_max;
                 Mp {
                     cur: i64::from(row.mp_cur).clamp(0, max),
                     max,

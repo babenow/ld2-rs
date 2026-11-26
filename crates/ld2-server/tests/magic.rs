@@ -502,9 +502,12 @@ async fn mana_regen_out_of_combat() {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
     };
-    // Полный бар за 6 с → реген ~10 маны/с (без боя). rune_cost = 30:
-    // два каста обнуляют бар, а для набора 30 маны регену нужно 3 с —
-    // «пустой бар» детерминирован даже на медленном CI (гонка мс vs 3 с).
+    // M30: максимум бара мага — 110 (формула character-params.md §1.1),
+    // стартовое mp_cur = 60. Полный бар за 6 с → шаг регена
+    // ceil(110/6)=19 × духовность 1.1 ≈ 21/с (без боя). rune_cost = 30:
+    // два каста списывают 60, а реген поднимает бар уже через ~1 тик —
+    // поэтому фиксируем бар пином и проверяем только факт списания
+    // (гейт пустого бара покрыт в rune_cast_requires_mana).
     let ws = format!(
         "ws://{}/ws",
         common::start_server_with(&db_url, |cfg| {
@@ -513,7 +516,7 @@ async fn mana_regen_out_of_combat() {
         })
         .await
     );
-    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+    let (mut c, _login, char_id) = in_world_profile(&ws, "mage").await;
 
     let staff_uid = give(&mut c, "staff_apprentice").await;
     let rune_uid = give(&mut c, "rune_fire").await;
@@ -525,9 +528,19 @@ async fn mana_regen_out_of_combat() {
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
 
+    // Пин бара перед кастами: реген-тик (~21/с) во время setup иначе
+    // сдвигает mp_left первого каста с 30.
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("пул");
+    sqlx::query("UPDATE characters SET mp_cur = 60 WHERE id = $1")
+        .bind(&char_id)
+        .execute(&pool)
+        .await
+        .expect("пин бара");
+    pool.close().await;
+
     // 2 каста × 30 маны; M17/F30g: между кастами кулдаун руны (1 с),
-    // пауза — окно регена (вне боя +10/с при regen_out_s=6), поэтому
-    // точное mp_left второго каста зависит от фазы реген-тика.
+    // пауза — окно регена (M30: вне боя ≈21/с при regen_out_s=6),
+    // поэтому точное mp_left второго каста зависит от числа тиков.
     for i in 0..2 {
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
@@ -544,16 +557,17 @@ async fn mana_regen_out_of_combat() {
         if i == 0 {
             assert_eq!(cast["payload"]["mp_left"], 30, "расход маны D4: {cast}");
         } else {
-            // Списано 30 — бар ниже цены каста (гейт пустого бара
-            // покрыт в rune_cast_requires_mana).
+            // Списано 30 от бара ≤60+реген — mp_left ниже стартового
+            // 60 (гейт пустого бара покрыт в rune_cast_requires_mana).
             assert!(
-                cast["payload"]["mp_left"].as_i64().unwrap_or(60) < 30,
-                "бар ниже цены каста: {cast}"
+                cast["payload"]["mp_left"].as_i64().unwrap_or(60) < 60,
+                "бар упал после второго каста: {cast}"
             );
         }
     }
 
-    // Реген по тику (§2.4): бар поднимается до цены каста (~3 с при 10/с).
+    // Реген по тику (§2.4): бар поднимается до цены каста (~1 тик
+    // при ≈21/с — M30 перекрыл старые «3 с при 10/с»).
     let stats = c
         .wait(|v| {
             v["type"] == "evt/char/stats"
@@ -563,7 +577,9 @@ async fn mana_regen_out_of_combat() {
     let mp = stats["payload"]["patch"]["mp"]["cur"].as_i64().expect("mp");
     assert!(mp >= 30, "реген поднял бар хотя бы до цены каста: {mp}");
 
-    // Кулдаун руны (M17/F30g) давно истёк — каст после регена проходит.
+    // Кулдаун руны (M17/F30g, 1 с) — M30-реген успевает поднять бар
+    // раньше, чем истечёт кулдаун, поэтому ждём его явно.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let seq = c
         .send(
             "cmd/magic.rune_cast",

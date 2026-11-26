@@ -484,8 +484,10 @@ mod tests {
         assert_eq!(attr_label(ru, "dex"), "Ловкость");
         assert_eq!(attr_label(ru, "vit"), "Стойкость");
         assert_eq!(attr_label(ru, "int"), "Интеллект");
+        assert_eq!(attr_label(ru, "spir"), "Духовность", "M30: духовность");
         assert_eq!(attr_label(en, "str"), "Strength");
         assert_eq!(attr_label(en, "int"), "Intellect");
+        assert_eq!(attr_label(en, "spir"), "Spirit", "M30: духовность");
         assert_eq!(attr_label(ru, "cha"), "cha", "харизма убрана");
     }
 

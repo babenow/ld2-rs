@@ -20,6 +20,28 @@
   `[gameplay.magic.mana]`/`[gameplay.health]`). Реализация — фазы B2–B7
   по плану; протокол без изменений (attrs — свободная карта, hp/mp уже в
   снапшоте).
+- **M30 реализован (фазы B2–B6)** — миграция `0033` добавляет `spir`
+  (духовность, 10) в `attrs`; whitelists сервера/контента и поле в
+  `ld2-editor`; л10н «Духовность»/«Spirit» в листе. Фасад
+  `stats::recalculate` (порядок: `max_hp` → `max_mp` → ресурс профиля →
+  `derive`) — на нём write-through в `character_state` (при расхождении
+  с колонками → `db::characters::set_max` с `LEAST`-клампом курентов),
+  `char.create` (стартовые максимумы до ресурса профиля) и level-up
+  (`max_hp` по новому уровню в `tick/combat.rs`). Конфиг:
+  `[gameplay.magic.mana]` (mp_max_base/mp_per_int/mp_per_arcana/
+  mp_per_spir/spirit_regen_pct) и новая секция `[gameplay.health]`
+  (hp_max_base/hp_per_vit/hp_per_level/regen_out_s/regen_in_pct_s) +
+  валидация; сэмплы `server.example.toml`/`deploy/server.toml` синхронны
+  (паритет-тест). Реген: `resource_step` получил духовность
+  (множитель `1 + spir×spirit_regen_pct/100`, только мана), новый
+  `health_step` (вне боя `ceil(max/regen_out_s)`, в бою `%/с`, мёртвые
+  не регенерируют) — оба в `regen_step` одним патчем `evt/char/stats`
+  через `heal_hp`/`set_mp`. Стартовый бар персонажа остаётся 60 при
+  максимуме 110 (заполнение сломало бы e2e-ожидания) — реген добирает.
+  Поправлен e2e `mana_regen_out_of_combat` под новую экономику: пин
+  `mp_cur=60` перед кастами, ослабленный ассерт второго каста
+  (`<60` — гейт пустого бара покрыт `rune_cast_requires_mana`) и
+  явное ожидание 1-сек кулдауна перед финальным кастом.
 
 ## 2026-11-25
 

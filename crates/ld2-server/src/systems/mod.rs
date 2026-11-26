@@ -427,22 +427,54 @@ mod tests {
         assert_eq!(resource_name("mage"), "маны");
 
         // Ярость: −5/сек вне боя, в бою не трогаем, пол — 0.
-        assert_eq!(resource_step("warrior", 50, 100, false, &cfg), Some(45));
-        assert_eq!(resource_step("warrior", 50, 100, true, &cfg), None);
-        assert_eq!(resource_step("warrior", 3, 100, false, &cfg), Some(0));
+        assert_eq!(resource_step("warrior", 50, 100, false, 0, &cfg), Some(45));
+        assert_eq!(resource_step("warrior", 50, 100, true, 0, &cfg), None);
+        assert_eq!(resource_step("warrior", 3, 100, false, 0, &cfg), Some(0));
         // Энергия: +20/сек всегда, потолок 100, полная — молчим.
-        assert_eq!(resource_step("archer", 80, 100, true, &cfg), Some(100));
-        assert_eq!(resource_step("archer", 95, 100, false, &cfg), Some(100));
-        assert_eq!(resource_step("archer", 100, 100, true, &cfg), None);
+        assert_eq!(resource_step("archer", 80, 100, true, 0, &cfg), Some(100));
+        assert_eq!(resource_step("archer", 95, 100, false, 0, &cfg), Some(100));
+        assert_eq!(resource_step("archer", 100, 100, true, 0, &cfg), None);
         // Мана: прежняя модель (вне боя 60/45 → +2, в бою 1% → +1).
-        assert_eq!(resource_step("mage", 45, 60, false, &cfg), Some(47));
-        assert_eq!(resource_step("mage", 45, 60, true, &cfg), Some(46));
-        assert_eq!(resource_step("mage", 60, 60, false, &cfg), None);
+        assert_eq!(resource_step("mage", 45, 60, false, 0, &cfg), Some(47));
+        assert_eq!(resource_step("mage", 45, 60, true, 0, &cfg), Some(46));
+        assert_eq!(resource_step("mage", 60, 60, false, 0, &cfg), None);
+        // M30: духовность 10 при spirit_regen_pct=1.0 → ×1.1,
+        // округление вверх: вне боя 2→3, в бою 1→2; ярость не зависит.
+        assert_eq!(
+            resource_step("mage", 45, 60, false, 10, &cfg),
+            Some(48),
+            "духовность ускоряет реген маны"
+        );
+        assert_eq!(
+            resource_step("mage", 45, 60, true, 10, &cfg),
+            Some(47),
+            "духовность ускоряет реген маны в бою"
+        );
+        assert_eq!(
+            resource_step("warrior", 50, 100, false, 10, &cfg),
+            Some(45),
+            "ярость от духовности не зависит"
+        );
         // Ярость за урон: 15 %, вверх; не-воин — 0.
         assert_eq!(rage_gain(res, "warrior", 10), 2, "1.5 → 2");
         assert_eq!(rage_gain(res, "warrior", 1), 1, "0.15 → 1");
         assert_eq!(rage_gain(res, "mage", 10), 0);
         assert_eq!(rage_gain(res, "warrior", 0), 0);
+    }
+
+    /// M30: регенерация здоровья (character-params.md §3.1) —
+    /// дефолты `HealthSection`: вне боя 100/60 → +2, в бою 0.5 % → +1,
+    /// мёртвые (cur=0) и полный бар не регенерируют.
+    #[test]
+    fn health_step_regens_out_and_in_combat() {
+        let example =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("server.example.toml");
+        let cfg = crate::config::Config::load(&example).expect("example валиден");
+        assert_eq!(health_step(50, 100, false, &cfg), Some(52), "вне боя");
+        assert_eq!(health_step(50, 100, true, &cfg), Some(51), "в бою");
+        assert_eq!(health_step(99, 100, false, &cfg), Some(100), "кламп");
+        assert_eq!(health_step(100, 100, false, &cfg), None, "полный");
+        assert_eq!(health_step(0, 100, false, &cfg), None, "мёртвый");
     }
 
     /// M25: пол минимальной скорости атаки (настройка сервера) и

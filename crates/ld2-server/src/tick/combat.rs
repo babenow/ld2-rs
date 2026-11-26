@@ -781,7 +781,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         }
     };
 
-    let (xp, rank, max_attr, total_xp, char_name, gender) = match (
+    let (xp, rank, max_attr, total_xp, char_name, gender, attrs, mp_max) = match (
         crate::db::skills::learned_one(pool, &work.char_id, &skill_id).await,
         crate::db::characters::get(pool, &work.char_id).await,
     ) {
@@ -790,7 +790,16 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
                 serde_json::from_value(row.attrs).unwrap_or_default();
             let max_attr = attrs.values().max().copied().unwrap_or(0);
             let (xp, rank) = learned.unwrap_or((0, 0));
-            (xp, rank, max_attr, row.total_xp, row.name, row.gender)
+            (
+                xp,
+                rank,
+                max_attr,
+                row.total_xp,
+                row.name,
+                row.gender,
+                attrs,
+                row.mp_max,
+            )
         }
         (Err(e), _) | (_, Err(e)) => {
             warn!("тик (XP {}): {e}", work.char_id);
@@ -812,6 +821,14 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
         let (old_level, ..) = crate::systems::level_for_total(total_xp, level_cfg);
         let (new_level, ..) = crate::systems::level_for_total(total_xp + work.amount, level_cfg);
         if new_level > old_level {
+            // M30: максимум HP растёт с уровнем (character-params.md
+            // §2.1) — пересчёт кэша колонки + границ текущего значения.
+            let hp_max = crate::stats::max_hp(&attrs, new_level, &state.config);
+            if let Err(e) =
+                crate::db::characters::set_max(pool, &work.char_id, hp_max, i64::from(mp_max)).await
+            {
+                warn!("set_max (level-up {}): {e}", work.char_id);
+            }
             let payload = ld2_protocol::evt::CharLevelUp {
                 char_id: work.char_id.clone(),
                 name: char_name.clone(),

@@ -261,6 +261,44 @@ impl Config {
                 self.gameplay.magic.mana.regen_in_pct_s
             ));
         }
+        // M30: формулы максимумов и множитель духовности (character-params.md §1.1).
+        if self.gameplay.magic.mana.mp_max_base < 0 {
+            out.push("gameplay.magic.mana.mp_max_base: должен быть ≥ 0".into());
+        }
+        for (key, value) in [
+            ("mp_per_int", self.gameplay.magic.mana.mp_per_int),
+            ("mp_per_arcana", self.gameplay.magic.mana.mp_per_arcana),
+            ("mp_per_spir", self.gameplay.magic.mana.mp_per_spir),
+            (
+                "spirit_regen_pct",
+                self.gameplay.magic.mana.spirit_regen_pct,
+            ),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                out.push(format!(
+                    "gameplay.magic.mana.{key}: должен быть ≥ 0 (получено: {value})"
+                ));
+            }
+        }
+        // M30: здоровье — формула максимума и реген (character-params.md §2.1/§3.1).
+        let health = &self.gameplay.health;
+        if health.hp_max_base < 1 {
+            out.push("gameplay.health.hp_max_base: должен быть ≥ 1".into());
+        }
+        for (key, value) in [
+            ("hp_per_vit", health.hp_per_vit),
+            ("hp_per_level", health.hp_per_level),
+            ("regen_in_pct_s", health.regen_in_pct_s),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                out.push(format!(
+                    "gameplay.health.{key}: должен быть ≥ 0 (получено: {value})"
+                ));
+            }
+        }
+        if health.regen_out_s == 0 {
+            out.push("gameplay.health.regen_out_s: должен быть ≥ 1".into());
+        }
     }
 
     fn check_world(&self, out: &mut Vec<String>) {

@@ -268,6 +268,7 @@ pub struct EditorApp {
     req_dex: Option<Entity<TextInput>>,
     req_vit: Option<Entity<TextInput>>,
     req_int: Option<Entity<TextInput>>,
+    req_spir: Option<Entity<TextInput>>,
     req_level: Option<Entity<TextInput>>,
 
     // форма локации
@@ -457,6 +458,7 @@ impl EditorApp {
             req_dex: None,
             req_vit: None,
             req_int: None,
+            req_spir: None,
             req_level: None,
             loc_name: None,
             loc_text: None,
@@ -673,6 +675,7 @@ impl EditorApp {
         self.req_dex = Some(mk(window, cx, "dex"));
         self.req_vit = Some(mk(window, cx, "vit"));
         self.req_int = Some(mk(window, cx, "int"));
+        self.req_spir = Some(mk(window, cx, "spir"));
         self.req_level = Some(mk(window, cx, "уровень"));
         self.loc_name = Some(mk(window, cx, "Имя локации"));
         self.loc_text = Some(mk(window, cx, "Текст/описание (E3: одна строка)"));
@@ -1079,6 +1082,7 @@ impl EditorApp {
                     self.req_dex.clone(),
                     self.req_vit.clone(),
                     self.req_int.clone(),
+                    self.req_spir.clone(),
                     self.req_level.clone(),
                 ],
             ),
@@ -1322,6 +1326,7 @@ impl EditorApp {
         Self::put_text(&self.req_dex, attr("dex"), cx);
         Self::put_text(&self.req_vit, attr("vit"), cx);
         Self::put_text(&self.req_int, attr("int"), cx);
+        Self::put_text(&self.req_spir, attr("spir"), cx);
         Self::put_text(
             &self.req_level,
             item.requires
@@ -1850,6 +1855,7 @@ impl EditorApp {
             ("dex", "dex", &self.req_dex),
             ("vit", "vit", &self.req_vit),
             ("int", "int", &self.req_int),
+            ("spir", "spir", &self.req_spir),
         ];
         let mut values: Vec<(&str, Option<Value>)> = Vec::new();
         for (attr, label, input) in attr_values.drain(..) {
@@ -7130,6 +7136,7 @@ impl EditorApp {
                     .child(self.field_cell("dex", &self.req_dex))
                     .child(self.field_cell("vit", &self.req_vit))
                     .child(self.field_cell("int", &self.req_int))
+                    .child(self.field_cell("spir", &self.req_spir))
                     .child(self.field_cell("Уровень", &self.req_level))
                     .child(
                         self.button("btn-apply-requires", "Применить")

@@ -171,6 +171,93 @@ pub fn derive(
     params
 }
 
+// ─── M30: максимумы и фасад пересчёта (docs/character-params.md) ────────────
+
+/// M30 §2.1: максимум HP — `hp_max_base + vit×hp_per_vit + level×hp_per_level`.
+/// Результат — **кэш** в колонке `characters.hp_max` (см. док §2.3):
+/// фасад чистый, персист делает вызывающая точка.
+pub fn max_hp(attrs: &BTreeMap<String, i64>, level: u32, cfg: &crate::config::Config) -> i64 {
+    let hp = &cfg.gameplay.health;
+    let raw = hp.hp_max_base as f64
+        + attr(attrs, "vit") as f64 * hp.hp_per_vit
+        + f64::from(level) * hp.hp_per_level;
+    // Валидатор не даёт отрицательных коэффициентов, но vit может
+    // уйти в минус аффиксами — максимум не бывает ниже 1.
+    (raw.round() as i64).max(1)
+}
+
+/// M30 §1.1: максимум маны — `mp_max_base + int×mp_per_int +
+/// arcana_rank×mp_per_arcana + spir×mp_per_spir` (духовность M30).
+/// Кэш в колонке `characters.mp_max`; у воина/лучника ресурс по
+/// профилю всё равно перекрывает ману (`resource_max`).
+pub fn max_mp(
+    attrs: &BTreeMap<String, i64>,
+    skills: &[SkillSnapshot],
+    cfg: &crate::config::Config,
+) -> i64 {
+    let mana = &cfg.gameplay.magic.mana;
+    let raw = mana.mp_max_base as f64
+        + attr(attrs, "int") as f64 * mana.mp_per_int
+        + rank(skills, "arcana") as f64 * mana.mp_per_arcana
+        + attr(attrs, "spir") as f64 * mana.mp_per_spir;
+    (raw.round() as i64).max(1)
+}
+
+/// M30: вход фасада [`recalculate`] — всё, что нужно для полного
+/// пересчёта, без БД и без события.
+pub struct RecalcInput<'a> {
+    /// Эффективные атрибуты: колонка `attrs` + самоцветы + бонусы
+    /// снаряжения (`character_state` собирает до вызова).
+    pub attrs: &'a BTreeMap<String, i64>,
+    pub skills: &'a [SkillSnapshot],
+    /// Снаряжённые предметы (для производных и бонусов `kind=param`).
+    pub equipped: &'a [ItemSnapshot],
+    /// Уровень персонажа (не ранг — для формулы HP).
+    pub level: u32,
+    /// Профиль (`warrior`/`archer`/…) — для рабочего максимума ресурса.
+    pub profile: &'a str,
+    pub cfg: &'a crate::config::Config,
+}
+
+/// M30: результат [`recalculate`] — все параметры разом. Порядок
+/// вычисления внутри фиксирован: `max_hp` → `max_mp` → `resource_max`
+/// (зависит от `mp_max`) → `derive`.
+pub struct Recalc {
+    pub hp_max: i64,
+    pub mp_max: i64,
+    /// Рабочий максимум ресурса профиля: ярость/энергия/мана.
+    pub resource_max: i64,
+    pub derived: DerivedParams,
+}
+
+/// M30: **фасад пересчёта всех параметров** (решение заказчика
+/// 2026-11-26): единая точка входа для снапшота, level-up, вставки/
+/// извлечения самоцвета и создания персонажа. Внутри — поочерёдные
+/// узкие функции (см. порядок в [`Recalc`]).
+///
+/// Фасад **чистый**: ничего не пишет в БД и не шлёт событий —
+/// персист (`db::characters::set_max`) и патчи `evt/char/stats` делает
+/// вызывающая точка. Регенерация сюда не входит: это тик-дельты
+/// (`regen_step`), а не параметры.
+pub fn recalculate(input: RecalcInput<'_>) -> Recalc {
+    let hp_max = max_hp(input.attrs, input.level, input.cfg);
+    let mp_max = max_mp(input.attrs, input.skills, input.cfg);
+    let resource_max =
+        crate::systems::resource_max(input.profile, &input.cfg.gameplay.resource, mp_max);
+    let derived = derive(
+        input.attrs,
+        input.skills,
+        input.equipped,
+        input.cfg.gameplay.combat.base_damage,
+    );
+    Recalc {
+        hp_max,
+        mp_max,
+        resource_max,
+        derived,
+    }
+}
+
 /// M18/F47/ADR-010: бонусы `kind=param` надетых предметов. Плоские
 /// прибавляются к итогу, проценты **складываются** и применяются к
 /// полученному итогу (решение 2026-11-13 — «сумма % к итогу»);
@@ -257,10 +344,47 @@ mod tests {
     use super::*;
 
     fn attrs10() -> BTreeMap<String, i64> {
-        ["str", "dex", "vit", "int"]
+        ["str", "dex", "vit", "int", "spir"]
             .iter()
             .map(|k| (k.to_string(), 10i64))
             .collect()
+    }
+
+    /// M30: фасад [`recalculate`] — стартовые значения на дефолтах
+    /// `server.example.toml` (hp 100, мана 110, профиль → ресурс).
+    #[test]
+    fn recalculate_facade_start_values() {
+        let example =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("server.example.toml");
+        let cfg = crate::config::Config::load(&example).expect("example валиден");
+        let attrs = attrs10();
+        let skills = [skill("arcana", 0)];
+        let out = recalculate(RecalcInput {
+            attrs: &attrs,
+            skills: &skills,
+            equipped: &[],
+            level: 1,
+            profile: "mage",
+            cfg: &cfg,
+        });
+        // hp: 40 + vit10×5 + уровень1×10 = 100 (без вклада ранга).
+        assert_eq!(out.hp_max, 100, "стартовое здоровье GDD §2.1");
+        // mp: 20 + int10×4 + arcana0×5 + spir10×5 = 110 (§1.1).
+        assert_eq!(out.mp_max, 110, "стартовая мана с духовностью");
+        assert_eq!(out.resource_max, 110, "маг — ресурс это мана");
+        // Производные считаются тем же `derive`, что и раньше.
+        assert_eq!(out.derived.accuracy, 80, "accuracy = 75 + dex/2");
+
+        // Воин: ресурс — ярость из конфига, мане формулы не мешает.
+        let warrior = recalculate(RecalcInput {
+            attrs: &attrs,
+            skills: &skills,
+            equipped: &[],
+            level: 1,
+            profile: "warrior",
+            cfg: &cfg,
+        });
+        assert_eq!(warrior.resource_max, 100, "воин — ярость");
     }
 
     fn skill(id: &str, rank: u32) -> SkillSnapshot {
