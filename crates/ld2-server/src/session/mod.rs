@@ -546,6 +546,49 @@ pub(crate) fn event_text(ty: &str, state_version: Option<u64>, payload: Value) -
     })
 }
 
+/// M34: завершить игровую сессию персонажа — отвязка мира, присутствие,
+/// соц-очистка и события партнёрам. Вызывается при закрытии WS и при
+/// вытеснении аккаунта вторым входом.
+pub(crate) async fn close_char_session(state: &SharedState, char_id: &str, owner: &str) {
+    let gone = {
+        let world = state.world.lock().expect("мир");
+        world.char_location(char_id)
+    };
+    let mine = {
+        let mut world = state.world.lock().expect("мир");
+        world.unbind_char(char_id, owner)
+    };
+    // Присутствие: соседи видят уход из мира (только наша сессия).
+    if mine {
+        if let Some(location_id) = gone {
+            presence::announce_despawn(state, &location_id, char_id, None);
+        }
+    }
+    let closed = if mine {
+        let mut social = state.social.lock().expect("соц");
+        social.drop_invites_for(char_id);
+        social.drop_guild_invites_for(char_id);
+        social.drop_trades_for(char_id)
+    } else {
+        None
+    };
+    if let Some((participants, offer_id)) = closed {
+        let text = event_text(
+            "evt/trade/closed",
+            None,
+            serde_json::json!({ "offer_id": offer_id, "reason": "cancelled" }),
+        );
+        if !text.is_empty() {
+            let world = state.world.lock().expect("мир");
+            for addr in participants {
+                if addr != char_id {
+                    world.send_to_char(&addr, text.clone());
+                }
+            }
+        }
+    }
+}
+
 /// Первые 12 символов sha256-версии контента — для компактного лога.
 fn short_version(version: &str) -> &str {
     version.get(..12).unwrap_or(version)

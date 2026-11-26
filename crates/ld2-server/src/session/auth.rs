@@ -12,7 +12,7 @@ use tracing::warn;
 
 use crate::{auth, db};
 
-use super::{out_ack, out_event, presence, Out, Session};
+use super::{out_ack, out_event, Out, Session};
 
 impl Session {
     /// Регистрация = немедленный вход (ADR-006); лимиты — из конфига (D25).
@@ -184,22 +184,19 @@ impl Session {
                 warn!("отзыв refresh не удался: {e}");
             }
         }
-        // Сессия выходит из мира: бой и рассылка (M12.5).
+        // Сессия выходит из мира: бой, рассылка, соц-очистка (M34).
         if let Some(char_id) = self.selected_char_id.take() {
-            let gone = {
-                let world = self.state.world.lock().expect("мир");
-                world.char_location(&char_id)
-            };
-            let mine = {
-                let mut world = self.state.world.lock().expect("мир");
-                world.unbind_char(&char_id, &self.peer.to_string())
-            };
-            // Присутствие: соседи видят уход из мира (только наша сессия).
-            if mine {
-                if let Some(location_id) = gone {
-                    presence::announce_despawn(&self.state, &location_id, &char_id, None);
-                }
-            }
+            crate::session::close_char_session(&self.state, &char_id, &self.peer.to_string()).await;
+        }
+        // M34: снять регистрацию аккаунт-сессии (только свою).
+        {
+            let owner = self.peer.to_string();
+            let mut sessions = self
+                .state
+                .account_sessions
+                .lock()
+                .expect("сессии аккаунтов");
+            sessions.retain(|_, (o, _)| o != &owner);
         }
         self.char = None;
         self.location_id = None;
@@ -253,6 +250,34 @@ impl Session {
         self.selected_char_id = None;
         self.char = None;
         self.location_id = None;
+        // M34: повторный вход на аккаунт — старую сессию разлогиниваем
+        // (заказчик): событие ей + завершение её игровой сессии, чтобы
+        // новый вход мог выбрать того же персонажа.
+        let owner = self.peer.to_string();
+        let previous = {
+            let mut sessions = self
+                .state
+                .account_sessions
+                .lock()
+                .expect("сессии аккаунтов");
+            sessions.insert(account_id, (owner.clone(), self.out_tx.clone()))
+        };
+        if let Some((old_owner, old_tx)) = previous {
+            if old_owner != owner {
+                let text =
+                    crate::session::event_text("evt/session/replaced", None, serde_json::json!({}));
+                if !text.is_empty() {
+                    let _ = old_tx.try_send(text);
+                }
+                let ids = {
+                    let world = self.state.world.lock().expect("мир");
+                    world.char_ids_owned_by(&old_owner)
+                };
+                for id in ids {
+                    crate::session::close_char_session(&self.state, &id, &old_owner).await;
+                }
+            }
+        }
         // Восстановление последней сессии (§4.5): после resume клиент шлёт
         // `state.resync` и ждёт снапшот — персонаж должен быть выбран.
         self.restore_last_char(account_id).await;

@@ -30,6 +30,14 @@ impl AppStore {
                 self.time_offset = sorted[sorted.len() / 2];
                 vec![]
             }
+            "evt/session/replaced" => {
+                // M34: в аккаунт вошли из другого окна — разлогиниваем
+                // эту сессию и показываем ошибку-тост (заказчик).
+                let msg = t(self.lang, Key::SessionReplaced).to_string();
+                let effects = self.reset_to_login(Some(msg.clone()));
+                self.notice = Some(msg);
+                effects
+            }
             "evt/account/premium" => {
                 // M33: срок премиума изменился (админ/покупка) — title bar.
                 let until = payload.get("premium_until").and_then(|v| v.as_i64());

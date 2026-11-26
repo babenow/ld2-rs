@@ -118,51 +118,16 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
         }
     }
 
-    // Отвязка персонажа: бой и рассылка (M12.5) + соц-чистка (M12.7):
-    // приглашения снимаются, активная сделка отменяется с событием
-    // `evt/trade/closed` партнёру.
+    // M34: отвязка персонажа — общий helper (бой, рассылка, соц-очистка,
+    // события партнёрам); используется и при вытеснении аккаунта.
     if let Some(char_id) = session.selected_char() {
-        // R10: отвязка и соц-чистка — только если это была наша сессия
-        // (умершая старая сессия позже новой не отменяет сделку новой).
-        let gone = {
-            let world = state.world.lock().expect("мир");
-            world.char_location(&char_id)
-        };
-        let mine = {
-            let mut world = state.world.lock().expect("мир");
-            world.unbind_char(&char_id, &peer.to_string())
-        };
-        // Присутствие: соседи видят уход из мира (только наша сессия).
-        if mine {
-            if let Some(location_id) = gone {
-                crate::session::presence::announce_despawn(&state, &location_id, &char_id, None);
-            }
-        }
-        let closed = if mine {
-            {
-                let mut social = state.social.lock().expect("соц");
-                social.drop_invites_for(&char_id);
-                social.drop_guild_invites_for(&char_id);
-                social.drop_trades_for(&char_id)
-            }
-        } else {
-            None
-        };
-        if let Some((participants, offer_id)) = closed {
-            let text = crate::session::event_text(
-                "evt/trade/closed",
-                None,
-                serde_json::json!({ "offer_id": offer_id, "reason": "cancelled" }),
-            );
-            if !text.is_empty() {
-                let world = state.world.lock().expect("мир");
-                for addr in participants {
-                    if addr != char_id {
-                        world.send_to_char(&addr, text.clone());
-                    }
-                }
-            }
-        }
+        crate::session::close_char_session(&state, &char_id, &peer.to_string()).await;
+    }
+    // M34: снять регистрацию аккаунт-сессии (только свою).
+    {
+        let owner = peer.to_string();
+        let mut sessions = state.account_sessions.lock().expect("сессии аккаунтов");
+        sessions.retain(|_, (o, _)| o != &owner);
     }
     info!("ws: соединение {peer} закрыто");
 }
