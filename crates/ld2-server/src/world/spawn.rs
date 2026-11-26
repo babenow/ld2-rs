@@ -179,6 +179,36 @@ impl World {
             }
         }
     }
+    /// M37: призыв мобов приёмом босса: клоны шаблона сида с
+    /// уникальными id, без респавна и без наследования босса.
+    pub fn summon_mobs(
+        &mut self,
+        template_id: &str,
+        count: i64,
+        location_id: &str,
+        now_ms: i64,
+    ) -> Vec<LiveMob> {
+        let Some(template) = self.mob_seed.get(template_id).cloned() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for _ in 0..count.clamp(1, 8) {
+            self.summon_seq += 1;
+            let mut mob = template.clone();
+            mob.id = format!("{template_id}_summon_{}", self.summon_seq);
+            mob.location_id = location_id.to_string();
+            mob.hp = mob.hp_start;
+            mob.hp_max = template.hp_max;
+            mob.next_attack_at = now_ms + 500;
+            mob.boss = None;
+            mob.respawn = None;
+            mob.target = None;
+            self.mobs.insert(mob.id.clone(), mob.clone());
+            out.push(mob);
+        }
+        out
+    }
+
     /// Мёртвые мобы текущей локации уже не отдаются; снапшот §6 = статика
     /// (кроме мобов — они живут здесь) + живые мобы + динамические трупы.
     pub fn build_location(

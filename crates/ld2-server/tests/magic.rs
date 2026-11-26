@@ -745,6 +745,135 @@ async fn snapshot_carries_socket_accepts() {
     assert_eq!(accepts_of(&helm_uid), ["gem"], "броня: слот под самоцвет");
 }
 
+/// Заказчик: сет «1000 истин» — «Клеймор» (двуручный) и «Клинок»
+/// (одноручный); щит даёт блок щитом 12..18 и 2 рунных слота +
+/// 3 самоцветных; клинок и щит надеваются вместе.
+#[tokio::test]
+async fn thousand_truths_set_sockets_and_equip() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    let twohand = give(&mut c, "sword_1000_true").await;
+    let onehand = give(&mut c, "sword_1000_true_1h").await;
+    let shield = give(&mut c, "shield_1000_true").await;
+
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "resync");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let inv = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь");
+
+    let item_of = |uid: &str| -> &serde_json::Value {
+        inv.iter()
+            .find(|i| i["uid"] == uid)
+            .unwrap_or_else(|| panic!("предмет {uid} должен быть в инвентаре"))
+    };
+    let accepts_of = |uid: &str| -> Vec<String> {
+        item_of(uid)["sockets"]
+            .as_array()
+            .expect("сокеты")
+            .iter()
+            .map(|s| s["accepts"].as_str().unwrap_or("<нет поля>").to_string())
+            .collect()
+    };
+
+    assert_eq!(item_of(&twohand)["name"], "Клеймор тысячи истин");
+    assert_eq!(item_of(&onehand)["name"], "Клинок тысячи истин");
+    assert_eq!(item_of(&shield)["name"], "Щит тысячи истин");
+    assert_eq!(
+        accepts_of(&onehand),
+        ["rune", "rune", "gem", "gem"],
+        "клинок: 2 руны + 2 камня"
+    );
+    assert_eq!(
+        accepts_of(&shield),
+        ["rune", "rune", "gem", "gem", "gem"],
+        "щит: 2 руны + 3 камня"
+    );
+    let param = |id: &str| -> i64 {
+        item_of(&shield)["bonuses"]
+            .as_array()
+            .expect("бонусы")
+            .iter()
+            .find(|b| b["id"] == id)
+            .and_then(|b| b["value"].as_i64())
+            .unwrap_or_else(|| panic!("нет бонуса {id} у щита"))
+    };
+    assert_eq!(
+        (param("block_min"), param("block_max")),
+        (12, 18),
+        "блок щитом: 12..18 урона"
+    );
+    assert_eq!(param("block_chance"), 12, "базовый шанс блока щита");
+
+    // Клинок и щит — вместе (main_hand + off_hand).
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": onehand, "slot": "main_hand" }),
+        )
+        .await;
+    let before = c.ack(seq).await;
+    assert_eq!(before["result"], "ok", "клинок");
+    let base_chance = before["payload"]["char"]["derived"]["block_chance"]
+        .as_i64()
+        .expect("шанс блока без щита");
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": shield, "slot": "off_hand" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "щит в off_hand: {ack}");
+    let der = &ack["payload"]["char"]["derived"];
+    assert_eq!(
+        der["block_chance"].as_i64(),
+        Some(base_chance + 12),
+        "щит добавил базовый шанс блока"
+    );
+    assert_eq!(
+        (der["block_min"].as_i64(), der["block_max"].as_i64()),
+        (Some(12), Some(18)),
+        "блок щитом 12..18 в derived"
+    );
+    // Заказчик 2026-11-27: клинок (одноручный) не парирует.
+    assert_eq!(der["parry_chance"], 0, "клинок: нет парирования");
+    assert_eq!(der["parry_min"], 0);
+
+    // Меняем клинок на клеймор (двуручный) — парирование появляется;
+    // урон контрудара от силы: 10 + str-бонус клеймора 5 → 15 → 3..7.
+    for slot in ["off_hand", "main_hand"] {
+        let seq = c.send("cmd/item.unequip", json!({ "slot": slot })).await;
+        assert_eq!(c.ack(seq).await["result"], "ok", "снять {slot}");
+    }
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": twohand, "slot": "main_hand" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "клеймор: {ack}");
+    let der = &ack["payload"]["char"]["derived"];
+    assert!(
+        der["parry_chance"].as_i64().unwrap_or(0) > 0,
+        "двуручный клеймор парирует: {der}"
+    );
+    assert_eq!(
+        (der["parry_min"].as_i64(), der["parry_max"].as_i64()),
+        (Some(3), Some(7)),
+        "контрудар от силы 15 → 3..7"
+    );
+}
+
 /// M18/F58 (ADR-012): слот принимает по `accepts` — гемы в оружие
 /// разрешены там, где слот под самоцветы (`rune_sockets` делит
 /// слоты: первые рунные, остальные под самоцветы).

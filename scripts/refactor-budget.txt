@@ -12,7 +12,7 @@ crates/ld2-client/src/root/game/entities.rs 672 187
 crates/ld2-client/src/root/game.rs 743 150
 crates/ld2-client/src/root/settings.rs 780 183
 crates/ld2-client/src/root/sheet/character.rs 770 150
-crates/ld2-client/src/root/sheet/equip.rs 630 181
+crates/ld2-client/src/root/sheet/equip.rs 647 181
 crates/ld2-client/src/root/social.rs 613 150
 crates/ld2-client/src/root.rs 905 176
 crates/ld2-client/src/text_input.rs 699 150
@@ -34,7 +34,7 @@ crates/ld2-server/src/session/magic.rs 605 331
 crates/ld2-server/src/session/quests.rs 320 253
 crates/ld2-server/src/session/socketing.rs 513 312
 crates/ld2-server/src/session/upgrade.rs 477 345
-crates/ld2-server/src/tick/combat.rs 1143 167
+crates/ld2-server/src/tick/combat.rs 1185 167
 crates/ld2-test-kit/src/fixtures.rs 652 150
 
 # --- минимум тестов по крейтам ---

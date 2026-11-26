@@ -74,6 +74,19 @@ pub struct BossSelfBuff {
     pub duration_s: i64,
 }
 
+/// M37: призыв мобов приёмом (Белый волк — «Громкий вой»).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BossSummon {
+    /// id шаблона моба в контенте (`mob_seed`), например `m_3`.
+    pub mob: String,
+    #[serde(default = "boss_summon_count")]
+    pub count: i64,
+}
+
+fn boss_summon_count() -> i64 {
+    2
+}
+
 /// M25: навык босса — кулдаун, каст (подготовка) и урон/бафф.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct BossSkill {
@@ -90,17 +103,24 @@ pub struct BossSkill {
     /// M25: бафф на себя при применении.
     #[serde(default)]
     pub self_buff: Option<BossSelfBuff>,
-    /// M25: эффект на игроков при применении (стан/немота/ослепление).
+    /// M25: эффект на игроков при применении (стан/немота/ослепление,
+    /// M37 — кровотечение).
     #[serde(default)]
     pub effect: Option<BossEffect>,
+    /// M37: призыв мобов при применении («Громкий вой»).
+    #[serde(default)]
+    pub summon: Option<BossSummon>,
 }
 
 /// M25: эффект приёма босса на игроков локации.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct BossEffect {
-    /// `stun` (ничего нельзя) | `silence` (нет магии) | `blind` (нет атак).
+    /// `stun` | `silence` | `blind` | `bleed` (M37).
     pub kind: String,
     pub duration_s: i64,
+    /// M37: для `bleed` — урон в секунду (по умолчанию 1).
+    #[serde(default)]
+    pub value: Option<i64>,
 }
 
 /// M25: название эффекта контроля (сервер — истина, RU).
@@ -109,6 +129,7 @@ pub fn effect_title(kind: &str) -> String {
         "stun" => "Оглушение".to_string(),
         "silence" => "Немота".to_string(),
         "blind" => "Ослепление".to_string(),
+        "bleed" => "Кровотечение".to_string(),
         other => other.to_string(),
     }
 }
@@ -606,6 +627,15 @@ impl World {
             });
         }
         Some(corpse_id)
+    }
+    /// M37: мобы, выбранные целью активного боя (бьют в ответ, даже
+    /// если не агрессивны — например, элитный Белый волк).
+    pub fn combat_mobs_in(&self, location_id: &str) -> Vec<String> {
+        self.combat
+            .values()
+            .filter(|c| c.location_id == location_id)
+            .map(|c| c.target_id.clone())
+            .collect()
     }
     /// Мобы локации, готовые атаковать (агрессивные — при живых персонажах).
     pub fn aggro_mobs_in(&self, location_id: &str) -> Vec<String> {

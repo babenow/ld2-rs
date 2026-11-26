@@ -157,6 +157,96 @@
           ]
         },
         {
+          "id": "m_white_wolf",
+          "kind": "monster",
+          "name": "Белый волк",
+          "hp": {
+            "cur": 90,
+            "max": 90
+          },
+          "tags": [
+            "aggro",
+            "elite"
+          ],
+          "aggro": false,
+          "difficulty": 6,
+          "damage": 7,
+          "combat": {
+            "armor": 8,
+            "dodge": 8,
+            "parry": 8,
+            "resist": 10,
+            "accuracy": 85
+          },
+          "respawn": {
+            "min_s": 180,
+            "max_s": 300
+          },
+          "harvest": {
+            "level": 45,
+            "skin": true,
+            "gut": true,
+            "skin_extra": [
+              {
+                "def_id": "pelt_white_wolf",
+                "chance": 0.03
+              }
+            ]
+          },
+          "drops": [
+            "potion_heal",
+            "gold_coin"
+          ],
+          "boss_ai": {
+            "phases": [
+              {
+                "after_s": 0,
+                "name": "Белый волк",
+                "glyph": "W",
+                "damage_mult": 1.0,
+                "interval_mult": 1.0
+              }
+            ],
+            "skills": [
+              {
+                "id": "bite",
+                "name": "Укус",
+                "glyph": "b",
+                "cooldown_s": 7,
+                "damage": 7,
+                "effect": {
+                  "kind": "bleed",
+                  "duration_s": 6,
+                  "value": 2
+                }
+              },
+              {
+                "id": "howl",
+                "name": "Громкий вой",
+                "glyph": "h",
+                "cooldown_s": 20,
+                "damage": 0,
+                "summon": {
+                  "mob": "m_3",
+                  "count": 2
+                }
+              },
+              {
+                "id": "growl",
+                "name": "Рык",
+                "glyph": "g",
+                "cooldown_s": 15,
+                "damage": 0,
+                "self_buff": {
+                  "damage_mult": 1.5,
+                  "interval_mult": 1.0,
+                  "duration_s": 10
+                }
+              }
+            ]
+          }
+        },
+        {
           "id": "cor_9",
           "kind": "corpse",
           "name": "Труп: Ким-младший",
