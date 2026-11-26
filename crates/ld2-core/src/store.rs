@@ -2442,11 +2442,11 @@ mod tests {
             serde_json::json!({
                 "entity": { "id": "p_guest", "kind": "player", "name": "Сара" },
                 "location_id": "l_village",
-                "text": "Сара пришла"
+                "text": "пришла Сара"
             }),
         ));
         let last = store.log.back().expect("строка");
-        assert_eq!(last.text, "Сара пришла", "{}", last.text);
+        assert_eq!(last.text, "пришла Сара", "{}", last.text);
         assert_eq!(last.kind, LogKind::Location);
 
         // Пустая строка — прежний шаблон «{name} появляется» (не портим заглушкой).

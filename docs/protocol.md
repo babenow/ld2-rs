@@ -235,7 +235,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 // (hp не передаётся; свой персонаж в список не входит). Вход/переход/выход
 // соседа приходят адресными evt/entity/spawn и evt/entity/despawn; у перехода
 // и респавна в событиях есть text с готовой строкой журнала —
-// «Сара пришла» / «Марк ушел — тропа на север», гибель моба — «Волк погиб».
+// «пришла Сара» / «Марк ушел — тропа на север», гибель моба — «Волк погиб».
 
 // ItemSnapshot
 { "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest|bag
@@ -386,7 +386,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/char/stats` | `{ patch }` | изменение атрибутов/HP/MP |
 | `evt/char/death` | `{ victim_char: true, lost_items[], corpse, respawn { location_id, delay_s } }` | смерть ПЕРСОНАЖА, полная потеря лута |
 | `evt/location/changed` | `{ location: LocationSnapshot }` | новая локация (broadcast в ней же) |
-| `evt/entity/spawn` | `{ entity: Entity, location_id, text? }` | появление сущности; M29: `text` — готовая строка журнала («Сара пришла»), без неё клиент пишет «{name} появляется» |
+| `evt/entity/spawn` | `{ entity: Entity, location_id, text? }` | появление сущности; M29: `text` — готовая строка журнала («пришла Сара»), без неё клиент пишет «{name} появляется» |
 | `evt/entity/move` | `{ entity_id, patch }` | перемещение/изменение внутри локации |
 | `evt/entity/hp` | `{ entity_id, hp }` | смена HP |
 | `evt/entity/despawn` | `{ entity_id, location_id, kind?, text? }` | исчезновение (смерть/уход/TTL); `kind` M20 — «{name} исчез» для предмета; M29: `text` — готовая строка журнала («Марк ушел — тропа на север», «Волк погиб») |

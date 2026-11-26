@@ -160,7 +160,7 @@ pub struct LocationChanged {
 pub struct EntitySpawn {
     pub entity: Entity,
     pub location_id: String,
-    /// M29 (заказчик): готовая строка журнала прихода («Сара пришла»);
+    /// M29 (заказчик): готовая строка журнала прихода («пришла Сара»);
     /// без неё — клиентский шаблон «{name} появляется». Аддитивно §11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,

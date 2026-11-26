@@ -45,14 +45,15 @@ fn broadcast(state: &SharedState, location_id: &str, except: &str, text: String)
     }
 }
 
-/// Глагол прихода (M29, заказчик): «пришел»/«пришла» по роду.
+/// Глагол прихода (M29, заказчик): «пришел/пришла» по роду — формат
+/// `[действие] [имя]` (в отличие от ухода/гибели, где имя впереди).
 pub(crate) fn came_line(name: &str, gender: &str) -> String {
     let verb = if gender == "female" {
         "пришла"
     } else {
         "пришел"
     };
-    format!("{name} {verb}")
+    format!("{verb} {name}")
 }
 
 /// Глагол гибели (M29, заказчик): «погиб»/«погибла» по роду.

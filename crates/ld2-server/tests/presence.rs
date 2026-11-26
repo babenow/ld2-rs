@@ -87,7 +87,7 @@ async fn players_in_same_location_are_visible_and_leave_events() {
     assert_eq!(back["payload"]["entity"]["id"], char_b);
     let came = back["payload"]["text"].as_str().unwrap_or_default();
     assert!(
-        came == format!("{b_name} пришел") || came == format!("{b_name} пришла"),
+        came == format!("пришел {b_name}") || came == format!("пришла {b_name}"),
         "строка прихода: {came:?}"
     );
 
