@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::features::SessionConfig;
 use crate::types::{
-    CharacterState, CrimeLogEntry, CrimeStatus, Entity, GuildState, Hp, ItemSnapshot, JsonMap,
-    LocationSnapshot, PartyState, ProfessionSnapshot, QuestState,
+    BuffState, CharacterState, CrimeLogEntry, CrimeStatus, Entity, GuildState, Hp, ItemSnapshot,
+    JsonMap, LocationSnapshot, PartyState, ProfessionSnapshot, QuestState,
 };
 
 /// Событие: wire-`type` (`evt/<domain>.<event>`) и (де)сериализация payload'а.
@@ -160,6 +160,10 @@ pub struct LocationChanged {
 pub struct EntitySpawn {
     pub entity: Entity,
     pub location_id: String,
+    /// M29 (заказчик): готовая строка журнала прихода («пришла Сара»);
+    /// без неё — клиентский шаблон «{name} появляется». Аддитивно §11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -178,6 +182,47 @@ pub struct EntityHp {
 pub struct EntityDespawn {
     pub entity_id: String,
     pub location_id: String,
+    /// M20: тип исчезнувшей сущности — клиент различает строки журнала
+    /// («{name} исчезает» vs «{name} исчез» для предмета); аддитивно
+    /// §11: старый сервер не шлёт → прежняя строка.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::types::EntityKind>,
+    /// R-dnd (заказчик 2026-11-21): кто поднял предмет с земли —
+    /// строка журнала «{имя} подобрал(а) …»; `None` — не подбор
+    /// (TTL/другие причины). Аддитивно §11: старый сервер не шлёт.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picked_by: Option<String>,
+    /// Пол подобрал(а) — «подобрала» для female.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picked_gender: Option<String>,
+    /// M29: готовая строка журнала для соседей («{имя} ушел — {выход}»)
+    /// при переходе игрока в другую локацию; `None` — прежняя строка
+    /// «{name} исчезает»/подбор. Аддитивно §11: старый сервер не шлёт.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// M20: предмет в локации исчез (TTL выброса) — журнал «{name} исчез».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemExpired {
+    /// Id наземного предмета (на будущее; журналу нужно name).
+    pub uid: String,
+    pub name: String,
+}
+
+/// M20: выброс предмета в локации — журнал у всех, кто в локации
+/// (§8, аддитивно): «{by} выбросил(а) …» / «Вы выбросили …».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemDropped {
+    /// Кто бросил (`char_id`) — для строки «Вы …» у себя.
+    pub char_id: String,
+    /// Имя персонажа (для «{by} выбросил(а)»).
+    pub by_name: String,
+    /// `male`|`female` — выбор «выбросил/выбросила».
+    pub gender: String,
+    pub qty: i64,
+    /// Название предмета.
+    pub item_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -230,6 +275,10 @@ pub struct CombatCooldown {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_id: Option<String>,
     pub until_epoch: i64,
+    /// M17/F30g: полная длительность кулдауна, мс — для прогресс-бара
+    /// клиента (`None` — старый сервер, без бара).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -304,6 +353,10 @@ pub struct UpgradeResult {
     pub item_destroyed: Option<bool>,
     #[serde(default)]
     pub cost: JsonMap,
+    /// M18/F53: длительность анимации улучшения, мс (из конфига
+    /// сервера). Клиент показывает прогресс-бар это время.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -328,6 +381,13 @@ pub struct CraftResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CraftProfession {
     pub profession: ProfessionSnapshot,
+    /// M22: имя профессии (из контента, рус.) — журнал клиента.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// M22: полученное за действие количество опыта (`None`/0 —
+    /// журнал «{name}: опыт +{n}» не пишется).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -338,6 +398,16 @@ pub struct QuestProgress {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuestUpdated {
     pub quest: QuestState,
+}
+
+// ─── баффы рун (M18/F58d, ADR-012 §6) ───────────────────────────────────────
+
+/// **Полная замена** списка активных баффов (стак/таймер — как
+/// `evt/crime/status`; клиент пересчитывает отображение целиком).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharBuffs {
+    #[serde(default)]
+    pub buffs: Vec<BuffState>,
 }
 
 // ─── преступность (§10, ФР-11) ───────────────────────────────────────────────
@@ -369,6 +439,10 @@ pub struct CrimeRemoved {
 /// Сообщение чата (§8, ФР-13): `sent_at` — ISO-8601 UTC.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
+    /// M14/F19: id строки в истории (для удаления модератором);
+    /// у старых серверов отсутствует → `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     pub channel: String,
     pub from: String,
     pub name: String,
@@ -378,6 +452,12 @@ pub struct ChatMessage {
     pub sent_at: String,
     #[serde(flatten, default)]
     pub extra: JsonMap,
+}
+
+/// M14/F19: модератор удалил сообщение — клиент убирает строку по `id`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatDeleted {
+    pub id: u64,
 }
 
 /// Полное состояние группы; `party: null` — группы нет (§8).
@@ -447,7 +527,136 @@ pub struct GuildLog {
     pub entry: GuildLogEntry,
 }
 
+/// M20: страница многостраничного игрового диалога (заготовка).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogPage {
+    pub id: String,
+    pub text: String,
+    /// Кнопки действий (для page-диалога).
+    #[serde(default)]
+    pub actions: Vec<DialogAction>,
+}
+
+/// M20: кнопка действия в игровом диалоге.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogAction {
+    pub id: String,
+    pub label: String,
+}
+
+/// M20: поле ввода execute-диалога («text» | «number»).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogInput {
+    pub id: String,
+    pub label: String,
+    #[serde(default = "dialog_input_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub default: String,
+}
+
+fn dialog_input_kind() -> String {
+    "text".into()
+}
+
+/// M20: открытие игрового диалога — **заготовка** многостраничного
+/// (страницы + действия + кнопка «Назад» на клиенте) и execute-диалога
+/// (ввод данных → `cmd/dialog.submit` возвращает набор вводов).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DialogOpen {
+    /// Стабильный id диалога (для choice/submit).
+    pub id: String,
+    /// `page` | `execute`.
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub pages: Vec<DialogPage>,
+    #[serde(default)]
+    pub inputs: Vec<DialogInput>,
+}
+
+/// Снятие шкур: разделка завершена — клиент чистит прогресс-бар и
+/// пишет в журнал «Вы освежевали труп …»/«Вы сняли шкуру с трупа …»
+/// (`ok=false` — труп исчез, сообщения нет).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HarvestResult {
+    pub entity_id: String,
+    /// Имя животного (без префикса «Труп:»).
+    pub name: String,
+    /// `skin` | `gut`.
+    pub action: String,
+    pub ok: bool,
+    /// M22: разделка **прервана взаимодействием с предметом** —
+    /// для `skin` кожа испорчена (повтор невозможен), для `gut` —
+    /// просто отмена (можно повторить); клиент пишет «Шкура
+    /// испорчена» и чистит прогресс-бар.
+    #[serde(default)]
+    pub ruined: bool,
+}
+
+/// M22: новый уровень персонажа — журнал: себе «Вы получили новый
+/// уровень!…», остальным в локации «{имя} получил(а) новый уровень!».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharLevelUp {
+    pub char_id: String,
+    pub name: String,
+    /// `male` | `female` — «получил/получила».
+    pub gender: String,
+    pub level: u32,
+}
+
 // ─── wire-типы (protocol.md §8) ──────────────────────────────────────────────
+
+/// M25: моб атаковал — следующая атака через `interval_ms`
+/// (прогресс-бар атаки монстров на клиенте).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobAttack {
+    pub entity_id: String,
+    pub next_attack_at: i64,
+    pub interval_ms: i64,
+}
+
+/// M25: босс перешёл в фазу (по времени боя).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobPhase {
+    pub entity_id: String,
+    pub phase: u32,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+}
+
+/// M25: босс начал каст навыка (подготовка — босс не атакует).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobCast {
+    pub entity_id: String,
+    pub source_name: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+    pub ends_at: i64,
+}
+
+/// M25: дебафф контроля персонажа (эффект приёма босса): стан —
+/// всплывающее окно с прогрессбаром, остальные — журнал.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharAfflict {
+    /// `stun` | `silence` | `blind`.
+    pub kind: String,
+    pub title: String,
+    /// Срок действия (epoch, мс).
+    pub until_ms: i64,
+}
+
+/// M25: босс использовал навык.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MobSkill {
+    pub entity_id: String,
+    pub source_name: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<String>,
+}
 
 impl_events!(
     (StateSnapshot, "evt/state/snapshot"),
@@ -463,6 +672,11 @@ impl_events!(
     (EntityMove, "evt/entity/move"),
     (EntityHp, "evt/entity/hp"),
     (EntityDespawn, "evt/entity/despawn"),
+    (MobAttack, "evt/mob/attack"),
+    (MobPhase, "evt/mob/phase"),
+    (MobSkill, "evt/mob/skill"),
+    (MobCast, "evt/mob/cast"),
+    (CharAfflict, "evt/char/afflict"),
     (CorpseCreated, "evt/corpse/created"),
     (CorpseLooted, "evt/corpse/looted"),
     (CombatHit, "evt/combat/hit"),
@@ -472,15 +686,22 @@ impl_events!(
     (ItemAdded, "evt/item/added"),
     (ItemRemoved, "evt/item/removed"),
     (ItemState, "evt/item/state"),
+    (ItemDropped, "evt/item/dropped"),
+    (ItemExpired, "evt/item/expired"),
+    (HarvestResult, "evt/harvest/result"),
+    (CharLevelUp, "evt/char/level_up"),
+    (DialogOpen, "evt/dialog/open"),
     (UpgradeResult, "evt/upgrade/result"),
     (CraftResult, "evt/craft/result"),
     (CraftProfession, "evt/craft/profession"),
     (QuestProgress, "evt/quest/progress"),
     (QuestUpdated, "evt/quest/updated"),
+    (CharBuffs, "evt/char/buffs"),
     (CrimeStatusUpdate, "evt/crime/status"),
     (CrimeAdded, "evt/crime/added"),
     (CrimeRemoved, "evt/crime/removed"),
     (ChatMessage, "evt/chat/message"),
+    (ChatDeleted, "evt/chat/deleted"),
     (PartyUpdated, "evt/party/updated"),
     (TradeState, "evt/trade/state"),
     (TradeClosed, "evt/trade/closed"),
@@ -499,12 +720,15 @@ mod tests {
             StateSnapshot::TYPE,
             CharXp::TYPE,
             MagicCast::TYPE,
+            CharBuffs::TYPE,
             CrimeStatusUpdate::TYPE,
             GuildLog::TYPE,
             SessionConfig::TYPE,
+            ChatDeleted::TYPE,
         ] {
             assert!(ty.starts_with("evt/"), "{ty}");
         }
+        assert_eq!(ChatDeleted::TYPE, "evt/chat/deleted");
     }
 
     #[test]
@@ -527,9 +751,12 @@ mod tests {
         let s = SkillSnapshot {
             id: "sword".into(),
             name: None,
+            description: None,
+            group: None,
             rank: 3,
             xp: 612,
             xp_to_next: 480,
+            rank_cap: None,
         };
         assert_eq!(serde_json::to_value(s).expect("ok")["rank"], 3);
     }

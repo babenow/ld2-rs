@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Иконка приложения Likedimion (клиент ld2).
+
+  Мотив: рунная метка (Laguz, «тропа») с золотой инкрустацией — руны
+  инкрустируются в посохи (ТЗ §1). Палитра — §7.4 ТЗ: тёмная плитка
+  bg #1e1e24, акцент #4a90d9, золото #d19a66.
+
+  Из этого файла scripts/make-icons.sh генерирует: PNG 16…1024,
+  icon.icns (macOS), icon.ico (Windows). Правки только здесь.
+-->
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Плитка: тёмный камень, сверху светлее -->
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2d2d35"/>
+      <stop offset="1" stop-color="#191920"/>
+    </linearGradient>
+    <!-- Руна: светло-голубой верх → акцент → тёмно-голубой низ -->
+    <linearGradient id="rune" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8dbcf4"/>
+      <stop offset="0.5" stop-color="#4a90d9"/>
+      <stop offset="1" stop-color="#2f6cb0"/>
+    </linearGradient>
+    <!-- Ореол вокруг руны -->
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#4a90d9" stop-opacity="0.34"/>
+      <stop offset="0.6" stop-color="#4a90d9" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#4a90d9" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Золото камня -->
+    <linearGradient id="gem" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2d493"/>
+      <stop offset="0.55" stop-color="#d19a66"/>
+      <stop offset="1" stop-color="#9c6432"/>
+    </linearGradient>
+    <!-- Виньетка: затемнение краёв плитки -->
+    <radialGradient id="vignette" cx="0.5" cy="0.46" r="0.62">
+      <stop offset="0" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.30"/>
+    </radialGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+  </defs>
+
+  <!-- Плитка -->
+  <rect x="72" y="72" width="880" height="880" rx="200" fill="url(#tile)"/>
+  <!-- Виньетка и тонкая рамка -->
+  <rect x="72" y="72" width="880" height="880" rx="200" fill="url(#vignette)"/>
+  <rect x="75" y="75" width="874" height="874" rx="197" fill="none" stroke="#3a3a42" stroke-width="6"/>
+  <rect x="80" y="80" width="864" height="864" rx="192" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="2"/>
+  <!-- Мягкий свет сверху -->
+  <ellipse cx="512" cy="96" rx="340" ry="52" fill="#ffffff" opacity="0.05" filter="url(#glow)"/>
+
+  <!-- Ореол руны -->
+  <ellipse cx="512" cy="502" rx="330" ry="300" fill="url(#halo)"/>
+
+  <!-- Руна: тень-выемка (утоплена в камень) -->
+  <path d="M430 290 V750 M430 290 L594 494"
+        fill="none" stroke="#0d0d12" stroke-width="88"
+        stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>
+  <!-- Свечение руны -->
+  <path d="M430 290 V750 M430 290 L594 494"
+        fill="none" stroke="#4a90d9" stroke-width="72"
+        stroke-linecap="round" stroke-linejoin="round"
+        opacity="0.85" filter="url(#glow)"/>
+  <!-- Руна -->
+  <path d="M430 290 V750 M430 290 L594 494"
+        fill="none" stroke="url(#rune)" stroke-width="72"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Блик на стержне -->
+  <path d="M414 320 V700" fill="none" stroke="#ffffff"
+        stroke-opacity="0.28" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- Камни-инкрустация: вершина стержня и конец ветви -->
+  <g>
+    <rect x="384" y="244" width="92" height="92" rx="10"
+          transform="rotate(45 430 290)" fill="url(#gem)"
+          stroke="#7a4d1f" stroke-width="3"/>
+    <path d="M430 254 L466 290 L430 326 L394 290 Z"
+          fill="#ffffff" opacity="0.18"/>
+    <circle cx="420" cy="280" r="7" fill="#ffffff" opacity="0.5"/>
+  </g>
+  <g>
+    <rect x="548" y="448" width="92" height="92" rx="10"
+          transform="rotate(45 594 494)" fill="url(#gem)"
+          stroke="#7a4d1f" stroke-width="3"/>
+    <path d="M594 458 L630 494 L594 530 L558 494 Z"
+          fill="#ffffff" opacity="0.18"/>
+    <circle cx="584" cy="484" r="7" fill="#ffffff" opacity="0.5"/>
+  </g>
+</svg>

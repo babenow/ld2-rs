@@ -1,0 +1,74 @@
+{
+  "professions": [
+    {
+      "id": "herbalist",
+      "name": "Травничество",
+      "type": "primary"
+    },
+    {
+      "id": "alchemist",
+      "name": "Алхимия",
+      "type": "primary"
+    },
+    {
+      "id": "mining",
+      "name": "Горное дело",
+      "type": "primary"
+    },
+    {
+      "id": "blacksmith",
+      "name": "Кузнечное дело",
+      "type": "primary"
+    },
+    {
+      "id": "skinning",
+      "name": "Снятие шкур",
+      "type": "primary"
+    },
+    {
+      "id": "leatherworking",
+      "name": "Кожевенное дело",
+      "type": "primary"
+    },
+    {
+      "id": "tailor",
+      "name": "Портняжное дело",
+      "type": "primary"
+    },
+    {
+      "id": "scribe",
+      "name": "Начертание",
+      "type": "primary"
+    },
+    {
+      "id": "woodcutting",
+      "name": "Лесозаготовка",
+      "type": "primary"
+    },
+    {
+      "id": "woodcarver",
+      "name": "Резчик",
+      "type": "primary"
+    },
+    {
+      "id": "jeweler",
+      "name": "Ювелирное дело",
+      "type": "primary"
+    },
+    {
+      "id": "cook",
+      "name": "Кулинария",
+      "type": "secondary"
+    },
+    {
+      "id": "fishing",
+      "name": "Рыболовство",
+      "type": "secondary"
+    },
+    {
+      "id": "medic",
+      "name": "Лечение",
+      "type": "secondary"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Likedimion
+Comment=Текстовая онлайн-MMORPG — клиент ld2 (gpui)
+Exec=ld2-gpui
+Icon=likedimion
+Terminal=false
+Categories=Game;RolePlaying;
+# app_id окна (gpui WindowOptions.app_id, Wayland) — лаунчер
+# сопоставляет окно с этой записью и вешает иконку hicolor.
+StartupWMClass=ld2-gpui

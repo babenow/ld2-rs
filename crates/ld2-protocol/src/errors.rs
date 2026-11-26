@@ -24,10 +24,24 @@ pub enum ProtocolError {
 pub enum ErrorCode {
     AuthExpired,
     BadCredentials,
+    /// Логин занят (`auth.register`, ADR-006).
+    LoginTaken,
+    /// Логин/пароль короче лимитов сервера (`auth.register`, ADR-006).
+    WeakPassword,
+    /// Регистрация выключена настройкой сервера (ADR-006).
+    RegisterDisabled,
+    /// Email пуст/невалиден по синтаксису (ADR-007, D33).
+    BadEmail,
+    /// Email уже занят другим аккаунтом (ADR-007, D33).
+    EmailTaken,
     CharLimit,
     NameTaken,
     BadProfile,
+    /// Неизвестное значение `gender` в `char.create` (M18/F34).
+    BadGender,
     NotInLocation,
+    /// В локации нет тренера для профессии/навыка (M14).
+    NoTrainer,
     ExitBlocked,
     TargetGone,
     NotInCombat,
@@ -36,6 +50,9 @@ pub enum ErrorCode {
     NoCharges,
     NotEnoughMp,
     NoRuneSlot,
+    /// M18/F58f: та же руна уже вставлена в предмет — дубликаты не
+    /// стакаются (указание заказчика; §11.2: новый код совместим).
+    DuplicateRune,
     RequirementAttr,
     Profession,
     InventoryFull,
@@ -47,15 +64,38 @@ pub enum ErrorCode {
     PartyFull,
     GuildLimit,
     GuildPermission,
+    /// Недостаточно прав роли аккаунта (модерация чата, M14/F19).
+    Permission,
     XpPool,
     RankCap,
+    /// M21: уровень профессии не набран до границы ранга
+    /// (`craft.rank_up`, награда квеста с `rank_up`).
+    LevelRequired,
+    /// M18/F44: шкала навыка не заполнена на 100 % (ADR-009).
+    SkillNotReady,
     ProfessionLimit,
+    /// M18/F36: взятых квестов больше `quests.max_active` (§5).
+    QuestLimit,
+    /// M18/F39: не хватает валюты на покупку в магазине NPC.
+    NotEnoughMoney,
     StationRequired,
     ToolMissing,
     Ingredients,
     RateLimited,
     PvpForbidden,
     TooLarge,
+    /// M24: количество в админ-диалоге вне 1..=999 (`E_BAD_QTY`).
+    BadQuantity,
+    /// M24: персонаж занят разделкой — действия блокированы (`E_BUSY`).
+    Busy,
+    /// M25: дебафф контроля (стан/немота/ослепление) — действия
+    /// блокированы (`E_STUNNED`).
+    Stunned,
+    /// M28: сумка с ограничением типов не принимает этот предмет
+    /// (`E_BAG_TYPE`).
+    BagType,
+    /// M28/B8: сумка не подходит к спец-слоту (`E_BAG_SLOT`).
+    BagSlot,
     Internal,
     /// Код, неизвестный этой версии клиента (новее контракта / расширение сервера).
     Unknown(String),
@@ -67,10 +107,17 @@ impl ErrorCode {
         match self {
             Self::AuthExpired => "E_AUTH_EXPIRED",
             Self::BadCredentials => "E_BAD_CREDENTIALS",
+            Self::LoginTaken => "E_LOGIN_TAKEN",
+            Self::WeakPassword => "E_WEAK_PASSWORD",
+            Self::RegisterDisabled => "E_REGISTER_DISABLED",
+            Self::BadEmail => "E_BAD_EMAIL",
+            Self::EmailTaken => "E_EMAIL_TAKEN",
             Self::CharLimit => "E_CHAR_LIMIT",
             Self::NameTaken => "E_NAME_TAKEN",
             Self::BadProfile => "E_BAD_PROFILE",
+            Self::BadGender => "E_BAD_GENDER",
             Self::NotInLocation => "E_NOT_IN_LOCATION",
+            Self::NoTrainer => "E_NO_TRAINER",
             Self::ExitBlocked => "E_EXIT_BLOCKED",
             Self::TargetGone => "E_TARGET_GONE",
             Self::NotInCombat => "E_NOT_IN_COMBAT",
@@ -79,6 +126,7 @@ impl ErrorCode {
             Self::NoCharges => "E_NO_CHARGES",
             Self::NotEnoughMp => "E_NOT_ENOUGH_MP",
             Self::NoRuneSlot => "E_NO_RUNE_SLOT",
+            Self::DuplicateRune => "E_DUPLICATE_RUNE",
             Self::RequirementAttr => "E_REQUIREMENT_ATTR",
             Self::Profession => "E_PROFESSION",
             Self::InventoryFull => "E_INVENTORY_FULL",
@@ -90,15 +138,26 @@ impl ErrorCode {
             Self::PartyFull => "E_PARTY_FULL",
             Self::GuildLimit => "E_GUILD_LIMIT",
             Self::GuildPermission => "E_GUILD_PERMISSION",
+            Self::Permission => "E_PERMISSION",
             Self::XpPool => "E_XP_POOL",
             Self::RankCap => "E_RANK_CAP",
+            Self::LevelRequired => "E_LEVEL_REQUIRED",
+            Self::SkillNotReady => "E_SKILL_NOT_READY",
             Self::ProfessionLimit => "E_PROFESSION_LIMIT",
+            Self::QuestLimit => "E_QUEST_LIMIT",
+            Self::NotEnoughMoney => "E_NOT_ENOUGH_MONEY",
             Self::StationRequired => "E_STATION_REQUIRED",
             Self::ToolMissing => "E_TOOL_MISSING",
             Self::Ingredients => "E_INGREDIENTS",
             Self::RateLimited => "E_RATE_LIMITED",
             Self::PvpForbidden => "E_PVP_FORBIDDEN",
             Self::TooLarge => "E_TOO_LARGE",
+            Self::BadQuantity => "E_BAD_QTY",
+            Self::Busy => "E_BUSY",
+            Self::Stunned => "E_STUNNED",
+            Self::BagType => "E_BAG_TYPE",
+            Self::BagSlot => "E_BAG_SLOT",
+
             Self::Internal => "E_INTERNAL",
             Self::Unknown(raw) => raw,
         }
@@ -112,10 +171,17 @@ impl FromStr for ErrorCode {
         Ok(match s {
             "E_AUTH_EXPIRED" => Self::AuthExpired,
             "E_BAD_CREDENTIALS" => Self::BadCredentials,
+            "E_LOGIN_TAKEN" => Self::LoginTaken,
+            "E_WEAK_PASSWORD" => Self::WeakPassword,
+            "E_REGISTER_DISABLED" => Self::RegisterDisabled,
+            "E_BAD_EMAIL" => Self::BadEmail,
+            "E_EMAIL_TAKEN" => Self::EmailTaken,
             "E_CHAR_LIMIT" => Self::CharLimit,
             "E_NAME_TAKEN" => Self::NameTaken,
             "E_BAD_PROFILE" => Self::BadProfile,
+            "E_BAD_GENDER" => Self::BadGender,
             "E_NOT_IN_LOCATION" => Self::NotInLocation,
+            "E_NO_TRAINER" => Self::NoTrainer,
             "E_EXIT_BLOCKED" => Self::ExitBlocked,
             "E_TARGET_GONE" => Self::TargetGone,
             "E_NOT_IN_COMBAT" => Self::NotInCombat,
@@ -124,6 +190,7 @@ impl FromStr for ErrorCode {
             "E_NO_CHARGES" => Self::NoCharges,
             "E_NOT_ENOUGH_MP" => Self::NotEnoughMp,
             "E_NO_RUNE_SLOT" => Self::NoRuneSlot,
+            "E_DUPLICATE_RUNE" => Self::DuplicateRune,
             "E_REQUIREMENT_ATTR" => Self::RequirementAttr,
             "E_PROFESSION" => Self::Profession,
             "E_INVENTORY_FULL" => Self::InventoryFull,
@@ -135,15 +202,25 @@ impl FromStr for ErrorCode {
             "E_PARTY_FULL" => Self::PartyFull,
             "E_GUILD_LIMIT" => Self::GuildLimit,
             "E_GUILD_PERMISSION" => Self::GuildPermission,
+            "E_PERMISSION" => Self::Permission,
             "E_XP_POOL" => Self::XpPool,
             "E_RANK_CAP" => Self::RankCap,
+            "E_LEVEL_REQUIRED" => Self::LevelRequired,
             "E_PROFESSION_LIMIT" => Self::ProfessionLimit,
+            "E_QUEST_LIMIT" => Self::QuestLimit,
+            "E_NOT_ENOUGH_MONEY" => Self::NotEnoughMoney,
             "E_STATION_REQUIRED" => Self::StationRequired,
             "E_TOOL_MISSING" => Self::ToolMissing,
             "E_INGREDIENTS" => Self::Ingredients,
             "E_RATE_LIMITED" => Self::RateLimited,
             "E_PVP_FORBIDDEN" => Self::PvpForbidden,
             "E_TOO_LARGE" => Self::TooLarge,
+            "E_BAD_QTY" => Self::BadQuantity,
+            "E_BUSY" => Self::Busy,
+            "E_STUNNED" => Self::Stunned,
+            "E_BAG_TYPE" => Self::BagType,
+            "E_BAG_SLOT" => Self::BagSlot,
+
             "E_INTERNAL" => Self::Internal,
             other => Self::Unknown(other.to_string()),
         })
@@ -158,10 +235,16 @@ mod tests {
     const DOC_CODES: &[&str] = &[
         "E_AUTH_EXPIRED",
         "E_BAD_CREDENTIALS",
+        "E_LOGIN_TAKEN",
+        "E_WEAK_PASSWORD",
+        "E_REGISTER_DISABLED",
+        "E_BAD_EMAIL",
+        "E_EMAIL_TAKEN",
         "E_CHAR_LIMIT",
         "E_NAME_TAKEN",
         "E_BAD_PROFILE",
         "E_NOT_IN_LOCATION",
+        "E_NO_TRAINER",
         "E_EXIT_BLOCKED",
         "E_TARGET_GONE",
         "E_NOT_IN_COMBAT",
@@ -184,13 +267,20 @@ mod tests {
         "E_XP_POOL",
         "E_RANK_CAP",
         "E_PROFESSION_LIMIT",
+        "E_QUEST_LIMIT",
+        "E_NOT_ENOUGH_MONEY",
         "E_STATION_REQUIRED",
         "E_TOOL_MISSING",
         "E_INGREDIENTS",
         "E_RATE_LIMITED",
         "E_PVP_FORBIDDEN",
+        "E_PERMISSION",
         "E_TOO_LARGE",
         "E_INTERNAL",
+        "E_BAD_GENDER",
+        "E_STUNNED",
+        "E_BAG_TYPE",
+        "E_BAG_SLOT",
     ];
 
     #[test]

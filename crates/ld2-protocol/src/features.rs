@@ -16,6 +16,10 @@ pub struct SessionConfig {
     pub char_slot_limit: u32,
     #[serde(default)]
     pub profession_limit: u32,
+    /// M14/F19: роль аккаунта — `player` | `admin` | `moderator`
+    /// (модерация чата); старый сервер без поля → `player`.
+    #[serde(default = "default_account_role")]
+    pub role: String,
     /// Capability-фичи с точечными ключами (`loot.roll`, `upgrade.rules`, …).
     #[serde(default)]
     pub features: JsonMap,
@@ -24,11 +28,23 @@ pub struct SessionConfig {
     pub inventory: InventoryConfig,
     pub upgrade: UpgradeConfig,
     pub magic: MagicConfig,
+    /// M25: время жизни строки журнала (Лог), с; `0` — не удаляются;
+    /// старый сервер без поля → 30 (§11).
+    #[serde(default = "default_journal_ttl_s")]
+    pub journal_ttl_s: i64,
+    /// M18/F36: лимит текущих квестов (§5, DoD: конфиг, не код).
+    #[serde(default = "default_quest_max_active")]
+    pub quests: QuestsConfig,
     #[serde(default)]
     pub characters: Vec<CharacterSummary>,
     /// Незнакомые поля — сохраняем и игнорируем (§2.3, §11).
     #[serde(flatten, default)]
     pub extra: JsonMap,
+}
+
+/// Роль по умолчанию для серверов без поля (§11 обратная совместимость).
+fn default_account_role() -> String {
+    "player".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -90,6 +106,10 @@ pub struct InventoryConfig {
     pub slots: u32,
     #[serde(default)]
     pub equip_slots: Vec<String>,
+    /// M28: слотов под сумки (`0` — система сумок выключена; старый
+    /// сервер поле не шлёт → 0, клиент рисует один рюкзак).
+    #[serde(default)]
+    pub bag_slots: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -97,14 +117,50 @@ pub struct UpgradeConfig {
     pub max_level: u32,
     pub preview: bool,
     pub shows_chance: bool,
+    /// M18/F53: длительность анимации улучшения, сек (прогресс-бар).
+    #[serde(default = "default_upgrade_duration_s")]
+    pub duration_s: f64,
+}
+
+fn default_upgrade_duration_s() -> f64 {
+    3.0
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MagicConfig {
-    /// Способ восстановления зарядов рун: `item` (масло алхимика), … (D4).
+    /// Способ восстановления зарядов рун (D4; M18/F58c оживил ключ):
+    /// `time` — тикер по серверному `rune_recharge_s`, `item` — только
+    /// извлечением. Клиенту — только для отображения/логики окон.
     pub rune_recharge: String,
+    /// M24: секунд на восстановление одного заряда — клиент рисует
+    /// прогрессбар заполнения рун; аддитивно §11: старый сервер
+    /// поля не шлёт → фолбэк 30 с (server.example.toml).
+    #[serde(default = "default_rune_recharge_s")]
+    pub rune_recharge_s: f64,
     pub scroll_requires_target: bool,
     pub mana: ManaConfig,
+}
+
+/// Фолбэк `rune_recharge_s` для сервера без поля (§11).
+fn default_rune_recharge_s() -> f64 {
+    30.0
+}
+
+/// M18/F36: квесты §5 — лимит текущих (взятых: active/turn_in) квестов;
+/// старый сервер без поля → 10 (§11).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestsConfig {
+    pub max_active: u32,
+}
+
+/// Фолбэк лимита квестов для клиентов со старым сервером (§11).
+/// Фолбэк `journal_ttl_s` для сервера без поля (§11).
+fn default_journal_ttl_s() -> i64 {
+    30
+}
+
+fn default_quest_max_active() -> QuestsConfig {
+    QuestsConfig { max_active: 10 }
 }
 
 /// Реген маны (D4, §5): вне боя — секунд на полный бар, в бою — %/сек.
@@ -129,5 +185,28 @@ impl SessionConfig {
     /// Фича-булево (`features["loot.roll"] = false` → `Some(false)`).
     pub fn feature_bool(&self, key: &str) -> Option<bool> {
         self.feature(key).and_then(serde_json::Value::as_bool)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M24/§11: старый сервер без `rune_recharge_s` → фолбэк 30 с.
+    #[test]
+    fn magic_config_defaults_rune_recharge_s() {
+        let v: MagicConfig = serde_json::from_value(serde_json::json!({
+            "rune_recharge": "time",
+            "scroll_requires_target": true,
+            "mana": { "regen_out_s": 5, "regen_in_pct_s": 1.0, "rune_cost": 10 }
+        }))
+        .expect("deserialize");
+        assert_eq!(v.rune_recharge_s, 30.0, "фолбэк для старого сервера");
+    }
+
+    /// M25/§11: старый сервер без journal_ttl_s → 30 с.
+    #[test]
+    fn journal_ttl_defaults_to_thirty() {
+        assert_eq!(default_journal_ttl_s(), 30);
     }
 }

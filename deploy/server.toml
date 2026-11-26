@@ -1,0 +1,208 @@
+# deploy/server.toml — конфиг ld2-server для Docker Compose (PLAN-M12.1, D25).
+#
+# Отличается от crates/ld2-server/server.example.toml ровно одной строкой —
+# database.url (хост БД `postgres` — имя сервиса в compose); состав ключей
+# контролируется тестом tests/config.rs::deploy_config_matches_example_except_db_url.
+#
+# ВНИМАНИЕ: это dev-шаблон для локального `docker compose up`. Креды ниже
+# (`ld2:ld2`) — учебные и НЕ секрет; для прода смонтируйте свой конфиг с
+# реальным паролем и не используйте POSTGRES_PASSWORD из compose:
+#   -v ./prod-server.toml:/etc/ld2/server.toml:ro
+
+[server]
+bind = "0.0.0.0:24817"     # WS-слушатель (в M12.1 отдаётся только /healthz)
+name = "ld2-dev"           # → §5 server.name
+region = "ru"              # → §5 server.region
+# min_client = "0.11.0"    # опционально (§5): если задан — клиенты старше блокируются
+log_level = "info"         # EnvFilter-директива: "info", "info,sqlx=warn"
+allow_scenario = false     # M24: /scenario только для админа (прод)
+
+[database]
+# dev-креды compose (см. предупреждение выше); прод: свой файл, chmod 600.
+url = "postgres://ld2:ld2@postgres:5432/ld2"
+max_connections = 10
+
+[auth]
+access_ttl_s = 900         # D29: access-токен
+refresh_ttl_s = 2592000    # D29: refresh-токен (дольше access)
+register_enabled = true    # D28: cmd/auth.register
+min_login_len = 3
+min_password_len = 8
+
+[gameplay]
+char_slot_limit = 8        # → §5 char_slot_limit (DoD M2: конфиг, не код)
+profession_limit = 2       # → §5 profession_limit
+cmd_rate_per_min = 240   # R15: per-session лимит мутирующих команд/мин (0 — выкл)
+
+party_max_members = 4   # ФР-14: лимит состава группы
+
+[gameplay.quests]           # M18/F36: квесты → §5 quests.max_active
+max_active = 10             # лимит текущих (взятых) квестов на персонажа
+
+
+[gameplay.shop]            # M18/F39: магазины NPC (цены считаются сервером)
+server_markup = 1.0        # множитель наценки сервера (1.1 = +10%)
+max_discount_bp = 5000     # потолок суммарной скидки (bp: 5000 = −50%)
+
+# Навык → множитель скидки ЗА РАНГ (haggle 0.02 = −2%/ранг)
+[gameplay.shop.skill_discounts]
+haggle = 0.02
+
+[gameplay.combat]           # M12.5: тик-луп атак (D25)
+attack_interval_s = 1.0     # период атак в бою, с
+min_attack_interval_s = 0.5 # M25: минимальная скорость атаки моба, с (пол интервала)
+base_damage = 6
+rng_seed = 0                 # M32: ГПСЧ боевых бросков (0 — случайный)             # базовый урон персонажа (v1)
+flee_chance = 0.5           # шанс cmd/combat.flee, 0..=1
+
+[gameplay.level]            # M15/F24: уровень персонажа (окно персонажа)
+# XP = round(A×level² + B×level + C) — опыт перехода level → level+1
+a = 50.0                    # рост на высоких уровнях
+b = 50.0                    # темп в начале
+c = 0.0                     # базовое смещение (XP(1) = 100)
+max_level = 60
+
+[gameplay.features]        # → §5 features; неизвестные ключи разрешены
+"loot.roll" = false
+"respawn.inn" = true
+"guild.bank" = false
+"upgrade.rules" = "break_on_fail"
+"trade.value_hint" = true
+"chat.slash" = true
+
+[gameplay.crime]           # §10: модель частичного сложения — только отсюда
+t_max_s = 604800
+blend_k = 0.5
+
+[gameplay.crime.base]
+murderer_s = 21600
+marauder_s = 7200
+
+[[gameplay.crime.kinds]]
+kind = "murderer"
+title = "Убийца"
+severity = "high"
+
+[[gameplay.crime.kinds]]
+kind = "marauder"
+title = "Мародёр"
+severity = "medium"
+
+[[gameplay.crime.kinds]]
+kind = "thief"
+title = "Вор"
+severity = "medium"
+
+[gameplay.chat]
+server_history = 200       # размер кольцевой истории в БД
+max_len = 500
+cooldown_s = 1.5
+channels = ["system", "location", "global", "party", "guild", "whisper"]
+
+[gameplay.inventory]
+slots = 20
+equip_slots = ["head", "shoulders", "bracers", "gloves", "body", "legs", "feet", "cloak", "ring1", "ring2", "amulet", "main_hand", "off_hand", "artifact1", "artifact2"]
+# M28: слоты под сумки (сумки дают ёмкость; 0 — выключить).
+bag_slots = 4
+
+[gameplay.upgrade]
+max_level = 9
+preview = true
+shows_chance = true
+gold_base = 100         # стоимость улучшения +0 → +1 (золото)
+gold_per_level = 50     # прибавка за уровень
+chance_base = 0.9       # шанс успеха с +0
+chance_per_level = 0.05 # снижение шанса за уровень
+duration_s = 3          # длительность анимации улучшения, сек (M18/F53)
+
+# Рейты сервера (M18/F54): множитель любых шансов.
+# 1.0 — шансы как в формуле, 0.0 — все броски падают.
+[gameplay.rates]
+chance = 1.0
+
+[gameplay.professions]  # skills.md §8 (D25)
+xp_per_craft_base = 40  # XP за крафт: 40 + per_rank × ранг рецепта
+xp_per_craft_per_rank = 25
+fail_xp_ratio = 0.2     # XP при неудаче
+# M21: две шкалы — уровень (0..max_level, порог растёт) и ранг
+# (границы кратно rank_span; повышение — у тренера за золото/награда)
+level_xp_base = 40      # порог уровня: round(base × growth^L)
+level_xp_growth = 1.02  # каждый уровень дороже на 2 %
+max_level = 250         # потолок уровня (верхний ранг «Мастер»)
+rank_span = 50          # уровней в ранге (границы: 50/100/150/200)
+rank_up_gold_base = 200 # ранг у тренера: round(base × growth^ранг)
+rank_up_gold_growth = 1.5
+
+[gameplay.magic]
+rune_recharge = "time"         # M18/F58c (ADR-012 §4): тикер зарядов; "item" — только извлечением
+rune_recharge_s = 30.0         # сек на восстановление одного заряда руны
+scroll_requires_target = true
+
+[gameplay.magic.mana]      # ADR-002: мана
+regen_out_s = 45
+regen_in_pct_s = 1.0
+rune_cost = 10
+# M30: формула максимума (character-params.md §1.1) и духовность:
+# mp_max = base + int×mp_per_int + arcana×mp_per_arcana + spir×mp_per_spir
+mp_max_base = 20
+mp_per_int = 4.0
+mp_per_arcana = 5.0
+mp_per_spir = 5.0
+spirit_regen_pct = 1.0       # +1 % скорости регена маны за очко духовности
+
+# M30: здоровье и его регенерация (character-params.md §2.1/§3.1):
+# hp_max = hp_max_base + vit×hp_per_vit + level×hp_per_level
+[gameplay.health]
+hp_max_base = 40
+hp_per_vit = 5.0
+hp_per_level = 10.0
+regen_out_s = 60             # вне боя — секунд на полный бар
+regen_in_pct_s = 0.5         # в бою — % макс. HP в секунду
+
+[world]
+content_dir = "content"    # статический контент (JSON) → сид в PostgreSQL (D26)
+tick_hz = 10               # тик-луп мира (D31), 1..=100
+autosave_interval_s = 30   # периодический флаш онлайн-состояния (D27)
+journal_ttl_s = 30          # M25: время жизни строки журнала (Лог), с; 0 — не удаляются
+content_poll_s = 30         # M27: hot reload контента — период проверки каталога, с; 0 — только SIGHUP/admin
+
+[skills]                   # skills.md §8: xp_to_next = round(base_xp × growth^rank)
+base_xp = 120
+growth = 1.32
+rank_max = 30
+ranks_per_level = 2       # M31: боевые/защитные/магические — не более 2 рангов за уровень
+kill_xp_base = 4          # M31: снижено с 8 (заказчик)
+kill_xp_per_difficulty = 3  # M31: снижено с 6
+
+# M14: активные способности cmd/skill.use (skills.md §4; D25)
+[gameplay.resource]
+rage_max = 100        # M17/F30e: максимум ярости (воин)
+energy_max = 100      # максимум энергии (лучник)
+rage_gain_pct = 0.15  # доля урона (в/из) → ярость
+rage_decay_s = 5.0    # падение вне боя, ед/сек
+energy_regen_s = 20.0 # восстановление энергии, ед/сек
+
+[skills.active.power_strike]
+cooldown_s = 8        # §4: кулдаун «Мощного удара»
+damage_mult = 1.8     # §4: ×1.8 урона
+cost = 25             # M17/F30e: цена в ресурсе класса
+req_skill = "sword"   # открывается: владение мечом 5
+req_rank = 5
+
+[[skills.gates]]           # ранг → требуемый атрибут (§2.2; E_REQUIREMENT_ATTR)
+rank = 10
+attr = 12
+
+[[skills.gates]]
+rank = 20
+attr = 18
+
+[[skills.gates]]
+rank = 30
+attr = 25
+
+# M19 (ADR-013): discovery подключения — клиент хранит домен и берёт
+# адрес из GET /.well-known/ld2.json ({ address, version, min_client }).
+# Секция не задана / address пуст →404 (discovery выключен).
+[discovery]
+address = "ws://127.0.0.1:24817/ws"

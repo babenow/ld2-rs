@@ -1,0 +1,1780 @@
+{
+  "items": [
+    {
+      "id": "traveler_bag",
+      "type": "bag",
+      "name": "Походный рюкзак",
+      "rarity": "common",
+      "gold_value": 25,
+      "qty": 1,
+      "bag_slots": 20
+    },
+    {
+      "id": "linen_bag",
+      "type": "bag",
+      "name": "Льняная сумка",
+      "rarity": "uncommon",
+      "gold_value": 60,
+      "qty": 1,
+      "bag_slots": 8
+    },
+    {
+      "id": "wool_bag",
+      "type": "bag",
+      "name": "Шерстяная сумка",
+      "rarity": "rare",
+      "gold_value": 150,
+      "qty": 1,
+      "bag_slots": 12
+    },
+    {
+      "id": "silk_bag",
+      "type": "bag",
+      "name": "Шёлковая сумка",
+      "rarity": "epic",
+      "gold_value": 320,
+      "qty": 1,
+      "bag_slots": 16
+    },
+    {
+      "id": "gold_coin",
+      "type": "money",
+      "name": "Золотая монета",
+      "rarity": "common",
+      "upgrade": 0,
+      "gold_value": 1,
+      "qty": 10,
+      "stats": {
+        "buff": {
+          "param": "accuracy",
+          "value": 1,
+          "duration_s": 5,
+          "max_stacks": 1
+        }
+      }
+    },
+    {
+      "id": "sword_knight",
+      "type": "weapon",
+      "slot": "main_hand",
+      "name": "Рыцарский меч",
+      "rune_sockets": 1,
+      "sockets": 1,
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "dmg": "6..9",
+        "class": "warrior"
+      },
+      "gold_value": 180,
+      "skill": "sword"
+    },
+    {
+      "id": "helmet_leather",
+      "type": "armor",
+      "slot": "head",
+      "name": "Кожаный шлем",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 40
+    },
+    {
+      "id": "armor_bronze",
+      "type": "armor",
+      "slot": "body",
+      "name": "Бронзовый доспех",
+      "sockets": 1,
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 6
+      },
+      "gold_value": 120
+    },
+    {
+      "id": "boots_traveler",
+      "type": "armor",
+      "slot": "feet",
+      "name": "Сапоги странника",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 90
+    },
+    {
+      "id": "hood_scout",
+      "type": "armor",
+      "slot": "head",
+      "name": "Капюшон разведчика",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 70
+    },
+    {
+      "id": "helm_knight",
+      "type": "armor",
+      "slot": "head",
+      "name": "Шлем рыцаря",
+      "sockets": 1,
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "armor": 5
+      },
+      "gold_value": 180
+    },
+    {
+      "id": "armor_leather",
+      "type": "armor",
+      "slot": "body",
+      "name": "Кожаный доспех",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 50
+    },
+    {
+      "id": "chainmail",
+      "type": "armor",
+      "slot": "body",
+      "name": "Кольчуга",
+      "sockets": 1,
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "armor": 9
+      },
+      "gold_value": 260
+    },
+    {
+      "id": "plate_steel",
+      "type": "armor",
+      "slot": "body",
+      "name": "Стальной доспех",
+      "sockets": 3,
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "armor": 12
+      },
+      "gold_value": 520
+    },
+    {
+      "id": "boots_leather",
+      "type": "armor",
+      "slot": "feet",
+      "name": "Кожаные сапоги",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 1
+      },
+      "gold_value": 25
+    },
+    {
+      "id": "greaves_iron",
+      "type": "armor",
+      "slot": "legs",
+      "name": "Железные поножи",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 4
+      },
+      "gold_value": 95
+    },
+    {
+      "id": "sword_champion",
+      "type": "weapon",
+      "slot": "main_hand",
+      "name": "Клинок чемпиона",
+      "rune_sockets": 2,
+      "sockets": 3,
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "dmg": "10..16"
+      },
+      "gold_value": 900,
+      "skill": "sword"
+    },
+    {
+      "id": "staff_archmage",
+      "type": "staff",
+      "slot": "main_hand",
+      "hands": 2,
+      "name": "Посох архимага",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "magic": 6
+      },
+      "gold_value": 850,
+      "rune_sockets": 3,
+      "sockets": 3
+    },
+    {
+      "id": "helm_champion",
+      "type": "armor",
+      "slot": "head",
+      "name": "Шлем чемпиона",
+      "sockets": 2,
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "armor": 8
+      },
+      "gold_value": 480
+    },
+    {
+      "id": "boots_thunder",
+      "type": "armor",
+      "slot": "feet",
+      "name": "Сапоги грома",
+      "sockets": 2,
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "armor": 6
+      },
+      "gold_value": 430
+    },
+    {
+      "id": "rune_frost",
+      "type": "rune",
+      "name": "Руна мороза",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "frost_bolt",
+        "damage": 10,
+        "school": "frost",
+        "charges": 6,
+        "max": 8,
+        "glyph": "n",
+        "class": "mage"
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_storm",
+      "type": "rune",
+      "name": "Руна шторма",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "storm_bolt",
+        "damage": 14,
+        "school": "storm",
+        "charges": 5,
+        "max": 8,
+        "cost": 2,
+        "glyph": "m",
+        "class": "mage"
+      },
+      "gold_value": 75
+    },
+    {
+      "id": "bow_hunter",
+      "type": "weapon",
+      "name": "Охотничий лук",
+      "rarity": "common",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "dmg": "4..7"
+      },
+      "gold_value": 60,
+      "skill": "bow",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "bow_long",
+      "type": "weapon",
+      "name": "Длинный лук",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "dmg": "7..11"
+      },
+      "gold_value": 260,
+      "skill": "bow",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "twohand_sword",
+      "type": "weapon",
+      "name": "Двуручный меч",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "dmg": "9..15"
+      },
+      "gold_value": 320,
+      "skill": "twohand",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "drakkar_axe",
+      "type": "weapon",
+      "name": "Топор Драккара",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 3.0,
+      "stats": {
+        "dmg": "13..26",
+        "param": {
+          "crit_chance": 3,
+          "accuracy": 1
+        },
+        "class": "warrior",
+        "attr": "str",
+        "value": 5,
+        "buff": {
+          "param": "crit_damage",
+          "value": 5,
+          "duration_s": 5,
+          "max_stacks": 1,
+          "pct": true
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 1,
+          "duration_s": 5,
+          "max_stacks": 1,
+          "pct": true
+        },
+        "effect": {
+          "kind": "stun",
+          "value": 1,
+          "duration_s": 3,
+          "period_s": 1
+        }
+      },
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 4,
+          "pct": true
+        },
+        {
+          "kind": "skill",
+          "id": "sword",
+          "value": 1
+        }
+      ],
+      "gold_value": 320,
+      "skill": "twohand",
+      "slot": "main_hand",
+      "hands": 2,
+      "sockets": 4,
+      "rune_sockets": 2,
+      "requires": {
+        "attr": {
+          "str": 46,
+          "dex": 54
+        },
+        "level": 60
+      }
+    },
+    {
+      "id": "sword_1000_true",
+      "type": "weapon",
+      "name": "Меч тысячи истин",
+      "rarity": "legendary",
+      "upgrade": 10,
+      "cooldown_s": 3.0,
+      "stats": {
+        "dmg": "19..31"
+      },
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 5
+        },
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 5
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 6
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 4,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 12,
+          "pct": true
+        },
+        {
+          "kind": "skill",
+          "id": "sword",
+          "value": 1
+        }
+      ],
+      "gold_value": 3200,
+      "skill": "twohand",
+      "slot": "main_hand",
+      "hands": 2,
+      "sockets": 4,
+      "rune_sockets": 2
+    },
+    {
+      "id": "hammer_battle",
+      "type": "weapon",
+      "name": "Боевой молот",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "dmg": "11..16"
+      },
+      "gold_value": 210,
+      "skill": "twohand",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "axe_war",
+      "type": "weapon",
+      "name": "Секира",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "dmg": "10..14"
+      },
+      "gold_value": 190,
+      "skill": "axe",
+      "slot": "main_hand",
+      "hands": 2
+    },
+    {
+      "id": "shield_wood",
+      "type": "shield",
+      "name": "Деревянный щит",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 40,
+      "slot": "off_hand"
+    },
+    {
+      "id": "shield_iron",
+      "type": "shield",
+      "name": "Железный щит",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 6
+      },
+      "gold_value": 160,
+      "slot": "off_hand"
+    },
+    {
+      "id": "shoulders_leather",
+      "type": "armor",
+      "name": "Кожаные наплечники",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 45,
+      "slot": "shoulders"
+    },
+    {
+      "id": "shoulders_steel",
+      "type": "armor",
+      "name": "Стальные наплечники",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 4
+      },
+      "gold_value": 130,
+      "slot": "shoulders"
+    },
+    {
+      "id": "bracers_leather",
+      "type": "armor",
+      "name": "Кожаные поручи",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 45,
+      "slot": "bracers"
+    },
+    {
+      "id": "bracers_steel",
+      "type": "armor",
+      "name": "Стальные поручи",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 4
+      },
+      "gold_value": 130,
+      "slot": "bracers"
+    },
+    {
+      "id": "gloves_cloth",
+      "type": "armor",
+      "name": "Тканевые перчатки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 1
+      },
+      "gold_value": 30,
+      "slot": "gloves"
+    },
+    {
+      "id": "gloves_leather",
+      "type": "armor",
+      "name": "Кожаные перчатки",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 3
+      },
+      "gold_value": 95,
+      "slot": "gloves"
+    },
+    {
+      "id": "cloak_traveler",
+      "type": "armor",
+      "name": "Плащ странника",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 60,
+      "slot": "cloak"
+    },
+    {
+      "id": "cloak_wolf",
+      "type": "armor",
+      "name": "Волчий плащ",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 4
+      },
+      "gold_value": 155,
+      "slot": "cloak"
+    },
+    {
+      "id": "ring_silver",
+      "type": "armor",
+      "name": "Серебряное кольцо",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "armor": 1
+      },
+      "gold_value": 70,
+      "slot": "ring"
+    },
+    {
+      "id": "ring_ruby",
+      "type": "armor",
+      "name": "Рубиновое кольцо",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 180,
+      "slot": "ring"
+    },
+    {
+      "id": "amulet_talisman",
+      "type": "armor",
+      "name": "Талисман",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "armor": 2
+      },
+      "gold_value": 140,
+      "slot": "amulet"
+    },
+    {
+      "id": "artifact_heart",
+      "type": "artifact",
+      "name": "Сердце пламени",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "magic": 3
+      },
+      "gold_value": 700,
+      "slot": "artifact"
+    },
+    {
+      "id": "artifact_shard",
+      "type": "artifact",
+      "name": "Грозовой осколок",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "magic": 4
+      },
+      "gold_value": 720,
+      "slot": "artifact"
+    },
+    {
+      "id": "gem_str",
+      "type": "gem",
+      "name": "Самоцвет силы",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "attr": "str",
+        "value": 3
+      },
+      "gold_value": 120
+    },
+    {
+      "id": "gem_str_fine",
+      "type": "gem",
+      "name": "Крупный самоцвет силы",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "attr": "str",
+        "value": 6
+      },
+      "gold_value": 420
+    },
+    {
+      "id": "gem_dex",
+      "type": "gem",
+      "name": "Самоцвет ловкости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "attr": "dex",
+        "value": 3
+      },
+      "gold_value": 120
+    },
+    {
+      "id": "gem_dex_fine",
+      "type": "gem",
+      "name": "Крупный самоцвет ловкости",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "attr": "dex",
+        "value": 6
+      },
+      "gold_value": 420
+    },
+    {
+      "id": "gem_vit",
+      "type": "gem",
+      "name": "Самоцвет стойкости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "attr": "vit",
+        "value": 3
+      },
+      "gold_value": 120
+    },
+    {
+      "id": "gem_vit_fine",
+      "type": "gem",
+      "name": "Крупный самоцвет стойкости",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "attr": "vit",
+        "value": 6
+      },
+      "gold_value": 420
+    },
+    {
+      "id": "gem_int",
+      "type": "gem",
+      "name": "Самоцвет разума",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {
+        "attr": "int",
+        "value": 3
+      },
+      "gold_value": 120
+    },
+    {
+      "id": "gem_int_fine",
+      "type": "gem",
+      "name": "Крупный самоцвет разума",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {
+        "attr": "int",
+        "value": 6
+      },
+      "gold_value": 420
+    },
+    {
+      "id": "gem_str_weak",
+      "type": "gem",
+      "name": "Тусклый самоцвет силы",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "attr": "str",
+        "value": 2
+      },
+      "gold_value": 40
+    },
+    {
+      "id": "gem_str_brilliant",
+      "type": "gem",
+      "name": "Сияющий самоцвет силы",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "attr": "str",
+        "value": 10
+      },
+      "gold_value": 1000
+    },
+    {
+      "id": "gem_str_legendary",
+      "type": "gem",
+      "name": "Легендарный самоцвет силы",
+      "rarity": "legendary",
+      "upgrade": 0,
+      "stats": {
+        "attr": "str",
+        "value": 15
+      },
+      "gold_value": 2400
+    },
+    {
+      "id": "gem_dex_weak",
+      "type": "gem",
+      "name": "Тусклый самоцвет ловкости",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "attr": "dex",
+        "value": 2
+      },
+      "gold_value": 40
+    },
+    {
+      "id": "gem_dex_brilliant",
+      "type": "gem",
+      "name": "Сияющий самоцвет ловкости",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "attr": "dex",
+        "value": 10
+      },
+      "gold_value": 1000
+    },
+    {
+      "id": "gem_dex_legendary",
+      "type": "gem",
+      "name": "Легендарный самоцвет ловкости",
+      "rarity": "legendary",
+      "upgrade": 0,
+      "stats": {
+        "attr": "dex",
+        "value": 15
+      },
+      "gold_value": 2400
+    },
+    {
+      "id": "gem_vit_weak",
+      "type": "gem",
+      "name": "Тусклый самоцвет стойкости",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "attr": "vit",
+        "value": 2
+      },
+      "gold_value": 40
+    },
+    {
+      "id": "gem_vit_brilliant",
+      "type": "gem",
+      "name": "Сияющий самоцвет стойкости",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "attr": "vit",
+        "value": 10
+      },
+      "gold_value": 1000
+    },
+    {
+      "id": "gem_vit_legendary",
+      "type": "gem",
+      "name": "Легендарный самоцвет стойкости",
+      "rarity": "legendary",
+      "upgrade": 0,
+      "stats": {
+        "attr": "vit",
+        "value": 15
+      },
+      "gold_value": 2400
+    },
+    {
+      "id": "gem_int_weak",
+      "type": "gem",
+      "name": "Тусклый самоцвет разума",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "attr": "int",
+        "value": 2
+      },
+      "gold_value": 40
+    },
+    {
+      "id": "gem_int_brilliant",
+      "type": "gem",
+      "name": "Сияющий самоцвет разума",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {
+        "attr": "int",
+        "value": 10
+      },
+      "gold_value": 1000
+    },
+    {
+      "id": "gem_int_legendary",
+      "type": "gem",
+      "name": "Легендарный самоцвет разума",
+      "rarity": "legendary",
+      "upgrade": 0,
+      "stats": {
+        "attr": "int",
+        "value": 15
+      },
+      "gold_value": 2400
+    },
+    {
+      "id": "dagger_knife",
+      "type": "weapon",
+      "slot": "main_hand",
+      "name": "Кинжал",
+      "rarity": "common",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "dmg": "2..4"
+      },
+      "gold_value": 35,
+      "skill": "dagger"
+    },
+    {
+      "id": "potion_heal",
+      "type": "potion",
+      "name": "Зелье лечения",
+      "rarity": "common",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "heal": 30
+      },
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "staff_apprentice",
+      "type": "staff",
+      "slot": "main_hand",
+      "hands": 2,
+      "name": "Посох подмастерья",
+      "rarity": "common",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "magic": 2
+      },
+      "gold_value": 60,
+      "rune_sockets": 2,
+      "sockets": 2
+    },
+    {
+      "id": "rune_fire",
+      "type": "rune",
+      "name": "Руна огня",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "fire_dart",
+        "damage": 12,
+        "school": "fire",
+        "charges": 7,
+        "max": 10,
+        "glyph": "f",
+        "class": "mage"
+      },
+      "gold_value": 40
+    },
+    {
+      "id": "rune_marksman",
+      "type": "rune",
+      "name": "Руна меткости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "precision",
+        "damage": 8,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "p",
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "class": "archer"
+      },
+      "gold_value": 55
+    },
+    {
+      "id": "rune_fury",
+      "type": "rune",
+      "name": "Руна ярости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "fury",
+        "damage": 10,
+        "chance": 0.25,
+        "charges": 6,
+        "max": 8,
+        "glyph": "r",
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "warrior"
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_warding",
+      "type": "rune",
+      "name": "Руна стойкости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "fortitude",
+        "damage": 6,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "g",
+        "buff": {
+          "param": "armor",
+          "value": 10,
+          "duration_s": 15,
+          "max_stacks": 3
+        },
+        "class": "warrior"
+      },
+      "gold_value": 55
+    },
+    {
+      "id": "rune_bloodletter",
+      "type": "rune",
+      "name": "Руна кровотечения",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hemorrhage",
+        "damage": 7,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "b",
+        "effect": {
+          "kind": "bleed",
+          "value": 3,
+          "duration_s": 6
+        },
+        "class": "warrior"
+      },
+      "gold_value": 80
+    },
+    {
+      "id": "rune_stunning",
+      "type": "rune",
+      "name": "Руна оглушения",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "concussion",
+        "damage": 6,
+        "chance": 0.25,
+        "charges": 5,
+        "max": 8,
+        "glyph": "s",
+        "effect": {
+          "kind": "stun",
+          "duration_s": 3
+        },
+        "class": "warrior"
+      },
+      "gold_value": 85
+    },
+    {
+      "id": "rune_binding",
+      "type": "rune",
+      "name": "Руна опутывания",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "entangle",
+        "damage": 6,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "v",
+        "effect": {
+          "kind": "root",
+          "duration_s": 5
+        },
+        "class": "archer"
+      },
+      "gold_value": 80
+    },
+    {
+      "id": "rune_wolf_rage",
+      "type": "rune",
+      "name": "Руна волка: Ярость",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "wolves_rage",
+        "damage": 8,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "R",
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "warrior"
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_wolf_blood",
+      "type": "rune",
+      "name": "Руна волка: Ярость-Кровь",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "wolves_rage",
+        "damage": 9,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "RB",
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "warrior"
+      },
+      "gold_value": 130
+    },
+    {
+      "id": "rune_wolf_wail",
+      "type": "rune",
+      "name": "Руна волка: Ярость-Кровь-Воя",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "wolves_rage",
+        "damage": 10,
+        "chance": 0.3,
+        "charges": 4,
+        "max": 8,
+        "glyph": "RBW",
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "effect": {
+          "kind": "bleed",
+          "value": 4,
+          "duration_s": 6
+        },
+        "class": "warrior"
+      },
+      "gold_value": 260
+    },
+    {
+      "id": "rune_hawk_eye",
+      "type": "rune",
+      "name": "Руна сокола: Око",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hawks_eye",
+        "damage": 8,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "E",
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "class": "archer"
+      },
+      "gold_value": 55
+    },
+    {
+      "id": "rune_hawk_wind",
+      "type": "rune",
+      "name": "Руна сокола: Око-Ветер",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hawks_eye",
+        "damage": 9,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "EW",
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "archer"
+      },
+      "gold_value": 130
+    },
+    {
+      "id": "rune_hawk_sting",
+      "type": "rune",
+      "name": "Руна сокола: Око-Ветер-Жало",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hawks_eye",
+        "damage": 10,
+        "chance": 0.3,
+        "charges": 4,
+        "max": 8,
+        "glyph": "EWS",
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "effect": {
+          "kind": "root",
+          "duration_s": 4
+        },
+        "class": "archer"
+      },
+      "gold_value": 260
+    },
+    {
+      "id": "rune_flame_spark",
+      "type": "rune",
+      "name": "Руна пламени: Искра",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "flame_word",
+        "damage": 10,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 10,
+        "glyph": "S",
+        "school": "fire",
+        "buff": {
+          "param": "magic_crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "mage"
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_flame_gust",
+      "type": "rune",
+      "name": "Руна пламени: Искра-Порыв",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "flame_word",
+        "damage": 11,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 10,
+        "glyph": "SG",
+        "school": "fire",
+        "buff": {
+          "param": "magic_crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "mage"
+      },
+      "gold_value": 130
+    },
+    {
+      "id": "rune_flame_ash",
+      "type": "rune",
+      "name": "Руна пламени: Искра-Порыв-Пепел",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "flame_word",
+        "damage": 12,
+        "chance": 0.3,
+        "charges": 4,
+        "max": 10,
+        "glyph": "SGA",
+        "school": "fire",
+        "buff": {
+          "param": "magic_crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "effect": {
+          "kind": "burn",
+          "value": 3,
+          "period_s": 2,
+          "duration_s": 6
+        },
+        "class": "mage"
+      },
+      "gold_value": 260
+    },
+    {
+      "id": "scroll_frost",
+      "type": "scroll",
+      "name": "Свиток мороза",
+      "rarity": "common",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "frost_bolt",
+        "damage": 9,
+        "school": "frost"
+      },
+      "gold_value": 30,
+      "qty": 1
+    },
+    {
+      "id": "skinning_knife",
+      "type": "skinning_knife",
+      "name": "Нож для снятия шкур",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q1",
+      "type": "hide_scraps",
+      "name": "Обрезки шкуры",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 2,
+      "qty": 1
+    },
+    {
+      "id": "hide_q1",
+      "type": "hide",
+      "name": "Шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 12,
+      "qty": 1
+    },
+    {
+      "id": "hide_q2",
+      "type": "hide",
+      "name": "Хорошая шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 24,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q2",
+      "type": "hide_scraps",
+      "name": "Хорошие обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 4,
+      "qty": 1
+    },
+    {
+      "id": "hide_q3",
+      "type": "hide",
+      "name": "Отличная шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 36,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q3",
+      "type": "hide_scraps",
+      "name": "Отличные обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 6,
+      "qty": 1
+    },
+    {
+      "id": "hide_q4",
+      "type": "hide",
+      "name": "Превосходная шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 48,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q4",
+      "type": "hide_scraps",
+      "name": "Превосходные обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 8,
+      "qty": 1
+    },
+    {
+      "id": "hide_q5",
+      "type": "hide",
+      "name": "Великолепная шкура",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 60,
+      "qty": 1
+    },
+    {
+      "id": "hide_scraps_q5",
+      "type": "hide_scraps",
+      "name": "Великолепные обрезки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 10,
+      "qty": 1
+    },
+    {
+      "id": "meat",
+      "type": "meat",
+      "name": "Мясо",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 8,
+      "qty": 1
+    },
+    {
+      "id": "offal",
+      "type": "offal",
+      "name": "Потроха",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
+      "id": "axe",
+      "type": "axe",
+      "name": "Топор",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "pickaxe",
+      "type": "pickaxe",
+      "name": "Кирка",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "sickle",
+      "type": "sickle",
+      "name": "Серп",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "ore_copper",
+      "type": "ore_copper",
+      "name": "Медная руда",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 6,
+      "qty": 1
+    },
+    {
+      "id": "branches",
+      "type": "branches",
+      "name": "Ветки",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 1,
+      "qty": 1
+    },
+    {
+      "id": "herb",
+      "type": "herb",
+      "name": "Трава",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 2,
+      "qty": 1
+    },
+    {
+      "id": "wood_oak",
+      "type": "wood_oak",
+      "name": "Дубовое бревно",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 4,
+      "qty": 1
+    },
+    {
+      "id": "parchment",
+      "type": "parchment",
+      "name": "Пергамент",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
+      "id": "ink",
+      "type": "ink",
+      "name": "Чернила",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 3,
+      "qty": 1
+    },
+    {
+      "id": "tool_flask",
+      "type": "flask",
+      "name": "Колба",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "tool_chisel",
+      "type": "chisel",
+      "name": "Резец",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "tool_quill",
+      "type": "quill",
+      "name": "Перо",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 15,
+      "qty": 1
+    },
+    {
+      "id": "stone_upgrade_small",
+      "type": "upgrade_stone",
+      "name": "Малый камень усиления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "quality": -5
+      },
+      "gold_value": 10,
+      "qty": 1
+    },
+    {
+      "id": "stone_upgrade_medium",
+      "type": "upgrade_stone",
+      "name": "Средний камень усиления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "quality": 0
+      },
+      "gold_value": 30,
+      "qty": 1
+    },
+    {
+      "id": "stone_upgrade_large",
+      "type": "upgrade_stone",
+      "name": "Большой камень усиления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {
+        "quality": 5
+      },
+      "gold_value": 60,
+      "qty": 1
+    },
+    {
+      "id": "item_new_1",
+      "type": "gem",
+      "name": "Новый предмет",
+      "rarity": "common",
+      "upgrade": 0,
+      "gold_value": 0,
+      "stats": {
+        "dmg": "4..8"
+      },
+      "sockets": 0
+    },
+    {
+      "id": "arrow",
+      "type": "ammo",
+      "name": "Стрела",
+      "rarity": "common",
+      "gold_value": 1,
+      "qty": 200
+    },
+    {
+      "id": "quiver",
+      "type": "bag",
+      "name": "Колчан",
+      "rarity": "uncommon",
+      "gold_value": 80,
+      "qty": 1,
+      "bag_slots": 10,
+      "bag_types": [
+        "ammo"
+      ],
+      "bag_kind": "quiver"
+    },
+    {
+      "id": "herbalist_bag",
+      "type": "bag",
+      "name": "Сумка травника",
+      "rarity": "uncommon",
+      "gold_value": 90,
+      "qty": 1,
+      "bag_slots": 12,
+      "bag_types": [
+        "herb"
+      ],
+      "bag_kind": "reagent"
+    },
+    {
+      "id": "reagent_bag",
+      "type": "bag",
+      "name": "Сумка реагентов",
+      "rarity": "uncommon",
+      "gold_value": 100,
+      "qty": 1,
+      "bag_slots": 14,
+      "bag_types": [
+        "herb",
+        "ore_copper",
+        "wood_oak",
+        "hide",
+        "hide_scraps",
+        "meat",
+        "offal",
+        "branches",
+        "parchment",
+        "ink",
+        "flask"
+      ],
+      "bag_kind": "reagent"
+    },
+    {
+      "id": "keyring",
+      "type": "bag",
+      "name": "Ключница",
+      "rarity": "rare",
+      "gold_value": 120,
+      "qty": 1,
+      "bag_slots": 8,
+      "bag_types": [
+        "key"
+      ],
+      "bag_kind": "keyring"
+    },
+    {
+      "id": "old_key",
+      "type": "key",
+      "name": "Старый ключ",
+      "rarity": "common",
+      "gold_value": 5,
+      "qty": 1
+    }
+  ]
+}

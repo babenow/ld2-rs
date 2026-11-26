@@ -1,0 +1,8 @@
+ack cmd/location.look v=-
+ack cmd/map.world v=-
+ack cmd/state.resync v=1
+evt/state/snapshot v=1
+ack cmd/quest.list v=-
+ack cmd/craft.list v=-
+ack cmd/guild.browse v=-
+ack cmd/crime.log v=-

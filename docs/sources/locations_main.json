@@ -1,0 +1,599 @@
+{
+  "locations": [
+    {
+      "id": "l_village",
+      "name": "Деревня Изба",
+      "spawn": true,
+      "flags": [
+        "safe"
+      ],
+      "text": "Тесная деревня на опушке. Дым из труб, крики петухов. На север уходит тропа в лес.",
+      "exits": [
+        {
+          "id": "e_north",
+          "label": "тропа на север",
+          "dir": "north",
+          "to": "l_forest"
+        },
+        {
+          "id": "e_city",
+          "label": "дорога в город",
+          "dir": "east",
+          "to": "l_city_center"
+        }
+      ],
+      "entities": [
+        {
+          "id": "npc_elder",
+          "kind": "npc",
+          "name": "Староста",
+          "trainer": {
+            "price_profession": {
+              "gold_base": 500
+            },
+            "professions": [
+              "blacksmith",
+              "alchemist",
+              "scribe",
+              "woodcarver",
+              "tailor",
+              "cook",
+              "herbalist",
+              "woodcutting",
+              "mining",
+              "skinning",
+              "leatherworking",
+              "jeweler",
+              "fishing",
+              "medic"
+            ],
+            "skills": [
+              "sword",
+              "axe",
+              "polearm",
+              "bow",
+              "dagger",
+              "twohand",
+              "unarmed",
+              "armor_heavy",
+              "armor_light",
+              "block",
+              "shield_block",
+              "evasion",
+              "parring",
+              "m_evasion",
+              "m_armor",
+              "m_dispel",
+              "fire",
+              "frost",
+              "storm",
+              "healing",
+              "arcana",
+              "stealth",
+              "lockpicking",
+              "pickpocket",
+              "disarm",
+              "mining",
+              "woodcutting",
+              "survival",
+              "bestiary",
+              "haggle",
+              "lore",
+              "leadership"
+            ],
+            "price": {
+              "gold_base": 100,
+              "gold_per_rank": 50,
+              "items": []
+            }
+          }
+        },
+        {
+          "id": "st_alchemy",
+          "kind": "object",
+          "name": "Алхимический стол",
+          "station": "alchemy_table"
+        },
+        {
+          "id": "st_workbench",
+          "kind": "object",
+          "name": "Верстак",
+          "station": "workbench"
+        },
+        {
+          "id": "st_scribe",
+          "kind": "object",
+          "name": "Стол начертателя",
+          "station": "scribe_table"
+        }
+      ]
+    },
+    {
+      "id": "l_forest",
+      "name": "Черный лес",
+      "flags": [
+        "pvp"
+      ],
+      "text": "Сосны давят тьмою… Тропа вьётся на юг, к деревне.",
+      "exits": [
+        {
+          "id": "e_south",
+          "label": "тропа на юг",
+          "dir": "south",
+          "to": "l_village"
+        }
+      ],
+      "entities": [
+        {
+          "id": "m_3",
+          "kind": "monster",
+          "name": "Волк",
+          "hp": {
+            "cur": 18,
+            "max": 18
+          },
+          "tags": [
+            "aggro"
+          ],
+          "aggro": true,
+          "difficulty": 3,
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          },
+          "harvest": {
+            "level": 20,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
+            "potion_heal",
+            "gold_coin"
+          ]
+        },
+        {
+          "id": "cor_9",
+          "kind": "corpse",
+          "name": "Труп: Ким-младший",
+          "was_player": true,
+          "loot": [
+            "dagger_knife",
+            "potion_heal"
+          ]
+        },
+        {
+          "id": "cont_forest_chest",
+          "kind": "container",
+          "name": "Потрёпанный сундук",
+          "loot": [
+            "gold_coin",
+            "potion_heal",
+            "herb"
+          ],
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          }
+        },
+        {
+          "id": "r_forest_herb",
+          "kind": "resource",
+          "name": "Трава",
+          "resource": "herb",
+          "max": 1,
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+          "despawn_when_empty": true,
+          "profession": "herbalist",
+          "min_rank": 1,
+          "tool": "sickle"
+        },
+        {
+          "id": "r_forest_tree",
+          "kind": "resource",
+          "name": "Дуб",
+          "resource": "wood_oak",
+          "max": 2,
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          },
+          "despawn_when_empty": false,
+          "profession": "woodcutting",
+          "min_rank": 1,
+          "tool": "axe"
+        },
+        {
+          "id": "r_forest_branches",
+          "kind": "resource",
+          "name": "Ветки",
+          "resource": "branches",
+          "max": 5,
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+          "despawn_when_empty": false,
+          "profession": "woodcutting",
+          "min_rank": 1,
+          "tool": "axe"
+        },
+        {
+          "id": "r_forest_ore",
+          "kind": "resource",
+          "name": "Медная жила",
+          "resource": "ore_copper",
+          "max": 3,
+          "respawn": {
+            "min_s": 90,
+            "max_s": 180
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 1,
+          "tool": "pickaxe"
+        }
+      ]
+    },
+    {
+      "id": "l_city_north",
+      "name": "Северная улица",
+      "text": "Ровные фасады, лотки у стен. На юг — центральная улица; по сторонам двери: на западе — алхимическая лаборатория, на востоке — плотницкая мастерская.",
+      "exits": [
+        {
+          "id": "e_south",
+          "label": "улица на юг",
+          "dir": "south",
+          "to": "l_city_center"
+        },
+        {
+          "id": "e_west",
+          "label": "дверь: алхимическая лаборатория",
+          "dir": "west",
+          "to": "l_alchemy"
+        },
+        {
+          "id": "e_east",
+          "label": "дверь: плотницкая мастерская",
+          "dir": "east",
+          "to": "l_carpentry"
+        }
+      ],
+      "entities": [
+        {
+          "id": "npc_armorer",
+          "kind": "npc",
+          "name": "Торговец бронёй"
+        }
+      ]
+    },
+    {
+      "id": "l_city_center",
+      "name": "Центральная улица",
+      "text": "Три параллельные улицы сходятся здесь. На камне стоит староста; на запад — дорога в деревню, на восток — кузница, на север и юг — соседние улицы.",
+      "exits": [
+        {
+          "id": "e_north",
+          "label": "улица на север",
+          "dir": "north",
+          "to": "l_city_north"
+        },
+        {
+          "id": "e_south",
+          "label": "улица на юг",
+          "dir": "south",
+          "to": "l_city_south"
+        },
+        {
+          "id": "e_west",
+          "label": "дорога в деревню",
+          "dir": "west",
+          "to": "l_village"
+        },
+        {
+          "id": "e_east",
+          "label": "дверь: кузница",
+          "dir": "east",
+          "to": "l_forge"
+        }
+      ],
+      "entities": [
+        {
+          "id": "npc_city_elder",
+          "kind": "npc",
+          "name": "Староста города"
+        },
+        {
+          "id": "npc_weaponsmith",
+          "kind": "npc",
+          "name": "Оружейник"
+        }
+      ]
+    },
+    {
+      "id": "l_city_south",
+      "name": "Южная улица",
+      "text": "Тихая улица у городской стены. На север — центральная улица; на востоке — ворота склада.",
+      "exits": [
+        {
+          "id": "e_north",
+          "label": "улица на север",
+          "dir": "north",
+          "to": "l_city_center"
+        },
+        {
+          "id": "e_east",
+          "label": "дверь: склад",
+          "dir": "east",
+          "to": "l_warehouse"
+        }
+      ],
+      "entities": []
+    },
+    {
+      "id": "l_forge",
+      "name": "Кузница",
+      "text": "Горн дышит жаром, наковальня звенит под молотом. На запад — выход на центральную улицу.",
+      "exits": [
+        {
+          "id": "e_west",
+          "label": "на центральную улицу",
+          "dir": "west",
+          "to": "l_city_center"
+        }
+      ],
+      "entities": [
+        {
+          "id": "st_forge",
+          "kind": "object",
+          "name": "Наковальня",
+          "station": "forge"
+        }
+      ]
+    },
+    {
+      "id": "l_carpentry",
+      "name": "Плотницкая мастерская",
+      "text": "Стружка под ногами, стойки с инструментом. На запад — выход на северную улицу.",
+      "exits": [
+        {
+          "id": "e_west",
+          "label": "на северную улицу",
+          "dir": "west",
+          "to": "l_city_north"
+        }
+      ],
+      "entities": [
+        {
+          "id": "st_bench_city",
+          "kind": "object",
+          "name": "Верстак плотника",
+          "station": "workbench"
+        }
+      ]
+    },
+    {
+      "id": "l_alchemy",
+      "name": "Алхимическая лаборатория",
+      "text": "Сосуды с настойками, запах трав. На восток — выход на северную улицу.",
+      "exits": [
+        {
+          "id": "e_east",
+          "label": "на северную улицу",
+          "dir": "east",
+          "to": "l_city_north"
+        }
+      ],
+      "entities": [
+        {
+          "id": "st_alchemy_city",
+          "kind": "object",
+          "name": "Алхимический стол",
+          "station": "alchemy_table"
+        },
+        {
+          "id": "npc_alchemist",
+          "kind": "npc",
+          "name": "Алхимик"
+        }
+      ]
+    },
+    {
+      "id": "l_warehouse",
+      "name": "Склад",
+      "text": "Сумрак, ящики до потолка, скрип крысиных когтей. В дальнем углу — тень непропорциональной величины. На запад — выход на южную улицу.",
+      "exits": [
+        {
+          "id": "e_west",
+          "label": "на южную улицу",
+          "dir": "west",
+          "to": "l_city_south"
+        }
+      ],
+      "entities": [
+        {
+          "id": "m_rat_1",
+          "kind": "monster",
+          "name": "Крыса",
+          "hp": {
+            "cur": 6,
+            "max": 6
+          },
+          "difficulty": 1,
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+          "harvest": {
+            "level": 1,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
+            "gold_coin"
+          ]
+        },
+        {
+          "id": "m_rat_2",
+          "kind": "monster",
+          "name": "Крыса",
+          "hp": {
+            "cur": 6,
+            "max": 6
+          },
+          "difficulty": 1,
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+          "harvest": {
+            "level": 1,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
+            "gold_coin"
+          ]
+        },
+        {
+          "id": "m_rat_3",
+          "kind": "monster",
+          "name": "Крыса",
+          "hp": {
+            "cur": 7,
+            "max": 7
+          },
+          "difficulty": 1,
+          "respawn": {
+            "min_s": 30,
+            "max_s": 60
+          },
+          "harvest": {
+            "level": 1,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
+            "gold_coin",
+            "herb"
+          ]
+        },
+        {
+          "id": "m_giant_rat",
+          "kind": "monster",
+          "name": "Огромная крыса",
+          "hp": {
+            "cur": 60,
+            "max": 60
+          },
+          "tags": [
+            "aggro"
+          ],
+          "aggro": true,
+          "difficulty": 6,
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          },
+          "harvest": {
+            "level": 4,
+            "skin": true,
+            "gut": true
+          },
+          "drops": [
+            "potion_heal",
+            "gold_coin",
+            "herb"
+          ]
+        },
+        {
+          "id": "m_dragon",
+          "kind": "monster",
+          "name": "Древний дракон",
+          "hp": {
+            "cur": 400,
+            "max": 400
+          },
+          "tags": [
+            "boss",
+            "aggro"
+          ],
+          "aggro": true,
+          "difficulty": 50,
+          "damage": 10,
+          "attack_speed": 3000,
+          "respawn": {
+            "min_s": 300,
+            "max_s": 600
+          },
+          "boss_ai": {
+            "phases": [
+              {
+                "after_s": 0,
+                "name": "Пробуждение",
+                "glyph": "a",
+                "damage_mult": 1.0,
+                "interval_mult": 1.0
+              },
+              {
+                "after_s": 30,
+                "name": "Ярость",
+                "glyph": "b",
+                "damage_mult": 1.5,
+                "interval_mult": 0.85
+              },
+              {
+                "after_s": 60,
+                "name": "Разрушение",
+                "glyph": "c",
+                "damage_mult": 2.0,
+                "interval_mult": 0.7
+              }
+            ],
+            "skills": [
+              {
+                "id": "flame_breath",
+                "name": "Огненное дыхание",
+                "glyph": "f",
+                "cooldown_s": 20,
+                "damage": 25,
+                "cast_s": 2,
+                "effect": {
+                  "kind": "blind",
+                  "duration_s": 4
+                }
+              },
+              {
+                "id": "tail_swipe",
+                "name": "Удар хвостом",
+                "glyph": "t",
+                "cooldown_s": 12,
+                "damage": 15,
+                "cast_s": 1,
+                "effect": {
+                  "kind": "stun",
+                  "duration_s": 3
+                }
+              },
+              {
+                "id": "dragon_fury",
+                "name": "Ярость дракона",
+                "glyph": "r",
+                "cooldown_s": 45,
+                "damage": 0,
+                "cast_s": 3,
+                "self_buff": {
+                  "damage_mult": 1.5,
+                  "interval_mult": 0.85,
+                  "duration_s": 15
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

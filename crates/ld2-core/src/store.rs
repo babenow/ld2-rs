@@ -1,0 +1,3434 @@
+//! `AppStore` — единое состояние клиента, собираемое **только** из событий
+//! сервера (ТЗ §6.2). UI — проекция стора; редьюсер чистый и тестируется без
+//! egui (ТЗ §15.5: «UI-фича без reducer-теста не мёржится»).
+//!
+//! Побочные эффекты (keyring, токен в транспорт) возвращаются из [`AppStore::apply`]
+//! и исполняются слоем приложения — редьюсер остаётся детерминированным.
+
+use std::collections::{BTreeMap, VecDeque};
+
+use ld2_protocol::evt::{
+    CharDeath, CharStats, CharXp, ChatMessage, CombatCooldown, CombatHit, CorpseCreated,
+    CorpseLooted, CrimeAdded, CrimeRemoved, CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove,
+    EntitySpawn, ErrorNotice, GuildLogEntry, ItemAdded, ItemDropped, ItemExpired,
+    ItemRemovalReason, ItemRemoved, LocationChanged, MagicCast, StateDelta, StateSnapshot,
+    TimeSync as TimeSyncEvent,
+};
+use ld2_protocol::types::{
+    CharacterSummary, CrimeLogEntry, CrimeStatus, GuildState, Hp, LocationSnapshot, PartyState,
+    QuestState,
+};
+use ld2_protocol::{ErrorCode, SessionConfig};
+
+use crate::l10n::{t, Key, Lang};
+use crate::transport::{IngressEvent, TransportStatus};
+
+mod npc;
+mod patch;
+mod reducers;
+mod types;
+pub use npc::*;
+pub(crate) use patch::*;
+pub use types::*;
+
+/// Ёмкость журнала мира (НФР §8: лог локации ≤ 10 000; M3 — 1000).
+const LOG_LIMIT: usize = 1000;
+/// Каналы чата из §5 (порядок вкладок UI).
+pub const CHAT_CHANNELS: [&str; 6] = ["system", "location", "global", "party", "guild", "whisper"];
+/// Ёмкость истории посещённых.
+const VISITED_LIMIT: usize = 50;
+
+impl Default for AppStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AppStore {
+    /// Активный диалог (M11.2): экран персонажей — создание/удаление;
+    /// игра — смерть > осмотр > лут > группа > гильдия > сделка >
+    /// выбор цели инкрустации (M17/F30a); окно сокетов (инкрустация
+    /// через меню оружия) — popup, вне диспетчера (M18); вне игры/
+    /// персонажей — None. `create_open` и `delete_open` — флаги UI
+    /// (Root), остальное — состояние store.
+    ///
+    /// M18/F53: описание предмета и окно заточки — попапы (вне
+    /// диспетчера модалок, как окно персонажа и диалог NPC).
+    pub fn active_dialog(&self, create_open: bool, delete_open: bool) -> Option<Dialog> {
+        match self.screen {
+            Screen::Characters => {
+                if create_open {
+                    Some(Dialog::Create)
+                } else if delete_open {
+                    Some(Dialog::Delete)
+                } else {
+                    None
+                }
+            }
+            Screen::Game => {
+                if self.death.is_some() {
+                    Some(Dialog::Death)
+                } else if self.entity_detail.is_some() {
+                    Some(Dialog::Examine)
+                } else if self.loot_confirm.is_some() {
+                    Some(Dialog::Loot)
+                } else if self.party_invite.is_some() {
+                    Some(Dialog::PartyInvite)
+                } else if self.guild_invite.is_some() {
+                    Some(Dialog::GuildInvite)
+                } else if self.trade.is_some() {
+                    Some(Dialog::Trade)
+                } else if self.inscribe.is_some() {
+                    // M17/F30a: окно «Куда инкрустировать…».
+                    Some(Dialog::Inscribe)
+                } else {
+                    // M18/F38: диалог NPC — попап (вне диспетчера модалок).
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// M11.7 (D20): отложить `char.delete` на `delay_s` секунд от `now`
+    /// (замещает прежнее немедленное подтверждение удаления).
+    pub fn schedule_delete(&mut self, char_id: String, name: String, now: i64, delay_s: i64) {
+        self.pending_delete = Some(PendingDelete {
+            char_id,
+            name,
+            deadline: now + delay_s,
+        });
+    }
+
+    /// M11.7: отмена (вход в игру, логаут, явный отказ — D20).
+    pub fn cancel_delete(&mut self) {
+        self.pending_delete = None;
+    }
+
+    /// M11.7: срок истёк — `Some(char_id)`, состояние снимается (одноразово).
+    pub fn tick_delete(&mut self, now: i64) -> Option<String> {
+        let due = self
+            .pending_delete
+            .as_ref()
+            .is_some_and(|p| now >= p.deadline);
+        if due {
+            self.pending_delete.take().map(|p| p.char_id)
+        } else {
+            None
+        }
+    }
+}
+
+impl AppStore {
+    pub fn new() -> Self {
+        Self {
+            screen: Screen::Login,
+            session: None,
+            snapshot: None,
+            transport: TransportStatus::Connecting,
+            pending: None,
+            login_error: None,
+            register_error: None,
+            create_error: None,
+            select_error: None,
+            world_error: None,
+            death: None,
+            item_detail: None,
+            upgrade: None,
+            sharpen_stone: None,
+            sharpen_list: false,
+            socketing: None,
+            dialog: None,
+            harvest: None,
+            inscribe: None,
+            item_cooldowns: BTreeMap::new(),
+            time_offset: 0,
+            time_samples: VecDeque::new(),
+            lang: Lang::Ru,
+            rune_recharge_phase_ms: None,
+            target: None,
+            combat_cooldowns: BTreeMap::new(),
+            global_cooldown_until: 0,
+            crime_log: Vec::new(),
+            crime_log_loaded: false,
+            loot_confirm: None,
+            quest_tracker: Vec::new(),
+            chat: std::collections::HashMap::new(),
+            chat_channel: "location".into(),
+            last_whisper_from: None,
+            party: None,
+            party_invite: None,
+            trade: None,
+            guild: None,
+            guild_invite: None,
+            guild_browse: Vec::new(),
+            guild_log: Vec::new(),
+            guild_browse_loaded: false,
+            chat_limit: 5_000,
+            rtt_ms: None,
+            recipes: Vec::new(),
+            recipes_loaded: false,
+            notice: None,
+            min_client_required: None,
+            forced_update: false,
+            last_login: None,
+            log: VecDeque::new(),
+            visited: Vec::new(),
+            entity_detail: None,
+            pickup: None,
+            pickup_dirty: false,
+            admin_catalog: None,
+            map_locations: Vec::new(),
+            map_offset: 0,
+            map_total: 0,
+            map_request: false,
+            map_root: String::new(),
+            admin_god: false,
+            stun: None,
+            admin_target_items: None,
+            npc_dialog: None,
+            pending_delete: None,
+            deleting_char: None,
+            session_login: None,
+        }
+    }
+
+    // ── события транспорта (единственный вход состояния) ────────────────────
+
+    /// Применение ingress-события. Возвращает эффекты для слоя приложения.
+    pub fn apply(&mut self, ev: IngressEvent) -> Vec<Effect> {
+        match ev {
+            IngressEvent::Status(status) => self.apply_status(status),
+            IngressEvent::Ack(ack) => self.apply_ack(ack),
+            IngressEvent::Event(env) => self.apply_event(&env.msg_type, env.payload),
+            IngressEvent::CommandTimeout { msg_type, .. } => {
+                self.notice = Some(format!("нет ответа сервера: {msg_type}"));
+                self.pending = None;
+                vec![]
+            }
+            IngressEvent::CommandFailed { msg_type, .. } => {
+                self.notice = Some(format!("связь потеряна: {msg_type}"));
+                self.pending = None;
+                vec![]
+            }
+            IngressEvent::Rtt(ms) => {
+                // НФР §8: RTT-индикатор в header.
+                self.rtt_ms = Some(ms);
+                vec![]
+            }
+        }
+    }
+
+    fn apply_status(&mut self, status: TransportStatus) -> Vec<Effect> {
+        let auth_expired = matches!(status, TransportStatus::AuthExpired);
+        let stopped = matches!(status, TransportStatus::Stopped);
+        // M19 (§15): discovery-отказ — понятная причина без подключения
+        // (текст по ключу; ретраи транспорта продолжаются).
+        if let TransportStatus::ResolveFailed(code) = &status {
+            use crate::l10n::{t, Key, Lang};
+            let key = match code {
+                crate::transport::ResolveFailCode::Unreachable => Key::DiscUnreachable,
+                crate::transport::ResolveFailCode::BadDoc => Key::DiscBadDoc,
+                crate::transport::ResolveFailCode::Contract => Key::DiscContract,
+                crate::transport::ResolveFailCode::MinClient => Key::DiscMinClient,
+                crate::transport::ResolveFailCode::Insecure => Key::DiscInsecure,
+            };
+            self.notice = Some(t(Lang::Ru, key).to_string());
+            self.transport = status;
+            return vec![];
+        }
+        self.transport = status;
+        if auth_expired {
+            // §4.5: access/refresh истёк → экран входа, токен из keyring.
+            return self.reset_to_login(Some("Сессия истекла — войдите снова".into()));
+        }
+        if stopped && self.screen != Screen::Login {
+            self.notice = Some("Соединение с сервером потеряно".into());
+            return self.reset_to_login(None);
+        }
+        vec![]
+    }
+
+    fn apply_event(&mut self, msg_type: &str, payload: Option<serde_json::Value>) -> Vec<Effect> {
+        let Some(payload) = payload else {
+            return vec![];
+        };
+        match msg_type {
+            m if m == "evt/location/changed"
+                || m.starts_with("evt/entity/")
+                || (m.starts_with("evt/char/") && m != "evt/char/afflict") =>
+            {
+                self.reduce_world(m, payload)
+            }
+            m if m.starts_with("evt/combat/")
+                || m.starts_with("evt/mob/")
+                || m == "evt/magic/cast"
+                || m == "evt/harvest/result"
+                || m == "evt/char/afflict" =>
+            {
+                self.reduce_combat(m, payload)
+            }
+            m if m.starts_with("evt/item/")
+                || m.starts_with("evt/corpse/")
+                || m == "evt/upgrade/result" =>
+            {
+                self.reduce_items(m, payload)
+            }
+            m if m.starts_with("evt/chat/")
+                || m == "evt/party/updated"
+                || m.starts_with("evt/trade/")
+                || m.starts_with("evt/guild/") =>
+            {
+                self.reduce_social(m, payload)
+            }
+            m if m.starts_with("evt/craft/")
+                || m.starts_with("evt/quest/")
+                || m.starts_with("evt/crime/") =>
+            {
+                self.reduce_craft(m, payload)
+            }
+            m if m == "evt/time.sync"
+                || m == "evt/session.start"
+                || m == "evt/state/snapshot"
+                || m == "evt/state/delta"
+                || m == "evt/dialog/open"
+                || m == "evt/error" =>
+            {
+                self.reduce_misc(m, payload)
+            }
+            _ => vec![], // неизвестные/ненужные события транспорт уже залогировал
+        }
+    }
+
+    /// R11: дельта неприменима — полный снапшот (§12.4).
+    fn request_resync(&self) -> Vec<Effect> {
+        vec![Effect::ResyncState]
+    }
+
+    // ── журнал и история (ФР-17, ФР-03) ────────────────────────────────────
+
+    fn push_log(&mut self, kind: LogKind, text: impl Into<String>) {
+        if self.log.len() >= LOG_LIMIT {
+            self.log.pop_front();
+        }
+        self.log.push_back(LogEntry {
+            kind,
+            text: text.into(),
+            at: local_epoch_ms(),
+        });
+    }
+
+    /// M25: удалить строки журнала старше TTL (порядок — от старых);
+    /// true — что-то удалено (нужен repaint). `ttl_s <= 0` — ничего
+    /// не удаляется (настройка сервера `journal_ttl_s`).
+    pub fn expire_log(&mut self, now_ms: i64, ttl_s: i64) -> bool {
+        if ttl_s <= 0 {
+            return false;
+        }
+        let limit = ttl_s.saturating_mul(1000);
+        let mut removed = false;
+        while let Some(front) = self.log.front() {
+            if now_ms.saturating_sub(front.at) < limit {
+                break;
+            }
+            self.log.pop_front();
+            removed = true;
+        }
+        removed
+    }
+
+    fn push_visited(&mut self, location: &LocationSnapshot) {
+        self.visited.retain(|v| v.id != location.id);
+        if self.visited.len() >= VISITED_LIMIT {
+            self.visited.remove(0);
+        }
+        self.visited.push(VisitedLocation {
+            id: location.id.clone(),
+            name: location.name.clone(),
+        });
+    }
+
+    /// Отправка команды мира: сброс ошибки + фиксация pending (ФР-03).
+    pub fn on_world_sent(&mut self, act: Act) {
+        self.world_error = None;
+        self.pending = Some(act);
+    }
+
+    /// Отправка команды листа/инвентаря (ФР-04/ФР-07).
+    pub fn on_sheet_sent(&mut self, act: Act) {
+        self.pending = Some(act);
+    }
+
+    /// M16/F29g: локальный обмен позициями предметов в сетке рюкзака
+    /// (после cmd/item.move — порядок сервера подхватится при resync).
+    pub fn swap_inventory(&mut self, a: &str, b: &str) {
+        let Some(snap) = self.snapshot.as_mut() else {
+            return;
+        };
+        let Some(i) = snap.char.inventory.iter().position(|i| i.uid == a) else {
+            return;
+        };
+        let Some(j) = snap.char.inventory.iter().position(|i| i.uid == b) else {
+            return;
+        };
+        snap.char.inventory.swap(i, j);
+    }
+
+    /// Подтверждение смерти (ФР-06): окно «Вы погибли» закрывается
+    /// **только** этим действием — молча закрыть нельзя.
+    pub fn confirm_death(&mut self) {
+        self.death = None;
+    }
+
+    /// Открыть модалку улучшения (ФР-10); превью придёт от сервера.
+    pub fn open_upgrade(&mut self, item_uid: String, item_name: String) {
+        self.upgrade = Some(UpgradeView {
+            item_uid,
+            item_name,
+            preview: None,
+            result: None,
+        });
+    }
+
+    pub fn close_upgrade(&mut self) {
+        self.upgrade = None;
+    }
+
+    /// Открыть инкрустацию посоха (ФР-09).
+    pub fn open_socketing(&mut self, staff_uid: String) {
+        tracing::info!("socketing: открытие окна, staff={staff_uid}");
+        self.socketing = Some(staff_uid);
+    }
+
+    pub fn close_socketing(&mut self) {
+        tracing::info!("socketing: закрытие окна (close_socketing)");
+        self.socketing = None;
+    }
+
+    /// M17/F30a: открыть список оружия под инкрустацию руны.
+    pub fn open_inscribe(&mut self, rune_uid: String) {
+        self.inscribe = Some(rune_uid);
+    }
+
+    pub fn close_inscribe(&mut self) {
+        self.inscribe = None;
+    }
+
+    /// Выбор цели кликом по строке сущности (ФР-05).
+    pub fn select_target(&mut self, entity_id: impl Into<String>) {
+        self.target = Some(entity_id.into());
+    }
+
+    /// Цикл целей по Tab: первый монстр → следующий → (wrap) (ФР-05).
+    /// M14/F4: длительность глобального кулдауна, мс (клиентская
+    /// блокировка всех боевых действий: панель, руны, свитки/зелья).
+    pub const GLOBAL_COOLDOWN_MS: i64 = 1000;
+
+    /// Начать глобальный кулдаун с `now_ms` (epoch, мс). Уже
+    /// действующее окно не укорачивается — берётся максимум.
+    pub fn begin_global_cooldown(&mut self, now_ms: i64) {
+        self.global_cooldown_until = self
+            .global_cooldown_until
+            .max(now_ms + Self::GLOBAL_COOLDOWN_MS);
+    }
+
+    /// Остаток глобального кулдауна, мс (≥0).
+    /// M17/F30g: остаток и полная длительность кулдауна предмета
+    /// (`item:<def_id>`); `None` — кулдауна нет.
+    pub fn item_cd_bar(&self, def_id: &str, now_ms: i64) -> Option<(i64, i64)> {
+        let (until, total) = self.item_cooldowns.get(&format!("item:{def_id}"))?;
+        let left = (*until - now_ms).max(0);
+        (left > 0).then_some((left, *total))
+    }
+
+    pub fn global_cooldown_left(&self, now_ms: i64) -> i64 {
+        (self.global_cooldown_until - now_ms).max(0)
+    }
+
+    /// M14/F4: готовность боевого действия и показываемый остаток.
+    /// Приоритет кулдаунов: **max(основной, глобальный)** — если
+    /// основной длиннее, показываем его, иначе глобальный.
+    /// Чистая функция — юнит-тест ниже.
+    pub fn action_ready(own_cd_left_ms: i64, global_left_ms: i64) -> (bool, i64) {
+        let left = own_cd_left_ms.max(global_left_ms);
+        (left <= 0, left.max(0))
+    }
+
+    pub fn cycle_target(&mut self) {
+        let Some(snap) = self.snapshot.as_ref() else {
+            self.target = None;
+            return;
+        };
+        let monsters: Vec<&str> = snap
+            .location
+            .entities
+            .iter()
+            .filter(|e| e.kind == ld2_protocol::types::EntityKind::Monster)
+            .map(|e| e.id.as_str())
+            .collect();
+        if monsters.is_empty() {
+            self.target = None;
+            return;
+        }
+        let next = match self
+            .target
+            .as_deref()
+            .and_then(|t| monsters.iter().position(|m| *m == t))
+        {
+            Some(pos) => monsters[(pos + 1) % monsters.len()].to_string(),
+            None => monsters[0].to_string(),
+        };
+        self.target = Some(next);
+    }
+
+    /// Трекер квестов (ФР-12): переключение, максимум 3.
+    pub fn toggle_quest_tracker(&mut self, quest_id: &str) {
+        if let Some(pos) = self.quest_tracker.iter().position(|q| q == quest_id) {
+            self.quest_tracker.remove(pos);
+        } else if self.quest_tracker.len() < 3 {
+            self.quest_tracker.push(quest_id.to_string());
+        }
+    }
+
+    /// Подтверждение «забрать лут трупа игрока» (ФР-11).
+    pub fn set_loot_confirm(&mut self, uid: String, name: String) {
+        self.loot_confirm = Some((uid, name));
+    }
+
+    pub fn clear_loot_confirm(&mut self) {
+        self.loot_confirm = None;
+    }
+
+    /// Сброс в экран входа с очисткой сессии/персонажа (чистый сброс, DoD M2).
+    fn reset_to_login(&mut self, reason: Option<String>) -> Vec<Effect> {
+        let login = self
+            .session_login
+            .clone()
+            .or_else(|| self.last_login.clone());
+        self.screen = Screen::Login;
+        self.session = None;
+        self.snapshot = None;
+        self.pending = None;
+        self.login_error = reason;
+        self.create_error = None;
+        self.select_error = None;
+        self.world_error = None;
+        self.death = None;
+        self.item_detail = None;
+        self.entity_detail = None;
+        self.pickup = None;
+        self.admin_catalog = None;
+        self.admin_god = false;
+        self.stun = None;
+        self.admin_target_items = None;
+        self.upgrade = None;
+        self.socketing = None;
+        self.dialog = None;
+        self.target = None;
+        self.loot_confirm = None;
+        self.quest_tracker.clear();
+        self.npc_dialog = None;
+        self.session_login = None;
+        self.chat.clear();
+        // M14/F18: лог мира персональный — очистка при выходе.
+        self.log.clear();
+        self.last_whisper_from = None;
+        self.party = None;
+        self.party_invite = None;
+        self.trade = None;
+        self.guild = None;
+        self.guild_invite = None;
+        self.guild_log.clear();
+        self.guild_browse_loaded = false;
+        self.guild_browse.clear();
+        login
+            .map(|login| vec![Effect::ForgetSession { login }])
+            .unwrap_or_default()
+    }
+
+    // ── действия UI (отправка команд фиксируют pending) ─────────────────────
+
+    /// Пользователь нажал «Войти» — команда ушла в транспорт.
+    pub fn on_login_sent(&mut self, login: &str) {
+        self.last_login = Some(login.to_string());
+        self.session_login = Some(login.to_string());
+        self.login_error = None;
+        self.notice = None;
+        self.pending = Some(Act::Login);
+    }
+
+    /// Пользователь нажал «Зарегистрироваться» — команда ушла (M13).
+    pub fn on_register_sent(&mut self, login: &str) {
+        self.last_login = Some(login.to_string());
+        self.session_login = Some(login.to_string());
+        self.login_error = None;
+        self.register_error = None;
+        self.notice = None;
+        self.pending = Some(Act::Register);
+    }
+
+    pub fn on_create_sent(&mut self) {
+        self.create_error = None;
+        self.pending = Some(Act::Create);
+    }
+
+    pub fn on_select_sent(&mut self) {
+        self.select_error = None;
+        self.pending = Some(Act::Select);
+    }
+
+    pub fn on_delete_sent(&mut self, char_id: &str) {
+        self.notice = None;
+        self.pending = Some(Act::Delete);
+        self.deleting_char = Some(char_id.to_string());
+    }
+
+    /// Hot-switch: вернуться к выбору персонажей БЕЗ ре-логина (ФР-02).
+    /// Снимок персонажа выгружается — следующий вход соберёт чистые сторы (DoD M2).
+    /// Журнал и история — общий журнал аккаунта, переживают переключение.
+    pub fn back_to_characters(&mut self) {
+        self.screen = Screen::Characters;
+        self.snapshot = None;
+        self.select_error = None;
+        self.world_error = None;
+        self.entity_detail = None;
+        self.pickup = None;
+        self.admin_catalog = None;
+        self.admin_god = false;
+        self.stun = None;
+        self.admin_target_items = None;
+        self.item_detail = None;
+        self.death = None;
+        self.upgrade = None;
+        self.socketing = None;
+        self.dialog = None;
+        self.quest_tracker.clear();
+        self.npc_dialog = None;
+        // ФР-13: переключение персонажа сбрасывает историю чата.
+        self.chat.clear();
+        // M14/F18: лог мира персональный — очистка при выходе из игры.
+        self.log.clear();
+        self.last_whisper_from = None;
+        self.party = None;
+        self.party_invite = None;
+        self.trade = None;
+        self.guild = None;
+        self.guild_invite = None;
+        self.guild_log.clear();
+        self.notice = None;
+    }
+
+    /// Логаут (ФР-01): чистый сессионный сброс + отзыв токена.
+    /// Смена сервера в настройках (ФР-19): возврат на экран входа БЕЗ
+    /// отзыва keyring-токена (токен старого хоста остаётся валидным).
+    pub fn to_login_screen(&mut self) {
+        let _ = self.reset_to_login(None);
+    }
+
+    pub fn logout(&mut self) -> Vec<Effect> {
+        self.reset_to_login(None)
+    }
+
+    /// M14/F19: может ли аккаунт писать в system-чат и удалять сообщения.
+    /// Роль приходит в `session.start`; старый сервер → `player`.
+    pub fn can_moderate(&self) -> bool {
+        matches!(
+            self.session.as_ref().map(|s| s.role.as_str()),
+            Some("admin") | Some("moderator")
+        )
+    }
+
+    pub fn slot_usage(&self) -> (usize, u32) {
+        let used = self
+            .session
+            .as_ref()
+            .map(|s| s.characters.len())
+            .unwrap_or(0);
+        let limit = self
+            .session
+            .as_ref()
+            .map(|s| s.char_slot_limit)
+            .unwrap_or(0);
+        (used, limit)
+    }
+}
+
+/// Локальное время в epoch-секундах.
+pub fn local_epoch() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Локальное время в миллисекундах epoch (M14/F4: плавный отсчёт
+/// кулдаунов на кнопках панели — тик 50 мс).
+pub fn local_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Активные статусы на момент `now` (epoch): истёвшие скрываются локально —
+/// fallback без событий (ФР-11). Клиент НЕ пересчитывает сроки (§4.10).
+pub fn filter_active_statuses(statuses: &[CrimeStatus], now: i64) -> Vec<CrimeStatus> {
+    statuses
+        .iter()
+        .filter(|s| s.expires_at > now)
+        .cloned()
+        .collect()
+}
+
+/// M18/F58f (ADR-012 §6): активные баффы рун — снятые/просроченные не
+/// показываются (сервер присылает только активные, но локальный отсчёт
+/// может отстать; §1.1 now = локальное + offset).
+pub fn filter_active_buffs(
+    buffs: &[ld2_protocol::types::BuffState],
+    now: i64,
+) -> Vec<&ld2_protocol::types::BuffState> {
+    buffs.iter().filter(|b| b.expires_at > now).collect()
+}
+
+/// Разбор ввода чата: `/w Имя текст`, `/p`, `/g`, `/r` (ответ последнему
+/// whisper), `/scenario …` (passthrough-сценарии мока); обычный текст —
+/// в активный канал. `whisper_to` — адресат для `/r` («ответить»).
+pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&str>) -> ChatDraft {
+    let trimmed = input.trim();
+    // Сценарии мока — dev-команда, уходит как текст (мок перехватывает префикс).
+    if trimmed.starts_with("/scenario ") {
+        return ChatDraft::Send {
+            channel: active_channel.to_string(),
+            to: None,
+            text: trimmed.to_string(),
+        };
+    }
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        // Обычный текст — в активный канал.
+        return ChatDraft::Send {
+            channel: active_channel.to_string(),
+            to: None,
+            text: trimmed.to_string(),
+        };
+    };
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let cmd = parts.next().unwrap_or_default().to_ascii_lowercase();
+    let arg = parts.next().unwrap_or("").trim();
+    match cmd.as_str() {
+        // `/w Имя текст` → whisper адресату.
+        "w" | "whisper" => {
+            let mut it = arg.splitn(2, char::is_whitespace);
+            let to = it.next().unwrap_or("").to_string();
+            let text = it.next().unwrap_or("").trim().to_string();
+            if to.is_empty() || text.is_empty() {
+                return ChatDraft::Unknown("/w".into());
+            }
+            ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some(to),
+                text,
+            }
+        }
+        // `/r текст` → ответ последнему адресату whisper.
+        "r" | "reply" => match whisper_to {
+            Some(to) if !arg.is_empty() => ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some(to.to_string()),
+                text: arg.to_string(),
+            },
+            _ => ChatDraft::Unknown("/r".into()),
+        },
+        // `/p` / `/g` → каналы группы/гильдии.
+        "p" | "party" if !arg.is_empty() => ChatDraft::Send {
+            channel: "party".into(),
+            to: None,
+            text: arg.to_string(),
+        },
+        "g" | "guild" if !arg.is_empty() => ChatDraft::Send {
+            channel: "guild".into(),
+            to: None,
+            text: arg.to_string(),
+        },
+        _ => ChatDraft::Unknown(format!("/{cmd}")),
+    }
+}
+
+impl Profile {
+    pub fn all() -> [Profile; 3] {
+        [Profile::Warrior, Profile::Archer, Profile::Mage]
+    }
+
+    /// Wire-значение `cmd/char.create.profile`.
+    pub fn value(self) -> &'static str {
+        match self {
+            Profile::Warrior => "warrior",
+            Profile::Archer => "archer",
+            Profile::Mage => "mage",
+        }
+    }
+
+    /// Локализованное название профиля.
+    pub fn label_key(self) -> crate::l10n::Key {
+        use crate::l10n::Key;
+        match self {
+            Profile::Warrior => Key::ProfileWarrior,
+            Profile::Archer => Key::ProfileArcher,
+            Profile::Mage => Key::ProfileMage,
+        }
+    }
+}
+
+impl Gender {
+    pub fn all() -> [Gender; 2] {
+        [Gender::Male, Gender::Female]
+    }
+
+    /// Wire-значение `cmd/char.create.gender`.
+    pub fn value(self) -> &'static str {
+        match self {
+            Gender::Male => "male",
+            Gender::Female => "female",
+        }
+    }
+
+    /// Локализованное название пола.
+    pub fn label_key(self) -> crate::l10n::Key {
+        use crate::l10n::Key;
+        match self {
+            Gender::Male => Key::GenderMale,
+            Gender::Female => Key::GenderFemale,
+        }
+    }
+}
+
+/// Заголовок преступления из конфига сервера (§5 kinds), фолбэк — kind.
+pub fn crime_kind_title(store: &AppStore, kind: &str) -> String {
+    store
+        .session
+        .as_ref()
+        .and_then(|s| s.crime.kinds.iter().find(|k| k.kind == kind))
+        .map(|k| k.title.clone())
+        .unwrap_or_else(|| kind.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M22: журнал опыта и повышения уровня профессии — обе строки
+    /// приходят (воспроизводство: «+600» было, «Уровень…» — нет,
+    /// когда в снапшоте не было записи профессии).
+    #[test]
+    fn profession_xp_and_level_up_log_lines() {
+        let mut store = in_game();
+        let first = serde_json::json!({
+            "profession": {
+                "id": "skinning", "rank": 1, "level": 14,
+                "xp": 18, "xp_to_next": 53, "extra": {}
+            },
+            "name": "Снятие шкур",
+            "gain": 600
+        });
+        store.apply_event("evt/craft/profession", Some(first));
+        let log = |store: &AppStore| -> Vec<String> {
+            store.log.iter().map(|l| l.text.clone()).collect()
+        };
+        let lines = log(&store);
+        assert!(
+            lines.iter().any(|t| t == "Снятие шкур: опыт +600"),
+            "строка опыта: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|t| t == "Уровень профессии Снятие шкур: 14"),
+            "строка уровня (записи в снапшоте не было): {lines:?}"
+        );
+        // Повторное событие без повышения уровня — новой строки нет.
+        let second = serde_json::json!({
+            "profession": {
+                "id": "skinning", "rank": 1, "level": 14,
+                "xp": 18, "xp_to_next": 53, "extra": {}
+            },
+            "name": "Снятие шкур",
+            "gain": 10
+        });
+        store.apply_event("evt/craft/profession", Some(second));
+        let lines = log(&store);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|t| t.as_str() == "Уровень профессии Снятие шкур: 14")
+                .count(),
+            1,
+            "уровень логируется один раз: {lines:?}"
+        );
+    }
+
+    /// M14/F4: глобальный кулдаун — 1 с; повтор не укорачивает окно.
+    #[test]
+    fn global_cooldown_blocks_one_second_and_never_shrinks() {
+        let mut store = AppStore::new();
+        assert_eq!(store.global_cooldown_left(1_000), 0, "не начат");
+
+        store.begin_global_cooldown(1_000);
+        assert_eq!(
+            store.global_cooldown_left(1_000),
+            AppStore::GLOBAL_COOLDOWN_MS
+        );
+        assert_eq!(store.global_cooldown_left(1_500), 500, "спадает");
+        assert_eq!(store.global_cooldown_left(2_000), 0, "истёк");
+
+        // Повтор через 500 мс продлевает, но не откатывает окно.
+        store.begin_global_cooldown(1_500);
+        assert_eq!(store.global_cooldown_until, 2_500);
+        // Старое время (гонка тиков) не укорачивает уже действующее.
+        store.begin_global_cooldown(1_100);
+        assert_eq!(store.global_cooldown_until, 2_500);
+    }
+
+    /// M14/F4: показываемый остаток = max(основной, глобальный).
+    #[test]
+    fn action_ready_takes_longest_cooldown() {
+        assert_eq!(AppStore::action_ready(0, 0), (true, 0), "оба свободны");
+        assert_eq!(
+            AppStore::action_ready(500, 0),
+            (false, 500),
+            "только основной"
+        );
+        assert_eq!(
+            AppStore::action_ready(0, 700),
+            (false, 700),
+            "только глобальный"
+        );
+        assert_eq!(
+            AppStore::action_ready(900, 300),
+            (false, 900),
+            "основной длиннее"
+        );
+        assert_eq!(
+            AppStore::action_ready(300, 900),
+            (false, 900),
+            "глобальный длиннее"
+        );
+        assert_eq!(
+            AppStore::action_ready(-1, -5),
+            (true, 0),
+            "истёкшие — готово"
+        );
+    }
+    use ld2_test_kit::fixtures;
+
+    // ─── M11.6: E2E-тест вехи — диспетчер всплывающих диалогов ─────────────
+    // Прогон сценария: создание персонажа → мир → смерть → лут → инвайт;
+    // тот же AppStore::active_dialog читает UI-диспетчер gpui-клиента.
+
+    #[test]
+    fn dialog_dispatch_e2e() {
+        let mut s = AppStore::new();
+        // Вне игры/персонажей диалогов нет, даже с флагами UI.
+        assert_eq!(s.active_dialog(true, true), None);
+
+        // Экран персонажей: создание > удаление.
+        s.screen = Screen::Characters;
+        assert_eq!(s.active_dialog(false, false), None);
+        assert_eq!(s.active_dialog(false, true), Some(Dialog::Delete));
+        assert_eq!(s.active_dialog(true, true), Some(Dialog::Create));
+
+        // Мир: флаги персонажей не действуют.
+        s.screen = Screen::Game;
+        assert_eq!(s.active_dialog(true, false), None);
+
+        // Смерть главнее всего (ФР-06), осмотр/лут — после неё.
+        s.death = Some(
+            serde_json::from_value(serde_json::json!({
+                "victim_char": true,
+                "corpse": "c1",
+                "respawn": {"location_id": "l1", "delay_s": 0}
+            }))
+            .expect("death"),
+        );
+        s.entity_detail = Some(serde_json::json!({"entity": {"name": "x"}}));
+        s.loot_confirm = Some(("uid".into(), "Труп".into()));
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Death));
+        s.death = None;
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Examine));
+        s.entity_detail = None;
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Loot));
+        s.loot_confirm = None;
+
+        // Инвайт в группу > гильдия > сделка (ФР-14/15/16).
+        s.party_invite = Some(PartyInviteView {
+            invite_id: "i1".into(),
+            from: "p1".into(),
+            from_name: "Игрок".into(),
+        });
+        s.guild_invite = Some(GuildInviteView {
+            guild_id: "g1".into(),
+            guild_name: "Г".into(),
+            from_name: "Игрок".into(),
+        });
+        s.trade = Some(
+            serde_json::from_value(serde_json::json!({
+                "offer_id": "o1", "version": 1,
+                "you_gold": 0, "them_gold": 0,
+                "you_locked": false, "them_locked": false
+            }))
+            .expect("trade"),
+        );
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::PartyInvite));
+        s.party_invite = None;
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::GuildInvite));
+        s.guild_invite = None;
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Trade));
+        s.trade = None;
+
+        // Лист: инкрустация (ФР-09); описание предмета и заточка —
+        // попапы (M18/F53), вне диспетчера модалок.
+        s.item_detail = Some(serde_json::json!({"name": "x"}));
+        // M18: окно сокетов — popup (вне диспетчера модалок).
+        s.socketing = Some("staff".into());
+        assert_eq!(s.active_dialog(false, false), None, "сокетинг — popup");
+        s.socketing = None;
+        // M17/F30a: выбор цели инкрустации — отдельный диалог.
+        s.inscribe = Some("rune_1".into());
+        assert_eq!(s.active_dialog(false, false), Some(Dialog::Inscribe));
+        s.inscribe = None;
+        // M18/F38: диалог NPC — попап: не участвует в диспетчере
+        // модалок (модалки смерти/осмотра/луута — выше по приоритету).
+        s.npc_dialog = Some(NpcDialogView::default());
+        assert_eq!(s.active_dialog(false, false), None);
+        s.npc_dialog = None;
+        assert_eq!(s.active_dialog(false, false), None);
+    }
+
+    // ─── M11.7: таймер удаления (D20) ──────────────────────────────────────
+
+    #[test]
+    fn deletion_timer_schedule_tick_cancel() {
+        let mut s = AppStore::new();
+        s.schedule_delete("c1".into(), "Ким".into(), 1_000, 10);
+        assert_eq!(s.tick_delete(1_005), None, "до срока — не уходит");
+        assert!(s.pending_delete.is_some());
+        assert_eq!(s.tick_delete(1_010), Some("c1".into()), "срок истёк");
+        assert!(s.pending_delete.is_none(), "одноразово");
+        assert_eq!(s.tick_delete(1_020), None, "повторный тик — пусто");
+
+        s.schedule_delete("c2".into(), "Астра".into(), 2_000, 30);
+        s.cancel_delete();
+        assert_eq!(s.tick_delete(3_000), None, "отменено — не уходит");
+        assert!(s.pending_delete.is_none());
+
+        // Новая запись замещает старую (отложенных — не больше одного).
+        s.schedule_delete("c1".into(), "Ким".into(), 3_000, 5);
+        s.schedule_delete("c2".into(), "Астра".into(), 3_000, 60);
+        assert_eq!(s.tick_delete(3_010), None, "старая заменена");
+        assert_eq!(
+            s.pending_delete.as_ref().map(|p| p.char_id.as_str()),
+            Some("c2")
+        );
+    }
+
+    // ─── M8: чат (ФР-13) ───────────────────────────────────────────────────
+
+    #[test]
+    fn slash_parse_whisper_and_channels() {
+        // `/w Имя текст` → whisper адресату.
+        assert_eq!(
+            parse_chat_input("/w Астра привет!", "location", None),
+            ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some("Астра".into()),
+                text: "привет!".into()
+            }
+        );
+        // `/p` / `/g` → каналы группы/гильдии.
+        assert_eq!(
+            parse_chat_input("/p идём в лес", "location", None),
+            ChatDraft::Send {
+                channel: "party".into(),
+                to: None,
+                text: "идём в лес".into()
+            }
+        );
+        assert_eq!(
+            parse_chat_input("/g привет гильдии", "global", None),
+            ChatDraft::Send {
+                channel: "guild".into(),
+                to: None,
+                text: "привет гильдии".into()
+            }
+        );
+        // Обычный текст — в активный канал.
+        assert_eq!(
+            parse_chat_input("просто текст", "location", None),
+            ChatDraft::Send {
+                channel: "location".into(),
+                to: None,
+                text: "просто текст".into()
+            }
+        );
+    }
+
+    #[test]
+    fn slash_parse_reply_and_unknown() {
+        // `/r` с адресатом последнего whisper.
+        assert_eq!(
+            parse_chat_input("/r тоже привет", "location", Some("Астра")),
+            ChatDraft::Send {
+                channel: "whisper".into(),
+                to: Some("Астра".into()),
+                text: "тоже привет".into()
+            }
+        );
+        // Без адресата — ошибка, не отправляется.
+        assert_eq!(
+            parse_chat_input("/r привет", "location", None),
+            ChatDraft::Unknown("/r".into())
+        );
+        // Неизвестная команда — ошибка тостом (ФР-13), текстом в чат не идёт.
+        assert_eq!(
+            parse_chat_input("/xyz ага", "location", None),
+            ChatDraft::Unknown("/xyz".into())
+        );
+        // Неполный `/w` — ошибка.
+        assert_eq!(
+            parse_chat_input("/w Астра", "location", None),
+            ChatDraft::Unknown("/w".into())
+        );
+        // Сценарии мока — passthrough (dev-команда мока).
+        assert_eq!(
+            parse_chat_input("/scenario death", "global", None),
+            ChatDraft::Send {
+                channel: "global".into(),
+                to: None,
+                text: "/scenario death".into()
+            }
+        );
+    }
+
+    /// M14/F19: evt/chat/deleted убирает строку из истории канала;
+    /// can_moderate — по роли из session.start (старый сервер → player).
+    /// M14/F22: строки с маркером replay не попадают ни в чат, ни в
+    /// журнал — прошлая сессия не навязывается новому входу.
+    #[test]
+    fn replay_marked_messages_not_shown() {
+        let mut store = store_with_session();
+        let log_before = store.log.len();
+
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 7, "channel": "global", "from": "p", "name": "Старый",
+                "text": "вчерашнее", "sent_at": "2026-11-08T12:00:00Z",
+                "replay": true
+            })),
+        }));
+        assert!(
+            !store.chat.contains_key("global"),
+            "реплей не создаёт кольцо канала"
+        );
+        assert_eq!(store.log.len(), log_before, "реплей не пушится в журнал");
+
+        // Обычное сообщение (без маркера) — как раньше.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 8, "channel": "global", "from": "p", "name": "Живой",
+                "text": "сейчас", "sent_at": "2026-11-09T12:00:00Z"
+            })),
+        }));
+        assert_eq!(store.chat.get("global").expect("живое сообщение").len(), 1);
+        assert_eq!(store.log.len(), log_before + 1, "живое — в журнал идёт");
+    }
+
+    #[test]
+    fn chat_deleted_event_removes_message() {
+        let mut store = store_with_session();
+        assert!(!store.can_moderate(), "fixtures: роль player");
+        store.session.as_mut().expect("сессия").role = "moderator".into();
+        assert!(store.can_moderate(), "модератор может");
+
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 42, "channel": "system", "from": "p", "name": "Мод",
+                "text": "служебное", "sent_at": "2026-11-09T00:00:00Z"
+            })),
+        }));
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "id": 43, "channel": "system", "from": "p", "name": "Мод",
+                "text": "остаётся", "sent_at": "2026-11-09T00:00:01Z"
+            })),
+        }));
+        let sys = store.chat.get("system").expect("канал system");
+        assert_eq!(sys.len(), 2);
+
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/deleted".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({ "id": 42 })),
+        }));
+        let sys = store.chat.get("system").expect("канал system");
+        assert_eq!(sys.len(), 1, "удалена только строка с id");
+        assert_eq!(sys[0].text, "остаётся");
+        assert_eq!(sys[0].id, Some(43), "id пережил удаление соседа");
+    }
+
+    #[test]
+    fn chat_history_is_ring_per_channel() {
+        let mut store = store_with_session();
+        let limit = store.chat_limit;
+        for i in 0..(limit + 5) {
+            store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/chat/message".into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({
+                    "channel": "global", "from": "p", "name": "Марк",
+                    "text": format!("м {i}"), "sent_at": "2026-11-03T00:00:00Z"
+                })),
+            }));
+        }
+        let global = store.chat.get("global").expect("канал global");
+        assert_eq!(global.len(), limit, "ring-буфер: лимит из конфига");
+        assert_eq!(global.front().unwrap().text, "м 5", "старые вытеснены");
+        // Другой канал не тронут.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "system", "from": "srv", "name": "Сервер",
+                "text": "событие", "sent_at": "2026-11-03T00:00:00Z"
+            })),
+        }));
+        assert_eq!(store.chat.get("system").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn party_invite_opens_pending_and_accept_clears_it() {
+        let mut store = store_with_session();
+        // Приглашение (поле invite, §11) → модалка ответа.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/party/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "party": serde_json::Value::Null,
+                "invite": { "invite_id": "inv_1", "from": "c1", "from_name": "Ким" }
+            })),
+        }));
+        let inv = store.party_invite.as_ref().expect("приглашение");
+        assert_eq!(inv.invite_id, "inv_1");
+        assert_eq!(inv.from_name, "Ким");
+        assert!(store.party.is_none());
+
+        // Принятие: состав группы приходит тем же событием.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/party/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "party": {
+                    "id": "pt_1", "leader": "c1",
+                    "members": [
+                        { "id": "c1", "name": "Ким" },
+                        { "id": "c2", "name": "Астра" }
+                    ]
+                }
+            })),
+        }));
+        let party = store.party.as_ref().expect("группа");
+        assert_eq!(party.members.len(), 2);
+        assert_eq!(party.leader, "c1");
+        assert!(store.party_invite.is_none(), "ответ дан — модалка закрыта");
+
+        // Выход/распускание: party: null.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/party/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({ "party": null })),
+        }));
+        assert!(store.party.is_none());
+    }
+
+    #[test]
+    fn trade_state_mirror_version_and_close() {
+        let mut store = store_with_session();
+        // Зеркальная перспектива: you — своя сторона, them — чужая (ФР-15).
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/trade/state".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "offer_id": "of_c1", "version": 3,
+                "you": [ { "uid": "m_1", "type": "ingot_iron", "name": "Слиток",
+                            "rarity": "common", "upgrade": 0, "stats": {} } ],
+                "them": [],
+                "you_gold": 10, "them_gold": 0,
+                "you_locked": false, "them_locked": true,
+                "value_hint": 15
+            })),
+        }));
+        let trade = store.trade.as_ref().expect("сделка");
+        assert_eq!(trade.version, 3, "версия — истина сервера");
+        assert_eq!(trade.you.len(), 1);
+        assert_eq!(trade.you[0].uid, "m_1");
+        assert!(trade.them.is_empty());
+        assert!(trade.them_locked && !trade.you_locked);
+        assert_eq!(trade.value_hint, Some(15));
+
+        // Завершение: done закрывает окно и пишет в журнал.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/trade/closed".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({ "offer_id": "of_c1", "reason": "done" })),
+        }));
+        assert!(store.trade.is_none());
+        assert!(store.log.iter().any(|e| e.text.contains("состоялась")));
+    }
+
+    #[test]
+    fn guild_update_invite_and_log() {
+        let mut store = store_with_session();
+        // Приглашение в гильдию (§11).
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/guild/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "guild": serde_json::Value::Null,
+                "invite": { "guild_id": "g_1", "guild_name": "Стальные волки",
+                             "from_name": "Ким" }
+            })),
+        }));
+        let inv = store.guild_invite.as_ref().expect("приглашение");
+        assert_eq!(inv.guild_name, "Стальные волки");
+
+        // Состояние гильдии + журнал.
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/guild/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "guild": { "id": "g_1", "name": "Стальные волки",
+                            "members": [ { "id": "c1", "name": "Ким",
+                                           "rank": "master", "online": true } ] }
+            })),
+        }));
+        assert_eq!(store.guild.as_ref().expect("гильдия").members.len(), 1);
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/guild/log".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "entry": { "kind": "rank_change", "text": "Ранг c2 → member",
+                            "at": 1793700000 }
+            })),
+        }));
+        assert_eq!(store.guild_log.len(), 1);
+        assert!(store.log.iter().any(|e| e.text.contains("Гильдия")));
+    }
+
+    /// НФР/§12: min_client capability сервера новее клиента → предупреждение.
+    #[test]
+    fn newer_min_client_shows_warning() {
+        let mut store = AppStore::new();
+        store.on_login_sent("demo");
+        let mut cfg = fixtures::session_config(8);
+        cfg.server.min_client = Some("99.0.0".into());
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::to_value(cfg).unwrap()),
+        }));
+        let notice = store.notice.expect("предупреждение о версии");
+        assert!(notice.contains("99.0.0"), "нужна версия сервера: {notice}");
+
+        // Текущая/старая версия — без предупреждения.
+        let mut store = AppStore::new();
+        store.on_login_sent("demo");
+        let mut cfg = fixtures::session_config(8);
+        cfg.server.min_client = Some("0.1.0".into());
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::to_value(cfg).unwrap()),
+        }));
+        assert!(store.notice.is_none(), "старая версия сервера — тихо");
+    }
+
+    /// D7: события уведомлений эмитятся эффектами (флаг применяет App).
+    #[test]
+    fn notify_effects_emitted_for_d7_events() {
+        let mut store = store_with_session();
+
+        // Смерть.
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/char/death".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "victim_char": true, "lost_items": [], "corpse": "cor_self",
+                "respawn": { "location_id": "l_village", "delay_s": 0 }
+            })),
+        }));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::Notify(NotifyKind::Death))),
+            "смерть → уведомление: {effects:?}"
+        );
+
+        // Приглашение в группу.
+        let mut store = store_with_session();
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/party/updated".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "party": null,
+                "invite": { "invite_id": "inv_1", "from": "c1", "from_name": "Ким" }
+            })),
+        }));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::Notify(NotifyKind::PartyInvite))));
+
+        // Whisper от другого.
+        let mut store = store_with_session();
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "whisper", "from": "c2", "name": "Астра",
+                "text": "эй", "sent_at": "2026-11-04T00:00:00Z"
+            })),
+        }));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::Notify(NotifyKind::Whisper))));
+
+        // Своё сообщение whisper — без уведомления (нужен снапшот: id «я»).
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/state/snapshot".into(),
+            seq: None,
+            ts: None,
+            state_version: Some(1003),
+            payload: Some(
+                serde_json::to_value(fixtures::snapshot(
+                    1003,
+                    &fixtures::character("c1", "Ким"),
+                    &fixtures::village(),
+                ))
+                .expect("снапшот"),
+            ),
+        }));
+        let my_id = store.snapshot.as_ref().unwrap().char.id.clone();
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "whisper", "from": my_id, "name": "Ким",
+                "text": "себе", "sent_at": "2026-11-04T00:00:00Z"
+            })),
+        }));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::Notify(NotifyKind::Whisper))),
+            "своё сообщение не уведомляет"
+        );
+    }
+
+    #[test]
+    fn social_state_resets_on_char_switch() {
+        let mut store = store_with_session();
+        store.party = Some(PartyState {
+            id: "pt_1".into(),
+            leader: "c1".into(),
+            members: vec![],
+            extra: Default::default(),
+        });
+        store.back_to_characters();
+        assert!(store.party.is_none(), "пати сброшено при hot-switch");
+        assert!(store.guild_browse.is_empty());
+    }
+
+    #[test]
+    fn chat_resets_on_char_switch_and_whisper_reply_target() {
+        let mut store = store_with_session();
+        // Whisper от другого игрока запоминает адресата (ФР-13 «ответить»).
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": "whisper", "from": "c2", "name": "Астра",
+                "text": "эй", "sent_at": "2026-11-03T00:00:00Z"
+            })),
+        }));
+        assert_eq!(store.last_whisper_from.as_deref(), Some("Астра"));
+        assert_eq!(store.chat.get("whisper").unwrap().len(), 1);
+
+        // Переключение персонажа сбрасывает историю (ФР-13).
+        store.back_to_characters();
+        assert!(store.chat.is_empty(), "история чата сброшена");
+        assert!(store.last_whisper_from.is_none());
+    }
+
+    fn store_with_session() -> AppStore {
+        let mut store = AppStore::new();
+        let effects = store.apply(IngressEvent::Status(TransportStatus::Online));
+        assert!(effects.is_empty());
+        store.on_login_sent("demo");
+        let cfg = serde_json::to_value(fixtures::session_config(8)).unwrap();
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(cfg),
+        }));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::PersistSession { .. })));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::TransportToken(_))));
+        store
+    }
+
+    fn snapshot_event() -> IngressEvent {
+        let snap = serde_json::to_value(fixtures::snapshot(
+            1002,
+            &fixtures::character("c1", "Ким"),
+            &fixtures::village(),
+        ))
+        .unwrap();
+        IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/state/snapshot".into(),
+            seq: None,
+            ts: None,
+            state_version: Some(1002),
+            payload: Some(snap),
+        })
+    }
+
+    #[test]
+    fn session_start_moves_to_characters_with_effects() {
+        let store = store_with_session();
+        assert_eq!(store.screen, Screen::Characters);
+        assert_eq!(store.slot_usage(), (1, 8));
+        assert!(store.login_error.is_none());
+        assert!(!store.forced_update, "без min_client — вход разрешён");
+    }
+
+    #[test]
+    fn session_start_min_client_forces_update() {
+        let mut store = store_with_session();
+        // Сервер требует более новый клиент → вход в мир блокируется.
+        let mut cfg = serde_json::to_value(fixtures::session_config(8)).unwrap();
+        cfg["server"]["min_client"] = serde_json::json!("99999.0.0");
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(cfg),
+        }));
+        assert!(store.forced_update);
+        assert_eq!(store.min_client_required.as_deref(), Some("99999.0.0"));
+        assert!(store.notice.is_some(), "предупреждение видно");
+
+        // Требование равно версии клиента — вход разрешён.
+        let mut cfg = serde_json::to_value(fixtures::session_config(8)).unwrap();
+        cfg["server"]["min_client"] = serde_json::json!(env!("CARGO_PKG_VERSION"));
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(cfg),
+        }));
+        assert!(!store.forced_update);
+    }
+
+    #[test]
+    fn snapshot_moves_to_game_and_switch_is_clean() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        assert_eq!(store.screen, Screen::Game);
+        assert!(store.snapshot.is_some());
+
+        // DoD M2: смена персонажа = чистый сброс сторов (снимок выгружен).
+        store.back_to_characters();
+        assert_eq!(store.screen, Screen::Characters);
+        assert!(store.snapshot.is_none());
+
+        // Сессия переживает hot-switch — ре-логин не нужен.
+        assert!(store.session.is_some());
+        store.apply(snapshot_event());
+        assert_eq!(store.screen, Screen::Game);
+    }
+
+    /// M14/F18: лог мира персональный — не переживает вход и выход.
+    #[test]
+    fn log_cleared_on_enter_and_exit() {
+        let mut store = store_with_session();
+        // Вход в игру: лог содержит только строку «Вход в мир».
+        store.apply(snapshot_event());
+        assert_eq!(store.screen, Screen::Game);
+        assert_eq!(
+            store.log.len(),
+            1,
+            "при входе лог очищается — только «Вход в мир»"
+        );
+        // Накопили строк — выход из игры очищает.
+        store.back_to_characters();
+        assert!(
+            store.log.is_empty(),
+            "смена персонажа/выход из игры чистит лог"
+        );
+        // Повторный вход — снова чисто.
+        store.apply(snapshot_event());
+        assert_eq!(store.log.len(), 1, "повторный вход начинается заново");
+        // Логаут (экран входа) тоже чистит.
+        store.logout();
+        assert!(store.log.is_empty(), "логаут чистит лог");
+    }
+
+    #[test]
+    fn login_ack_error_shows_message() {
+        let mut store = AppStore::new();
+        store.on_login_sent("demo");
+        let ack = ld2_protocol::Ack::error(
+            1,
+            None,
+            &ErrorCode::BadCredentials,
+            "неверный логин или пароль",
+        );
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(
+            store.login_error.as_deref(),
+            Some("неверный логин или пароль")
+        );
+        assert_eq!(store.screen, Screen::Login);
+        assert!(store.pending.is_none());
+    }
+
+    #[test]
+    fn auth_expired_resets_session_and_forgets_token() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        assert_eq!(store.screen, Screen::Game);
+
+        let effects = store.apply(IngressEvent::Status(TransportStatus::AuthExpired));
+        assert_eq!(store.screen, Screen::Login);
+        assert!(store.session.is_none(), "сессия очищена");
+        assert!(store.snapshot.is_none());
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ForgetSession { .. })),
+            "токен отозван"
+        );
+    }
+
+    #[test]
+    fn session_start_on_reconnect_keeps_game_screen() {
+        // §4.5: session.start повторяется при resume — игрок не выкидывается.
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        let cfg = serde_json::to_value(fixtures::session_config(8)).unwrap();
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(cfg),
+        }));
+        assert_eq!(
+            store.screen,
+            Screen::Game,
+            "реконнект не выкидывает из игры"
+        );
+        assert!(store.session.is_some());
+    }
+
+    #[test]
+    fn create_ack_appends_character() {
+        let mut store = store_with_session();
+        store.on_create_sent();
+        let mut new_char = fixtures::character_summary();
+        new_char.id = "c2".into();
+        new_char.name = "Арн".into();
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            7,
+            Some(1003),
+            &serde_json::json!({ "character": new_char }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.slot_usage(), (2, 8), "персонаж добавлен в список");
+        assert_eq!(store.notice.as_deref(), Some("Персонаж создан"));
+    }
+
+    #[test]
+    fn delete_ack_error_surfaces_notice() {
+        let mut store = store_with_session();
+        let id = store.session.as_ref().unwrap().characters[0].id.clone();
+        store.on_delete_sent(&id);
+        let ack = ld2_protocol::Ack::error(9, None, &ErrorCode::CharLimit, "нельзя удалить");
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.notice.as_deref(), Some("нельзя удалить"));
+        assert_eq!(store.slot_usage(), (1, 8), "список не изменился");
+    }
+
+    /// M11.7: успешный ack удаления снимает карточку (ФР-02).
+    #[test]
+    fn delete_ack_removes_character_from_list() {
+        let mut store = store_with_session();
+        assert_eq!(store.slot_usage(), (1, 8), "до удаления");
+        let id = store.session.as_ref().unwrap().characters[0].id.clone();
+        store.on_delete_sent(&id);
+        let ack = ld2_protocol::Ack::ok(10, Some(1004));
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.slot_usage(), (0, 8), "карточка убрана по ack");
+        assert_eq!(store.notice.as_deref(), Some("Персонаж удалён"));
+        assert!(store.deleting_char.is_none());
+    }
+
+    #[test]
+    fn transport_stopped_returns_to_login() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        let effects = store.apply(IngressEvent::Status(TransportStatus::Stopped));
+        assert_eq!(store.screen, Screen::Login);
+        assert!(store.snapshot.is_none());
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::ForgetSession { .. })));
+        assert!(store.notice.is_some(), "пользователь видит причину");
+    }
+
+    // ─── M3: мир, журнал, история ──────────────────────────────────────────
+
+    fn evt(ty: &str, payload: serde_json::Value) -> IngressEvent {
+        IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: ty.to_string(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(payload),
+        })
+    }
+
+    fn in_game() -> AppStore {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        assert_eq!(store.screen, Screen::Game);
+        store
+    }
+
+    #[test]
+    fn location_changed_updates_location_visited_and_log() {
+        let mut store = in_game();
+        assert_eq!(store.visited.len(), 1, "деревня при входе в мир");
+
+        let payload = serde_json::to_value(LocationChanged {
+            location: fixtures::forest(),
+        })
+        .unwrap();
+        store.apply(evt("evt/location/changed", payload));
+
+        let snap = store.snapshot.as_ref().unwrap();
+        assert_eq!(snap.location.id, "l_forest");
+        assert_eq!(store.visited.len(), 2, "история: деревня + лес");
+        assert_eq!(store.visited[1].name, "Черный лес");
+        // M29 (заказчик): переход не пишет «Вы вошли в …» в журнал.
+        assert!(
+            !store.log.iter().any(|l| l.text.contains("Вы вошли")),
+            "строка «Вы вошли» не должна появляться"
+        );
+        assert!(store.entity_detail.is_none());
+
+        // Возврат в деревню: дедуп истории (свежая в конце, без дублей).
+        let payload = serde_json::to_value(LocationChanged {
+            location: fixtures::village(),
+        })
+        .unwrap();
+        store.apply(evt("evt/location/changed", payload));
+        assert_eq!(store.visited.len(), 2, "дедуп по id");
+        assert_eq!(store.visited[1].id, "l_village");
+    }
+
+    #[test]
+    fn combat_hit_logged_by_direction() {
+        let mut store = in_game();
+        let char_id = "c1".to_string();
+
+        let hit = |source: &str| {
+            serde_json::json!({
+                "source": source, "source_name": "Ким", "target": "m_3", "target_name": "Волк",
+                "kind": "melee", "amount": 7, "crit": false, "miss": false,
+                "text": format!("удар от {source}")
+            })
+        };
+        store.apply(evt("evt/combat/hit", hit(&char_id)));
+        store.apply(evt("evt/combat/hit", hit("m_3")));
+
+        let kinds: Vec<LogKind> = store.log.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![LogKind::Location, LogKind::CombatOut, LogKind::CombatIn],
+            "свой урон — исходящий, чужой — входящий (ФР-05)"
+        );
+    }
+
+    #[test]
+    fn entity_despawn_removes_and_logs() {
+        let mut store = in_game();
+        assert!(store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .location
+            .entities
+            .iter()
+            .any(|e| e.id == "npc_elder"));
+
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({ "entity_id": "npc_elder", "location_id": "l_village" }),
+        ));
+        assert!(
+            !store
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .location
+                .entities
+                .iter()
+                .any(|e| e.id == "npc_elder"),
+            "сущность удалена"
+        );
+        let last = store.log.back().expect("лог");
+        assert!(last.text.contains("Староста"), "{}", last.text);
+    }
+
+    #[test]
+    fn move_ack_ok_applies_location_and_error_sets_world_error() {
+        let mut store = in_game();
+        store.on_world_sent(Act::Move);
+
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            5,
+            Some(1003),
+            &serde_json::json!({ "location": fixtures::forest() }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().location.id,
+            "l_forest",
+            "ack несёт новую локацию"
+        );
+        assert!(store.pending.is_none() && store.world_error.is_none());
+
+        store.on_world_sent(Act::Move);
+        let ack = ld2_protocol::Ack::error(6, None, &ErrorCode::ExitBlocked, "выход завален");
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.world_error.as_deref(), Some("выход завален"));
+    }
+
+    #[test]
+    fn examine_ack_sets_entity_detail_with_loot() {
+        let mut store = in_game();
+        store.on_world_sent(Act::Examine);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            7,
+            None,
+            &serde_json::json!({
+                "entity": fixtures::forest().entities[2], // cor_9 — труп игрока
+                "loot": [ { "uid": "loot:cor_9:0", "type": "weapon", "name": "Кинжал" } ],
+                "was_player": true
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let detail = store.entity_detail.as_ref().expect("осмотр");
+        assert_eq!(
+            detail["was_player"], true,
+            "⚠ труп игрока виден при осмотре"
+        );
+        assert!(detail["loot"].as_array().expect("лут").len() == 1);
+        assert!(store.pending.is_none());
+    }
+
+    /// M23: ack `entity.info` для окна подятия кладётся в `pickup` и
+    /// НЕ перетирает модалку осмотра (`entity_detail`) — окна независимы.
+    #[test]
+    fn pickup_ack_sets_pickup_not_examine() {
+        let mut store = in_game();
+        store.entity_detail = Some(serde_json::json!({"entity": {"name": "осмотр"}}));
+        store.on_world_sent(Act::PickupInfo);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            9,
+            None,
+            &serde_json::json!({
+                "entity": {"id": "cor_1", "name": "Волк", "kind": "corpse"},
+                "loot": [ { "uid": "loot:cor_1:0", "type": "hide", "name": "Шкура" } ],
+                "inner": [],
+                "was_player": false,
+                "looted": false
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let pickup = store.pickup.as_ref().expect("окно подятия");
+        assert_eq!(pickup["entity"]["id"], "cor_1", "лут трупа");
+        assert_eq!(
+            store.entity_detail.as_ref().expect("осмотр")["entity"]["name"],
+            "осмотр",
+            "модалка осмотра не тронута"
+        );
+        assert!(store.pending.is_none());
+        // Ошибка (`E_TARGET_GONE`) — в мир, данные очищаются при
+        // смене локации/выходе (как у entity_detail).
+        store.pickup = None;
+        assert!(store.pickup.is_none());
+    }
+
+    /// M18/F35: ack `npc.talk` открывает окно диалога (реплики + квесты);
+    /// `evt/quest/updated` с невидимой фазой убирает квест из списка окна.
+    #[test]
+    fn npc_talk_ack_opens_dialog_and_prunes_quest() {
+        let mut store = in_game();
+        store.on_world_sent(Act::NpcTalk);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            8,
+            None,
+            &serde_json::json!({
+                "dialog": {
+                    "id": "npc_elder", "name": "Староста"
+                },
+                "node": {
+                    "id": "l_hello", "text": "Как дела?",
+                    "replies": [
+                        { "id": "r_work", "text": "Какая работа?", "wait_s": 1740 },
+                        { "id": "r_shop", "text": "Покажи свои товары.", "action": "shop" },
+                        { "id": "r_bye", "text": "Пока." }
+                    ]
+                },
+                "quests": [ { "id": "q1", "title": "Волчья беда", "state": "available" } ],
+                "actions": [ "quests", "train" ],
+                "training": [
+                    { "skill": "sword", "points": 10, "gold": 100 },
+                    { "skill": "fire", "points": 10, "gold": 50,
+                      "items": [ { "def_id": "herb", "qty": 1 } ] }
+                ]
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        assert_eq!(dialog.name, "Староста");
+        // Лента: корневой узел (`greeting` убран — ADR-008).
+        assert_eq!(dialog.transcript.len(), 1, "лента: {dialog:?}");
+        assert!(!dialog.transcript[0].me && dialog.transcript[0].text == "Как дела?");
+        let node = dialog.node.as_ref().expect("узел");
+        assert_eq!(node.id, "l_hello");
+        assert_eq!(node.replies.len(), 3);
+        // M18/F42: `wait_s` парсится — реплика на кулдауне неактивна
+        // (ADR-008), без поля — активна.
+        assert_eq!(node.replies[0].wait_s, Some(1740), "таймер кулдауна");
+        assert_eq!(node.replies[1].wait_s, None, "активная реплика");
+        // M18/F43: `action` парсится — реплика откроет магазин.
+        assert_eq!(
+            node.replies[1].action.as_deref(),
+            Some("shop"),
+            "действие реплики"
+        );
+        assert_eq!(node.replies[2].action, None, "у обычной ответа нет");
+        // Живой отсчёт: абсолютный дедлайн ≈ now + 1740 с.
+        let until = node.replies[0]
+            .wait_until_ms
+            .expect("дедлайн кулдауна ставится");
+        let expected = local_epoch_ms() + 1740 * 1000;
+        assert!(
+            (until - expected).abs() < 2_000,
+            "дедлайн {until} ≈ {expected}"
+        );
+        assert_eq!(
+            node.replies[2].wait_until_ms, None,
+            "у активной реплики дедлайна нет"
+        );
+        assert_eq!(dialog.quests.len(), 1);
+        assert_eq!(dialog.actions, vec!["quests", "train"], "actions из ack");
+        // M18/F44: обучение парсится (ADR-009) — навык, очки, плата.
+        assert_eq!(dialog.training.len(), 2, "обучение: {dialog:?}");
+        let train = &dialog.training[0];
+        assert_eq!(train.skill, "sword");
+        assert_eq!(train.points, 10);
+        assert_eq!(train.gold, 100);
+        assert!(train.items.is_empty(), "у sword платы предметами нет");
+        let fire = &dialog.training[1];
+        assert_eq!(fire.skill, "fire");
+        assert_eq!(fire.items.len(), 1, "у fire плата предметом");
+        assert_eq!(fire.items[0].def_id, "herb");
+        assert_eq!(fire.items[0].qty, 1);
+        assert_eq!(store.active_dialog(false, false), None, "попап вне модалок");
+        assert!(store.pending.is_none());
+
+        // M18/F37: ответ → новый узел в ленте, квесты освежены.
+        store.on_world_sent(Act::NpcReply);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            9,
+            None,
+            &serde_json::json!({
+                "node": {
+                    "id": "l_errand", "text": "Отнеси весть!", "quest": "q1",
+                    "replies": [ { "id": "r_errand_bye", "text": "Хорошо." } ]
+                },
+                "quests": [ { "id": "q1", "title": "Волчья беда", "state": "available" } ]
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        assert_eq!(dialog.transcript.len(), 2, "лента растёт: {dialog:?}");
+        assert_eq!(dialog.transcript[1].text, "Отнеси весть!");
+        assert_eq!(
+            dialog.node.as_ref().expect("узел").quest.as_deref(),
+            Some("q1")
+        );
+
+        // Квест взят → из диалога исчезает (и в снапшоте стал active).
+        store.apply(evt(
+            "evt/quest/updated",
+            serde_json::json!({ "quest": { "id": "q1", "title": "Волчья беда", "state": "active" } }),
+        ));
+        assert!(
+            store
+                .npc_dialog
+                .as_ref()
+                .expect("диалог открыт")
+                .quests
+                .is_empty(),
+            "принятый квест убран из окна"
+        );
+
+        // M18/F38: конец диалога («Пока») — окно закрывается целиком.
+        store.on_world_sent(Act::NpcReply);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            10,
+            None,
+            &serde_json::json!({ "node": serde_json::Value::Null, "quests": [] }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(
+            store.npc_dialog.is_none(),
+            "терминальный ответ закрыл диалог"
+        );
+        assert_eq!(store.active_dialog(false, false), None);
+    }
+
+    /// M18/F41: повторное открытие диалога (`cmd/npc.talk`) начинает
+    /// разговор заново — лента с приветствия, открытый магазин и
+    /// выбранная валюта сброшены.
+    #[test]
+    fn npc_talk_reopens_resets_dialog_to_start() {
+        let mut store = in_game();
+        let talk_ack = |seq: u32| {
+            ld2_protocol::Ack::ok_with_payload(
+                seq,
+                None,
+                &serde_json::json!({
+                    "dialog": {
+                        "id": "npc_elder", "name": "Староста"
+                    },
+                    "node": {
+                        "id": "l_hello", "text": "Как дела?",
+                        "replies": [ { "id": "r_bye", "text": "Пока." } ]
+                    },
+                    "quests": [],
+                    "actions": [ "shop" ]
+                }),
+            )
+            .unwrap()
+        };
+
+        // Первое открытие: корневой узел.
+        store.on_world_sent(Act::NpcTalk);
+        store.apply(IngressEvent::Ack(talk_ack(20)));
+        // Разговор пошёл дальше: ответ → вторая строка ленты.
+        store.on_world_sent(Act::NpcReply);
+        store.apply(IngressEvent::Ack(
+            ld2_protocol::Ack::ok_with_payload(
+                21,
+                None,
+                &serde_json::json!({
+                    "node": { "id": "l_errand", "text": "Отнеси весть!",
+                              "replies": [ { "id": "r_done", "text": "Хорошо." } ] },
+                    "quests": []
+                }),
+            )
+            .unwrap(),
+        ));
+        // И магазин открыт, и валюта выбрана.
+        store.on_world_sent(Act::ShopList);
+        store.apply(IngressEvent::Ack(
+            ld2_protocol::Ack::ok_with_payload(
+                22,
+                None,
+                &serde_json::json!({
+                    "shop": { "tabs": [
+                        { "currency": "gold_coin", "currency_name": "Золотая монета",
+                          "items": [] },
+                        { "currency": "gem_str", "currency_name": "Самоцвет силы",
+                          "items": [] }
+                    ]}
+                }),
+            )
+            .unwrap(),
+        ));
+        {
+            let dialog = store.npc_dialog.as_mut().expect("диалог открыт");
+            dialog.shop_currency = Some("gem_str".into());
+            assert_eq!(dialog.transcript.len(), 2, "лента разговора");
+            assert!(dialog.shop.is_some(), "магазин открыт");
+        }
+
+        // Повторное открытие — всё с начала.
+        store.on_world_sent(Act::NpcTalk);
+        store.apply(IngressEvent::Ack(talk_ack(23)));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        assert_eq!(dialog.transcript.len(), 1, "лента заново: {dialog:?}");
+        assert_eq!(dialog.transcript[0].text, "Как дела?", "с корневой реплики");
+        assert_eq!(dialog.node.as_ref().expect("корень").id, "l_hello");
+        assert!(dialog.shop.is_none(), "магазин закрыт");
+        assert!(dialog.shop_currency.is_none(), "валюта сброшена");
+        assert_eq!(dialog.actions, vec!["shop"], "actions нового ack");
+    }
+
+    /// M18/F39: ack `shop.list` открывает панель магазина внутри окна
+    /// диалога (активная вкладка — первая).
+    #[test]
+    fn shop_list_ack_opens_shop_panel() {
+        let mut store = in_game();
+        let talk = serde_json::json!({
+            "dialog": { "id": "npc_elder", "name": "Староста" },
+            "node": serde_json::Value::Null,
+            "quests": []
+        });
+        store.npc_dialog = NpcDialogView::from_payload(&talk);
+        store.on_world_sent(Act::ShopList);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            12,
+            None,
+            &serde_json::json!({
+                "shop": { "tabs": [
+                    { "currency": "gold_coin", "currency_name": "Золотая монета",
+                      "items": [ { "def_id": "potion_heal", "name": "Зелье лечения",
+                                   "rarity": "common", "price": 28, "qty": 1,
+                                   "item": { "uid": "shop:potion_heal", "type": "potion",
+                                             "name": "Зелье лечения", "rarity": "common",
+                                             "upgrade": 0, "stats": {}, "sockets": [],
+                                             "qty": 1 } } ] },
+                    { "currency": "gem_str", "currency_name": "Самоцвет силы", "items": [] }
+                ]}
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let dialog = store.npc_dialog.as_ref().expect("диалог открыт");
+        let shop = dialog.shop.as_ref().expect("магазин открыт");
+        assert_eq!(shop.tabs.len(), 2);
+        assert_eq!(
+            dialog.shop_currency.as_deref(),
+            Some("gold_coin"),
+            "активна первая вкладка"
+        );
+        assert_eq!(shop.tabs[0].items[0].price, 28);
+        // M18/F40: снапшот парсится — карточка по клику строки.
+        let snapshot = shop.tabs[0].items[0].item.as_ref().expect("снапшот товара");
+        assert_eq!(snapshot.name, "Зелье лечения");
+        assert_eq!(snapshot.item_type, "potion");
+        // Закрытие диалога чистит магазин (поля внутри вида).
+        store.npc_dialog = None;
+        assert!(store.npc_dialog.is_none());
+    }
+
+    #[test]
+    fn corpse_looted_was_player_logs_crime() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/corpse/looted",
+            serde_json::json!({
+                "corpse_id": "cor_9", "by": "c1", "by_name": "Марк", "was_player": true
+            }),
+        ));
+        let last = store.log.back().expect("лог");
+        assert_eq!(last.kind, LogKind::Crime);
+        assert!(last.text.contains("Мародёр"), "{}", last.text);
+    }
+
+    // ─── M4: лист, инвентарь, смерть ────────────────────────────────────────
+
+    #[test]
+    fn death_sets_modal_and_confirm_clears_it() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/char/death",
+            serde_json::json!({
+                "victim_char": true,
+                "lost_items": [
+                    { "uid": "i_17", "name": "Ясеневый посох", "rarity": "rare" },
+                    { "uid": "s_1", "name": "Свиток огненного шара", "rarity": "common" }
+                ],
+                "corpse": "cor_self",
+                "respawn": { "location_id": "l_village", "delay_s": 0 }
+            }),
+        ));
+        let death = store.death.as_ref().expect("модалка смерти");
+        assert_eq!(death.lost_items.len(), 2, "сводка утраченного (ФР-06)");
+        // M18: строки утраты в журнале больше нет — только модалка.
+        assert!(
+            store.log.iter().all(|e| !e.text.contains("ВЫ ПОГИБЛИ")),
+            "в журнале нет строки о гибели"
+        );
+
+        // Закрыть можно только подтверждением.
+        store.confirm_death();
+        assert!(store.death.is_none());
+    }
+
+    #[test]
+    fn item_removed_clears_inventory_and_equip_slot() {
+        let mut store = in_game();
+        assert!(store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .any(|i| i.uid == "i_17"));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.equip.get("main_hand"),
+            Some(&Some("i_17".to_string()))
+        );
+
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "lost_on_death" }),
+        ));
+        let snap = store.snapshot.as_ref().unwrap();
+        assert!(
+            !snap.char.inventory.iter().any(|i| i.uid == "i_17"),
+            "предмет убран из инвентаря"
+        );
+        assert!(
+            snap.char.equip.get("main_hand").is_none_or(|v| v.is_none()),
+            "слот экипировки освобождён"
+        );
+        // Заказчик: в журнале — ИМЯ предмета, не id.
+        let last = store.log.back().expect("строка журнала");
+        assert!(
+            last.text.contains("Вы потеряли 1 Ясеневый посох +2"),
+            "имя предмета в журнале: {}",
+            last.text
+        );
+        assert!(
+            !last.text.contains("i_17"),
+            "id не должен попадать в журнал: {}",
+            last.text
+        );
+    }
+
+    fn ground_entity(id: &str) -> ld2_protocol::types::Entity {
+        let mut extra = serde_json::Map::new();
+        extra.insert("ground".into(), serde_json::json!(true));
+        extra.insert("def_id".into(), serde_json::json!("potion_heal"));
+        extra.insert("qty".into(), serde_json::json!(5));
+        ld2_protocol::types::Entity {
+            id: id.into(),
+            kind: ld2_protocol::types::EntityKind::Object,
+            name: "Зелье лечения".into(),
+            hp: None,
+            tags: None,
+            was_player: None,
+            aggro: None,
+            boss: None,
+            next_attack_at: None,
+            attack_interval: None,
+            attacking: None,
+            extra,
+        }
+    }
+
+    fn spawn_ground(id: &str) -> IngressEvent {
+        evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": ground_entity(id),
+                "location_id": "l_village"
+            }),
+        )
+    }
+
+    #[test]
+    fn pickup_logs_pickup_lines() {
+        let mut store = in_game(); // персонаж «Ким»
+        store.apply(spawn_ground("g_test"));
+
+        // Свой подбор → «Вы подняли N имя» (заказчик).
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "g_test", "location_id": "l_village",
+                "kind": "object", "picked_by": "Ким", "picked_gender": "male"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Вы подняли 5 Зелье лечения", "{}", last.text);
+
+        // Чужой подбор, female → «{имя} подобрала N имя».
+        store.apply(spawn_ground("g_test2"));
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "g_test2", "location_id": "l_village",
+                "kind": "object", "picked_by": "Аня", "picked_gender": "female"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Аня подобрала 5 Зелье лечения", "{}", last.text);
+
+        // Без picked_by (TTL) → «{name} исчезает».
+        store.apply(spawn_ground("g_test3"));
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "g_test3", "location_id": "l_village",
+                "kind": "object"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Зелье лечения исчезает", "{}", last.text);
+    }
+
+    #[test]
+    fn despawn_server_text_goes_to_journal() {
+        let mut store = in_game(); // персонаж «Ким» в l_village
+                                   // Сосед-игрок уходит: сервер прислал готовую строку — она в журнале.
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "p_friend", "location_id": "l_village",
+                "kind": "player", "text": "Марк ушел — тропа на север"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Марк ушел — тропа на север", "{}", last.text);
+        assert_eq!(store.log.back().expect("строка").kind, LogKind::Location);
+
+        // Пустая строка — не пишем ничего нового (последняя — от прошлого
+        // шага): сервер не должен портить журнал заглушками.
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "p_other", "location_id": "l_village",
+                "kind": "player", "text": ""
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Марк ушел — тропа на север", "{}", last.text);
+
+        // Без text — прежний шаблон «{name} исчезает».
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "p_friend2", "kind": "player", "name": "Сара" },
+                "location_id": "l_village"
+            }),
+        ));
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "p_friend2", "location_id": "l_village",
+                "kind": "player"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Сара исчезает", "{}", last.text);
+    }
+
+    #[test]
+    fn spawn_server_text_goes_to_journal() {
+        let mut store = in_game(); // «Ким» в l_village
+                                   // Приход соседа с готовой строкой сервера — строка журнала как есть.
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "p_guest", "kind": "player", "name": "Сара" },
+                "location_id": "l_village",
+                "text": "пришла Сара"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "пришла Сара", "{}", last.text);
+        assert_eq!(last.kind, LogKind::Location);
+
+        // Пустая строка — прежний шаблон «{name} появляется» (не портим заглушкой).
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "p_guest2", "kind": "player", "name": "Марк" },
+                "location_id": "l_village",
+                "text": ""
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Марк появляется", "{}", last.text);
+        assert_eq!(last.kind, LogKind::System);
+
+        // Без text — прежнее поведение (популяция спавна не задета).
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "m_wolf", "kind": "monster", "name": "Волк" },
+                "location_id": "l_village"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Волк появляется", "{}", last.text);
+    }
+
+    #[test]
+    fn dropped_log_is_uniform_for_everyone() {
+        let mut store = in_game();
+        // ЧУЖОЙ выброс — «{имя} выбросил …» (не «Вы выбросили»).
+        store.apply(evt(
+            "evt/item/dropped",
+            serde_json::json!({
+                "char_id": "other-char",
+                "by_name": "Ким",
+                "gender": "male",
+                "item_name": "Зелье лечения",
+                "qty": 2,
+                "sent_at": "2026-11-21T00:00:00Z"
+            }),
+        ));
+        let last = store.log.back().expect("строка журнала");
+        assert_eq!(last.text, "Ким выбросил 2 Зелье лечения", "{}", last.text);
+
+        // Свой выброс — «Вы выбросили…» (заказчик).
+        store.apply(evt(
+            "evt/item/dropped",
+            serde_json::json!({
+                "char_id": "c1",
+                "by_name": "Ким",
+                "gender": "male",
+                "item_name": "Зелье лечения",
+                "qty": 1,
+                "sent_at": "2026-11-21T00:00:00Z"
+            }),
+        ));
+        let last = store.log.back().expect("строка журнала");
+        assert_eq!(last.text, "Вы выбросили 1 Зелье лечения", "{}", last.text);
+    }
+
+    #[test]
+    fn item_added_appends_to_inventory() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/item/added",
+            serde_json::json!({
+                "item": { "uid": "loot_m_3", "type": "material", "name": "Трофея: Волк",
+                          "rarity": "common", "upgrade": 0, "stats": {}, "qty": 1 }
+            }),
+        ));
+        assert!(store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .any(|i| i.uid == "loot_m_3"));
+        assert_eq!(store.log.back().unwrap().kind, LogKind::Loot);
+    }
+
+    #[test]
+    fn char_stats_patch_applies_hp_and_mp() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/char/stats",
+            serde_json::json!({ "patch": { "hp": { "cur": 60, "max": 60 },
+                                           "mp": { "cur": 60, "max": 60 } } }),
+        ));
+        let snap = store.snapshot.as_ref().unwrap();
+        assert_eq!(snap.char.hp.cur, 60, "hp после респауна");
+        assert_eq!(snap.char.mp.cur, 60, "mp после респауна");
+    }
+
+    #[test]
+    fn equip_ack_replaces_character_state() {
+        let mut store = in_game();
+        let mut ch = fixtures::character("c1", "Ким");
+        ch.equip.insert("body".into(), Some("loot_m_3".into()));
+        store.on_sheet_sent(Act::Equip);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            11,
+            Some(1010),
+            &serde_json::json!({ "char": ch, "item": serde_json::Value::Null }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.equip.get("body"),
+            Some(&Some("loot_m_3".to_string())),
+            "экипировка применена из ack (нет событий на смену слота)"
+        );
+        assert!(store.notice.is_none() && store.pending.is_none());
+    }
+
+    #[test]
+    fn equip_ack_error_goes_to_notice() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Equip);
+        let ack = ld2_protocol::Ack::error(12, None, &ErrorCode::ItemGone, "предмета нет");
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.notice.as_deref(), Some("предмета нет"));
+        assert!(store.world_error.is_none(), "ошибки листа не в мире");
+    }
+
+    #[test]
+    fn invest_ack_and_xp_event_update_pool_and_skill() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Invest);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            13,
+            Some(1011),
+            &serde_json::json!({ "pool_left": 70 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.snapshot.as_ref().unwrap().char.xp_pool, 70);
+
+        store.apply(evt(
+            "evt/char/xp",
+            serde_json::json!({
+                "skill_id": "sword", "amount": 50, "skill_xp": 662,
+                "rank": 3, "xp_to_next": 480, "pool_left": 70
+            }),
+        ));
+        let snap = store.snapshot.as_ref().unwrap();
+        let sword = snap.char.skills.iter().find(|s| s.id == "sword").unwrap();
+        assert_eq!(sword.xp, 662, "прогресс навыка обновлён (ФР-04)");
+        assert_eq!(snap.char.xp_pool, 70);
+        assert_eq!(store.log.back().unwrap().kind, LogKind::Xp);
+    }
+
+    // ─── M5: улучшение, инкрустация, патчи предметов ────────────────────────
+
+    #[test]
+    fn upgrade_lifecycle_open_preview_result() {
+        let mut store = in_game();
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        let view = store.upgrade.as_ref().expect("модалка открыта");
+        assert!(view.preview.is_none(), "превью ещё не пришло");
+
+        // ack превью заполняет view.
+        store.on_sheet_sent(Act::Preview);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            21,
+            None,
+            &serde_json::json!({
+                "preview_id": "pv_7",
+                "delta": { "upgrade": "+3" },
+                "cost": { "gold": 300, "materials": { "rune_dust": 2 } },
+                "chance": 0.75
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let view = store.upgrade.as_ref().expect("view");
+        assert_eq!(view.item_uid, "i_17");
+        assert_eq!(view.preview.as_ref().unwrap()["preview_id"], "pv_7");
+
+        // Результат остаётся в модалке (не закрывается) и пишет лог.
+        store.apply(evt(
+            "evt/upgrade/result",
+            serde_json::json!({
+                "uid": "i_17", "ok": true, "new_upgrade": 3,
+                "item_destroyed": false, "cost": { "gold": 300 }
+            }),
+        ));
+        assert!(store.upgrade.is_some(), "модалка остаётся открытой");
+        assert!(
+            store.upgrade.as_ref().unwrap().result.is_some(),
+            "результат сохранён"
+        );
+        let last = store.log.back().expect("лог");
+        assert_eq!(last.kind, LogKind::Loot);
+        assert!(last.text.contains("+3"), "{}", last.text);
+    }
+
+    /// M18/F54: ack выбора камня заполняет активный камень (uid/имя из
+    /// снапшота/качество); удаление камня снимает выбор и гасит превью,
+    /// чтобы не стартовать по неактуальному `preview_id`.
+    /// M18/F55: итог заточки переживает автопревью — после результата
+    /// запрашивается новое превью (для повторного улучшения), и итог
+    /// обязан остаться на экране зелёным/красным, а не исчезнуть.
+    #[test]
+    fn sharpen_result_survives_new_preview() {
+        let mut store = in_game();
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        let ack_preview = |n: u32| {
+            ld2_protocol::Ack::ok_with_payload(
+                n,
+                None,
+                &serde_json::json!({
+                    "preview_id": format!("pv_{n}"),
+                    "delta": { "upgrade": "+3" },
+                    "cost": { "gold": 100 }
+                }),
+            )
+            .unwrap()
+        };
+
+        // Первое превью → результат.
+        store.on_sheet_sent(Act::Preview);
+        store.apply(IngressEvent::Ack(ack_preview(41)));
+        store.apply(evt(
+            "evt/upgrade/result",
+            serde_json::json!({
+                "uid": "i_17", "ok": true, "new_upgrade": 3,
+                "item_destroyed": false, "cost": { "gold": 100 }
+            }),
+        ));
+        assert!(
+            store.upgrade.as_ref().unwrap().result.is_some(),
+            "итог есть"
+        );
+        assert!(
+            store.upgrade.as_ref().unwrap().preview.is_none(),
+            "превью сброшено под автопревью"
+        );
+
+        // Автопревью после результата (M18/F55): итог обязан пережить.
+        store.on_sheet_sent(Act::Preview);
+        store.apply(IngressEvent::Ack(ack_preview(42)));
+
+        let view = store.upgrade.as_ref().expect("окно открыто");
+        assert!(
+            view.preview.is_some(),
+            "новое превью принято — повторная заточка доступна"
+        );
+        assert!(
+            view.result.is_some(),
+            "итог прошлого броска не затёрт новым превью"
+        );
+    }
+
+    /// M18/F55: окно заточки переживает расход последнего камня —
+    /// иначе «назад» (гейт был `stone || upgrade`) закрывал окно вовсе
+    /// (жалоба M18/F55). Гейт — отдельный флаг `sharpen_list`.
+    #[test]
+    fn sharpen_window_outlives_spent_stone() {
+        let mut store = in_game();
+        assert!(!store.sharpen_list, "окно по умолчанию закрыто");
+
+        // Выбор камня открывает окно (экран списка).
+        store.on_sheet_sent(Act::Sharpen);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            51,
+            None,
+            &serde_json::json!({ "stone_uid": "i_17", "quality": 5 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.sharpen_list, "окно открыто выбором камня");
+
+        // Последний камень потрачен → сервер снимает выбор...
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "consumed" }),
+        ));
+        assert!(store.sharpen_stone.is_none(), "камень снят");
+        assert!(
+            store.sharpen_list,
+            "окно обязано пережить расход камня — иначе «назад» его закроет"
+        );
+
+        // «Назад» к списку закрывает только карточку предмета.
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.close_upgrade();
+        assert!(store.upgrade.is_none(), "карточка предмета закрыта");
+        assert!(store.sharpen_list, "список доступен — окно живо");
+
+        // Закрытие окна (крестик/Esc/скрим) — флаг снимается.
+        store.sharpen_list = false;
+        assert!(!store.sharpen_list, "окно закрыто");
+    }
+
+    #[test]
+    fn sharpen_stone_set_by_ack_and_cleared_on_removed() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Sharpen);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            31,
+            None,
+            &serde_json::json!({ "stone_uid": "i_17", "quality": 5 }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+
+        let stone = store.sharpen_stone.as_ref().expect("камень выбран");
+        assert_eq!(stone.uid, "i_17");
+        assert_eq!(stone.quality, 5, "качество из ack");
+        assert_eq!(stone.name, "Ясеневый посох", "имя из снапшота");
+
+        // Превью посчитано с камнем — запоминаем, что оно есть.
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.on_sheet_sent(Act::Preview);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            32,
+            None,
+            &serde_json::json!({ "preview_id": "pv_1", "delta": { "upgrade": "+3" } }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.upgrade.as_ref().unwrap().preview.is_some());
+
+        // Камень выбыл → выбор снят, превью погашено (старт был бы
+        // неверным шагом без нового камня).
+        store.apply(evt(
+            "evt/item/removed",
+            serde_json::json!({ "uid": "i_17", "reason": "consumed" }),
+        ));
+        assert!(
+            store.sharpen_stone.is_none(),
+            "выбор камня снят по удалению"
+        );
+        assert!(
+            store.upgrade.as_ref().unwrap().preview.is_none(),
+            "превью погашено вместе с камнем"
+        );
+        assert!(store.upgrade.is_some(), "окно заточки само не закрывается");
+    }
+
+    #[test]
+    fn upgrade_failure_destroys_and_logs_crime() {
+        let mut store = in_game();
+        store.open_upgrade("i_17".into(), "Ясеневый посох".into());
+        store.apply(evt(
+            "evt/upgrade/result",
+            serde_json::json!({
+                "uid": "i_17", "ok": false, "item_destroyed": true, "cost": {}
+            }),
+        ));
+        assert!(store.upgrade.is_some());
+        let last = store.log.back().expect("лог");
+        assert_eq!(
+            last.kind,
+            LogKind::Crime,
+            "разрушение — в журнал преступлений/потерь"
+        );
+        assert!(last.text.contains("РАЗРУШЕН"), "{}", last.text);
+    }
+
+    #[test]
+    fn item_state_patch_updates_upgrade_and_sockets() {
+        let mut store = in_game();
+        // Патч уровня (+N).
+        store.apply(evt(
+            "evt/item/state",
+            serde_json::json!({ "uid": "i_17", "patch": { "upgrade": 3 } }),
+        ));
+        let item = store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == "i_17")
+            .unwrap();
+        assert_eq!(item.upgrade, 3, "уровень обновлён");
+
+        // Патч целым предметом (сокеты после инкрустации).
+        let mut full = fixtures::staff_item();
+        full.sockets.as_mut().unwrap()[1].rune = Some(ld2_protocol::types::RuneInfo {
+            class: None,
+            damage: None,
+            def_id: None,
+            name: "Руна льда".into(),
+            spell: "ice_shard".into(),
+            charges: 5,
+            max: 5,
+            glyph: None,
+            detail: None,
+            rarity: None,
+        });
+        store.apply(evt(
+            "evt/item/state",
+            serde_json::json!({ "uid": "i_17", "patch": { "item": full } }),
+        ));
+        let item = store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == "i_17")
+            .unwrap();
+        assert_eq!(
+            item.sockets.as_ref().unwrap()[1]
+                .rune
+                .as_ref()
+                .unwrap()
+                .name,
+            "Руна льда",
+            "сокет применён"
+        );
+    }
+
+    #[test]
+    fn socket_ack_applies_staff_and_rune() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Socket);
+        // Ack извлечения: посох обновлён + руна добавлена в инвентарь.
+        let mut staff = fixtures::staff_item();
+        staff.sockets.as_mut().unwrap()[0].rune = None;
+        let rune = fixtures::rune_item("rune_i_17_0");
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            22,
+            Some(1020),
+            &serde_json::json!({ "staff": staff, "rune": rune }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let snap = store.snapshot.as_ref().unwrap();
+        let staff = snap
+            .char
+            .inventory
+            .iter()
+            .find(|i| i.uid == "i_17")
+            .unwrap();
+        assert!(
+            staff.sockets.as_ref().unwrap()[0].rune.is_none(),
+            "сокет пуст"
+        );
+        assert!(
+            snap.char.inventory.iter().any(|i| i.uid == "rune_i_17_0"),
+            "руна в инвентаре"
+        );
+        assert!(store.notice.is_none());
+    }
+
+    /// M18/F32: ack с `char` (цель была надета) применяет атрибуты —
+    /// бонус самоцвета виден сразу, без переодевания.
+    #[test]
+    fn socket_ack_with_char_applies_attrs() {
+        let mut store = in_game();
+        store.on_sheet_sent(Act::Socket);
+        let mut ch = fixtures::character("c1", "Ким");
+        ch.attrs.insert("str".into(), 13);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            23,
+            Some(1021),
+            &serde_json::json!({ "staff": fixtures::staff_item(), "char": ch }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        let snap = store.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snap.char.attrs.get("str"),
+            Some(&13i64),
+            "бонус самоцвета применён из `char` ack"
+        );
+        assert!(store.notice.is_none());
+    }
+
+    #[test]
+    fn cast_error_goes_to_world_error_not_sheet() {
+        let mut store = in_game();
+        store.on_world_sent(Act::Cast);
+        let ack = ld2_protocol::Ack::error(23, None, &ErrorCode::NotEnoughMp, "не хватает маны");
+        store.apply(IngressEvent::Ack(ack));
+        assert_eq!(store.world_error.as_deref(), Some("не хватает маны"));
+        assert!(store.notice.is_none(), "каст — не лист");
+    }
+
+    // ─── M6: время, цель, кулдауны, статусы ─────────────────────────────────
+
+    fn delta_event(from_version: u64, name: &str) -> IngressEvent {
+        IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/state/delta".into(),
+            seq: None,
+            ts: None,
+            state_version: Some(from_version + 1),
+            payload: Some(serde_json::json!({
+                "from_version": from_version,
+                "to_version": from_version + 1,
+                "patch": [
+                    { "op": "replace", "path": "/location/name", "value": name }
+                ]
+            })),
+        })
+    }
+
+    #[test]
+    fn state_delta_applies_patch() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        assert!(store.snapshot.is_some());
+
+        let effects = store.apply(delta_event(1002, "Тестовое имя"));
+        assert!(effects.is_empty(), "патч применён без resync: {effects:?}");
+        let snap = store.snapshot.as_ref().expect("снапшот");
+        assert_eq!(snap.location.name, "Тестовое имя");
+    }
+
+    #[test]
+    fn state_delta_mismatch_requests_resync() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+
+        // Чужая база (версия снапшота 1002) → авто-resync.
+        let effects = store.apply(delta_event(999, "Чужая"));
+        assert!(effects.iter().any(|e| matches!(e, Effect::ResyncState)));
+
+        // Неприменимый путь (replace на отсутствующий ключ) → авто-resync.
+        let bad = IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/state/delta".into(),
+            seq: None,
+            ts: None,
+            state_version: Some(1003),
+            payload: Some(serde_json::json!({
+                "from_version": 1002,
+                "to_version": 1003,
+                "patch": [
+                    { "op": "replace", "path": "/location/no_such_key", "value": "x" }
+                ]
+            })),
+        });
+        let effects = store.apply(bad);
+        assert!(effects.iter().any(|e| matches!(e, Effect::ResyncState)));
+    }
+
+    #[test]
+    fn evt_error_sets_notice_and_fatal_requests_resync() {
+        let mut store = store_with_session();
+        let err = |fatal: bool| {
+            IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/error".into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({
+                    "code": "E_MAINTENANCE",
+                    "message": "перезагрузка",
+                    "fatal": fatal
+                })),
+            })
+        };
+        let effects = store.apply(err(false));
+        assert!(store.notice.is_some(), "notice показан");
+        assert!(effects.is_empty(), "не-фатальная — без resync");
+
+        let effects = store.apply(err(true));
+        assert!(store.notice.is_some());
+        assert!(effects.iter().any(|e| matches!(e, Effect::ResyncState)));
+    }
+
+    #[test]
+    fn time_sync_takes_median_of_ring() {
+        let mut store = store_with_session();
+        let local = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        // Медиана пяти замеров {1080, 1090, 1100, 1110, 1300} = 1100.
+        for delta in [1100, 1090, 1110, 1080, 1300] {
+            let sync = IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/time.sync".into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({ "server_ts": local + delta })),
+            });
+            store.apply(sync);
+        }
+        assert!(
+            (1095..=1105).contains(&store.time_offset),
+            "медиана кольца: {}",
+            store.time_offset
+        );
+    }
+
+    fn chat_event(channel: &str) -> IngressEvent {
+        IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": channel,
+                "from": "Ким",
+                "name": "Ким",
+                "text": "привет",
+                "sent_at": "2026-11-20T00:00:00Z"
+            })),
+        })
+    }
+
+    #[test]
+    fn chat_log_localizes_channel_and_colors_by_kind() {
+        let mut store = store_with_session();
+        // en: [Location], не [location].
+        store.lang = Lang::En;
+        store.apply(chat_event("location"));
+        let last = store.log.back().expect("строка журнала");
+        assert!(
+            last.text.contains("[Location] Ким: привет"),
+            "{}",
+            last.text
+        );
+        assert!(matches!(last.kind, LogKind::Chat), "{:?}", last.kind);
+
+        // Партнёрский канал — своя метка и свой цвет.
+        store.apply(chat_event("party"));
+        let last = store.log.back().expect("строка журнала");
+        assert!(last.text.contains("[Party]"), "{}", last.text);
+        assert!(matches!(last.kind, LogKind::ChatParty), "{:?}", last.kind);
+
+        // ru: [Гильдия].
+        store.lang = Lang::Ru;
+        store.apply(chat_event("guild"));
+        let last = store.log.back().expect("строка журнала");
+        assert!(last.text.contains("[Гильдия]"), "{}", last.text);
+        assert!(matches!(last.kind, LogKind::ChatGuild), "{:?}", last.kind);
+    }
+
+    #[test]
+    fn time_sync_calibrates_offset() {
+        let mut store = in_game();
+        let server_ts = local_epoch() + 1000;
+        store.apply(evt(
+            "evt/time.sync",
+            serde_json::json!({ "server_ts": server_ts, "rtt_hint_ms": 1 }),
+        ));
+        assert!(
+            (990..=1010).contains(&store.time_offset),
+            "offset ≈ +1000: {}",
+            store.time_offset
+        );
+    }
+
+    #[test]
+    fn target_cycle_in_forest_and_autoclear() {
+        let mut store = in_game(); // деревня: только NPC — монстров нет
+        store.cycle_target();
+        assert!(store.target.is_none(), "в деревне монстров нет");
+
+        let payload = serde_json::to_value(LocationChanged {
+            location: fixtures::forest(),
+        })
+        .unwrap();
+        store.apply(evt("evt/location/changed", payload));
+
+        store.select_target("p_77");
+        assert_eq!(store.target.as_deref(), Some("p_77"));
+
+        store.cycle_target(); // монстр → цель
+        assert_eq!(store.target.as_deref(), Some("m_3"));
+        store.cycle_target(); // один монстр → wrap на себя
+        assert_eq!(store.target.as_deref(), Some("m_3"));
+
+        // Гибель цели → авто-сброс (ФР-05).
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({ "entity_id": "m_3", "location_id": "l_forest" }),
+        ));
+        assert!(store.target.is_none(), "цель исчезла → сброс");
+    }
+
+    #[test]
+    fn combat_cooldown_recorded() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/combat/cooldown",
+            serde_json::json!({ "skill_id": "power_strike", "until_epoch": 123 }),
+        ));
+        assert_eq!(store.combat_cooldowns.get("power_strike"), Some(&123));
+    }
+
+    /// M17/F30g: бар кулдауна предмета — остаток и полная
+    /// длительность; истёкшая запись и чужой предмет — None.
+    #[test]
+    fn item_cd_bar_reports_left_and_total() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/combat/cooldown",
+            serde_json::json!({
+                "skill_id": "item:potion_heal",
+                "until_epoch": 123,
+                "duration_ms": 1000
+            }),
+        ));
+        assert_eq!(
+            store.item_cd_bar("potion_heal", 122_000),
+            Some((1_000, 1_000)),
+            "остаток и полная длительность"
+        );
+        assert_eq!(store.item_cd_bar("potion_heal", 124_000), None, "истёк");
+        assert_eq!(store.item_cd_bar("rune_fire", 122_000), None, "нет записи");
+        // Без duration (старый сервер) — fallback в combat_cooldowns.
+        store.apply(evt(
+            "evt/combat/cooldown",
+            serde_json::json!({ "skill_id": "item:scroll_frost", "until_epoch": 200 }),
+        ));
+        assert_eq!(
+            store.item_cd_bar("scroll_frost", 100_000),
+            None,
+            "без duration — бара нет"
+        );
+    }
+
+    #[test]
+    fn char_buffs_full_replacement() {
+        let mut store = in_game();
+        // M18/F58d: полная замена списка баффов (паттерн evt/crime/status).
+        let expires = local_epoch() + 30;
+        store.apply(evt(
+            "evt/char/buffs",
+            serde_json::json!({
+                "buffs": [
+                    { "kind": "rune_marksman", "title": "Меткость",
+                      "stacks": 2, "expires_at": expires }
+                ]
+            }),
+        ));
+        let buffs = &store.snapshot.as_ref().unwrap().char.buffs;
+        assert_eq!(buffs.len(), 1);
+        assert_eq!(buffs[0].kind, "rune_marksman");
+        assert_eq!(buffs[0].stacks, 2);
+        assert_eq!(buffs[0].expires_at, expires, "срок сервера не изменён");
+
+        // Пустой список — снятие всех баффов.
+        store.apply(evt("evt/char/buffs", serde_json::json!({ "buffs": [] })));
+        assert!(
+            store.snapshot.as_ref().unwrap().char.buffs.is_empty(),
+            "пустая замена снимает баффы"
+        );
+    }
+
+    #[test]
+    fn crime_statuses_replace_add_remove_without_recalculation() {
+        let mut store = in_game();
+        // Полная замена (§8): клиент хранит как есть, без пересчёта blend (§4.10).
+        let server_expiry = local_epoch() + 5000;
+        store.apply(evt(
+            "evt/crime/status",
+            serde_json::json!({
+                "statuses": [
+                    { "kind": "murderer", "severity": "high", "expires_at": server_expiry },
+                    { "kind": "marauder", "severity": "medium", "expires_at": local_epoch() + 2000 }
+                ],
+                "log_hint": null
+            }),
+        ));
+        let statuses = &store.snapshot.as_ref().unwrap().char.crime.statuses;
+        assert_eq!(statuses.len(), 2);
+        assert_eq!(
+            statuses[0].expires_at, server_expiry,
+            "срок сервера не изменён клиентом"
+        );
+
+        // Добавление: журнал дополняется, бейдж обновляется по kind.
+        store.apply(evt(
+            "evt/crime/added",
+            serde_json::json!({
+                "status": { "kind": "thief", "severity": "medium", "expires_at": local_epoch() + 1000 },
+                "log_entry": { "kind": "thief", "at": local_epoch(), "delta_s": 1000, "total_s": 8000 }
+            }),
+        ));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.crime.statuses.len(),
+            3
+        );
+        assert_eq!(store.crime_log.len(), 1, "журнал дополнен");
+
+        // Снятие статуса.
+        store.apply(evt(
+            "evt/crime/removed",
+            serde_json::json!({ "kind": "marauder" }),
+        ));
+        let kinds: Vec<String> = store
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .char
+            .crime
+            .statuses
+            .iter()
+            .map(|s| s.kind.clone())
+            .collect();
+        assert_eq!(kinds, vec!["murderer".to_string(), "thief".to_string()]);
+    }
+
+    #[test]
+    fn pvp_entry_with_active_status_notices() {
+        let mut store = in_game();
+        // Активный статус (серверный срок в будущем).
+        store.apply(evt(
+            "evt/crime/status",
+            serde_json::json!({
+                "statuses": [{ "kind": "murderer", "severity": "high",
+                               "expires_at": local_epoch() + 5000 }]
+            }),
+        ));
+
+        let payload = serde_json::to_value(LocationChanged {
+            location: fixtures::forest(), // flags: ["pvp"]
+        })
+        .unwrap();
+        store.apply(evt("evt/location/changed", payload));
+        let notice = store.notice.clone().expect("предупреждение о PvP");
+        assert!(notice.contains("PvP"), "{notice}");
+        assert!(notice.contains("murderer"), "{notice}");
+
+        // Без статусов (после снятия) — тоста нет.
+        store.apply(evt(
+            "evt/crime/removed",
+            serde_json::json!({ "kind": "murderer" }),
+        ));
+        store.apply(evt(
+            "evt/location/changed",
+            serde_json::to_value(LocationChanged {
+                location: fixtures::village(),
+            })
+            .unwrap(),
+        ));
+        store.apply(evt(
+            "evt/location/changed",
+            serde_json::to_value(LocationChanged {
+                location: fixtures::forest(),
+            })
+            .unwrap(),
+        ));
+        assert!(store.notice.is_none(), "нет статусов → нет тоста");
+    }
+
+    #[test]
+    fn crime_log_loaded_from_ack() {
+        let mut store = in_game();
+        assert!(!store.crime_log_loaded);
+        store.on_sheet_sent(Act::CrimeLog);
+        let ack = ld2_protocol::Ack::ok_with_payload(
+            30,
+            None,
+            &serde_json::json!({
+                "entries": [{ "kind": "marauder", "at": 100, "delta_s": 3471, "total_s": 25071 }]
+            }),
+        )
+        .unwrap();
+        store.apply(IngressEvent::Ack(ack));
+        assert!(store.crime_log_loaded);
+        assert_eq!(store.crime_log.len(), 1);
+        assert_eq!(store.crime_log[0].delta_s, 3471);
+    }
+
+    /// M25: журнал исчезающий — строки старше TTL удаляются, свежие
+    /// остаются; ttl <= 0 — ничего не удаляется.
+    #[test]
+    fn expire_log_removes_old_entries() {
+        let mut store = in_game();
+        store.log.clear(); // истечение — от старого конца
+        let base = store.log.len();
+        store.push_log(LogKind::System, "старая");
+        store.log.back_mut().expect("строка").at = local_epoch_ms() - 31_000;
+        store.push_log(LogKind::System, "свежая");
+        assert!(store.expire_log(local_epoch_ms(), 30), "старая удалена");
+        assert_eq!(store.log.len(), base + 1, "свежая осталась");
+        assert_eq!(store.log.back().expect("строка").text, "свежая");
+        // ttl <= 0 — не удаляем (сервер запретил истечение).
+        store.push_log(LogKind::System, "давняя");
+        store.log.back_mut().expect("строка").at = local_epoch_ms() - 60_000;
+        assert!(
+            !store.expire_log(local_epoch_ms(), 0),
+            "ttl0 — без истечения"
+        );
+        assert_eq!(store.log.len(), base + 2, "ничего не удалено");
+    }
+
+    #[test]
+    fn filter_active_buffs_hides_expired() {
+        use ld2_protocol::types::BuffState;
+        let now = 1_000;
+        let buffs = vec![
+            BuffState {
+                kind: "rune_marksman".into(),
+                title: "Меткость".into(),
+                stacks: 2,
+                expires_at: now + 30,
+                extra: Default::default(),
+            },
+            BuffState {
+                kind: "rune_rage".into(),
+                title: "Ярость".into(),
+                stacks: 1,
+                expires_at: now,
+                extra: Default::default(),
+            },
+        ];
+        let active = filter_active_buffs(&buffs, now);
+        assert_eq!(active.len(), 1, "просроченный не показывается");
+        assert_eq!(active[0].kind, "rune_marksman");
+        assert!(filter_active_buffs(&[], now).is_empty());
+    }
+
+    #[test]
+    fn filter_active_statuses_hides_expired() {
+        let now = 1000;
+        let statuses = vec![
+            CrimeStatus {
+                kind: "old".into(),
+                severity: ld2_protocol::types::Severity::High,
+                expires_at: now - 1,
+            },
+            CrimeStatus {
+                kind: "fresh".into(),
+                severity: ld2_protocol::types::Severity::Medium,
+                expires_at: now + 60,
+            },
+        ];
+        let active = filter_active_statuses(&statuses, now);
+        assert_eq!(active.len(), 1, "истёвший скрыт (ФР-11 fallback)");
+        assert_eq!(active[0].kind, "fresh");
+        assert_eq!(statuses.len(), 2, "источник не мутирован");
+    }
+
+    #[test]
+    fn debug_quest_updated_applies_pool() {
+        let mut store = in_game();
+        store.apply(evt(
+            "evt/quest/updated",
+            serde_json::json!({
+                "quest": {
+                    "id": "q_wolves", "title": "Волки", "state": "done",
+                    "goals": [ { "text": "Волков убито", "cur": 5, "need": 5 } ],
+                    "reward_preview": { "items": [], "xp": 450 }
+                },
+                "pool_left": 270,
+                "award": 150
+            }),
+        ));
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.xp_pool,
+            270,
+            "пул из quest/updated"
+        );
+        assert_eq!(
+            store.snapshot.as_ref().unwrap().char.quests[0].state,
+            ld2_protocol::types::QuestPhase::Done
+        );
+    }
+
+    #[test]
+    fn log_ring_buffer_capped() {
+        let mut store = in_game();
+        for i in 0..1005 {
+            store.apply(evt(
+                "evt/chat/message",
+                serde_json::json!({
+                    "channel": "location", "from": "p", "name": "Марк",
+                    "text": format!("м {i}"), "sent_at": "2026-11-03T00:00:00Z"
+                }),
+            ));
+        }
+        assert_eq!(store.log.len(), 1000, "ring-буфер журнала (НФР §8)");
+        assert!(store.log.front().expect("старейшая").text.contains("м 5"));
+    }
+}
