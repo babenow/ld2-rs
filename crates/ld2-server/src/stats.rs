@@ -71,6 +71,16 @@ fn weapon_damage(equipped: &[ItemSnapshot], base: i64) -> (i64, i64) {
     (base, base)
 }
 
+/// Заказчик 2026-11-27: парирование — параметр только двуручного
+/// оружия; у одноручного его нет.
+fn weapon_is_twohanded(equipped: &[ItemSnapshot]) -> bool {
+    equipped
+        .iter()
+        .find(|i| i.item_type == "weapon" && i.stats.contains_key("dmg"))
+        .and_then(|i| i.hands)
+        == Some(2)
+}
+
 /// Навык снаряжённого оружия из `extra["skill"]` (см. док модуля).
 fn equipped_weapon_skill(equipped: &[ItemSnapshot]) -> Option<&str> {
     equipped
@@ -129,10 +139,17 @@ pub fn derive(
         + dodge_pct)
         .round() as i64)
         .clamp(0, 60);
-    // Парирование: навык `parring` (контент-ид) + dex; контрудар ~½ урона.
-    let parry_chance = (5 + rank(skills, "parring") + dex / 10).clamp(0, 60);
-    let parry_min = w_min / 2 + strg / 4;
-    let parry_max = w_max / 2 + strg / 4;
+    // Парирование (заказчик 2026-11-27): только двуручное оружие —
+    // у одноручного парирования нет. Урон контрудара зависит от силы,
+    // а не от оружия: `str/4 .. str/2`.
+    let twohanded = weapon_is_twohanded(equipped);
+    let parry_chance = if twohanded {
+        (5 + rank(skills, "parring") + dex / 10).clamp(0, 60)
+    } else {
+        0
+    };
+    let parry_min = if twohanded { strg / 4 } else { 0 };
+    let parry_max = if twohanded { strg / 2 } else { 0 };
     // Блок: §B «+2% шанса полного блока за ранг»; сила и ловкость
     // тоже дают шанс (заказчик), а базовый шанс — у щита
     // (`stats.param.block_chance`). `block_min/max` — сколько урона
@@ -444,8 +461,8 @@ mod tests {
             "5+dex·0.3 / 50+dex/5"
         );
         assert_eq!((d.armor, d.dodge), (0, 7), "без брони / 3+dex·0.4");
-        assert_eq!((d.parry_min, d.parry_max), (5, 5), "w/2 + str/4");
-        assert_eq!(d.parry_chance, 6, "5 + dex/10");
+        // Без оружия парирования нет (только двуручное оружие).
+        assert_eq!((d.parry_min, d.parry_max, d.parry_chance), (0, 0, 0));
         // str+dex 20 → +2% шанса блока (щита нет, навыка нет).
         assert_eq!((d.block_min, d.block_max, d.block_chance), (0, 0, 2));
         assert_eq!(
@@ -485,10 +502,50 @@ mod tests {
         // 3 + dex·0.4(4) + evasion 5 + вклад кинжала 0 = 12
         // (бонус +0.5/ранг — у `unarmed`, не у кинжала).
         assert_eq!(d.dodge, 12, "уклон с evasion");
-        assert_eq!(d.parry_chance, 6, "parring не изучен");
+        assert_eq!(
+            (d.parry_min, d.parry_max, d.parry_chance),
+            (0, 0, 0),
+            "кинжал (одноручный) не парирует"
+        );
         assert_eq!(d.block_chance, 6, "block +2%/ранг + str/dex");
         assert_eq!(d.magic_dispel, 9, "int/2 + m_dispel 4");
         assert_eq!(d.magic_crit_chance, 9, "5 + 3 + arcana/2");
+    }
+
+    /// Заказчик 2026-11-27: парирование — только у двуручного оружия;
+    /// парируемый урон зависит от силы, а не от оружия.
+    #[test]
+    fn parry_only_twohanded_and_scales_with_strength() {
+        let mut twohand = item(
+            serde_json::json!({"dmg": "10..20"}),
+            serde_json::json!({"skill": "twohand"}),
+        );
+        twohand.hands = Some(2);
+        let d = derive(&attrs10(), &[skill("parring", 3)], &[twohand], 6);
+        assert_eq!((d.parry_min, d.parry_max), (2, 5), "сила/4 .. сила/2");
+        assert_eq!(d.parry_chance, 9, "5 + parring 3 + dex/10");
+
+        let mut strong = attrs10();
+        strong.insert("str".into(), 30);
+        let mut twohand = item(
+            serde_json::json!({"dmg": "10..20"}),
+            serde_json::json!({"skill": "twohand"}),
+        );
+        twohand.hands = Some(2);
+        let d = derive(&strong, &[], &[twohand], 6);
+        assert_eq!((d.parry_min, d.parry_max), (7, 15), "сила 30");
+
+        let mut onehand = item(
+            serde_json::json!({"dmg": "10..20"}),
+            serde_json::json!({"skill": "sword"}),
+        );
+        onehand.hands = Some(1);
+        let d = derive(&attrs10(), &[skill("parring", 3)], &[onehand], 6);
+        assert_eq!(
+            (d.parry_min, d.parry_max, d.parry_chance),
+            (0, 0, 0),
+            "одноручное оружие не парирует"
+        );
     }
 
     /// M32 (заказчик): навык владения оружием даёт **точность**, а не
