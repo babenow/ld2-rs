@@ -492,6 +492,11 @@ mod tests {
         // M31: тултипы-описания атрибутов.
         let str_tip = attr_tip(ru, "str").expect("у силы есть тултип");
         assert!(str_tip.contains("урон"), "{str_tip}");
+        assert!(str_tip.contains("за 1 очко"), "вклад за очко: {str_tip}");
+        assert!(
+            attr_tip(en, "dex").expect("ловкость").contains("per point"),
+            "EN-вклад за очко"
+        );
         assert!(
             attr_tip(en, "spir")
                 .expect("у духа есть тултип")
