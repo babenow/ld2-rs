@@ -6,6 +6,7 @@
 .idea/
 .vscode/*
 !.vscode/settings.json
+.zed/
 
 # macOS
 .DS_Store

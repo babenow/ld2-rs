@@ -6,6 +6,11 @@ pub(super) fn t(key: Key) -> &'static str {
     use Key::*;
     match key {
         AppTitle => "Likedimion",
+        PremiumLabel => "Премиум",
+        PremiumTooltip => "Премиум-аккаунт: +50% опыта персонажа и ускоренная прокачка профессий",
+        PremiumDayOne => "день",
+        PremiumDayFew => "дня",
+        PremiumDayMany => "дней",
         Subtitle => "текстовая онлайн-MMORPG",
         Exit => "Выход",
         Language => "Язык",

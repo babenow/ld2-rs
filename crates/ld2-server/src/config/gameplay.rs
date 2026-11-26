@@ -49,6 +49,35 @@ pub struct GameplaySection {
     /// M18/F54: рейты сервера — коэффициент любых шансов; опциональна.
     #[serde(default)]
     pub rates: RatesSection,
+    /// M33: премиум-аккаунт — множители прогресса; опциональна.
+    #[serde(default)]
+    pub premium: PremiumSection,
+}
+
+/// M33: бонусы премиум-аккаунта (заказчик: +50 % опыта и ускоренная
+/// прокачка профессий). Множители применяются к начислениям.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PremiumSection {
+    /// Множитель опыта персонажа за убийства (1.5 = +50 %).
+    #[serde(default = "default_premium_mult")]
+    pub xp_mult: f64,
+    /// Множитель опыта профессий (крафт/сбор).
+    #[serde(default = "default_premium_mult")]
+    pub profession_mult: f64,
+}
+
+const fn default_premium_mult() -> f64 {
+    1.5
+}
+
+impl Default for PremiumSection {
+    fn default() -> Self {
+        Self {
+            xp_mult: default_premium_mult(),
+            profession_mult: default_premium_mult(),
+        }
+    }
 }
 
 /// Лимиты квестов (M18/F36): `max_active` — взятых квестов (фазы

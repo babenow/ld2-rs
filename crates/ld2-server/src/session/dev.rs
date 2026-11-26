@@ -14,9 +14,55 @@ use super::{out_ack, out_event, Out, Session};
 use crate::db;
 
 impl Session {
+    /// `/scenario premium <дней|0>` (M33): выдать/продлить премиум
+    /// (0 — снять); событие `evt/account/premium` обновляет title bar.
+    async fn scenario_premium(&mut self, days: &str, seq: u32) -> Vec<Out> {
+        let Some(account_id) = self.account_id else {
+            return vec![Self::err(seq, ErrorCode::AuthExpired, "нужен вход")];
+        };
+        let Ok(days) = days.parse::<i64>() else {
+            return vec![Self::err(
+                seq,
+                ErrorCode::Internal,
+                "формат: premium <дней|0>",
+            )];
+        };
+        let now = crate::time::now_epoch();
+        let premium_until = if days <= 0 {
+            if let Err(e) = db::accounts::clear_premium(&self.state.pool, account_id).await {
+                warn!("scenario premium (сброс): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+            None
+        } else {
+            match db::accounts::grant_premium(&self.state.pool, account_id, now, days * 86_400)
+                .await
+            {
+                Ok(until) => until,
+                Err(e) => {
+                    warn!("scenario premium: {e}");
+                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+                }
+            }
+        };
+        vec![
+            Self::ack_payload(seq, &serde_json::json!({ "premium_until": premium_until })),
+            out_event(
+                "evt/account/premium",
+                None,
+                serde_json::json!({ "premium_until": premium_until }),
+            ),
+        ]
+    }
+
     /// `/scenario death` (ФР-06): общий поток смерти (death.rs) — теряется
     /// **только лут**, опыт/пул сохраняются (skills.md §2.2); респаун в спавне.
     pub(super) async fn scenario(&mut self, scenario: &str, seq: u32) -> Vec<Out> {
+        // `/scenario premium <дней|0>` — M33: включить/продлить (0 —
+        // снять) премиум аккаунта; клиент обновляет title bar.
+        if let Some(days) = scenario.strip_prefix("premium ") {
+            return self.scenario_premium(days.trim(), seq).await;
+        }
         // `/scenario give <def_id>` — dev-выдача предмета (тесты M12.5+).
         if let Some(def_id) = scenario.strip_prefix("give ") {
             return self.scenario_give(def_id.trim(), seq).await;

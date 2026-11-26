@@ -30,6 +30,14 @@ impl AppStore {
                 self.time_offset = sorted[sorted.len() / 2];
                 vec![]
             }
+            "evt/account/premium" => {
+                // M33: срок премиума изменился (админ/покупка) — title bar.
+                let until = payload.get("premium_until").and_then(|v| v.as_i64());
+                if let Some(session) = self.session.as_mut() {
+                    session.premium_until = until;
+                }
+                vec![]
+            }
             "evt/session.start" => {
                 let Ok(cfg) = serde_json::from_value::<SessionConfig>(payload) else {
                     tracing::warn!("некорректный evt/session.start — игнор");

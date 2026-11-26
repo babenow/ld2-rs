@@ -6,6 +6,11 @@ pub(super) fn t(key: Key) -> &'static str {
     use Key::*;
     match key {
         AppTitle => "Likedimion",
+        PremiumLabel => "Premium",
+        PremiumTooltip => "Premium account: +50% character XP and faster profession leveling",
+        PremiumDayOne => "day",
+        PremiumDayFew => "days",
+        PremiumDayMany => "days",
         Subtitle => "text-based online MMORPG",
         Exit => "Exit",
         Language => "Language",

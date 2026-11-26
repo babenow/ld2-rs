@@ -152,6 +152,15 @@ pub fn level_for_total(total_xp: i64, cfg: &LevelSection) -> (u32, i64, i64) {
     }
 }
 
+/// M33: начисление опыта с множителем премиума (round; <1 не режем —
+/// множитель валидируется ≥ 1). Ноль/отрицательное — без изменений.
+pub fn premium_gain(amount: i64, mult: f64) -> i64 {
+    if amount <= 0 {
+        return amount;
+    }
+    ((amount as f64) * mult.max(1.0)).round() as i64
+}
+
 /// M31: группы, для которых ранг ограничен уровнем персонажа
 /// (заказчик: боевые/защитные/магические — не более 2 за уровень).
 pub fn level_capped_group(group: &str) -> bool {
