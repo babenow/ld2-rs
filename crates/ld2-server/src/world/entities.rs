@@ -380,6 +380,30 @@ impl World {
                         skin.push(d);
                     }
                 }
+                // M37: редкие трофеи со шкуры (`harvest.skin_extra`):
+                // def_id + шанс (например, шкура белого волка — 3 %).
+                let extras: Vec<(String, f64)> = corpse
+                    .harvest
+                    .as_ref()
+                    .and_then(|h| h.get("skin_extra"))
+                    .and_then(|v| v.as_array())
+                    .map(|rows| {
+                        rows.iter()
+                            .filter_map(|row| {
+                                let def = row.get("def_id")?.as_str()?.to_string();
+                                let chance =
+                                    row.get("chance").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                Some((def, chance))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (def, chance) in extras {
+                    if roll_chance(chance.clamp(0.0, 1.0)) {
+                        corpse.loot.push(Some(def.clone()));
+                        skin.push(def);
+                    }
+                }
                 Some((corpse.clone(), skin, Vec::new()))
             }
             "gut" => {

@@ -148,6 +148,10 @@ pub struct World {
     /// M25: дебаффы контроля персонажей (эффекты приёмов босса):
     /// char_id → (kind → until, epoch мс).
     char_effects: HashMap<String, HashMap<String, i64>>,
+    /// M37: кровотечение персонажей от приёмов мобов (ДПС + срок).
+    char_bleed: HashMap<String, CharBleed>,
+    /// M37: счётчик призванных мобов — уникальные id (`m_3_summon_N`).
+    summon_seq: u64,
 }
 
 impl World {
@@ -601,5 +605,105 @@ mod tests {
         assert_eq!(world.char_attack_ms("c1"), Some(1_500));
         world.set_char_attack_ms("c1", None);
         assert_eq!(world.char_attack_ms("c1"), None, "оружие снято");
+    }
+
+    /// M37: кровотечение персонажа — тик раз в секунду и срок.
+    #[test]
+    fn char_bleed_ticks_and_expires() {
+        let mut world = World::default();
+        let now = 10_000;
+        assert!(world.bleeding_chars(now).is_empty(), "без кровотечения");
+        world.set_char_bleed("c1", 2, now + 2_500, now);
+        assert!(
+            world.bleeding_chars(now).is_empty(),
+            "первый тик — через 1 с"
+        );
+        assert_eq!(
+            world.bleeding_chars(now + 1_000),
+            vec![("c1".to_string(), 2)],
+            "тик кровотечения"
+        );
+        world.advance_char_bleed("c1", now + 1_000);
+        assert!(
+            world.bleeding_chars(now + 1_500).is_empty(),
+            "не чаще раза в секунду"
+        );
+        assert_eq!(world.bleeding_chars(now + 2_000).len(), 1, "второй тик");
+        world.advance_char_bleed("c1", now + 2_000);
+        assert!(world.bleeding_chars(now + 3_000).is_empty(), "срок истёк");
+    }
+
+    /// M37: призыв — клоны шаблона с уникальными id, без респавна.
+    #[test]
+    fn summon_mobs_clones_template_with_unique_ids() {
+        let mut world = World::default();
+        let row = (
+            "l_test".to_string(),
+            serde_json::json!([
+                {"id": "m_w", "kind": "monster", "name": "Волк",
+                 "hp": {"cur": 18, "max": 18}, "aggro": true,
+                 "difficulty": 3, "respawn": {"min_s": 60, "max_s": 120}}
+            ]),
+        );
+        world.seed_mobs(&[row], None);
+        let spawned = world.summon_mobs("m_w", 2, "l_test", 1_000);
+        assert_eq!(spawned.len(), 2, "два волка");
+        assert_ne!(spawned[0].id, spawned[1].id, "уникальные id");
+        for mob in &spawned {
+            assert_eq!(mob.location_id, "l_test");
+            assert_eq!((mob.hp, mob.hp_max), (18, 18), "полное HP");
+            assert!(mob.respawn.is_none(), "призванные не респавнятся");
+            assert!(world.mob(&mob.id).is_some(), "в мире");
+        }
+    }
+
+    /// M37: редкий трофей со снятия шкуры (`harvest.skin_extra`).
+    #[test]
+    fn skin_extra_drops_configured_loot() {
+        let mut world = World::default();
+        let row = (
+            "l_test".to_string(),
+            serde_json::json!([
+                {"id": "m_pelt", "kind": "monster", "name": "Белый волк",
+                 "hp": {"cur": 10, "max": 10},
+                 "harvest": {"level": 45, "skin": true, "skin_extra": [
+                     {"def_id": "pelt_white_wolf", "chance": 1.0},
+                     {"def_id": "pelt_never", "chance": 0.0}
+                 ]}},
+                {"id": "m_no_pelt", "kind": "monster", "name": "Волк",
+                 "hp": {"cur": 10, "max": 10},
+                 "harvest": {"level": 45, "skin": true, "skin_extra": [
+                     {"def_id": "pelt_white_wolf", "chance": 0.0}
+                 ]}}
+            ]),
+        );
+        world.seed_mobs(&[row], None);
+
+        let corpse_id = world.kill_mob("m_pelt").expect("труп");
+        let (corpse, skin, _) = world
+            .finish_harvest(&corpse_id, "skin", 20, 3)
+            .expect("шкура");
+        assert!(
+            skin.contains(&"pelt_white_wolf".to_string()),
+            "трофей в шкурах: {skin:?}"
+        );
+        assert!(
+            corpse.loot.iter().flatten().any(|d| d == "pelt_white_wolf"),
+            "трофей в луте трупа"
+        );
+        assert!(
+            !skin.contains(&"pelt_never".to_string()),
+            "шанс 0 не выпадает"
+        );
+
+        let corpse_id = world.kill_mob("m_no_pelt").expect("труп");
+        let (corpse, skin, _) = world
+            .finish_harvest(&corpse_id, "skin", 20, 3)
+            .expect("шкура");
+        assert!(
+            !corpse.loot.iter().flatten().any(|d| d == "pelt_white_wolf")
+                && !skin.contains(&"pelt_white_wolf".to_string()),
+            "без шанса трофея нет"
+        );
     }
 }

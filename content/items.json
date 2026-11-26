@@ -1587,6 +1587,16 @@
       "qty": 1
     },
     {
+      "id": "pelt_white_wolf",
+      "type": "hide",
+      "name": "Шкура белого волка",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 500,
+      "qty": 1
+    },
+    {
       "id": "meat",
       "type": "meat",
       "name": "Мясо",
