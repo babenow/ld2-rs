@@ -175,6 +175,7 @@ impl AppStore {
             log: VecDeque::new(),
             visited: Vec::new(),
             entity_detail: None,
+            inspect: None,
             pickup: None,
             pickup_dirty: false,
             admin_catalog: None,
@@ -518,6 +519,7 @@ impl AppStore {
         self.death = None;
         self.item_detail = None;
         self.entity_detail = None;
+        self.inspect = None;
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
@@ -594,6 +596,7 @@ impl AppStore {
         self.select_error = None;
         self.world_error = None;
         self.entity_detail = None;
+        self.inspect = None;
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
@@ -1684,6 +1687,43 @@ mod tests {
         );
         assert_eq!(store.screen, Screen::Login);
         assert!(store.pending.is_none());
+    }
+
+    /// M35: ack `char.inspect` заполняет карточку осмотра.
+    #[test]
+    fn inspect_ack_fills_card() {
+        let mut store = store_with_session();
+        store.pending = Some(Act::Inspect);
+        let ack = ld2_protocol::Ack {
+            v: 1,
+            msg_type: "ack".into(),
+            seq: 1,
+            state_version: None,
+            result: ld2_protocol::AckResult::Ok,
+            payload: Some(serde_json::json!({
+                "char": {
+                    "id": "c1",
+                    "name": "Аня",
+                    "level": 7,
+                    "profile": "mage",
+                    "equip": [{
+                        "slot": "main_hand",
+                        "item": { "uid": "i1", "type": "weapon", "name": "Посох", "rarity": "rare", "upgrade": 0 }
+                    }],
+                    "professions": [{
+                        "id": "mining", "rank": 2, "level": 55, "xp": 0, "xp_to_next": 40
+                    }]
+                }
+            })),
+            error: None,
+        };
+        store.apply(IngressEvent::Ack(ack));
+        let card = store.inspect.expect("карточка осмотра");
+        assert_eq!((card.id.as_str(), card.level), ("c1", 7));
+        assert_eq!(card.profile.as_deref(), Some("mage"));
+        assert_eq!(card.equip.len(), 1);
+        assert_eq!(card.equip[0].slot, "main_hand");
+        assert_eq!(card.professions[0].id, "mining");
     }
 
     /// M34: повторный вход в аккаунт — старая сессия на экране входа,

@@ -534,14 +534,30 @@ impl Root {
         // M23: на трупе и сундуке «Осмотреть» открывает то же окно
         // подятия, что и ЛКМ по строке (лут + рюкзак); у прочих
         // сущностей — прежняя модалка осмотра.
-        menu = menu.item(mk(
-            t(lang, Key::Examine).to_string(),
-            if matches!(entity.kind, EntityKind::Corpse | EntityKind::Container) {
-                Click::LootOpen(id.clone())
-            } else {
-                Click::Examine(id.clone())
-            },
-        ));
+        // M35: игрок — «Осмотреть» открывает карточку (экипировка,
+        // уровень, профессии); позиция — курсор в момент клика.
+        if entity.kind == EntityKind::Player {
+            let this = cx.entity();
+            let id = id.clone();
+            menu = menu.item(MenuItem::new(t(lang, Key::Examine).to_string()).on_click(
+                move |window, acx| {
+                    let pos = window.mouse_position();
+                    this.update(acx, |root, cx| {
+                        root.inspect_at = Some((f32::from(pos.x), f32::from(pos.y)));
+                        root.on_click(Click::InspectPlayer(id.clone()), cx);
+                    });
+                },
+            ));
+        } else {
+            menu = menu.item(mk(
+                t(lang, Key::Examine).to_string(),
+                if matches!(entity.kind, EntityKind::Corpse | EntityKind::Container) {
+                    Click::LootOpen(id.clone())
+                } else {
+                    Click::Examine(id.clone())
+                },
+            ));
+        }
         // M20/F20b: добыча ресурса (инструмент/ранг — на сервере).
         if entity.kind == EntityKind::Resource {
             menu = menu.item(mk(
