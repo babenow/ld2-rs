@@ -375,6 +375,28 @@ pub struct ProfessionSnapshot {
     pub extra: JsonMap,
 }
 
+/// M35: публичный осмотр персонажа (ПКМ) — только разрешённое:
+/// уровень, класс, экипировка и изученные профессии.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharInspectView {
+    pub id: String,
+    pub name: String,
+    pub level: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub equip: Vec<InspectItem>,
+    #[serde(default)]
+    pub professions: Vec<ProfessionSnapshot>,
+}
+
+/// M35: надетый предмет в карточке осмотра (слот + снимок вещи).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectItem {
+    pub slot: String,
+    pub item: ItemSnapshot,
+}
+
 /// M18/F58d (ADR-012 §6): активный бафф персонажа — руна-приём
 /// наложила эффект (стак + таймер). `kind` — идентификатор (ключ
 /// перевода/кэша), `title` — отображаемое название (сервер — истина,

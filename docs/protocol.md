@@ -291,6 +291,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | Команда | Payload | Ack payload | Идемп. | Назначение |
 |---|---|---|---|---|
 | `auth.login` | `{login, password}` | `{access_token, expires_in_s}` | + | вход |
+| `char.inspect` | `{char_id}` | `{char: CharInspectView}` | + | M35: ПКМ-осмотр игрока в той же локации — уровень, экипировка, профессии |
 | `auth.register` | `{login, password, email}` | `{access_token, expires_in_s}` | + | регистрация и немедленный вход (→ `evt/session.start`); лимиты — настройки сервера; `email` обязателен и уникален (`E_BAD_EMAIL`/`E_EMAIL_TAKEN`) |
 | `auth.resume` | `{refresh_token}` | `{access_token, expires_in_s}` | + | reconnect |
 | `auth.logout` | `{}` | `{}` | + | выход |

@@ -136,6 +136,9 @@ impl Render for Root {
             .when_some(self.drop_confirm_dialog(cx, &pal), |d, dialog| {
                 d.child(dialog)
             })
+            // M35: карточка осмотра чужого персонажа — поверх игры,
+            // под тостами (клик мимо/Esc закрывают).
+            .when_some(self.inspect_popup(cx, &pal), |d, layer| d.child(layer))
             // M16/F29h: системные уведомления — вверху по центру
             // (ely ToastViewport показывает внизу справа и не
             // позиционируется — заменён; тайминг у Toaster).
