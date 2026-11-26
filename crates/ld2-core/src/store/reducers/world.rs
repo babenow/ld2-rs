@@ -23,7 +23,6 @@ impl AppStore {
         let Ok(changed) = serde_json::from_value::<LocationChanged>(payload) else {
             return vec![];
         };
-        let name = changed.location.name.clone();
         let pvp = changed.location.flags.iter().any(|f| f == "pvp");
         let active: Vec<String> = {
             let now = local_epoch() + self.time_offset;
@@ -50,7 +49,8 @@ impl AppStore {
         self.entity_detail = None;
         self.pickup = None;
         self.world_error = None;
-        self.push_log(LogKind::Location, format!("Вы вошли в {name}"));
+        // M29 (заказчик): строка «Вы вошли в …» не нужна — переход и так
+        // виден по смене заголовка и событиям соседей.
         vec![]
     }
 

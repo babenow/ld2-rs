@@ -1815,9 +1815,11 @@ mod tests {
         assert_eq!(snap.location.id, "l_forest");
         assert_eq!(store.visited.len(), 2, "история: деревня + лес");
         assert_eq!(store.visited[1].name, "Черный лес");
-        let last = store.log.back().expect("запись лога");
-        assert_eq!(last.kind, LogKind::Location);
-        assert!(last.text.contains("Черный лес"), "{}", last.text);
+        // M29 (заказчик): переход не пишет «Вы вошли в …» в журнал.
+        assert!(
+            !store.log.iter().any(|l| l.text.contains("Вы вошли")),
+            "строка «Вы вошли» не должна появляться"
+        );
         assert!(store.entity_detail.is_none());
 
         // Возврат в деревню: дедуп истории (свежая в конце, без дублей).
