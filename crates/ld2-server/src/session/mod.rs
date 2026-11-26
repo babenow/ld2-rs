@@ -28,6 +28,7 @@ mod entity;
 mod gates;
 mod guild;
 mod harvest;
+mod inspect;
 mod items;
 mod location;
 mod magic;
@@ -187,6 +188,8 @@ impl Session {
             "cmd/char.list" => self.char_list(seq).await,
             "cmd/char.create" => self.char_create(env, seq).await,
             "cmd/char.select" => self.char_select(env, seq).await,
+            // M35: ПКМ-осмотр чужого персонажа (экипировка/уровень/профессии)
+            "cmd/char.inspect" => self.char_inspect(env, seq).await,
             "cmd/char.delete" => self.char_delete(env, seq).await,
             // мир (ФР-03, M12.3)
             "cmd/location.look" => self.location_look(seq).await,

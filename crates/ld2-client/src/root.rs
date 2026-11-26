@@ -39,6 +39,7 @@ mod helpers;
 pub(crate) use drag::{BpHold, ItemDragGhost, MapPan, PopupDrag, PopupResize, TitlebarDrag};
 mod game;
 mod hotkeys;
+mod inspect;
 mod lifecycle;
 mod pickup;
 mod popups;
@@ -175,6 +176,8 @@ pub(crate) enum Click {
     Attack(String),
     Flee,
     Examine(String),
+    /// M35: осмотр чужого персонажа (экипировка/уровень/профессии).
+    InspectPlayer(String),
     /// M18/F35: диалог NPC (поговорить/квесты).
     NpcTalk(String),
     PartyInvite(String),
@@ -466,6 +469,9 @@ pub struct Root {
     /// M11.7 (D20/D21): поле ввода ника и длительность таймера удаления.
     delete_name: Option<Entity<TextInput>>,
     delete_delay: i64,
+    /// M35: позиция курсора в момент «Осмотреть» (карточка чужого
+    /// персонажа появляется по клику рядом с меню).
+    inspect_at: Option<(f32, f32)>,
     /// M11.4: тосты Ely (notice → всплывающее уведомление).
     toaster: Entity<Toaster>,
     last_notice: Option<String>,
@@ -662,6 +668,7 @@ impl Root {
             trade_pick: None,
             delete_name: None,
             delete_delay: 10,
+            inspect_at: None,
             toaster: cx.new(|_| Toaster::default()),
             last_notice: None,
             journal_scroll: ScrollHandle::new(),

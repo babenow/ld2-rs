@@ -27,6 +27,8 @@ pub enum Act {
     Attack,
     /// `entity.info` → `entity_detail`.
     Examine,
+    /// M35: `char.inspect` → `inspect` (карточка чужого персонажа).
+    Inspect,
     /// M23: `entity.info` → `pickup` (окно подятия предмета — лут
     /// трупа отдельно от модалки осмотра).
     PickupInfo,
@@ -348,6 +350,8 @@ pub struct AppStore {
     pub visited: Vec<VisitedLocation>,
     /// Результат `entity.info` — модалка осмотра (включая лут трупа).
     pub entity_detail: Option<serde_json::Value>,
+    /// M35: публичный лист чужого персонажа (ПКМ-осмотр).
+    pub inspect: Option<ld2_protocol::types::CharInspectView>,
     /// M23: данные окна подятия предмета (payload `entity.info`:
     /// лут трупа + блок «Внутри»); гейт рендера — `Root::pickup_popup`.
     pub pickup: Option<serde_json::Value>,

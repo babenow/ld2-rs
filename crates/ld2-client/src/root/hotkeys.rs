@@ -104,6 +104,12 @@ impl Root {
         if self.settings_open || self.exit_timer.is_some() || ks.key != "escape" {
             return false;
         }
+        // M35: карточка осмотра — всплывающий слой поверх игры,
+        // закрывается первой.
+        if self.store.inspect.is_some() {
+            self.close_inspect(cx);
+            return true;
+        }
         // M23: окно подятия — верхний слой группы попапов (рисуется
         // последним поверх всех попапов): Esc закрывает его первым.
         if self.pickup_popup.open {

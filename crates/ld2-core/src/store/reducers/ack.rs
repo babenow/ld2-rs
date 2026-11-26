@@ -82,6 +82,7 @@ impl AppStore {
             Act::Move
             | Act::Attack
             | Act::Examine
+            | Act::Inspect
             | Act::PickupInfo
             | Act::NpcTalk
             | Act::NpcReply
@@ -457,7 +458,15 @@ impl AppStore {
             }
         }
         // Осмотр: payload ack'а — детали сущности (включая лут трупа, ФР-03/ФР-11).
-        if act == Act::Examine {
+        if act == Act::Inspect {
+            // M35: карточка осмотра — только присланный публичный лист.
+            self.inspect = ack
+                .payload
+                .and_then(|p| p.get("char").cloned())
+                .and_then(|v| {
+                    serde_json::from_value::<ld2_protocol::types::CharInspectView>(v).ok()
+                });
+        } else if act == Act::Examine {
             self.entity_detail = ack.payload;
         } else if act == Act::PickupInfo {
             // M23: окно подятия — тот же `entity.info`, но в отдельное

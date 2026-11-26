@@ -123,6 +123,12 @@ pub struct EntityInfo {
     pub entity_id: String,
 }
 
+/// M35: ПКМ-осмотр персонажа — экипировка, уровень и профессии.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharInspect {
+    pub char_id: String,
+}
+
 /// M18/F35: диалог NPC — приветствие/строки с условиями + доступные квесты.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct NpcTalk {
@@ -585,6 +591,7 @@ impl_commands!(
     (LocationMove, "cmd/location.move", false),
     (MapWorld, "cmd/map.world", true),
     (EntityInfo, "cmd/entity.info", true),
+    (CharInspect, "cmd/char.inspect", true),
     (NpcTalk, "cmd/npc.talk", true),
     (NpcReply, "cmd/npc.reply", false),
     (ShopList, "cmd/shop.list", true),

@@ -214,6 +214,8 @@ impl Root {
                     self.store.on_world_sent(Act::Examine)
                 }
             }
+            // M35: ПКМ-осмотр игрока — всплывающая карточка.
+            Click::InspectPlayer(id) => self.toggle_inspect(&id, _cx),
             // M23: ЛКМ по трупу — окно подятия (лут слева, рюкзак
             // справа); данные — отдельный `entity.info` → `pickup`.
             Click::PowerStrike => {
