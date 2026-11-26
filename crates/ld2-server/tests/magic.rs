@@ -844,6 +844,34 @@ async fn thousand_truths_set_sockets_and_equip() {
         (Some(12), Some(18)),
         "блок щитом 12..18 в derived"
     );
+    // Заказчик 2026-11-27: клинок (одноручный) не парирует.
+    assert_eq!(der["parry_chance"], 0, "клинок: нет парирования");
+    assert_eq!(der["parry_min"], 0);
+
+    // Меняем клинок на клеймор (двуручный) — парирование появляется;
+    // урон контрудара от силы: 10 + str-бонус клеймора 5 → 15 → 3..7.
+    for slot in ["off_hand", "main_hand"] {
+        let seq = c.send("cmd/item.unequip", json!({ "slot": slot })).await;
+        assert_eq!(c.ack(seq).await["result"], "ok", "снять {slot}");
+    }
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": twohand, "slot": "main_hand" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "клеймор: {ack}");
+    let der = &ack["payload"]["char"]["derived"];
+    assert!(
+        der["parry_chance"].as_i64().unwrap_or(0) > 0,
+        "двуручный клеймор парирует: {der}"
+    );
+    assert_eq!(
+        (der["parry_min"].as_i64(), der["parry_max"].as_i64()),
+        (Some(3), Some(7)),
+        "контрудар от силы 15 → 3..7"
+    );
 }
 
 /// M18/F58 (ADR-012): слот принимает по `accepts` — гемы в оружие
