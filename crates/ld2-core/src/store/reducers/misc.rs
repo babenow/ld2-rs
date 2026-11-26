@@ -30,6 +30,7 @@ impl AppStore {
                 self.time_offset = sorted[sorted.len() / 2];
                 vec![]
             }
+            "evt/session/afk" => self.reduce_afk(payload),
             "evt/session/replaced" => {
                 // M34: в аккаунт вошли из другого окна — разлогиниваем
                 // эту сессию и показываем ошибку-тост (заказчик).
@@ -196,5 +197,29 @@ impl AppStore {
             }
             _ => vec![],
         }
+    }
+
+    /// M36: бездействие — предупреждение (последние 5 %), сброс
+    /// активности или офлайн (экран выбора персонажа).
+    fn reduce_afk(&mut self, payload: serde_json::Value) -> Vec<Effect> {
+        if payload.get("offline").and_then(|v| v.as_bool()) == Some(true) {
+            self.afk_until_ms = None;
+            self.reset_to_characters();
+            self.notice = Some(t(self.lang, Key::AfkOffline).to_string());
+            return vec![];
+        }
+        if payload.get("reset").and_then(|v| v.as_bool()) == Some(true) {
+            self.afk_until_ms = None;
+            return vec![];
+        }
+        if let Some(remaining) = payload.get("remaining_s").and_then(|v| v.as_i64()) {
+            let timeout = payload
+                .get("timeout_s")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(300);
+            self.afk_window_s = (timeout / 20).max(1);
+            self.afk_until_ms = Some(local_epoch_ms() + remaining.max(0) * 1000);
+        }
+        vec![]
     }
 }

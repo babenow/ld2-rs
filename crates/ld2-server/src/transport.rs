@@ -35,6 +35,8 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
     // рассылку, команды через sink работают; resync восстановит).
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(256);
     let mut session = Session::new(state.clone(), peer, out_tx);
+    // M36: AFK-таймер — раз в секунду (предупреждение/офлайн).
+    let mut afk_tick = tokio::time::interval(std::time::Duration::from_secs(1));
 
     'conn: loop {
         tokio::select! {
@@ -99,6 +101,24 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
                         warn!("ws {peer}: бинарный фрейм — закрываю");
                         let _ = sink.close().await;
                         break 'conn;
+                    }
+                }
+            }
+            // M36: AFK — предупреждение на последних 5 % и офлайн.
+            _ = afk_tick.tick() => {
+                for out in session.afk_tick().await {
+                    match out {
+                        Out::Text(t) => {
+                            if !t.is_empty()
+                                && sink.send(Message::Text(t.into())).await.is_err()
+                            {
+                                break 'conn;
+                            }
+                        }
+                        Out::Close => {
+                            let _ = sink.close().await;
+                            break 'conn;
+                        }
                     }
                 }
             }

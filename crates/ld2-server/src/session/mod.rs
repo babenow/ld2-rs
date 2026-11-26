@@ -74,6 +74,10 @@ pub struct Session {
     out_tx: tokio::sync::mpsc::Sender<String>,
     /// R15: окно rate-limit мутирующих команд `(start_epoch, счётчик)`.
     cmd_rate_window: (i64, u32),
+    /// M36: последняя активность персонажа (epoch, мс) — AFK-таймер.
+    last_activity_ms: i64,
+    /// M36: предупреждение AFK уже отправлено (сброс — по активности).
+    afk_warned: bool,
     /// Активное превью улучшения (ФР-10, M12.5c): stale → `E_UPGRADE_PREVIEW_STALE`.
     preview_state: Option<UpgradePreviewState>,
     /// M18/F54: выбранный камень усиления (uid) — активен, пока игрок
@@ -111,6 +115,8 @@ impl Session {
             pending_rank_up: None,
             last_chat_at: None,
             cmd_rate_window: (crate::time::now_epoch(), 0),
+            last_activity_ms: crate::time::now_ms(),
+            afk_warned: false,
         }
     }
 
@@ -138,6 +144,24 @@ impl Session {
                 return vec![Out::Text(cached.clone())];
             }
         }
+        // M36: активность сбрасывает AFK-таймер; служебные команды
+        // (ping/time.sync/resync) — не активность.
+        let service = matches!(
+            env.msg_type.as_str(),
+            "cmd/ping" | "cmd/time.sync" | "cmd/state.resync"
+        );
+        let mut afk_reset = None;
+        if !service {
+            self.last_activity_ms = crate::time::now_ms();
+            if self.afk_warned {
+                self.afk_warned = false;
+                afk_reset = Some(Out::Text(event_text(
+                    "evt/session/afk",
+                    None,
+                    serde_json::json!({ "reset": true }),
+                )));
+            }
+        }
         let outs = self.dispatch(&env).await;
         // Первый ответ диспетчера — всегда ack (§2.2); кэшируем его текст.
         if let (Some(seq), Some(Out::Text(ack_text))) = (env.seq, outs.first()) {
@@ -149,7 +173,63 @@ impl Session {
                 }
             }
         }
+        let mut outs = outs;
+        if let Some(out) = afk_reset {
+            outs.push(out);
+        }
         outs
+    }
+
+    /// M36: шаг AFK-таймера (тик раз в секунду). Предупреждение — на
+    /// последних 5 % времени (каждую секунду), затем офлайн: персонаж
+    /// исчезает из мира, аккаунт остаётся — клиент уходит на выбор
+    /// персонажа.
+    pub async fn afk_tick(&mut self) -> Vec<Out> {
+        let Some(char_id) = self.selected_char_id.clone() else {
+            self.afk_warned = false;
+            return vec![];
+        };
+        let timeout_s = self.state.config.gameplay.afk_timeout_s;
+        if timeout_s == 0 {
+            return vec![];
+        }
+        let timeout_ms = timeout_s as i64 * 1000;
+        let elapsed = (crate::time::now_ms() - self.last_activity_ms).max(0);
+        if elapsed >= timeout_ms {
+            let owner = self.peer.to_string();
+            close_char_session(&self.state, &char_id, &owner).await;
+            self.selected_char_id = None;
+            self.char = None;
+            self.location_id = None;
+            self.afk_warned = false;
+            return vec![Out::Text(event_text(
+                "evt/session/afk",
+                None,
+                serde_json::json!({ "offline": true }),
+            ))];
+        }
+        // Окно предупреждения — 5 % таймаута, но не меньше секунды
+        // (иначе тик 1 с на коротких тестовых таймаутах его пропускает).
+        let warn_ms = (timeout_ms / 20).max(1_000).min(timeout_ms);
+        if elapsed >= timeout_ms - warn_ms {
+            self.afk_warned = true;
+            let remaining_ms = timeout_ms - elapsed;
+            let remaining_s = ((remaining_ms + 999) / 1000).max(1);
+            return vec![Out::Text(event_text(
+                "evt/session/afk",
+                None,
+                serde_json::json!({ "remaining_s": remaining_s, "timeout_s": timeout_s }),
+            ))];
+        }
+        if self.afk_warned {
+            self.afk_warned = false;
+            return vec![Out::Text(event_text(
+                "evt/session/afk",
+                None,
+                serde_json::json!({ "reset": true }),
+            ))];
+        }
+        vec![]
     }
 
     async fn dispatch(&mut self, env: &Envelope) -> Vec<Out> {
