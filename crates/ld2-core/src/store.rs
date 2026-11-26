@@ -2434,6 +2434,47 @@ mod tests {
     }
 
     #[test]
+    fn spawn_server_text_goes_to_journal() {
+        let mut store = in_game(); // «Ким» в l_village
+                                   // Приход соседа с готовой строкой сервера — строка журнала как есть.
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "p_guest", "kind": "player", "name": "Сара" },
+                "location_id": "l_village",
+                "text": "Сара пришла"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Сара пришла", "{}", last.text);
+        assert_eq!(last.kind, LogKind::Location);
+
+        // Пустая строка — прежний шаблон «{name} появляется» (не портим заглушкой).
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "p_guest2", "kind": "player", "name": "Марк" },
+                "location_id": "l_village",
+                "text": ""
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Марк появляется", "{}", last.text);
+        assert_eq!(last.kind, LogKind::System);
+
+        // Без text — прежнее поведение (популяция спавна не задета).
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "m_wolf", "kind": "monster", "name": "Волк" },
+                "location_id": "l_village"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Волк появляется", "{}", last.text);
+    }
+
+    #[test]
     fn dropped_log_is_uniform_for_everyone() {
         let mut store = in_game();
         // ЧУЖОЙ выброс — «{имя} выбросил …» (не «Вы выбросили»).

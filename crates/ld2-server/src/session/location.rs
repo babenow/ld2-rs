@@ -212,6 +212,7 @@ impl Session {
                 &self.state,
                 &target,
                 presence::player_entity(&char_id, &name),
+                Some(presence::came_line(&name, &gender)),
             );
         }
         let location = match db::locations::get(&self.state.pool, &target).await {

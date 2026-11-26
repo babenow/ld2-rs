@@ -45,12 +45,40 @@ fn broadcast(state: &SharedState, location_id: &str, except: &str, text: String)
     }
 }
 
-/// Игрок вошёл в локацию (вход в игру/переход): `evt/entity/spawn` остальным.
-pub(crate) fn announce_spawn(state: &SharedState, location_id: &str, entity: Entity) {
+/// Глагол прихода (M29, заказчик): «пришел»/«пришла» по роду.
+pub(crate) fn came_line(name: &str, gender: &str) -> String {
+    let verb = if gender == "female" {
+        "пришла"
+    } else {
+        "пришел"
+    };
+    format!("{name} {verb}")
+}
+
+/// Глагол гибели (M29, заказчик): «погиб»/«погибла» по роду.
+pub(crate) fn died_line(name: &str, gender: &str) -> String {
+    let verb = if gender == "female" {
+        "погибла"
+    } else {
+        "погиб"
+    };
+    format!("{name} {verb}")
+}
+
+/// Кто-то пришел в локацию (переход): `evt/entity/spawn` остальным
+/// с готовой строкой журнала; вход в мир/респавн — `text: None`
+/// (клиентский шаблон «{name} появляется»).
+pub(crate) fn announce_spawn(
+    state: &SharedState,
+    location_id: &str,
+    entity: Entity,
+    text: Option<String>,
+) {
     let except = entity.id.clone();
     let payload = EntitySpawn {
         entity,
         location_id: location_id.to_string(),
+        text,
     };
     let text = event_text(
         "evt/entity/spawn",

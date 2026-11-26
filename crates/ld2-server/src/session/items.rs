@@ -896,6 +896,7 @@ impl Session {
                     &ld2_protocol::evt::EntitySpawn {
                         entity,
                         location_id: location_id.clone(),
+                        text: None,
                     },
                 );
                 let world = self.state.world.lock().expect("мир");

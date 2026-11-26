@@ -356,6 +356,7 @@ impl Session {
                 &self.state,
                 loc_id,
                 super::presence::player_entity(&char_id, &name),
+                None,
             );
         }
         let location = match db::locations::get(&self.state.pool, loc_id).await {

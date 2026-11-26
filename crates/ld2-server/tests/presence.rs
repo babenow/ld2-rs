@@ -66,8 +66,18 @@ async fn players_in_same_location_are_visible_and_leave_events() {
     assert_eq!(despawn["payload"]["entity_id"], char_b);
     assert_eq!(despawn["payload"]["kind"], "player");
     assert_eq!(despawn["payload"]["location_id"], location);
+    // Готовая строка журнала: {имя} ушел/ушла — {метка выхода}.
+    let went = despawn["payload"]["text"].as_str().unwrap_or_default();
+    let b_name = spawn["payload"]["entity"]["name"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        went.starts_with(&format!("{b_name} ушел")) || went.starts_with(&format!("{b_name} ушла")),
+        "строка ухода: {went:?}"
+    );
+    assert!(!went.ends_with("— "), "метка выхода обязательна: {went:?}");
 
-    // Возврат B → A снова видит spawn.
+    // Возврат B → A снова видит spawn — сюда же строка прихода.
     let seq = b
         .send("cmd/location.move", json!({ "exit_id": "e_south" }))
         .await;
@@ -75,6 +85,11 @@ async fn players_in_same_location_are_visible_and_leave_events() {
     assert_eq!(ack["result"], "ok", "возврат: {ack}");
     let back = a.wait_event("evt/entity/spawn").await;
     assert_eq!(back["payload"]["entity"]["id"], char_b);
+    let came = back["payload"]["text"].as_str().unwrap_or_default();
+    assert!(
+        came == format!("{b_name} пришел") || came == format!("{b_name} пришла"),
+        "строка прихода: {came:?}"
+    );
 
     // Дисконнект B → A получает despawn.
     b.close().await;

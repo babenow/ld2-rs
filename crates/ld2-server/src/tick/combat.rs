@@ -560,6 +560,13 @@ pub(crate) fn mob_kill_effects(
     attacker: &str,
     skills_cfg: &SkillsSection,
 ) -> Option<KillXp> {
+    // M29 (заказчик): гибель моба — строка «{имя} погиб» всем в локации
+    // (имя — до kill_mob, тот удаляет моба из реестра).
+    let mob_name = world
+        .mob(target)
+        .map(|m| m.name.clone())
+        .unwrap_or_default();
+    let died = crate::session::presence::died_line(&mob_name, "male");
     let difficulty = world.mob(target).map(|m| m.difficulty).unwrap_or(1);
     let amount = skills_cfg.kill_xp_base + difficulty * skills_cfg.kill_xp_per_difficulty;
     let corpse_id = world.kill_mob(target);
@@ -574,7 +581,7 @@ pub(crate) fn mob_kill_effects(
                 kind: Some(ld2_protocol::types::EntityKind::Monster),
                 picked_by: None,
                 picked_gender: None,
-                text: None,
+                text: Some(died.clone()),
             },
         );
         if let Some(corpse_id) = &corpse_id {

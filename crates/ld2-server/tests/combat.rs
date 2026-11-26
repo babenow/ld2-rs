@@ -31,6 +31,16 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "атака: {ack}");
 
+    // Гибель моба — строка «{имя} погиб» всем в локации (M29).
+    let gone = c.wait_event("evt/entity/despawn").await;
+    assert_eq!(gone["payload"]["entity_id"], "m_3");
+    assert_eq!(gone["payload"]["kind"], "monster");
+    let died = gone["payload"]["text"].as_str().unwrap_or_default();
+    assert!(
+        died.ends_with(" погиб") || died.ends_with(" погибла"),
+        "строка гибели моба: {died:?}"
+    );
+
     // Тик-луп наносит удары: ждём смерть моба (деспан + труп).
     let corpse = c.wait_event("evt/corpse/created").await;
     let corpse_id = corpse["payload"]["entity"]["id"]
