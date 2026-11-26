@@ -217,6 +217,7 @@ impl Session {
             &self.state,
             &location_id,
             super::presence::player_entity(&row.id, &row.name),
+            None,
         );
         // M17/F30f: чем бьёт — по экипированному оружию (кэш мира).
         self.refresh_char_hits_as(&row.id).await;
@@ -365,6 +366,7 @@ impl Session {
                                 &self.state,
                                 &location_id,
                                 super::presence::player_entity(&row.id, &row.name),
+                                None,
                             );
                             // M17/F30f: чем бьёт — по экипированному оружию.
                             self.refresh_char_hits_as(&row.id).await;

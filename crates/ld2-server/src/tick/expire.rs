@@ -62,6 +62,7 @@ pub(super) async fn respawn_step(state: &SharedState) {
                     &ld2_protocol::evt::EntitySpawn {
                         entity,
                         location_id: entry.location_id.clone(),
+                        text: None,
                     },
                 );
                 for addr in world.chars_in_location(&entry.location_id) {
@@ -91,6 +92,7 @@ pub(super) async fn respawn_step(state: &SharedState) {
                         &ld2_protocol::evt::EntitySpawn {
                             entity: node.entity(),
                             location_id: entry.location_id.clone(),
+                            text: None,
                         },
                     );
                     for addr in world.chars_in_location(&entry.location_id) {

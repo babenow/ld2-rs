@@ -23,24 +23,24 @@ crates/ld2-core/src/store.rs 813 150
 crates/ld2-editor/src/app.rs 8329 647
 crates/ld2-editor/src/project.rs 1975 150
 crates/ld2-protocol/src/cmd.rs 654 150
-crates/ld2-protocol/src/evt.rs 707 150
-crates/ld2-server/src/session/chars.rs 679 231
+crates/ld2-protocol/src/evt.rs 711 150
+crates/ld2-server/src/session/chars.rs 681 231
 crates/ld2-server/src/session/combat.rs 747 268
-crates/ld2-server/src/session/dev.rs 612 289
+crates/ld2-server/src/session/dev.rs 613 289
 crates/ld2-server/src/session/entity.rs 452 238
 crates/ld2-server/src/session/harvest.rs 397 205
-crates/ld2-server/src/session/items.rs 963 250
+crates/ld2-server/src/session/items.rs 964 250
 crates/ld2-server/src/session/magic.rs 601 329
 crates/ld2-server/src/session/quests.rs 320 253
 crates/ld2-server/src/session/socketing.rs 509 310
 crates/ld2-server/src/session/upgrade.rs 475 343
-crates/ld2-server/src/tick/combat.rs 940 150
+crates/ld2-server/src/tick/combat.rs 947 150
 crates/ld2-test-kit/src/fixtures.rs 649 150
 
 # --- минимум тестов по крейтам ---
 tests ld2-client 53
 tests ld2-content 17
-tests ld2-core 118
+tests ld2-core 119
 tests ld2-editor 28
 tests ld2-protocol 20
 tests ld2-server 83

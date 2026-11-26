@@ -70,7 +70,9 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
         .as_ref()
         .map(|r| r.location_id.clone())
         .unwrap_or_default();
-    let char_name = current_row.map(|r| r.name).unwrap_or_default();
+    let (char_name, char_gender) = current_row
+        .map(|r| (r.name, r.gender))
+        .unwrap_or_else(|| (String::new(), "male".to_string()));
     let target = if spawn.is_empty() {
         current.clone()
     } else {
@@ -106,12 +108,18 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     location
         .entities
         .retain(|e| !(e.kind == ld2_protocol::types::EntityKind::Player && e.id == char_id));
-    if current != target && !current.is_empty() {
-        crate::session::presence::announce_despawn(state, &current, char_id, None);
+    // Присутствие (M29, заказчик): гибель видят ВСЕ соседи — строка
+    // «{имя} погиб/погибла» в despawn. Пара despawn+spawn идёт всегда:
+    // при респауне в другой локации — расход/приход, в той же — уход и
+    // мгновенное возвращение (клиент корректно обновляет «Игроков»).
+    if !current.is_empty() {
+        let died = crate::session::presence::died_line(&char_name, &char_gender);
+        crate::session::presence::announce_despawn(state, &current, char_id, Some(died));
         crate::session::presence::announce_spawn(
             state,
             &target,
             crate::session::presence::player_entity(char_id, &char_name),
+            None,
         );
     }
 

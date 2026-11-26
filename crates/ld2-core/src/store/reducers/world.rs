@@ -69,12 +69,17 @@ impl AppStore {
                             .iter()
                             .any(|e| e.id == spawn.entity.id)
                     {
-                        added = Some(spawn.entity.name.clone());
+                        added = Some((spawn.entity.name.clone(), spawn.text.clone()));
                         snap.location.entities.push(spawn.entity);
                     }
                 }
-                if let Some(name) = added {
-                    self.push_log(LogKind::System, format!("{name} появляется"));
+                if let Some((name, text)) = added {
+                    // M29 (заказчик): приход соседа — готовая строка
+                    // сервера («Сара пришла»); без неё — шаблон.
+                    match text.as_deref().filter(|l| !l.is_empty()) {
+                        Some(line) => self.push_log(LogKind::Location, line),
+                        None => self.push_log(LogKind::System, format!("{name} появляется")),
+                    }
                 }
                 vec![]
             }
