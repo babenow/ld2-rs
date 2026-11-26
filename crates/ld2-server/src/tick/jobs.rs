@@ -137,21 +137,44 @@ pub(super) async fn regen_step(state: &SharedState) {
             &state.config.gameplay.resource,
             i64::from(row.mp_max),
         );
-        let Some(new) = crate::systems::resource_step(
+        // M30: духовность ускоряет реген маны (character-params.md §3.2).
+        let attrs: std::collections::BTreeMap<String, i64> =
+            serde_json::from_value(row.attrs.clone()).unwrap_or_default();
+        let spir = attrs.get("spir").copied().unwrap_or(0);
+        let mp_new = crate::systems::resource_step(
             profile,
             i64::from(row.mp_cur),
             max,
             in_combat,
+            spir,
             &state.config,
-        ) else {
+        );
+        // M30: регенерация здоровья (character-params.md §3.1) —
+        // мёртвые не регенерируют, молчим без изменений.
+        let hp_max = i64::from(row.hp_max);
+        let hp_new =
+            crate::systems::health_step(i64::from(row.hp_cur), hp_max, in_combat, &state.config);
+        if mp_new.is_none() && hp_new.is_none() {
             continue; // без изменений — без шума каждый тик
-        };
-        if let Err(e) = crate::db::characters::set_mp(&state.pool, char_id, new as i32).await {
-            warn!("реген (mp {}): {e}", char_id);
-            continue;
         }
         let mut patch = serde_json::Map::new();
-        patch.insert("mp".into(), json!({ "cur": new, "max": max }));
+        if let Some(new) = mp_new {
+            if let Err(e) = crate::db::characters::set_mp(&state.pool, char_id, new as i32).await {
+                warn!("реген (mp {}): {e}", char_id);
+                continue;
+            }
+            patch.insert("mp".into(), json!({ "cur": new, "max": max }));
+        }
+        if let Some(new) = hp_new {
+            if let Err(e) =
+                crate::db::characters::heal_hp(&state.pool, char_id, new - i64::from(row.hp_cur))
+                    .await
+            {
+                warn!("реген (hp {}): {e}", char_id);
+                continue;
+            }
+            patch.insert("hp".into(), json!({ "cur": new, "max": hp_max }));
+        }
         let text = crate::session::event_text(
             "evt/char/stats",
             None,

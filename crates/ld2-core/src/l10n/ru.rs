@@ -88,6 +88,7 @@ pub(super) fn t(key: Key) -> &'static str {
         AttrDex => "Ловкость",
         AttrVit => "Стойкость",
         AttrInt => "Интеллект",
+        AttrSpir => "Духовность",
         SheetInventory => "Инвентарь",
         MaxLabel => "макс",
         EquipLabel => "Экипировка",

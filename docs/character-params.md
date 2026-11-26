@@ -223,9 +223,18 @@ gates = { 10 = 12, 20 = 18, 30 = 25 }
 
 ## 7. Карта кода
 
+> **Фасад пересчёта (M30):** все параметры считает одна чистая функция
+> `stats::recalculate(input) -> Recalc` — она поочерёдно вызывает `max_hp` → `max_mp` →
+> `resource_max` → `derive` и возвращает `Recalc { hp_max, mp_max, resource_max, derived }`.
+> Фасад ничего не пишет в БД и не шлёт событий: персист (`set_max`) и патчи `evt/char/stats`
+> делают вызывающие точки — снапшот, level-up, вставка/извлечение самоцвета, создание
+> персонажа. Регенерация фасадом не считается — это тик-дельты `regen_step` (§3).
+
 | Что | Где |
 |---|---|
-| Производные параметры | `ld2-server/src/stats.rs` (`derive`, `max_hp`, `max_mp` — M30) |
+| Фасад пересчёта всех параметров (M30) | `ld2-server/src/stats.rs` (`recalculate`) |
+| Производные параметры | `ld2-server/src/stats.rs` (`derive`) |
+| Максимумы HP/MP (M30) | `ld2-server/src/stats.rs` (`max_hp`, `max_mp`) |
 | Регенерация/ресурсы | `ld2-server/src/systems/combat.rs` (`resource_step`, `rage_gain`), `ld2-server/src/tick/jobs.rs` (`regen_step`) |
 | Уровень/опыт | `ld2-server/src/systems/xp.rs` |
 | Эффективные attrs, снапшот | `ld2-server/src/session/chars.rs` (`character_state`) |

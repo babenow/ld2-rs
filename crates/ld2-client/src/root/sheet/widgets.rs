@@ -310,6 +310,7 @@ pub(crate) fn attr_label(lang: Lang, key: &str) -> String {
         "dex" => t(lang, Key::AttrDex),
         "vit" => t(lang, Key::AttrVit),
         "int" => t(lang, Key::AttrInt),
+        "spir" => t(lang, Key::AttrSpir),
         other => other,
     }
     .to_string()

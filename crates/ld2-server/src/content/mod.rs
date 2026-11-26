@@ -557,7 +557,7 @@ mod tests {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
         let content = load(&dir).expect("контент контента загружается");
         let skill_ids: HashSet<&str> = content.skills.iter().map(|s| s.id.as_str()).collect();
-        const ATTRS: [&str; 4] = ["str", "dex", "vit", "int"];
+        const ATTRS: [&str; 5] = ["str", "dex", "vit", "int", "spir"];
         const PARAMS: [&str; 20] = [
             "accuracy",
             "damage",

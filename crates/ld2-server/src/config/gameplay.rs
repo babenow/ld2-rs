@@ -35,6 +35,10 @@ pub struct GameplaySection {
     /// без неё действуют дефолты (обратная совместимость конфигов).
     #[serde(default)]
     pub resource: ResourceSection,
+    /// M30: здоровье и его регенерация (`character-params.md` §2.1/§3.1);
+    /// секция опциональна (дефолт `HealthSection::default`).
+    #[serde(default)]
+    pub health: HealthSection,
     /// M18/F36: квесты — лимит текущих (взятых) квестов на персонажа
     /// → §5 `quests.max_active`; секция опциональна (дефолт 10).
     #[serde(default)]
@@ -202,6 +206,70 @@ pub struct ManaSection {
     pub regen_in_pct_s: f64,
     /// Стоимость каста руны в мане.
     pub rune_cost: u32,
+    /// M30: база формулы максимума маны (`character-params.md` §1.1) —
+    /// `mp_max = base + int×mp_per_int + arcana×mp_per_arcana + spir×mp_per_spir`.
+    /// Новые ключи — `serde(default)`, чтобы старые server.toml грузились.
+    #[serde(default = "default_mp_max_base")]
+    pub mp_max_base: i64,
+    /// M30: вклад интеллекта в максимум маны.
+    #[serde(default = "default_mp_per_int")]
+    pub mp_per_int: f64,
+    /// M30: вклад ранга `arcana` в максимум маны.
+    #[serde(default = "default_mp_per_arcana")]
+    pub mp_per_arcana: f64,
+    /// M30: вклад духовности в максимум маны.
+    #[serde(default = "default_mp_per_spir")]
+    pub mp_per_spir: f64,
+    /// M30: +1 % скорости регена маны за очко духовности
+    /// (`character-params.md` §3.2).
+    #[serde(default = "default_spirit_regen_pct")]
+    pub spirit_regen_pct: f64,
+}
+
+fn default_mp_max_base() -> i64 {
+    20
+}
+fn default_mp_per_int() -> f64 {
+    4.0
+}
+fn default_mp_per_arcana() -> f64 {
+    5.0
+}
+fn default_mp_per_spir() -> f64 {
+    5.0
+}
+fn default_spirit_regen_pct() -> f64 {
+    1.0
+}
+
+/// M30: здоровье и его регенерация (`[gameplay.health]`,
+/// `character-params.md` §2.1/§3.1) — секция опциональна, без неё
+/// действуют дефолты (обратная совместимость конфигов).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HealthSection {
+    /// M30: база формулы максимума HP.
+    pub hp_max_base: i64,
+    /// M30: вклад стойкости в максимум HP.
+    pub hp_per_vit: f64,
+    /// M30: вклад уровня в максимум HP.
+    pub hp_per_level: f64,
+    /// M30: реген вне боя — секунд на полный бар.
+    pub regen_out_s: u64,
+    /// M30: реген в бою, % макс. HP в секунду.
+    pub regen_in_pct_s: f64,
+}
+
+impl Default for HealthSection {
+    fn default() -> Self {
+        Self {
+            hp_max_base: 40,
+            hp_per_vit: 5.0,
+            hp_per_level: 10.0,
+            regen_out_s: 60,
+            regen_in_pct_s: 0.5,
+        }
+    }
 }
 
 /// M17/F30e: ресурсы по классам как в WoW (`[gameplay.resource]`) —

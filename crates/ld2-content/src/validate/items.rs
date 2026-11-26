@@ -7,8 +7,8 @@ use super::*;
 /// Редкости предмета (`items.json`: `rarity`).
 pub const ITEM_RARITIES: [&str; 5] = ["common", "uncommon", "rare", "epic", "legendary"];
 /// Атрибуты персонажа (ADR-010): `bonuses[].id` при `kind = "attr"` и
-/// ключ `stats.attr`.
-pub const ITEM_ATTRS: [&str; 4] = ["str", "dex", "vit", "int"];
+/// ключ `stats.attr`. `spir` — духовность (M30, character-params.md §1.1).
+pub const ITEM_ATTRS: [&str; 5] = ["str", "dex", "vit", "int", "spir"];
 /// Боевые параметры (ADR-010): `bonuses[].id` при `kind = "param"` и
 /// ключи `stats.param`.
 pub const ITEM_PARAMS: [&str; 20] = [

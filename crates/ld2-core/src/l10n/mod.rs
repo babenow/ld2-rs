@@ -125,6 +125,8 @@ pub enum Key {
     AttrDex,
     AttrVit,
     AttrInt,
+    // M30: духовность — макс. мана и реген (character-params.md §1.1)
+    AttrSpir,
     SheetInventory,
     MaxLabel,
     EquipLabel,
@@ -808,6 +810,7 @@ mod tests {
         Key::AttrDex,
         Key::AttrVit,
         Key::AttrInt,
+        Key::AttrSpir,
         Key::SheetInventory,
         Key::MaxLabel,
         Key::EquipLabel,

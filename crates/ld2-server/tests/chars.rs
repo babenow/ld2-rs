@@ -111,7 +111,11 @@ async fn character_lifecycle_persists_across_reconnect() {
     assert_eq!(snap["payload"]["char"]["name"], name);
     assert_eq!(
         snap["payload"]["char"]["hp"]["max"], 100,
-        "база из миграции 0003"
+        "M30: формула 40 + vit10×5 + уровень1×10"
+    );
+    assert_eq!(
+        snap["payload"]["char"]["mp"]["max"], 100,
+        "M30: воину ресурс перекрывает формул�� маны — ярость из конфига"
     );
     assert!(
         snap["payload"]["location"].is_object(),

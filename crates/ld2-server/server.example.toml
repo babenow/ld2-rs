@@ -142,6 +142,22 @@ scroll_requires_target = true
 regen_out_s = 45
 regen_in_pct_s = 1.0
 rune_cost = 10
+# M30: формула максимума (character-params.md §1.1) и духовность:
+# mp_max = base + int×mp_per_int + arcana×mp_per_arcana + spir×mp_per_spir
+mp_max_base = 20
+mp_per_int = 4.0
+mp_per_arcana = 5.0
+mp_per_spir = 5.0
+spirit_regen_pct = 1.0       # +1 % скорости регена маны за очко духовности
+
+# M30: здоровье и его регенерация (character-params.md §2.1/§3.1):
+# hp_max = hp_max_base + vit×hp_per_vit + level×hp_per_level
+[gameplay.health]
+hp_max_base = 40
+hp_per_vit = 5.0
+hp_per_level = 10.0
+regen_out_s = 60             # вне боя — секунд на полный бар
+regen_in_pct_s = 0.5         # в бою — % макс. HP в секунду
 
 [world]
 content_dir = "content"    # статический контент (JSON) → сид в PostgreSQL (D26)

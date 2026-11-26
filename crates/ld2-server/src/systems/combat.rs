@@ -62,13 +62,16 @@ pub fn rage_gain(res: &crate::config::ResourceSection, profile: &str, damage: i6
 /// M17/F30e: шаг ресурса онлайн-персонажа раз в секунду по профилю:
 /// **воин** — ярость падает вне боя (в бою не трогаем), **лучник** —
 /// энергия восстанавливается всегда (в бою и вне), **мана** — прежняя
-/// модель §2.4 (вне боя полный бар за `regen_out_s`, в бою %/с).
+/// модель §2.4 (вне боя полный бар за `regen_out_s`, в бою %/с),
+/// умноженная на духовность M30: `delta × (1 + spir×spirit_regen_pct/100)`
+/// (character-params.md §3.2; ярость/энергия от духовности не зависят).
 /// `None` — изменений нет (в том числе при полном ресурсе).
 pub fn resource_step(
     profile: &str,
     cur: i64,
     max: i64,
     in_combat: bool,
+    spir: i64,
     cfg: &crate::config::Config,
 ) -> Option<i64> {
     let cur = cur.min(max);
@@ -93,15 +96,44 @@ pub fn resource_step(
                 return None;
             }
             let mana = &cfg.gameplay.magic.mana;
-            let delta = if in_combat {
+            let base = if in_combat {
                 (max as f64 * mana.regen_in_pct_s / 100.0).ceil().max(1.0) as i64
             } else {
                 (max as f64 / mana.regen_out_s.max(1) as f64)
                     .ceil()
                     .max(1.0) as i64
             };
+            // M30: духовность ускоряет реген маны (в бое и вне).
+            let spirit_mult = 1.0 + spir.max(0) as f64 * mana.spirit_regen_pct / 100.0;
+            let delta = ((base as f64) * spirit_mult).ceil() as i64;
             (cur + delta).min(max)
         }
     };
+    (new != cur).then_some(new)
+}
+
+/// M30: шаг регенерации HP раз в секунду (character-params.md §3.1):
+/// вне боя полный бар за `health.regen_out_s`, в бою `regen_in_pct_s` %
+/// максимума в секунду; шаг ≥ 1. Лечат только `0 < cur < max` —
+/// **мёртвые не регенерируют** (кламп к максимуму делает `heal_hp`).
+/// `None` — изменений нет.
+pub fn health_step(
+    cur: i64,
+    max: i64,
+    in_combat: bool,
+    cfg: &crate::config::Config,
+) -> Option<i64> {
+    if cur <= 0 || cur >= max {
+        return None;
+    }
+    let health = &cfg.gameplay.health;
+    let delta = if in_combat {
+        (max as f64 * health.regen_in_pct_s / 100.0).ceil().max(1.0) as i64
+    } else {
+        (max as f64 / health.regen_out_s.max(1) as f64)
+            .ceil()
+            .max(1.0) as i64
+    };
+    let new = (cur + delta).min(max);
     (new != cur).then_some(new)
 }
