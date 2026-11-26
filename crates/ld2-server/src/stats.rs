@@ -17,7 +17,9 @@
 use ld2_protocol::types::{DerivedParams, ItemSnapshot, SkillSnapshot};
 use std::collections::BTreeMap;
 
-/// Эффекты оружейных навыков §A за ранг: (урон %, крит %, уклон %).
+/// Эффекты оружейных навыков §A за ранг: (точность %, крит %, уклон %).
+/// M32 (заказчик): навык владения оружием даёт **точность**, а не урон;
+/// на урон влияет только сила.
 const WEAPON_EFFECTS: &[(&str, f64, f64, f64)] = &[
     ("sword", 2.0, 0.0, 0.0),
     ("axe", 2.0, 0.0, 0.0),
@@ -94,23 +96,25 @@ pub fn derive(
         attr(attrs, "int"),
     );
 
-    // Вклад снаряжённого оружейного навыка (§A — в процентах за ранг).
-    let (mut dmg_pct, mut crit_pct, mut dodge_pct) = (0.0f64, 0.0f64, 0.0f64);
+    // Вклад снаряжённого оружейного навыка (§A за ранг): точность
+    // (M32: не урон — на урон влияет только сила), крит, уклонение.
+    let (mut acc_pct, mut crit_pct, mut dodge_pct) = (0.0f64, 0.0f64, 0.0f64);
     if let Some(skill_id) = equipped_weapon_skill(equipped) {
-        if let Some(&(_, d, c, u)) = WEAPON_EFFECTS.iter().find(|(id, ..)| *id == skill_id) {
+        if let Some(&(_, a, c, u)) = WEAPON_EFFECTS.iter().find(|(id, ..)| *id == skill_id) {
             let r = rank(skills, skill_id) as f64;
-            dmg_pct = d * r;
+            acc_pct = a * r;
             crit_pct = c * r;
             dodge_pct = u * r;
         }
     }
 
     // ── физические ──
-    let dmg_mult = 1.0 + dmg_pct / 100.0;
-    let damage_min = (((w_min + strg / 2) as f64) * dmg_mult).round() as i64;
-    let damage_max = (((w_max + strg / 2) as f64) * dmg_mult).round() as i64;
-    // Точность: ловкость (GDD §1) — база под «стартовый» 80 %.
-    let accuracy = (75 + dex / 2).clamp(1, 99);
+    // M32 (заказчик): урон = оружие + сила/2 (+ руны); навык оружия
+    // урон не множит.
+    let damage_min = w_min + strg / 2;
+    let damage_max = w_max + strg / 2;
+    // Точность: ловкость (GDD §1) + оружейный навык (M32).
+    let accuracy = (75 + dex / 2 + acc_pct.round() as i64).clamp(1, 99);
     let crit_chance = ((5.0 + dex as f64 * 0.3 + crit_pct).round() as i64).clamp(0, 100);
     let crit_damage = 50 + dex / 5;
     // Броня — сумма статов экипировки (контент брони пока пуст → 0).
@@ -469,8 +473,10 @@ mod tests {
             skill("arcana", 2),
         ];
         let d = derive(&attrs10(), &skills, &[dagger], 6);
-        // (2 + 5) × 1.045 = 7.315 → 7; (4 + 5) × 1.045 = 9.405 → 9.
-        assert_eq!((d.damage_min, d.damage_max), (7, 9), "dagger +1.5%/ранг");
+        // M32: урон — только оружие + сила/2 (навык его не множит).
+        assert_eq!((d.damage_min, d.damage_max), (7, 9), "2+5 / 4+5");
+        // M32: кинжал р.3 даёт точность: 75 + 5 + 1.5×3 = 84.5 → 85.
+        assert_eq!(d.accuracy, 85, "dagger +1.5% точности/ранг");
         // 5 + 10·0.3 + 0.7·3 = 10.1 → 10.
         assert_eq!(d.crit_chance, 10, "dagger +0.7% крита/ранг");
         // 3 + dex·0.4(4) + evasion 5 + вклад кинжала 0 = 12
@@ -480,6 +486,26 @@ mod tests {
         assert_eq!(d.block_chance, 4, "block +2%/ранг");
         assert_eq!(d.magic_dispel, 9, "int/2 + m_dispel 4");
         assert_eq!(d.magic_crit_chance, 9, "5 + 3 + arcana/2");
+    }
+
+    /// M32 (заказчик): навык владения оружием даёт **точность**, а не
+    /// урон; урон определяется только оружием и силой.
+    #[test]
+    fn weapon_skill_adds_accuracy_not_damage() {
+        let sword = item(
+            serde_json::json!({"dmg": "6..9"}),
+            serde_json::json!({"skill": "sword"}),
+        );
+        let plain = derive(&attrs10(), &[], std::slice::from_ref(&sword), 6);
+        let skilled = derive(&attrs10(), &[skill("sword", 5)], &[sword], 6);
+        assert_eq!(
+            (skilled.damage_min, skilled.damage_max),
+            (plain.damage_min, plain.damage_max),
+            "навык не меняет урон"
+        );
+        assert_eq!((plain.damage_min, plain.damage_max), (11, 14), "6+5 / 9+5");
+        assert_eq!(plain.accuracy, 80, "без навыка");
+        assert_eq!(skilled.accuracy, 90, "5 рангов × 2 % точности");
     }
 
     /// M17/F30a: руна в сокете оружия даёт +урон в «Параметрах»;
