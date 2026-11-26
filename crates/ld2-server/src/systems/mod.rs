@@ -292,6 +292,16 @@ mod tests {
         assert!(xp >= 100_000, "XP на потолке копится");
     }
 
+    /// M33: премиум-множитель опыта — +50 % с округлением.
+    #[test]
+    fn premium_gain_applies_multiplier() {
+        assert_eq!(premium_gain(13, 1.5), 20, "19.5 → 20");
+        assert_eq!(premium_gain(10, 1.5), 15);
+        assert_eq!(premium_gain(7, 2.0), 14);
+        assert_eq!(premium_gain(0, 1.5), 0);
+        assert_eq!(premium_gain(5, 0.5), 5, "множитель < 1 не режет");
+    }
+
     #[test]
     fn kill_xp_amount_from_difficulty() {
         // skills.md §2.3: xp = base + difficulty × per (M31: 4 + 3×3)

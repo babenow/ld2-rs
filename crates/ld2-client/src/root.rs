@@ -81,7 +81,7 @@ use ely::forms::{
 use ely::layout::ScrollArea;
 use ely::navigation::Tabs;
 use ely::overlays::Dialog;
-use ely::primitives::IconName;
+use ely::primitives::{IconName, Tooltip};
 use ely::shell::WindowControls;
 /// Автор клиента (статус-бар логина/выбора персонажа, заказчик).
 pub(crate) const AUTHOR: &str = "M. Babenko";
