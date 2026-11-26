@@ -259,6 +259,8 @@ impl Session {
             let mut plan: Vec<(String, String)> = Vec::new();
             {
                 let mut world = self.state.world.lock().expect("мир");
+                // M32: магическое сопротивление моба снижает урон.
+                let damage = crate::systems::after_resist(damage, world.mob_resist(target));
                 if let Some(hp) = world.damage_mob(target, damage) {
                     let mob_name = world
                         .mob(target)
@@ -510,6 +512,8 @@ impl Session {
             let mut plan: Vec<(String, String)> = Vec::new();
             {
                 let mut world = self.state.world.lock().expect("мир");
+                // M32: магическое сопротивление моба снижает урон.
+                let damage = crate::systems::after_resist(damage, world.mob_resist(target));
                 if let Some(hp) = world.damage_mob(target, damage) {
                     let mob_name = world
                         .mob(target)

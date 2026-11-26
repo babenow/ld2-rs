@@ -210,10 +210,38 @@ impl Session {
             resource_spent = true;
         }
 
-        // Урон: base_damage × множитель способности (§4: ×1.8).
-        let damage = ((self.state.config.gameplay.combat.base_damage as f64) * active.damage_mult)
-            .round()
-            .max(1.0) as i64;
+        // M32: урон способности — бросок урона листа × множитель;
+        // точность/уклон/парирование/броня моба — как у авто-атаки.
+        let (damage, miss) = {
+            let mut world = self.state.world.lock().expect("мир");
+            let combat = world
+                .char_combat(&char_id)
+                .unwrap_or(crate::world::CharCombat {
+                    damage_min: self.state.config.gameplay.combat.base_damage,
+                    damage_max: self.state.config.gameplay.combat.base_damage,
+                    accuracy: 80,
+                    dodge: 0,
+                    parry: 0,
+                    armor: 0,
+                });
+            let (mob_armor, mob_dodge, mob_parry, _, _) = world.mob_defense(target);
+            let rolls = (world.roll_pct(), world.roll01(), world.roll_pct());
+            match crate::systems::ability_damage(
+                combat.accuracy,
+                mob_dodge,
+                combat.damage_min,
+                combat.damage_max,
+                mob_armor,
+                mob_parry,
+                active.damage_mult,
+                rolls.0,
+                rolls.1,
+                rolls.2,
+            ) {
+                Some(dmg) => (dmg, false),
+                None => (0, true),
+            }
+        };
         // M17/F30e: ярость воина за нанесённый урон (15 % — конфиг).
         let rage = crate::systems::rage_gain(res_cfg, profile, damage);
 
@@ -272,7 +300,27 @@ impl Session {
         let mut hit_done = false;
         {
             let mut world = self.state.world.lock().expect("мир");
-            if let Some(hp) = world.damage_mob(target, damage) {
+            if miss {
+                let mob_name = world
+                    .mob(target)
+                    .map(|m| m.name.clone())
+                    .unwrap_or_default();
+                let hit = CombatHit {
+                    source: char_id.clone(),
+                    source_name: by_name.clone(),
+                    target: target.to_string(),
+                    target_name: mob_name,
+                    kind: CombatKind::Skill,
+                    amount: 0,
+                    crit: false,
+                    miss: true,
+                    text: format!("«{skill_name}»: промах"),
+                    extra: Default::default(),
+                };
+                for addr in world.chars_in_location(&location) {
+                    push_evt(&mut others, &addr, "evt/combat/hit", &hit);
+                }
+            } else if let Some(hp) = world.damage_mob(target, damage) {
                 hit_done = true;
                 let mob_name = world
                     .mob(target)
@@ -608,6 +656,8 @@ impl Session {
             }
             (events, pool_left)
         };
+        // M32: новый ранг навыка → пересчёт урона/защиты в кэше мира.
+        self.refresh_char_hits_as(&char_id).await;
         let mut outs = vec![
             Self::ack_payload(
                 seq,

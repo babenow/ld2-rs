@@ -27,6 +27,8 @@ pub fn test_config(db_url: &str, tweak: impl FnOnce(&mut Config)) -> Config {
     cfg.database.url = db_url.to_string();
     // Контент — из репозитория (CWD тестов — корень crate, M12.3/D26).
     cfg.world.content_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    // M32: детерминированные боевые броски в e2e (иначе тесты флакают).
+    cfg.gameplay.combat.rng_seed = Some(0x5EED_1234);
     tweak(&mut cfg);
     cfg
 }

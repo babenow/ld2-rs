@@ -703,6 +703,25 @@ impl Session {
             world.set_char_hits_as(char_id, hits);
             world.set_char_attack_ms(char_id, attack_ms);
         }
+        // M32: боевые параметры листа (урон/точность/уклон/парирование/
+        // броня) — кэш для синхронного тика: бой больше не бьёт
+        // константой конфига. Обновляется при входе/экипировке/рунах.
+        if let Ok(Some(row)) = db::characters::get(&self.state.pool, char_id).await {
+            if let Ok(state) = self.character_state(&row).await {
+                if let Some(d) = state.derived {
+                    let combat = crate::world::CharCombat {
+                        damage_min: d.damage_min,
+                        damage_max: d.damage_max,
+                        accuracy: d.accuracy,
+                        dodge: d.dodge,
+                        parry: d.parry_chance,
+                        armor: d.armor,
+                    };
+                    let mut world = self.state.world.lock().expect("мир");
+                    world.set_char_combat(char_id, combat);
+                }
+            }
+        }
         // M18/F58d: то же оружие — источник рун для авто-приёма.
         refresh_char_runes(&self.state, char_id).await;
     }

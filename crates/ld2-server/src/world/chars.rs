@@ -64,7 +64,34 @@ pub struct RuneBuff {
     pub max_stacks: i32,
 }
 
+/// M32: снимок боевых параметров персонажа для синхронного тика боя
+/// (без похода в БД на каждый удар). Источник — `stats::derive`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CharCombat {
+    /// Урон удара: `damage_min..=damage_max` (уже с оружием/навыком).
+    pub damage_min: i64,
+    pub damage_max: i64,
+    /// Точность (1..99) — шанс попасть по мобу.
+    pub accuracy: i64,
+    /// Уклонение (0..60) — шанс моба промахнуться.
+    pub dodge: i64,
+    /// Парирование (0..60) — шанс вдвое снизить урон.
+    pub parry: i64,
+    /// Броня — плоское снижение входящего урона.
+    pub armor: i64,
+}
+
 impl World {
+    /// M32: обновить кэш боевых параметров персонажа.
+    pub fn set_char_combat(&mut self, char_id: &str, combat: CharCombat) {
+        self.char_combat.insert(char_id.to_string(), combat);
+    }
+
+    /// M32: боевые параметры персонажа (до входа в мир — нет).
+    pub fn char_combat(&self, char_id: &str) -> Option<CharCombat> {
+        self.char_combat.get(char_id).copied()
+    }
+
     /// M24: включить/выключить неуязвимость персонажа («режим бога»).
     pub fn set_god(&mut self, char_id: &str, enabled: bool) {
         if enabled {

@@ -302,13 +302,17 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
         "until_epoch: {cd}"
     );
     let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
-    assert_eq!(hit["payload"]["amount"], 11, "6 × 1.8 = 11: {hit}");
     assert_eq!(hit["payload"]["kind"], "skill");
     assert_eq!(hit["payload"]["target"], "m_3");
+    // M32: урон — бросок листа (11) ×1.8 = 20, минус броня волка 6;
+    // парирование моба может вдвое срезать удар.
+    let amount = hit["payload"]["amount"].as_i64().expect("amount");
+    assert!((1..=20).contains(&amount), "урон способности: {hit}");
+    assert_eq!(hit["payload"]["miss"], false, "попали: {hit}");
     let hp = c
         .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
         .await;
-    assert_eq!(hp["payload"]["hp"]["cur"], 7, "18 − 11: {hp}");
+    assert_eq!(hp["payload"]["hp"]["cur"], 18 - amount, "18 − урон: {hp}");
 
     // 3) Повтор в кулдауне → E_COOLDOWN + retry_after_s (§7).
     let seq = c
@@ -369,7 +373,7 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
 
-    // Первый удар: 18 − 11 = 7.
+    // Первый удар способностью (M32: урон листа ×1.8 − броня моба).
     let seq = c
         .send(
             "cmd/skill.use",
@@ -379,26 +383,22 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     assert_eq!(c.ack(seq).await["result"], "ok", "первый удар");
     c.wait_event("evt/combat/cooldown").await;
     let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
-    assert_eq!(hit["payload"]["amount"], 11, "урон: {hit}");
+    let amount = hit["payload"]["amount"].as_i64().expect("amount");
+    assert!(amount > 0, "удар нанёс урон: {hit}");
     // M17/F30f: в логе имя способности (не id) и жирный урон.
     let text = hit["payload"]["text"].as_str().unwrap_or_default();
     assert!(text.contains("«Удар мощью»"), "имя скилла: {text}");
-    assert!(text.contains("**−11**"), "жирный урон: {text}");
+    assert!(
+        text.contains(&format!("**−{amount}**")),
+        "жирный урон: {text}"
+    );
 
-    // Кулдаун 0.5 с → до 1 с в гранулярности epoch-секунд; ждём с запасом.
-    tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
-
-    // Второй удар добивает (11 ≥ 7) → труп + XP убийства (13 = 4 + 3×3, M31).
+    // Добиваем авто-атаками (M32: промахи/парирование — случайны, поэтому
+    // не полагаемся на фиксированное число ударов; тик бьёт раз в секунду).
     let seq = c
-        .send(
-            "cmd/skill.use",
-            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
-        )
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
         .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "второй удар");
-    c.wait_event("evt/combat/cooldown").await;
-    let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
-    assert_eq!(hit["payload"]["amount"], 11, "урон добивающего: {hit}");
+    assert_eq!(c.ack(seq).await["result"], "ok", "авто-атака");
     let corpse = c.wait_event("evt/corpse/created").await;
     assert_eq!(corpse["payload"]["entity"]["kind"], "corpse");
     let xp = c.wait_event("evt/char/xp").await;

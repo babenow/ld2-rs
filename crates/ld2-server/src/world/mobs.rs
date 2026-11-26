@@ -206,6 +206,18 @@ pub struct LiveMob {
     pub aggro: bool,
     /// Урон моба (content `damage`, по умолчанию 4).
     pub damage: i64,
+    /// M32: боевые статы моба (content `combat` или плоские поля;
+    /// дефолты — от сложности 1..10).
+    /// Броня — плоское снижение физического урона.
+    pub armor: i64,
+    /// Уклонение, % (0..60) — шанс увернуться от удара игрока.
+    pub dodge: i64,
+    /// Парирование, % (0..60) — шанс вдвое снизить удар.
+    pub parry: i64,
+    /// Магическое сопротивление, % (0..80).
+    pub resist: i64,
+    /// Точность (1..99) — шанс попасть по игроку.
+    pub accuracy: i64,
     /// Следующая атака моба (epoch, мс).
     pub next_attack_at: i64,
     /// M24: одноразовый «админ-лут» (админ-панель): попадёт в труп
@@ -254,6 +266,15 @@ pub struct LiveMob {
 impl LiveMob {
     /// Проводной вид §6 (для списков сущностей и снапшотов).
     pub fn entity(&self) -> Entity {
+        // M32: боевые статы — в `extra` (аддитивно §6): клиентские
+        // подсказки/карточка моба показывают защиту.
+        let mut extra = serde_json::Map::new();
+        extra.insert("difficulty".into(), serde_json::json!(self.difficulty));
+        extra.insert("armor".into(), serde_json::json!(self.armor));
+        extra.insert("dodge".into(), serde_json::json!(self.dodge));
+        extra.insert("parry".into(), serde_json::json!(self.parry));
+        extra.insert("resist".into(), serde_json::json!(self.resist));
+        extra.insert("accuracy".into(), serde_json::json!(self.accuracy));
         Entity {
             id: self.id.clone(),
             kind: EntityKind::Monster,
@@ -281,7 +302,7 @@ impl LiveMob {
             next_attack_at: (self.next_attack_at > 0).then_some(self.next_attack_at),
             attack_interval: (self.attack_interval > 0).then_some(self.attack_interval),
             attacking: self.target.clone(),
-            extra: Default::default(),
+            extra,
         }
     }
 }
@@ -476,6 +497,18 @@ impl World {
     }
     pub fn mob_damage(&self, mob_id: &str) -> i64 {
         self.mobs.get(mob_id).map(|m| m.damage).unwrap_or(0)
+    }
+    /// M32: боевая защита моба → (броня, уклонение %, парирование %,
+    /// магическое сопротивление %, точность).
+    pub fn mob_defense(&self, mob_id: &str) -> (i64, i64, i64, i64, i64) {
+        self.mobs
+            .get(mob_id)
+            .map(|m| (m.armor, m.dodge, m.parry, m.resist, m.accuracy))
+            .unwrap_or((0, 0, 0, 0, 75))
+    }
+    /// M32: магическое сопротивление моба, %.
+    pub fn mob_resist(&self, mob_id: &str) -> i64 {
+        self.mobs.get(mob_id).map(|m| m.resist).unwrap_or(0)
     }
     pub fn mob_max_hp(&self, mob_id: &str) -> i64 {
         self.mobs.get(mob_id).map(|m| m.hp_max).unwrap_or(0)

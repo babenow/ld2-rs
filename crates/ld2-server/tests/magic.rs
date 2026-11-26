@@ -418,6 +418,7 @@ async fn scroll_cast_needs_target_and_kills() {
 
     let scroll1 = give(&mut c, "scroll_frost").await;
     let scroll2 = give(&mut c, "scroll_frost").await;
+    let scroll3 = give(&mut c, "scroll_frost").await;
 
     // В лес — к волку (hp 18, свиток бьёт на 9 → два каста).
     let seq = c
@@ -432,7 +433,7 @@ async fn scroll_cast_needs_target_and_kills() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_TARGET_GONE", "без цели: {ack}");
 
-    // Первый каст: урон 9, волк жив (18 → 9).
+    // Первый каст: урон 9 − 6 % магреза волка = 8 (18 → 10, M32).
     let seq = c
         .send(
             "cmd/magic.scroll_cast",
@@ -449,13 +450,13 @@ async fn scroll_cast_needs_target_and_kills() {
     let removed = c.wait_event("evt/item/removed").await;
     assert_eq!(removed["payload"]["uid"], scroll1);
     let hit = c
-        .wait(|v| {
-            v["type"] == "evt/combat/hit"
-                && v["payload"]["source"] == char
-                && v["payload"]["amount"] == 9
-        })
+        .wait(|v| v["type"] == "evt/combat/hit" && v["payload"]["source"] == char)
         .await;
     assert_eq!(hit["payload"]["target"], "m_3", "урон волку: {hit}");
+    assert_eq!(
+        hit["payload"]["amount"], 8,
+        "9 − 6 % сопротивления = 8: {hit}"
+    );
     // M17/F30f: слова заклинания и «чем бьёт» — в строке кастера,
     // магические слова жирные.
     let text = hit["payload"]["text"].as_str().unwrap_or_default();
@@ -465,15 +466,28 @@ async fn scroll_cast_needs_target_and_kills() {
     let hp = c
         .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
         .await;
-    assert_eq!(hp["payload"]["hp"]["cur"], 9, "18 − 9: {hp}");
+    assert_eq!(hp["payload"]["hp"]["cur"], 10, "18 − 8: {hp}");
 
-    // Второй каст добивает: труп + XP в школу `frost`; M17/F30g:
-    // кулдаун свитка (1 с) между кастами одного определения.
+    // Второй каст: 10 → 2 (M17/F30g: кулдаун свитка 1 с).
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let seq = c
         .send(
             "cmd/magic.scroll_cast",
             json!({ "item_uid": scroll2, "target_id": "m_3" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "второй каст");
+    let hp = c
+        .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
+        .await;
+    assert_eq!(hp["payload"]["hp"]["cur"], 2, "10 − 8: {hp}");
+
+    // Третий каст добивает: труп + XP в школу `frost`.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let seq = c
+        .send(
+            "cmd/magic.scroll_cast",
+            json!({ "item_uid": scroll3, "target_id": "m_3" }),
         )
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "каст-добивание");
@@ -489,7 +503,7 @@ async fn scroll_cast_needs_target_and_kills() {
     let seq = c
         .send(
             "cmd/magic.scroll_cast",
-            json!({ "item_uid": scroll2, "target_id": "m_3" }),
+            json!({ "item_uid": scroll3, "target_id": "m_3" }),
         )
         .await;
     let ack = c.ack(seq).await;

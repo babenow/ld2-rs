@@ -20,6 +20,80 @@ use crate::world::World;
 
 use super::plan::{event_text, push_event, push_text, KillXp, MobHit, Plan, RuneWork};
 
+/// M32: исход одного физического удара (без событий — их шлёт вызывающая
+/// точка).
+enum MeleeOutcome {
+    Miss,
+    Hit { damage: i64, parried: bool },
+}
+
+/// M32: бросок атаки персонажа по мобу: точность против уклонения,
+/// затем урон листа, парирование моба (½) и плоская броня.
+fn char_melee_outcome(
+    world: &mut World,
+    char_id: &str,
+    target: &str,
+    cfg: &CombatSection,
+) -> MeleeOutcome {
+    let combat = world
+        .char_combat(char_id)
+        .unwrap_or(crate::world::CharCombat {
+            damage_min: cfg.base_damage,
+            damage_max: cfg.base_damage,
+            accuracy: 80,
+            dodge: 0,
+            parry: 0,
+            armor: 0,
+        });
+    let (mob_armor, mob_dodge, mob_parry, _, _) = world.mob_defense(target);
+    if !crate::systems::hit_rolls(combat.accuracy, mob_dodge, world.roll_pct()) {
+        return MeleeOutcome::Miss;
+    }
+    let mut damage =
+        crate::systems::roll_damage(combat.damage_min, combat.damage_max, world.roll01());
+    let parried = world.roll_pct() < mob_parry as f64;
+    if parried {
+        damage = crate::systems::after_parry(damage);
+    }
+    MeleeOutcome::Hit {
+        damage: crate::systems::after_armor(damage, mob_armor),
+        parried,
+    }
+}
+
+/// M32: бросок атаки моба по персонажу: точность моба против уклонения
+/// игрока, его парирование (½) и броня.
+fn mob_melee_outcome(
+    world: &mut World,
+    mob_id: &str,
+    victim: &str,
+    damage_mult: f64,
+) -> MeleeOutcome {
+    let (_, _, _, _, mob_accuracy) = world.mob_defense(mob_id);
+    let combat = world
+        .char_combat(victim)
+        .unwrap_or(crate::world::CharCombat {
+            damage_min: 0,
+            damage_max: 0,
+            accuracy: 80,
+            dodge: 0,
+            parry: 0,
+            armor: 0,
+        });
+    if !crate::systems::hit_rolls(mob_accuracy, combat.dodge, world.roll_pct()) {
+        return MeleeOutcome::Miss;
+    }
+    let mut amount = ((world.mob_damage(mob_id) as f64) * damage_mult).round() as i64;
+    let parried = world.roll_pct() < combat.parry as f64;
+    if parried {
+        amount = crate::systems::after_parry(amount);
+    }
+    MeleeOutcome::Hit {
+        damage: crate::systems::after_armor(amount, combat.armor),
+        parried,
+    }
+}
+
 pub(super) fn plan_combat(
     world: &mut World,
     now_ms: i64,
@@ -101,7 +175,50 @@ fn char_attack(
         );
         return;
     }
-    let Some(hp) = world.damage_mob(&target, cfg.base_damage) else {
+    let mob_name = world
+        .mob(&target)
+        .map(|m| m.name.clone())
+        .unwrap_or_default();
+    let source_name = world.char_name(&char_id).unwrap_or_default();
+    // M32: бой — реальный урон листа (оружие/навык/сила), точность,
+    // уклон/парирование/броня моба (раньше били константой конфига).
+    let hits_as = world.char_hits_as(&char_id);
+    let (damage, parried) = match char_melee_outcome(world, &char_id, &target, cfg) {
+        MeleeOutcome::Miss => {
+            let mk = |text: String| CombatHit {
+                source: char_id.clone(),
+                source_name: source_name.clone(),
+                target: target.clone(),
+                target_name: mob_name.clone(),
+                kind: CombatKind::Melee,
+                amount: 0,
+                crit: false,
+                miss: true,
+                text,
+                extra: Default::default(),
+            };
+            push_event(
+                plan,
+                &char_id,
+                "evt/combat/hit",
+                &mk(format!("Вы промахиваетесь по {mob_name}")),
+            );
+            for addr in world.chars_in_location(&loc) {
+                if addr == char_id {
+                    continue;
+                }
+                push_event(
+                    plan,
+                    &addr,
+                    "evt/combat/hit",
+                    &mk(format!("{source_name} промахивается по {mob_name}")),
+                );
+            }
+            return;
+        }
+        MeleeOutcome::Hit { damage, parried } => (damage, parried),
+    };
+    let Some(hp) = world.damage_mob(&target, damage) else {
         world.end_combat(&char_id);
         push_event(
             plan,
@@ -114,39 +231,35 @@ fn char_attack(
         return;
     };
     // M17/F30e: нанесённый урон → ярость (применяется в tick_once).
-    plan.char_hits.push((char_id.clone(), cfg.base_damage));
-    let mob_name = world
-        .mob(&target)
-        .map(|m| m.name.clone())
-        .unwrap_or_default();
+    plan.char_hits.push((char_id.clone(), damage));
     let mob_max = world.mob_max_hp(&target);
-    let source_name = world.char_name(&char_id).unwrap_or_default();
 
     // M17/F30f: строка удара — «вы» атакующему, имя — наблюдателям;
     // «чем бьёт» — кэш экипированного оружия в мире.
-    let hits_as = world.char_hits_as(&char_id);
     let mk_hit = |text: String| CombatHit {
         source: char_id.clone(),
         source_name: source_name.clone(),
         target: target.clone(),
         target_name: mob_name.clone(),
         kind: CombatKind::Melee,
-        amount: cfg.base_damage,
+        amount: damage,
         crit: false,
         miss: false,
         text,
         extra: Default::default(),
     };
+    let parry_note = if parried {
+        format!(" ({mob_name} парирует)")
+    } else {
+        String::new()
+    };
     push_event(
         plan,
         &char_id,
         "evt/combat/hit",
-        &mk_hit(crate::combat_log::melee_hit_text(
-            &source_name,
-            &mob_name,
-            hits_as,
-            cfg.base_damage,
-            true,
+        &mk_hit(format!(
+            "{}{parry_note}",
+            crate::combat_log::melee_hit_text(&source_name, &mob_name, hits_as, damage, true)
         )),
     );
     for addr in world.chars_in_location(&loc) {
@@ -157,12 +270,9 @@ fn char_attack(
             plan,
             &addr,
             "evt/combat/hit",
-            &mk_hit(crate::combat_log::melee_hit_text(
-                &source_name,
-                &mob_name,
-                hits_as,
-                cfg.base_damage,
-                false,
+            &mk_hit(format!(
+                "{}{parry_note}",
+                crate::combat_log::melee_hit_text(&source_name, &mob_name, hits_as, damage, false)
             )),
         );
     }
@@ -503,15 +613,57 @@ fn plan_mob_attacks(
         };
         // M25: цель атаки — для строки «атакует вас/имя» в списке.
         world.set_mob_target(&mob_id, &victim);
-        let amount = ((world.mob_damage(&mob_id) as f64) * damage_mult).round() as i64;
-        if amount <= 0 {
-            continue;
-        }
         let mob_name = world
             .mob(&mob_id)
             .map(|m| m.name.clone())
             .unwrap_or_default();
         let victim_name = world.char_name(&victim).unwrap_or_default();
+        // M32: точность моба против уклонения персонажа; парирование —
+        // половина урона, броня персонажа — плоское снижение.
+        let (amount, parried) = match mob_melee_outcome(world, &mob_id, &victim, damage_mult) {
+            MeleeOutcome::Miss => {
+                push_event(
+                    plan,
+                    &victim,
+                    "evt/combat/hit",
+                    &CombatHit {
+                        source: mob_id.clone(),
+                        source_name: mob_name.clone(),
+                        target: victim.clone(),
+                        target_name: victim_name,
+                        kind: CombatKind::Melee,
+                        amount: 0,
+                        crit: false,
+                        miss: true,
+                        text: format!("{mob_name} промахивается по вам"),
+                        extra: Default::default(),
+                    },
+                );
+                // Бар атаки обновляем и при промахе — моб всё равно бил.
+                for addr in world.chars_in_location(&loc) {
+                    push_event(
+                        plan,
+                        &addr,
+                        "evt/mob/attack",
+                        &ld2_protocol::evt::MobAttack {
+                            entity_id: mob_id.clone(),
+                            next_attack_at: now_ms + interval_ms,
+                            interval_ms,
+                        },
+                    );
+                }
+                continue;
+            }
+            MeleeOutcome::Hit { damage, parried } => (damage, parried),
+        };
+        if amount <= 0 {
+            continue;
+        }
+        let parry_note = if parried {
+            " (вы парируете)"
+        } else {
+            ""
+        };
         push_event(
             plan,
             &victim,
@@ -525,7 +677,7 @@ fn plan_mob_attacks(
                 amount,
                 crit: false,
                 miss: false,
-                text: format!("{mob_name} бьёт вас: **{amount}**"),
+                text: format!("{mob_name} бьёт вас: **{amount}**{parry_note}"),
                 extra: Default::default(),
             },
         );

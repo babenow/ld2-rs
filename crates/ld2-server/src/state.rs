@@ -67,11 +67,14 @@ impl AppState {
                 .map_err(|e| tracing::warn!("магазины NPC не загружены: {e}"))
                 .unwrap_or_default(),
         };
+        // M32: ГПСЧ боевых бросков — фиксированное зерно у тестов.
+        let mut world = World::default();
+        world.seed_rng(config.gameplay.combat.rng_seed);
         Self {
             config: Arc::new(config),
             pool,
             rate: AuthRateLimiter::new(),
-            world: Mutex::new(World::default()),
+            world: Mutex::new(world),
             shutdown,
             social: Mutex::new(SocialState::default()),
             content: RwLock::new(Arc::new(content)),
