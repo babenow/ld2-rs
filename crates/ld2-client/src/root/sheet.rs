@@ -474,6 +474,40 @@ mod tests {
         assert_eq!(school_label(ru, "necro"), "necro", "fallback");
     }
 
+    /// M32: у каждого из 16 производных параметров есть тултип-описание
+    /// с формулой (числа/проценты), RU и EN.
+    #[test]
+    fn param_tips_cover_all_derived_params() {
+        let keys = [
+            Key::ParAccuracy,
+            Key::ParDamage,
+            Key::ParCritChance,
+            Key::ParCritDamage,
+            Key::ParArmor,
+            Key::ParDodge,
+            Key::ParParry,
+            Key::ParParryChance,
+            Key::ParBlock,
+            Key::ParBlockChance,
+            Key::ParMagicDefense,
+            Key::ParMagicDodge,
+            Key::ParMagicResist,
+            Key::ParMagicDispel,
+            Key::ParMagicCritDamage,
+            Key::ParMagicCritChance,
+        ];
+        for key in keys {
+            let tip = param_tip(key).unwrap_or_else(|| panic!("нет тултипа: {key:?}"));
+            let ru = t(Lang::Ru, tip);
+            assert!(
+                ru.chars().any(|c| c.is_ascii_digit()),
+                "в описании есть числа: {ru}"
+            );
+            assert!(!t(Lang::En, tip).is_empty(), "EN: {key:?}");
+        }
+        assert_eq!(param_tip(Key::SheetAttrs), None, "не производный параметр");
+    }
+
     /// M17/F30d: основные характеристики переведены; харизма (cha)
     /// убрана — неизвестный ключ падает на сырое значение.
     #[test]
