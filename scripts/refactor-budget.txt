@@ -12,7 +12,7 @@ crates/ld2-client/src/root/game/entities.rs 672 187
 crates/ld2-client/src/root/game.rs 743 150
 crates/ld2-client/src/root/settings.rs 780 183
 crates/ld2-client/src/root/sheet/character.rs 770 150
-crates/ld2-client/src/root/sheet/equip.rs 630 181
+crates/ld2-client/src/root/sheet/equip.rs 647 181
 crates/ld2-client/src/root/social.rs 613 150
 crates/ld2-client/src/root.rs 905 176
 crates/ld2-client/src/text_input.rs 699 150
