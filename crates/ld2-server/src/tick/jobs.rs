@@ -252,6 +252,8 @@ pub(super) async fn harvest_step(state: &SharedState) {
             if let Some((_, xp_old, rank_row, _)) = learned {
                 let gain = crate::systems::harvest_xp_gain(required, level);
                 if gain > 0 {
+                    // M33/M34: премиум и другие множители профессии.
+                    let gain = crate::progress::profession_xp(state, &job.char_id, gain).await;
                     let cfg = &state.config.gameplay.professions;
                     let (xp_new, level_new) =
                         crate::systems::profession_level_up(cfg, xp_old, level, gain);
@@ -437,16 +439,8 @@ pub(super) async fn profession_xp_step(
         .map(|(_, x, r, l)| (*x, *r, *l))
         .unwrap_or((0, 1, 0));
     let cfg = &state.config.gameplay.professions;
-    // M33: премиум — ускоренная прокачка профессий.
-    let premium =
-        crate::db::accounts::premium_for_char(&state.pool, char_id, crate::time::now_epoch())
-            .await
-            .unwrap_or(false);
-    let gain = if premium {
-        crate::systems::premium_gain(gain, state.config.gameplay.premium.profession_mult)
-    } else {
-        gain
-    };
+    // M33/M34: премиум и другие множители опыта профессии.
+    let gain = crate::progress::profession_xp(state, char_id, gain).await;
     // M21: опыт растит УРОВЕНЬ (остаток переносится, потолок —
     // max_level); ранг меняет только тренер/награда квеста.
     let (xp, level_new) = crate::systems::profession_level_up(cfg, xp, level.max(0) as u32, gain);
