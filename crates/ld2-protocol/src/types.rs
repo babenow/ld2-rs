@@ -273,6 +273,11 @@ pub struct SkillSnapshot {
     pub rank: u32,
     pub xp: i64,
     pub xp_to_next: i64,
+    /// M31: потолок ранга по уровню персонажа (боевые/защитные/
+    /// магические — не более 2 рангов за уровень); `None` — навык без
+    /// такого ограничения. Аддитивно §6/§11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank_cap: Option<u32>,
 }
 
 /// Уровень опасности статуса преступления (§5 `crime.kinds`).

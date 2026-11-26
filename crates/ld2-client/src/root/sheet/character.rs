@@ -434,9 +434,21 @@ impl Root {
                 pal.accent,
                 pal,
             ));
-        // M18/F44: вложение очков из пула убрано (ADR-009) — повышение
-        // ранга только у тренера в диалоге; при полной шкале — подсказка.
-        if skill.xp_to_next > 0 && skill.xp >= skill.xp_to_next {
+        // M31: ранг ограничен уровнем персонажа (не более 2 за уровень
+        // для боевых/защитных/магических) — вместо «готово к повышению»
+        // показываем потолок; сервер откажет и тренеру.
+        let at_cap = skill.rank_cap.is_some_and(|cap| rank >= cap);
+        if at_cap {
+            let cap = skill.rank_cap.unwrap_or(rank);
+            row = row.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(rgb(pal.muted))
+                    .child(tf(lang, Key::SkillLevelCap, &[("cap", &cap.to_string())])),
+            );
+        } else if skill.xp_to_next > 0 && skill.xp >= skill.xp_to_next {
+            // M18/F44: вложение очков из пула убрано (ADR-009) — повышение
+            // ранга только у тренера в диалоге; при полной шкале — подсказка.
             row = row.child(
                 div()
                     .text_size(px(11.0))
@@ -464,9 +476,10 @@ impl Root {
                 skill.rank,
                 skill.xp,
                 skill.xp_to_next,
+                skill.rank_cap,
             ))
         });
-        let Some((name, desc, rank, xp, next)) = info else {
+        let Some((name, desc, rank, xp, next, cap)) = info else {
             self.skill_info = None;
             return None;
         };
@@ -487,6 +500,15 @@ impl Root {
                 pal.accent,
                 pal,
             ));
+        // M31: потолок ранга по уровню (если сервер его прислал).
+        if let Some(cap) = cap {
+            body = body.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.muted))
+                    .child(tf(lang, Key::SkillLevelCap, &[("cap", &cap.to_string())])),
+            );
+        }
         if !desc.is_empty() {
             body = body.child(div().child(desc));
         }
@@ -550,24 +572,29 @@ impl Root {
                 .child(t(lang, Key::SheetAttrs)),
         );
         for (key, value) in &snap.char.attrs {
+            // M31: тултип-описание атрибута (заказчик).
+            let mut row = div()
+                .id(format!("ld2-attr-{key}"))
+                .flex()
+                .flex_row()
+                .justify_between()
+                .px_2()
+                .rounded_md()
+                .bg(rgb(pal.panel));
+            if let Some(tip) = attr_tip(lang, key) {
+                row = row.tooltip(Tooltip::text(tip));
+            }
             col = col.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .justify_between()
-                    .px_2()
-                    .rounded_md()
-                    .bg(rgb(pal.panel))
-                    .child(
-                        div()
-                            .text_color(rgb(pal.muted))
-                            .child(attr_label(lang, key)),
-                    )
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child(value.to_string()),
-                    ),
+                row.child(
+                    div()
+                        .text_color(rgb(pal.muted))
+                        .child(attr_label(lang, key)),
+                )
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(value.to_string()),
+                ),
             );
         }
         col

@@ -152,6 +152,26 @@ pub fn level_for_total(total_xp: i64, cfg: &LevelSection) -> (u32, i64, i64) {
     }
 }
 
+/// M31: группы, для которых ранг ограничен уровнем персонажа
+/// (заказчик: боевые/защитные/магические — не более 2 за уровень).
+pub fn level_capped_group(group: &str) -> bool {
+    matches!(group, "weapon" | "defense" | "magic")
+}
+
+/// M31: потолок ранга навыка. Для боевых/защитных/магических —
+/// `min(rank_max, ranks_per_level × уровень персонажа)`, для остальных
+/// групп — только `rank_max`.
+pub fn skill_rank_cap(cfg: &SkillsSection, group: &str, char_level: u32) -> u32 {
+    if level_capped_group(group) {
+        char_level
+            .max(1)
+            .saturating_mul(cfg.ranks_per_level.max(1))
+            .min(cfg.rank_max)
+    } else {
+        cfg.rank_max
+    }
+}
+
 /// Применить опыт убийства к навыку (skills.md §2.3): ранги растут, пока
 /// хватает гейтов атрибутов; на гейте/потолке XP копится в текущем ранге
 /// (гейты блокируют без ошибки — в отличие от вложения пула, §2.2).
@@ -162,6 +182,7 @@ pub fn apply_kill_xp(
     amount: i64,
     cfg: &SkillsSection,
     max_attr: i64,
+    rank_cap: u32,
 ) -> (i64, i32) {
     let mut xp = xp + amount;
     let mut rank = rank;
@@ -170,7 +191,7 @@ pub fn apply_kill_xp(
         if xp < need {
             break;
         }
-        if rank >= cfg.rank_max as i32 {
+        if rank >= rank_cap as i32 {
             break; // потолок: XP копится без роста ранга
         }
         let next = rank + 1;

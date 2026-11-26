@@ -64,6 +64,11 @@ const fn default_content_poll_s() -> u64 {
     30
 }
 
+/// M31: по умолчанию — 2 ранга за уровень персонажа.
+const fn default_ranks_per_level() -> u32 {
+    2
+}
+
 /// Константы модели опыта навыков (skills.md §8 — «конфиг сервера», D25).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,6 +80,11 @@ pub struct SkillsSection {
     pub rank_max: u32,
     /// Гейты по атрибутам: ранг → требуемое значение (→ `E_REQUIREMENT_ATTR`).
     pub gates: Vec<SkillGate>,
+    /// M31: потолок ранга боевых/защитных/магических навыков — не
+    /// более N рангов за уровень персонажа (2 → ранг ≤ 2×уровень).
+    /// Остальные группы (stealth/practice/social) не ограничены.
+    #[serde(default = "default_ranks_per_level")]
+    pub ranks_per_level: u32,
     /// Опыт за убийство (skills.md §2.3): `(base + difficulty × per)`.
     pub kill_xp_base: i64,
     pub kill_xp_per_difficulty: i64,

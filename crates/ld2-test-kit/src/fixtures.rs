@@ -489,6 +489,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
                 group: Some("weapon".into()),
                 xp: 612,
                 xp_to_next: 1471,
+                rank_cap: None,
             },
             SkillSnapshot {
                 id: "arcana".into(),
@@ -498,6 +499,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
                 group: Some("magic".into()),
                 xp: 40,
                 xp_to_next: 480,
+                rank_cap: None,
             },
         ],
         professions: vec![ProfessionSnapshot {

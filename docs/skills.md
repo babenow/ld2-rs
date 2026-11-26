@@ -45,6 +45,12 @@ xp_to_next(rank) = round( BASE_XP × GROWTH^rank )       # BASE_XP=120, GROWTH=1
 ```
 
 - Ранг навыка: `0 … RANK_MAX (30)`.
+- **Потолок по уровню персонажа (M31):** боевые, защитные и магические навыки
+  (`weapon`/`defense`/`magic`) — **не более 2 рангов за уровень**:
+  `rank ≤ min(RANK_MAX, ranks_per_level × уровень)`. XP сверх потолка копится и
+  добирает ранги после повышения уровня; попытка обучения у тренера выше
+  потолка → `E_RANK_CAP`. Остальные группы (`stealth`/`practice`/`social`)
+  уровнем не ограничены.
 - **Гейты по атрибутам:** ранг 10 требует атрибут 12, ранг 20 — 18, ранг 30 — 25 (сервер
   возвращает `E_REQUIREMENT_ATTR` при попытке вложить).
 - Потеря при смерти: **только лут** (ТЗ §3.6). Опыт навыков и XP-пул **не теряются** — осознанное
@@ -52,7 +58,8 @@ xp_to_next(rank) = round( BASE_XP × GROWTH^rank )       # BASE_XP=120, GROWTH=1
 
 ### 2.3 Множители убийств (relevance)
 
-`xp_kill = (8 + difficulty × 6) × relevance`, где `difficulty` — серверная сложность монстра 1..10.
+`xp_kill = (4 + difficulty × 3) × relevance`, где `difficulty` — серверная сложность монстра 1..10
+(M31: опыт снижен вдвое — 8+6×d → 4+3×d, указание заказчика).
 
 | Relevance | Кому | Пример |
 |---|---|---|
@@ -262,9 +269,10 @@ xp_to_next(rank) = round( BASE_XP × GROWTH^rank )       # BASE_XP=120, GROWTH=1
 base_xp = 120            # xp_to_next = round(base * growth^rank)
 growth = 1.32
 rank_max = 30
+ranks_per_level = 2                        # M31: боевые/защитные/магические — 2 ранга за уровень
 gates = { 10 = 12, 20 = 18, 30 = 25 }      # ранг → требуемый атрибут
-kill_xp_base = 8
-kill_xp_per_difficulty = 6
+kill_xp_base = 4                           # M31: снижено с 8
+kill_xp_per_difficulty = 3                 # M31: снижено с 6
 relevance = { primary = 1.0, secondary = 0.4, tertiary = 0.2 }
 quest_pool = { simple = [50, 150], chain = [500, 1500], daily = 100 }
 

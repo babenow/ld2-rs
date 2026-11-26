@@ -127,6 +127,14 @@ pub enum Key {
     AttrInt,
     // M30: духовность — макс. мана и реген (character-params.md §1.1)
     AttrSpir,
+    // M31: тултипы-описания атрибутов (character-params.md §1)
+    AttrStrTip,
+    AttrDexTip,
+    AttrVitTip,
+    AttrIntTip,
+    AttrSpirTip,
+    /// M31: потолок ранга навыка по уровню персонажа (строка навыка).
+    SkillLevelCap,
     SheetInventory,
     MaxLabel,
     EquipLabel,
@@ -811,6 +819,12 @@ mod tests {
         Key::AttrVit,
         Key::AttrInt,
         Key::AttrSpir,
+        Key::AttrStrTip,
+        Key::AttrDexTip,
+        Key::AttrVitTip,
+        Key::AttrIntTip,
+        Key::AttrSpirTip,
+        Key::SkillLevelCap,
         Key::SheetInventory,
         Key::MaxLabel,
         Key::EquipLabel,

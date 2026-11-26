@@ -1160,6 +1160,7 @@ mod tests {
             rank,
             xp: 0,
             xp_to_next: 120,
+            rank_cap: None,
         };
         assert!(!game::power_strike_open(&[]), "навыков нет");
         assert!(

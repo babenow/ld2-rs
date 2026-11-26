@@ -434,9 +434,9 @@ impl Session {
                 )];
             }
         };
-        // Навык есть в контенте.
-        match db::skills::content_skill(pool, &cmd.skill_id).await {
-            Ok(Some(_)) => {}
+        // Навык есть в контенте (группа нужна для потолка по уровню).
+        let content_skill = match db::skills::content_skill(pool, &cmd.skill_id).await {
+            Ok(Some(skill)) => skill,
             Ok(None) => {
                 return vec![Self::err(seq, ErrorCode::XpPool, "нет такого навыка")];
             }
@@ -444,7 +444,7 @@ impl Session {
                 warn!("skill.train (навык): {e}");
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
-        }
+        };
         // Прогресс: строка создаётся использованием навыка (тик боя/
         // крафта); без неё шкала пустая → отказ до оплаты.
         let (xp, rank) = match db::skills::learned(pool, &char_id).await {
@@ -459,6 +459,40 @@ impl Session {
             }
         };
         let cfg = &self.state.config.skills;
+        if rank >= cfg.rank_max as i32 {
+            return vec![Self::err(
+                seq,
+                ErrorCode::RankCap,
+                "достигнут потолок ранга",
+            )];
+        }
+        let next = rank + 1;
+        // M31: потолок ранга по уровню персонажа — не более 2 за уровень
+        // для боевых/защитных/магических навыков (заказчик). Проверяем до
+        // шкалы 100 %: у потолка она может быть полной, но ранг не растёт.
+        let total_xp = match db::characters::get(pool, &char_id).await {
+            Ok(Some(row)) => row.total_xp,
+            Ok(None) => {
+                return vec![Self::err(seq, ErrorCode::Internal, "персонаж не найден")];
+            }
+            Err(e) => {
+                warn!("skill.train (уровень): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
+        let (char_level, ..) =
+            crate::systems::level_for_total(total_xp, &self.state.config.gameplay.level);
+        let rank_cap = crate::systems::skill_rank_cap(cfg, &content_skill.skill_group, char_level);
+        if next as u32 > rank_cap {
+            return vec![Self::err(
+                seq,
+                ErrorCode::RankCap,
+                format!(
+                    "потолок ранга по уровню: {} за уровень (уровень {char_level} → максимум {rank_cap})",
+                    cfg.ranks_per_level
+                ),
+            )];
+        }
         let need = crate::systems::xp_to_next(rank.max(0) as u32, cfg);
         // M18/F44: повышение ранга — только при полной шкале (100 %).
         if need > 0 && xp < need {
@@ -469,14 +503,6 @@ impl Session {
                 format!("шкала навыка заполнена на {percent} % — нужно 100 %"),
             )];
         }
-        if rank >= cfg.rank_max as i32 {
-            return vec![Self::err(
-                seq,
-                ErrorCode::RankCap,
-                "достигнут потолок ранга",
-            )];
-        }
-        let next = rank + 1;
         // Гейт атрибутов (§2.2 skills.md) — как у прежнего вложения.
         if let Some(gate) = cfg.gates.iter().find(|g| g.rank as i32 == next) {
             let max_attr = self

@@ -264,7 +264,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 
 // SkillSnapshot
 { "id": "sword", "name": "Владение мечом", "description": "+2% физ. урона мечом",
-  "rank": 3, "level": 120, "xp": 300, "xp_to_next": 436 }  // M21: level — вторая шкала (границы рангов кратно 50)
+  "rank": 3, "level": 120, "xp": 300, "xp_to_next": 436,
+  "rank_cap": 6 }  // M31: потолок по уровню (2 ранга/уровень; нет поля — без ограничения)
 
 // BuffState (M18/F58d, ADR-012 §6): активный бафф руны в char.buffs
 { "kind": "rune_marksman", "title": "Меткость",     // kind — ключ, title — для UI
