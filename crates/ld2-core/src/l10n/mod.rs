@@ -46,6 +46,8 @@ pub enum Key {
     PremiumDayOne,
     PremiumDayFew,
     PremiumDayMany,
+    /// M34: аккаунт вытеснен повторным входом (тост на экране входа).
+    SessionReplaced,
     Subtitle,
     Exit,
     Language,
@@ -768,6 +770,7 @@ mod tests {
         Key::PremiumDayOne,
         Key::PremiumDayFew,
         Key::PremiumDayMany,
+        Key::SessionReplaced,
         Key::Subtitle,
         Key::Exit,
         Key::Language,

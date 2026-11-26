@@ -89,6 +89,40 @@ async fn register_login_logout_resume_flow() {
     assert_eq!(c3.ack(seq).await["result"], "ok");
 }
 
+/// M34: повторный вход на аккаунт вытесняет старую сессию: ей уходит
+/// `evt/session/replaced`, персонаж освобождается для нового окна.
+#[tokio::test]
+async fn second_login_replaces_old_session() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c1, login, char_id) = common::in_world(&ws).await;
+
+    // Второе окно входит тем же логином/паролем.
+    let mut c2 = WsClient::connect(&ws).await;
+    let seq = c2
+        .send(
+            "cmd/auth.login",
+            json!({ "login": login, "password": "longenough1" }),
+        )
+        .await;
+    assert_eq!(c2.ack(seq).await["result"], "ok", "второй вход");
+    c2.wait_event("evt/session.start").await;
+
+    // Старое окно получает сигнал разлогина.
+    let replaced = c1.wait_event("evt/session/replaced").await;
+    assert_eq!(replaced["type"], "evt/session/replaced");
+
+    // Персонаж старой сессии освобождён — новый вход его выбирает.
+    let seq = c2
+        .send("cmd/char.select", json!({ "char_id": char_id }))
+        .await;
+    let ack = c2.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "персонаж освобождён: {ack}");
+}
+
 #[tokio::test]
 async fn credential_errors_and_register_disabled() {
     let Some(db_url) = common::test_url() else {

@@ -292,6 +292,32 @@ mod tests {
         assert!(xp >= 100_000, "XP на потолке копится");
     }
 
+    /// M34: множители профессии перемножаются (премиум × событие).
+    #[test]
+    fn profession_multipliers_stack() {
+        assert_eq!(profession_xp_multiplier(false, 1.5, &[]), 1.0);
+        assert_eq!(profession_xp_multiplier(true, 1.5, &[]), 1.5);
+        assert!(
+            (profession_xp_multiplier(true, 1.5, &[1.2]) - 1.8).abs() < 1e-9,
+            "премиум × акция"
+        );
+        assert_eq!(
+            profession_xp_multiplier(false, 1.5, &[1.2, 0.5]),
+            0.6,
+            "множители перемножаются (включая дебафф)"
+        );
+        assert_eq!(
+            profession_xp_multiplier(false, 1.5, &[1.2, -0.5]),
+            1.2,
+            "неположительный отброшен"
+        );
+        assert_eq!(
+            profession_xp_multiplier(true, 0.5, &[]),
+            1.0,
+            "премиум < 1 не режет"
+        );
+    }
+
     /// M33: премиум-множитель опыта — +50 % с округлением.
     #[test]
     fn premium_gain_applies_multiplier() {

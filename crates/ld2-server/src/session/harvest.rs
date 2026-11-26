@@ -321,17 +321,9 @@ impl Session {
         // 7) XP профессии (паритет крафта) → снапшот себе.
         if let Some((prof, xp_old, rank, level)) = prof_xp {
             let cfg = &self.state.config.gameplay.professions;
-            let mut gain = cfg.xp_per_craft_base + cfg.xp_per_craft_per_rank * i64::from(rank);
-            // M33: премиум — ускоренная прокачка профессий.
-            let premium = db::accounts::premium_for_char(pool, &char_id, crate::time::now_epoch())
-                .await
-                .unwrap_or(false);
-            if premium {
-                gain = crate::systems::premium_gain(
-                    gain,
-                    self.state.config.gameplay.premium.profession_mult,
-                );
-            }
+            let gain = cfg.xp_per_craft_base + cfg.xp_per_craft_per_rank * i64::from(rank);
+            // M33/M34: премиум и другие множители опыта профессии.
+            let gain = crate::progress::profession_xp(&self.state, &char_id, gain).await;
             // M21: опыт растит УРОВЕНЬ; ранг меняет только тренер/квест.
             let (xp_new, level_new) =
                 crate::systems::profession_level_up(cfg, xp_old, level.max(0) as u32, gain);
