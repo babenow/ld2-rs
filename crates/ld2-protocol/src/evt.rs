@@ -191,6 +191,11 @@ pub struct EntityDespawn {
     /// Пол подобрал(а) — «подобрала» для female.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picked_gender: Option<String>,
+    /// M29: готовая строка журнала для соседей («{имя} ушел — {выход}»)
+    /// при переходе игрока в другую локацию; `None` — прежняя строка
+    /// «{name} исчезает»/подбор. Аддитивно §11: старый сервер не шлёт.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 /// M20: предмет в локации исчез (TTL выброса) — журнал «{name} исчез».

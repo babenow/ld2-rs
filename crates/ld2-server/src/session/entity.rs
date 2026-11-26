@@ -380,6 +380,7 @@ impl Session {
                 kind: Some(ld2_protocol::types::EntityKind::Object),
                 picked_by: Some(picked_name),
                 picked_gender: Some(picked_gender),
+                text: None,
             },
         );
         {

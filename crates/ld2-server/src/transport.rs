@@ -135,7 +135,7 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
         // Присутствие: соседи видят уход из мира (только наша сессия).
         if mine {
             if let Some(location_id) = gone {
-                crate::session::presence::announce_despawn(&state, &location_id, &char_id);
+                crate::session::presence::announce_despawn(&state, &location_id, &char_id, None);
             }
         }
         let closed = if mine {

@@ -61,20 +61,28 @@ pub(crate) fn announce_spawn(state: &SharedState, location_id: &str, entity: Ent
 }
 
 /// Игрок ушёл из локации: `evt/entity/despawn` остальным.
-pub(crate) fn announce_despawn(state: &SharedState, location_id: &str, char_id: &str) {
+/// `text` — готовая строка журнала соседям (M29): «{имя} ушел — {выход}»
+/// при переходе, без него — стандартное «{name} исчезает».
+pub(crate) fn announce_despawn(
+    state: &SharedState,
+    location_id: &str,
+    char_id: &str,
+    text: Option<String>,
+) {
     let payload = EntityDespawn {
         entity_id: char_id.to_string(),
         location_id: location_id.to_string(),
         kind: Some(EntityKind::Player),
         picked_by: None,
         picked_gender: None,
+        text,
     };
-    let text = event_text(
+    let wire = event_text(
         "evt/entity/despawn",
         None,
         serde_json::to_value(payload).unwrap_or_default(),
     );
-    broadcast(state, location_id, char_id, text);
+    broadcast(state, location_id, char_id, wire);
 }
 
 /// Имя привязанного персонажа из реестра мира (для событий смерти/перехода).

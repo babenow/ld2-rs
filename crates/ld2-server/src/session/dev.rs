@@ -351,7 +351,7 @@ impl Session {
                 .as_ref()
                 .map(|c| c.name.clone())
                 .unwrap_or_default();
-            super::presence::announce_despawn(&self.state, &previous, &char_id);
+            super::presence::announce_despawn(&self.state, &previous, &char_id, None);
             super::presence::announce_spawn(
                 &self.state,
                 loc_id,

@@ -148,7 +148,13 @@ impl AppStore {
                 } else {
                     String::new()
                 };
-                if let Some(name) = name {
+                // M29 (заказчик): сервер прислал готовую строку ухода
+                // игрока («{имя} ушел — {выход}») — она важнее шаблонов.
+                // Пишем и когда строки в снапшоте нет (запоздалое событие,
+                // сосед ушёл между снапшотами) — журнал не теряет факт.
+                if gone.text.as_deref().is_some_and(|l| !l.is_empty()) {
+                    self.push_log(LogKind::Location, gone.text.unwrap().to_string());
+                } else if let Some(name) = name {
                     // R-dnd (заказчик 2026-11-21): подбор с земли —
                     // своя строка «Вы подняли…», чужая — «{имя}
                     // подобрал(а)…»; без picked_by — TTL «исчезает».

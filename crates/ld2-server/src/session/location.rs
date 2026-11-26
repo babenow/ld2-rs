@@ -185,13 +185,29 @@ impl Session {
         // Присутствие: соседи по старой локации видят уход, по новой —
         // появление (снапшот себе строим ниже, себя из него убираем).
         if current != target && !current.is_empty() {
-            let name = self
+            let (name, gender) = self
                 .char
                 .as_ref()
-                .map(|c| c.name.clone())
-                .or_else(|| presence::char_name(&self.state, &char_id))
-                .unwrap_or_default();
-            presence::announce_despawn(&self.state, &current, &char_id);
+                .map(|c| (c.name.clone(), c.gender.clone()))
+                .unwrap_or_else(|| {
+                    (
+                        presence::char_name(&self.state, &char_id).unwrap_or_default(),
+                        "male".to_string(),
+                    )
+                });
+            // M29 (заказчик): строка журнала — «{имя} {ушел|ушла} {выход}»;
+            // выход — метка content (без неё — id), род — из персонажа.
+            let went = if gender == "female" {
+                "ушла"
+            } else {
+                "ушел"
+            };
+            let via = cur_row
+                .exit_target(&cmd.exit_id)
+                .map(|(exit, _)| exit.label)
+                .unwrap_or_else(|| cmd.exit_id.clone());
+            let line = format!("{name} {went} — {via}");
+            presence::announce_despawn(&self.state, &current, &char_id, Some(line));
             presence::announce_spawn(
                 &self.state,
                 &target,

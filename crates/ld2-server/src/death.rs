@@ -107,7 +107,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
         .entities
         .retain(|e| !(e.kind == ld2_protocol::types::EntityKind::Player && e.id == char_id));
     if current != target && !current.is_empty() {
-        crate::session::presence::announce_despawn(state, &current, char_id);
+        crate::session::presence::announce_despawn(state, &current, char_id, None);
         crate::session::presence::announce_spawn(
             state,
             &target,
