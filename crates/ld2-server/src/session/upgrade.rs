@@ -467,6 +467,8 @@ impl Session {
             );
         }
 
+        // M32: +N меняет урон/статы оружия → кэш боя.
+        self.refresh_char_hits_as(&char_id).await;
         // ack → события (§2.2).
         let mut result = vec![Self::ack_payload(seq, &serde_json::json!({}))];
         result.extend(outs);

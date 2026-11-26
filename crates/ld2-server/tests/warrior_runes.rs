@@ -40,6 +40,21 @@ fn temp_content() -> PathBuf {
         serde_json::to_string_pretty(&items).expect("ser"),
     )
     .expect("write items");
+    // M32: с реальным уроном листа волк умирает с одного удара, а авто-
+    // приём руны срабатывает только по живому — поднимаем HP цели.
+    let loc_path = tmp.join("locations.json");
+    let mut loc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&loc_path).expect("locations.json"))
+            .expect("parse locations");
+    for location in loc["locations"].as_array_mut().expect("locations") {
+        for entity in location["entities"].as_array_mut().into_iter().flatten() {
+            if entity["id"] == "m_3" {
+                entity["hp"] = json!({ "cur": 500, "max": 500 });
+            }
+        }
+    }
+    std::fs::write(&loc_path, serde_json::to_string_pretty(&loc).expect("ser"))
+        .expect("write locations");
     tmp
 }
 

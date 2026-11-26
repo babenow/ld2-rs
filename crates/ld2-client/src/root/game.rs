@@ -481,10 +481,29 @@ fn entity_tooltip(entity: &Entity) -> String {
         .cloned()
         .collect::<Vec<_>>()
         .join(" ");
-    if tags.is_empty() {
-        format!("{}{hp}", entity.name)
+    // M32: защита моба (сервер кладёт статы в `extra`): броня, уклон,
+    // парирование, магрезист, точность — видно в подсказке списка.
+    let stat = |key: &str| entity.extra.get(key).and_then(|v| v.as_i64());
+    let combat = if entity.kind == ld2_protocol::types::EntityKind::Monster {
+        match (
+            stat("armor"),
+            stat("dodge"),
+            stat("parry"),
+            stat("resist"),
+            stat("accuracy"),
+        ) {
+            (Some(a), Some(d), Some(p), Some(r), Some(acc)) => format!(
+                "\nБроня {a} · уклон {d}% · парирование {p}% · сопротивление {r}% · точность {acc}"
+            ),
+            _ => String::new(),
+        }
     } else {
-        format!("{}{hp} · {tags}", entity.name)
+        String::new()
+    };
+    if tags.is_empty() {
+        format!("{}{hp}{combat}", entity.name)
+    } else {
+        format!("{}{hp} · {tags}{combat}", entity.name)
     }
 }
 

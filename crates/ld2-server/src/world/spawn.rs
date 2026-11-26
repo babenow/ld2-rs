@@ -112,6 +112,21 @@ impl World {
                     })
                     .unwrap_or_default();
                 let damage = extra.get("damage").and_then(|v| v.as_i64()).unwrap_or(4);
+                // M32: боевые статы — объект `combat` или плоские поля;
+                // дефолты от сложности: старый контент играет без правок.
+                let combat = extra.get("combat").and_then(|v| v.as_object());
+                let stat = |key: &str, default: i64| {
+                    combat
+                        .and_then(|c| c.get(key))
+                        .or_else(|| extra.get(key))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(default)
+                };
+                let armor = stat("armor", difficulty * 2).max(0);
+                let dodge = stat("dodge", 3 + difficulty).clamp(0, 60);
+                let parry = stat("parry", difficulty).clamp(0, 60);
+                let resist = stat("resist", difficulty * 2).clamp(0, 80);
+                let accuracy = stat("accuracy", 75 + difficulty * 2).clamp(1, 99);
                 let hp_start = e.hp.map(|hp| hp.cur).unwrap_or(1);
                 let mob = LiveMob {
                     id: e.id.clone(),
@@ -124,6 +139,11 @@ impl World {
                     tags: e.tags.clone().unwrap_or_default(),
                     aggro: e.aggro.unwrap_or(false),
                     damage,
+                    armor,
+                    dodge,
+                    parry,
+                    resist,
+                    accuracy,
                     next_attack_at: 0,
                     stun_until: 0,
                     root_until: 0,

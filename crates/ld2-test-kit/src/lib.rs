@@ -100,7 +100,7 @@ impl WsClient {
                 }
             }
         };
-        tokio::time::timeout(Duration::from_secs(5), fut)
+        tokio::time::timeout(Duration::from_secs(15), fut)
             .await
             .expect("таймаут ожидания сообщения")
     }
@@ -126,7 +126,7 @@ impl WsClient {
                 }
             }
         };
-        tokio::time::timeout(Duration::from_secs(5), fut)
+        tokio::time::timeout(Duration::from_secs(15), fut)
             .await
             .expect("таймаут ожидания Close");
     }

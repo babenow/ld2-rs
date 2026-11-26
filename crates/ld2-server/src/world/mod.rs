@@ -21,6 +21,48 @@ pub use chars::*;
 pub use entities::*;
 pub use mobs::*;
 
+/// M32: бросок ГПСЧ боевых действий — xorshift64* (детерминируется
+/// конфигом `[gameplay.combat] rng_seed` в тестах).
+impl World {
+    /// Засеять ГПСЧ: `Some(n != 0)` — детерминированно, `None` — из ОС.
+    pub fn seed_rng(&mut self, seed: Option<u64>) {
+        self.rng_state = seed
+            .filter(|s| *s != 0)
+            .unwrap_or_else(|| {
+                let mut buf = [0u8; 8];
+                if getrandom::fill(&mut buf).is_ok() {
+                    u64::from_le_bytes(buf).max(1)
+                } else {
+                    0x9E37_79B9_7F4A_7C15
+                }
+            })
+            .max(1);
+    }
+
+    /// Бросок `[0, 1)`; незасеянный мир засевается от часов.
+    pub fn roll01(&mut self) -> f64 {
+        if self.rng_state == 0 {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x5EED);
+            self.rng_state = nanos.max(1);
+        }
+        let mut x = self.rng_state;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.rng_state = x;
+        let v = x.wrapping_mul(0x2545_F491_4F6C_DD1D);
+        ((v >> 11) as f64) / ((1u64 << 53) as f64)
+    }
+
+    /// Бросок `0..100` — шансы в процентах (неточность/парирование).
+    pub fn roll_pct(&mut self) -> f64 {
+        self.roll01() * 100.0
+    }
+}
+
 /// M20: случайные секунды в `[min, max]` (респавн-диапазоны;
 /// getrandom уже в графе). `max < min` → `min`.
 fn rand_range(min: i64, max: i64) -> i64 {
@@ -80,6 +122,11 @@ pub struct World {
     /// M18/F58d (ADR-012 §5): руны экипированного оружия — авто-приёмы
     /// в `plan_combat` (как `char_hits`: вход/экипировка/инкрустация).
     char_runes: HashMap<String, Vec<SocketedRune>>,
+    /// M32: боевые параметры персонажа (урон/точность/защита) — кэш
+    /// для синхронного тика (вход/экипировка/обучение).
+    char_combat: HashMap<String, CharCombat>,
+    /// M32: ГПСЧ боевых бросков (xorshift64*); 0 — не засеян.
+    rng_state: u64,
     corpse_seq: u64,
     /// M20: предметы, лежащие в локациях (выбросы) + TTL-удаление.
     ground_items: HashMap<String, GroundItem>,

@@ -21,6 +21,75 @@ pub fn crime_blend(t_cur: i64, t_new: i64, t_max: i64, k: f64) -> (i64, i64) {
     (total, (total - t_cur).max(0))
 }
 
+// ─── M32: боевые броски (точность, уклон, парирование, броня, магрезист) ────
+
+/// Шанс попадания, %: `точность − уклонение`, кламп 5..95 — полный
+/// промах или полная неуязвимость невозможны.
+pub fn hit_chance(accuracy: i64, dodge: i64) -> i64 {
+    (accuracy - dodge).clamp(5, 95)
+}
+
+/// Попал ли удар: бросок `0..100` меньше шанса попадания.
+pub fn hit_rolls(accuracy: i64, dodge: i64, roll: f64) -> bool {
+    roll < hit_chance(accuracy, dodge) as f64
+}
+
+/// Урон в диапазоне `[min, max]` по броску `[0,1)` (min == max —
+/// детерминированно, чем пользуются тесты без оружия).
+pub fn roll_damage(min: i64, max: i64, roll01: f64) -> i64 {
+    let min = min.max(0);
+    let max = max.max(min);
+    if max == min {
+        return min;
+    }
+    let span = (max - min + 1) as f64;
+    let offset = (roll01.clamp(0.0, 0.999_999) * span).floor() as i64;
+    (min + offset).clamp(min, max)
+}
+
+/// Урон способности по броскам (M32): `None` — промах. `mult` —
+/// множитель способности (`damage_mult`), `hit_roll`/`parry_roll` —
+/// броски 0..100, `dmg_roll` — 0..1.
+#[allow(clippy::too_many_arguments)]
+pub fn ability_damage(
+    accuracy: i64,
+    dodge: i64,
+    damage_min: i64,
+    damage_max: i64,
+    armor: i64,
+    parry: i64,
+    mult: f64,
+    hit_roll: f64,
+    dmg_roll: f64,
+    parry_roll: f64,
+) -> Option<i64> {
+    if !hit_rolls(accuracy, dodge, hit_roll) {
+        return None;
+    }
+    let roll = roll_damage(damage_min, damage_max, dmg_roll);
+    let mut damage = ((roll as f64) * mult).round().max(1.0) as i64;
+    if parry_roll < parry.clamp(0, 100) as f64 {
+        damage = after_parry(damage);
+    }
+    Some(after_armor(damage, armor))
+}
+
+/// Парирование — половина урона с округлением вверх, минимум 1.
+pub fn after_parry(damage: i64) -> i64 {
+    (damage.max(1) + 1) / 2
+}
+
+/// Броня — плоское снижение урона, минимум 1 (удар всегда ранит).
+pub fn after_armor(damage: i64, armor: i64) -> i64 {
+    (damage.max(1) - armor.max(0)).max(1)
+}
+
+/// Магическое сопротивление, % — снижение урона, минимум 1.
+pub fn after_resist(damage: i64, resist: i64) -> i64 {
+    let r = resist.clamp(0, 90) as f64;
+    (((damage.max(1) as f64) * (1.0 - r / 100.0)).round() as i64).max(1)
+}
+
 // ─── M17/F30e: ресурсы по классам (WoW-модель) ─────────────────────────────
 
 /// Максимум ресурса по профилю: воин — ярость, лучник — энергия

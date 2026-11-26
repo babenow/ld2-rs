@@ -330,6 +330,60 @@ mod tests {
         assert!(rank > 2, "после роста уровня ранг растёт: {rank}");
     }
 
+    /// M32: точность/уклон → шанс попадания (кламп 5..95).
+    #[test]
+    fn hit_chance_subtracts_dodge_and_clamps() {
+        assert_eq!(hit_chance(80, 6), 74);
+        assert_eq!(hit_chance(80, 0), 80);
+        assert_eq!(hit_chance(20, 60), 5, "пол всегда 5 %");
+        assert_eq!(hit_chance(99, 0), 95, "потолок 95 %");
+        assert!(hit_rolls(80, 6, 73.9));
+        assert!(!hit_rolls(80, 6, 74.0));
+    }
+
+    /// M32: бросок урона в диапазоне, границы и детерминизм.
+    #[test]
+    fn roll_damage_covers_range() {
+        assert_eq!(roll_damage(11, 11, 0.42), 11, "min == max");
+        assert_eq!(roll_damage(59, 75, 0.0), 59);
+        assert_eq!(roll_damage(59, 75, 0.999), 75);
+        let mid = roll_damage(59, 75, 0.5);
+        assert!((59..=75).contains(&mid), "{mid}");
+    }
+
+    /// M32: парирование, броня и магрезист — снижение урона, минимум 1.
+    #[test]
+    fn mitigation_reduces_damage_but_keeps_min_one() {
+        assert_eq!(after_parry(11), 6, "половина вверх");
+        assert_eq!(after_parry(10), 5);
+        assert_eq!(after_parry(1), 1);
+        assert_eq!(after_armor(11, 6), 5);
+        assert_eq!(after_armor(3, 10), 1, "минимум 1");
+        assert_eq!(after_resist(10, 6), 9, "6 % от 10");
+        assert_eq!(after_resist(50, 50), 25);
+        assert_eq!(after_resist(1, 90), 1, "минимум 1");
+    }
+
+    /// M32: урон способности — промах/парирование/броня и множитель.
+    #[test]
+    fn ability_damage_rolls_miss_parry_armor() {
+        // 11 ×1.8 = 20 → броня 6 → 14.
+        assert_eq!(
+            ability_damage(80, 6, 11, 11, 6, 3, 1.8, 10.0, 0.5, 50.0),
+            Some(14)
+        );
+        // Промах: бросок 90 против шанса 74.
+        assert_eq!(
+            ability_damage(80, 6, 11, 11, 6, 3, 1.8, 90.0, 0.5, 50.0),
+            None
+        );
+        // Парирование: 20 → 10 → −6 брони = 4.
+        assert_eq!(
+            ability_damage(80, 6, 11, 11, 6, 3, 1.8, 10.0, 0.5, 1.0),
+            Some(4)
+        );
+    }
+
     fn upgrade_cfg() -> crate::config::UpgradeSection {
         crate::config::UpgradeSection {
             max_level: 9,

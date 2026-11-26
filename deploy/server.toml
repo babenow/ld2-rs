@@ -51,7 +51,8 @@ haggle = 0.02
 [gameplay.combat]           # M12.5: тик-луп атак (D25)
 attack_interval_s = 1.0     # период атак в бою, с
 min_attack_interval_s = 0.5 # M25: минимальная скорость атаки моба, с (пол интервала)
-base_damage = 6             # базовый урон персонажа (v1)
+base_damage = 6
+rng_seed = 0                 # M32: ГПСЧ боевых бросков (0 — случайный)             # базовый урон персонажа (v1)
 flee_chance = 0.5           # шанс cmd/combat.flee, 0..=1
 
 [gameplay.level]            # M15/F24: уровень персонажа (окно персонажа)

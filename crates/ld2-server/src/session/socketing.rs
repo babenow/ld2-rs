@@ -325,6 +325,8 @@ impl Session {
                 serde_json::to_value(char_state).unwrap_or(Value::Null),
             );
         }
+        // M32: самоцветы меняют атрибуты → пересчёт боевого кэша.
+        self.refresh_char_hits_as(&char_id).await;
         let mut result = vec![Self::ack_payload(seq, &Value::Object(payload))];
         result.extend(outs);
         result
@@ -472,6 +474,8 @@ impl Session {
                 serde_json::to_value(char_state).unwrap_or(Value::Null),
             );
         }
+        // M32: извлечение самоцвета меняет атрибуты → кэш боя.
+        self.refresh_char_hits_as(&char_id).await;
         vec![Self::ack_payload(seq, &Value::Object(payload))]
     }
 
