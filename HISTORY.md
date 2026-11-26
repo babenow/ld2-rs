@@ -76,6 +76,7 @@
   («{name} появляется»/«{name} исчезает»). Проверки:
   `spawn_server_text_goes_to_journal` (core), строки ухода/прихода
   в e2e `presence`, «погиб» в `combat_kill_mob_yields_corpse_and_xp`.
+  Строка «Вы вошли в {локация}» при переходе больше не пишется.
 
 ## 2026-11-24
 
