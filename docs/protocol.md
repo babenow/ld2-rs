@@ -378,6 +378,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/session.start` | §5 | конфиг + токены + список персонажей |
 | `evt/account/premium` | `{ premium_until: i64 \| null }` | M33: срок премиума изменился (покупка/админ) — title bar клиента |
 | `evt/session/replaced` | `{}` | M34: в аккаунт вошли из другого окна — старый клиент разлогинивается и показывает ошибку-тост |
+| `evt/session/afk` | `{ remaining_s, timeout_s }` \| `{ reset: true }` \| `{ offline: true }` | M36: бездействие — предупреждение на последних 5 % (каждую секунду), сброс активности, перевод в офлайн (экран выбора персонажа) |
 | `evt/state/snapshot` | `{ state_version, char, location, party, guild, server_ts }` | полное состояние |
 | `evt/state/delta` | §3 | патч состояния |
 | `evt/pong` | `{ ts, rtt_ms }` | эхо пинга |

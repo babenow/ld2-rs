@@ -352,6 +352,10 @@ pub struct AppStore {
     pub entity_detail: Option<serde_json::Value>,
     /// M35: публичный лист чужого персонажа (ПКМ-осмотр).
     pub inspect: Option<ld2_protocol::types::CharInspectView>,
+    /// M36: дедлайн AFK-предупреждения (локальные epoch-мс); None — нет.
+    pub afk_until_ms: Option<i64>,
+    /// M36: окно предупреждения (5 % таймаута), с.
+    pub afk_window_s: i64,
     /// M23: данные окна подятия предмета (payload `entity.info`:
     /// лут трупа + блок «Внутри»); гейт рендера — `Root::pickup_popup`.
     pub pickup: Option<serde_json::Value>,

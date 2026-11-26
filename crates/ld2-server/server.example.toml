@@ -34,6 +34,7 @@ min_password_len = 8
 char_slot_limit = 8        # → §5 char_slot_limit (DoD M2: конфиг, не код)
 profession_limit = 2       # → §5 profession_limit
 cmd_rate_per_min = 240   # R15: per-session лимит мутирующих команд/мин (0 — выкл)
+afk_timeout_s = 300      # M36: бездействие персонажа, с (0 — выключено)
 
 party_max_members = 4   # ФР-14: лимит состава группы
 

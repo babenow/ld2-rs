@@ -176,6 +176,8 @@ impl AppStore {
             visited: Vec::new(),
             entity_detail: None,
             inspect: None,
+            afk_until_ms: None,
+            afk_window_s: 0,
             pickup: None,
             pickup_dirty: false,
             admin_catalog: None,
@@ -291,6 +293,7 @@ impl AppStore {
             m if m == "evt/time.sync"
                 || m == "evt/session.start"
                 || m == "evt/session/replaced"
+                || m == "evt/session/afk"
                 || m == "evt/account/premium"
                 || m == "evt/state/snapshot"
                 || m == "evt/state/delta"
@@ -520,6 +523,7 @@ impl AppStore {
         self.item_detail = None;
         self.entity_detail = None;
         self.inspect = None;
+        self.afk_until_ms = None;
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
@@ -548,6 +552,46 @@ impl AppStore {
         login
             .map(|login| vec![Effect::ForgetSession { login }])
             .unwrap_or_default()
+    }
+
+    /// M36: бездействие — персонаж в офлайне, аккаунт остаётся в сети:
+    /// экран выбора персонажа, игровое состояние очищено.
+    fn reset_to_characters(&mut self) {
+        self.screen = Screen::Characters;
+        self.snapshot = None;
+        self.pending = None;
+        self.login_error = None;
+        self.create_error = None;
+        self.select_error = None;
+        self.world_error = None;
+        self.death = None;
+        self.item_detail = None;
+        self.entity_detail = None;
+        self.inspect = None;
+        self.afk_until_ms = None;
+        self.pickup = None;
+        self.admin_catalog = None;
+        self.admin_god = false;
+        self.stun = None;
+        self.admin_target_items = None;
+        self.upgrade = None;
+        self.socketing = None;
+        self.dialog = None;
+        self.target = None;
+        self.loot_confirm = None;
+        self.quest_tracker.clear();
+        self.npc_dialog = None;
+        self.chat.clear();
+        self.log.clear();
+        self.last_whisper_from = None;
+        self.party = None;
+        self.party_invite = None;
+        self.trade = None;
+        self.guild = None;
+        self.guild_invite = None;
+        self.guild_log.clear();
+        self.guild_browse_loaded = false;
+        self.guild_browse.clear();
     }
 
     // ── действия UI (отправка команд фиксируют pending) ─────────────────────
@@ -597,6 +641,7 @@ impl AppStore {
         self.world_error = None;
         self.entity_detail = None;
         self.inspect = None;
+        self.afk_until_ms = None;
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
@@ -1687,6 +1732,48 @@ mod tests {
         );
         assert_eq!(store.screen, Screen::Login);
         assert!(store.pending.is_none());
+    }
+
+    /// M36: AFK-предупреждение → дедлайн; офлайн → экран выбора
+    /// персонажа (аккаунт остаётся), тост и очистка мира.
+    #[test]
+    fn afk_warning_and_offline() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        assert_eq!(store.screen, Screen::Game);
+        let ev = |payload: serde_json::Value| {
+            IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/session/afk".into(),
+                seq: None,
+                payload: Some(payload),
+                state_version: None,
+                ts: None,
+            })
+        };
+        store.apply(ev(serde_json::json!({
+            "remaining_s": 1, "timeout_s": 3
+        })));
+        assert!(store.afk_until_ms.is_some(), "предупреждение активно");
+        assert_eq!(store.afk_window_s, 1, "окно 5 % (минимум 1 с)");
+
+        store.apply(ev(serde_json::json!({ "reset": true })));
+        assert!(store.afk_until_ms.is_none(), "активность сбросила");
+
+        store.apply(ev(serde_json::json!({ "offline": true })));
+        assert_eq!(store.screen, Screen::Characters, "экран выбора персонажа");
+        assert!(store.session.is_some(), "аккаунт остаётся в сети");
+        assert!(store.snapshot.is_none(), "мир очищен");
+        assert!(store.afk_until_ms.is_none());
+        assert!(
+            store
+                .notice
+                .as_deref()
+                .unwrap_or_default()
+                .contains("бездействия"),
+            "тост: {:?}",
+            store.notice
+        );
     }
 
     /// M35: ack `char.inspect` заполняет карточку осмотра.

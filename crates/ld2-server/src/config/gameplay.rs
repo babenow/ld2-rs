@@ -3,6 +3,11 @@
 use super::world::default_cmd_rate_per_min;
 use super::*;
 
+/// M36: бездействие по умолчанию — 5 минут.
+const fn default_afk_timeout_s() -> u64 {
+    300
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameplaySection {
@@ -13,6 +18,10 @@ pub struct GameplaySection {
     /// дефолт 240 покрывает бой с запасом.
     #[serde(default = "default_cmd_rate_per_min")]
     pub cmd_rate_per_min: u32,
+    /// M36: бездействие персонажа в игре, с (`0` — выключено). При
+    /// истечении — офлайн (экран выбора персонажа) и исчезновение из мира.
+    #[serde(default = "default_afk_timeout_s")]
+    pub afk_timeout_s: u64,
     pub profession_limit: u32,
     /// Бой (M12.5): тик-луп атак и правила побега.
     pub combat: CombatSection,

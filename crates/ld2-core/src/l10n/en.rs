@@ -87,6 +87,8 @@ pub(super) fn t(key: Key) -> &'static str {
         InspectProfessions => "Professions",
         InspectNoProfessions => "No professions",
         InspectRank => "rank",
+        AfkWarning => "Character is idle and will go offline in {s} s",
+        AfkOffline => "Character went offline due to inactivity",
         BtnTalk => "Talk",
         Attack => "Attack",
         EntityDetailTitle => "Examine",

@@ -125,6 +125,9 @@ pub enum Key {
     InspectProfessions,
     InspectNoProfessions,
     InspectRank,
+    // M36: предупреждение о бездействии (AFK).
+    AfkWarning,
+    AfkOffline,
     /// M18/F35: пункт контекстного меню NPC — открыть диалог.
     BtnTalk,
     Attack,
@@ -850,6 +853,8 @@ mod tests {
         Key::InspectProfessions,
         Key::InspectNoProfessions,
         Key::InspectRank,
+        Key::AfkWarning,
+        Key::AfkOffline,
         Key::BtnTalk,
         Key::Attack,
         Key::EntityDetailTitle,
