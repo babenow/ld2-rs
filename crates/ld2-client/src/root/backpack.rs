@@ -248,6 +248,7 @@ impl BackpackTab {
 /// `content/items.json`).
 pub(crate) fn tab_for_type(item_type: &str) -> BackpackTab {
     match item_type {
+        t if t.starts_with("ore_") || t.starts_with("raw_") => BackpackTab::Material,
         domain::ITEM_WEAPON | domain::ITEM_STAFF => BackpackTab::Weapon,
         domain::ITEM_POTION => BackpackTab::Potion,
         domain::ITEM_RUNE | domain::ITEM_SCROLL => BackpackTab::Magic,

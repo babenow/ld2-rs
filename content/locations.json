@@ -25,6 +25,11 @@
           "id": "e_3",
           "label": "королевский тракт к Велгарду",
           "to": "l_velgard_sloboda_01"
+        },
+        {
+          "id": "e_mine_copper",
+          "label": "тропа в медный карьер",
+          "to": "l_mine_copper"
         }
       ],
       "entities": [
@@ -110,6 +115,12 @@
           "kind": "object",
           "name": "Стол начертателя",
           "station": "scribe_table"
+        },
+        {
+          "id": "st_jeweler",
+          "kind": "object",
+          "name": "Ювелирный стол",
+          "station": "jeweler_table"
         }
       ]
     },
@@ -328,7 +339,38 @@
           "despawn_when_empty": false,
           "profession": "mining",
           "min_rank": 1,
-          "tool": "pickaxe"
+          "tool": "pickaxe",
+          "required_level": 1
+        },
+        {
+          "id": "r_forest_tin",
+          "kind": "resource",
+          "name": "Оловянная жила",
+          "resource": "ore_tin",
+          "max": 2,
+          "respawn": {
+            "min_s": 120,
+            "max_s": 180
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 1,
+          "tool": "pickaxe",
+          "required_level": 15,
+          "gems": {
+            "chance": 0.06,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_topaz",
+              "raw_ruby",
+              "raw_garnet",
+              "raw_aquamarine"
+            ],
+            "pure": [
+              "raw_stone_accuracy",
+              "raw_stone_damage"
+            ]
+          }
         }
       ]
     },
@@ -30520,6 +30562,555 @@
         }
       ],
       "entities": []
+    },
+    {
+      "id": "l_mine_copper",
+      "name": "Медный карьер",
+      "spawn": false,
+      "flags": [
+        "pvp"
+      ],
+      "text": "Ступени карьера уходят вниз; в стенах блестит медная зелень и тусклое олово.",
+      "exits": [
+        {
+          "id": "e_mine_exit",
+          "label": "выход из карьера",
+          "to": "l_village"
+        },
+        {
+          "id": "e_mine_deep",
+          "label": "спуск в железные штольни",
+          "to": "l_mine_iron"
+        }
+      ],
+      "entities": [
+        {
+          "id": "ore_copper_1",
+          "kind": "resource",
+          "name": "Медная жила",
+          "resource": "ore_copper",
+          "max": 3,
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 1,
+          "tool": "pickaxe",
+          "required_level": 1,
+          "gems": {
+            "chance": 0.05,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_malachite",
+              "raw_obsidian",
+              "raw_amethyst"
+            ],
+            "pure": [
+              "raw_stone_str",
+              "raw_stone_dex",
+              "raw_stone_vit",
+              "raw_stone_int"
+            ]
+          }
+        },
+        {
+          "id": "ore_copper_2",
+          "kind": "resource",
+          "name": "Медная жила",
+          "resource": "ore_copper",
+          "max": 3,
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 1,
+          "tool": "pickaxe",
+          "required_level": 1,
+          "gems": {
+            "chance": 0.05,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_malachite",
+              "raw_obsidian",
+              "raw_amethyst"
+            ],
+            "pure": [
+              "raw_stone_str",
+              "raw_stone_dex",
+              "raw_stone_vit",
+              "raw_stone_int"
+            ]
+          }
+        },
+        {
+          "id": "ore_copper_3",
+          "kind": "resource",
+          "name": "Медная жила",
+          "resource": "ore_copper",
+          "max": 3,
+          "respawn": {
+            "min_s": 60,
+            "max_s": 120
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 1,
+          "tool": "pickaxe",
+          "required_level": 1,
+          "gems": {
+            "chance": 0.05,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_malachite",
+              "raw_obsidian",
+              "raw_amethyst"
+            ],
+            "pure": [
+              "raw_stone_str",
+              "raw_stone_dex",
+              "raw_stone_vit",
+              "raw_stone_int"
+            ]
+          }
+        },
+        {
+          "id": "ore_tin_1",
+          "kind": "resource",
+          "name": "Оловянная жила",
+          "resource": "ore_tin",
+          "max": 3,
+          "respawn": {
+            "min_s": 90,
+            "max_s": 150
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 1,
+          "tool": "pickaxe",
+          "required_level": 15,
+          "gems": {
+            "chance": 0.06,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_topaz",
+              "raw_ruby",
+              "raw_garnet",
+              "raw_aquamarine"
+            ],
+            "pure": [
+              "raw_stone_accuracy",
+              "raw_stone_damage"
+            ]
+          }
+        },
+        {
+          "id": "ore_tin_2",
+          "kind": "resource",
+          "name": "Оловянная жила",
+          "resource": "ore_tin",
+          "max": 3,
+          "respawn": {
+            "min_s": 90,
+            "max_s": 150
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 1,
+          "tool": "pickaxe",
+          "required_level": 15,
+          "gems": {
+            "chance": 0.06,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_topaz",
+              "raw_ruby",
+              "raw_garnet",
+              "raw_aquamarine"
+            ],
+            "pure": [
+              "raw_stone_accuracy",
+              "raw_stone_damage"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "l_mine_iron",
+      "name": "Железные штольни",
+      "spawn": false,
+      "flags": [
+        "pvp"
+      ],
+      "text": "Крепи штолен скрипят; в темноте пахнет ржавой водой и серебром.",
+      "exits": [
+        {
+          "id": "e_mine_copper",
+          "label": "наверх, в медный карьер",
+          "to": "l_mine_copper"
+        },
+        {
+          "id": "e_mine_deep",
+          "label": "спуск в глубины мифрила",
+          "to": "l_mine_mithril"
+        }
+      ],
+      "entities": [
+        {
+          "id": "ore_iron_1",
+          "kind": "resource",
+          "name": "Железная жила",
+          "resource": "ore_iron",
+          "max": 3,
+          "respawn": {
+            "min_s": 120,
+            "max_s": 180
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 2,
+          "tool": "pickaxe",
+          "required_level": 30,
+          "gems": {
+            "chance": 0.07,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_sapphire",
+              "raw_emerald",
+              "raw_onyx"
+            ],
+            "pure": [
+              "raw_stone_crit_chance",
+              "raw_stone_crit_damage",
+              "raw_stone_armor",
+              "raw_stone_dodge"
+            ]
+          }
+        },
+        {
+          "id": "ore_iron_2",
+          "kind": "resource",
+          "name": "Железная жила",
+          "resource": "ore_iron",
+          "max": 3,
+          "respawn": {
+            "min_s": 120,
+            "max_s": 180
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 2,
+          "tool": "pickaxe",
+          "required_level": 30,
+          "gems": {
+            "chance": 0.07,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_sapphire",
+              "raw_emerald",
+              "raw_onyx"
+            ],
+            "pure": [
+              "raw_stone_crit_chance",
+              "raw_stone_crit_damage",
+              "raw_stone_armor",
+              "raw_stone_dodge"
+            ]
+          }
+        },
+        {
+          "id": "ore_iron_3",
+          "kind": "resource",
+          "name": "Железная жила",
+          "resource": "ore_iron",
+          "max": 3,
+          "respawn": {
+            "min_s": 120,
+            "max_s": 180
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 2,
+          "tool": "pickaxe",
+          "required_level": 30,
+          "gems": {
+            "chance": 0.07,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_sapphire",
+              "raw_emerald",
+              "raw_onyx"
+            ],
+            "pure": [
+              "raw_stone_crit_chance",
+              "raw_stone_crit_damage",
+              "raw_stone_armor",
+              "raw_stone_dodge"
+            ]
+          }
+        },
+        {
+          "id": "ore_silver_1",
+          "kind": "resource",
+          "name": "Серебряная жила",
+          "resource": "ore_silver",
+          "max": 3,
+          "respawn": {
+            "min_s": 180,
+            "max_s": 240
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 3,
+          "tool": "pickaxe",
+          "required_level": 45,
+          "gems": {
+            "chance": 0.08,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_opal"
+            ],
+            "pure": [
+              "raw_stone_parry",
+              "raw_stone_parry_chance",
+              "raw_stone_block",
+              "raw_stone_block_chance"
+            ]
+          }
+        },
+        {
+          "id": "ore_silver_2",
+          "kind": "resource",
+          "name": "Серебряная жила",
+          "resource": "ore_silver",
+          "max": 3,
+          "respawn": {
+            "min_s": 180,
+            "max_s": 240
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 3,
+          "tool": "pickaxe",
+          "required_level": 45,
+          "gems": {
+            "chance": 0.08,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_opal"
+            ],
+            "pure": [
+              "raw_stone_parry",
+              "raw_stone_parry_chance",
+              "raw_stone_block",
+              "raw_stone_block_chance"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "l_mine_mithril",
+      "name": "Глубины мифрила",
+      "spawn": false,
+      "flags": [
+        "pvp"
+      ],
+      "text": "Дальше штолен — холодные залы; жилы светятся голубым, а золото лежит в трещинах.",
+      "exits": [
+        {
+          "id": "e_mine_iron",
+          "label": "наверх, в железные штольни",
+          "to": "l_mine_iron"
+        }
+      ],
+      "entities": [
+        {
+          "id": "ore_gold_1",
+          "kind": "resource",
+          "name": "Золотая жила",
+          "resource": "ore_gold",
+          "max": 2,
+          "respawn": {
+            "min_s": 240,
+            "max_s": 360
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 4,
+          "tool": "pickaxe",
+          "required_level": 60,
+          "gems": {
+            "chance": 0.1,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_topaz",
+              "raw_sapphire",
+              "raw_opal",
+              "raw_garnet"
+            ],
+            "pure": [
+              "raw_stone_magic_defense",
+              "raw_stone_magic_dodge",
+              "raw_stone_magic_resist",
+              "raw_stone_magic_dispel"
+            ]
+          }
+        },
+        {
+          "id": "ore_gold_2",
+          "kind": "resource",
+          "name": "Золотая жила",
+          "resource": "ore_gold",
+          "max": 2,
+          "respawn": {
+            "min_s": 240,
+            "max_s": 360
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 4,
+          "tool": "pickaxe",
+          "required_level": 60,
+          "gems": {
+            "chance": 0.1,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_topaz",
+              "raw_sapphire",
+              "raw_opal",
+              "raw_garnet"
+            ],
+            "pure": [
+              "raw_stone_magic_defense",
+              "raw_stone_magic_dodge",
+              "raw_stone_magic_resist",
+              "raw_stone_magic_dispel"
+            ]
+          }
+        },
+        {
+          "id": "ore_mithril_1",
+          "kind": "resource",
+          "name": "Мифриловая жила",
+          "resource": "ore_mithril",
+          "max": 2,
+          "respawn": {
+            "min_s": 360,
+            "max_s": 600
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 5,
+          "tool": "pickaxe",
+          "required_level": 80,
+          "gems": {
+            "chance": 0.12,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_malachite",
+              "raw_obsidian",
+              "raw_amethyst",
+              "raw_topaz",
+              "raw_ruby",
+              "raw_sapphire",
+              "raw_emerald",
+              "raw_onyx",
+              "raw_opal",
+              "raw_garnet",
+              "raw_aquamarine"
+            ],
+            "pure": [
+              "raw_stone_str",
+              "raw_stone_dex",
+              "raw_stone_vit",
+              "raw_stone_int",
+              "raw_stone_accuracy",
+              "raw_stone_damage",
+              "raw_stone_crit_chance",
+              "raw_stone_crit_damage",
+              "raw_stone_armor",
+              "raw_stone_dodge",
+              "raw_stone_parry",
+              "raw_stone_parry_chance",
+              "raw_stone_block",
+              "raw_stone_block_chance",
+              "raw_stone_magic_defense",
+              "raw_stone_magic_dodge",
+              "raw_stone_magic_resist",
+              "raw_stone_magic_dispel",
+              "raw_stone_magic_crit_damage",
+              "raw_stone_magic_crit_chance"
+            ]
+          }
+        },
+        {
+          "id": "ore_mithril_2",
+          "kind": "resource",
+          "name": "Мифриловая жила",
+          "resource": "ore_mithril",
+          "max": 2,
+          "respawn": {
+            "min_s": 360,
+            "max_s": 600
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 5,
+          "tool": "pickaxe",
+          "required_level": 80,
+          "gems": {
+            "chance": 0.12,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_malachite",
+              "raw_obsidian",
+              "raw_amethyst",
+              "raw_topaz",
+              "raw_ruby",
+              "raw_sapphire",
+              "raw_emerald",
+              "raw_onyx",
+              "raw_opal",
+              "raw_garnet",
+              "raw_aquamarine"
+            ],
+            "pure": [
+              "raw_stone_str",
+              "raw_stone_dex",
+              "raw_stone_vit",
+              "raw_stone_int",
+              "raw_stone_accuracy",
+              "raw_stone_damage",
+              "raw_stone_crit_chance",
+              "raw_stone_crit_damage",
+              "raw_stone_armor",
+              "raw_stone_dodge",
+              "raw_stone_parry",
+              "raw_stone_parry_chance",
+              "raw_stone_block",
+              "raw_stone_block_chance",
+              "raw_stone_magic_defense",
+              "raw_stone_magic_dodge",
+              "raw_stone_magic_resist",
+              "raw_stone_magic_dispel",
+              "raw_stone_magic_crit_damage",
+              "raw_stone_magic_crit_chance"
+            ]
+          }
+        }
+      ]
     }
   ]
 }

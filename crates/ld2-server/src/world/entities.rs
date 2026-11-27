@@ -43,6 +43,19 @@ pub struct HarvestJob {
     pub at: i64,
 }
 
+/// M38: таблица бонусных самоцветов рудной жилы.
+#[derive(Debug, Clone, Default)]
+pub struct GemTable {
+    /// Шанс, что вместе с рудой выпадет камень (0..1).
+    pub chance: f64,
+    /// Доля смешанных камней среди выпавших (0..1); остальные — чистые.
+    pub mixed_share: f64,
+    /// id необработанных смешанных самоцветов.
+    pub mixed: Vec<String>,
+    /// id необработанных чистых камней.
+    pub pure: Vec<String>,
+}
+
 /// M20/F20b: объект-ресурс в локации (жила/дерево/трава): `current`
 /// убывает по 1 за добычу, при 0 — респавн `[min_s, max_s]`; трава
 /// (`despawn_when_empty`) при исчерпании скрывается до респавна.
@@ -64,12 +77,25 @@ pub struct ResourceNode {
     pub min_rank: i32,
     /// Тип инструмента (`item_type` в инвентаре, `E_TOOL_MISSING`).
     pub tool: Option<String>,
+    /// M38: требуемый уровень профессии для добычи.
+    pub required_level: u32,
+    /// M38: бонусные самоцветы жилы (руда — основной ресурс).
+    pub gems: Option<GemTable>,
 }
 
 impl ResourceNode {
     /// Проводной вид §6 (spawn/снапшот): запас — как шкала hp
     /// (`{cur, max}`), клиент рисует бар и патчит через `entity/move`.
     pub fn entity(&self) -> Entity {
+        let mut extra = serde_json::Map::new();
+        extra.insert(
+            "required_level".into(),
+            serde_json::json!(self.required_level),
+        );
+        extra.insert("min_rank".into(), serde_json::json!(self.min_rank));
+        if let Some(gems) = &self.gems {
+            extra.insert("gem_chance".into(), serde_json::json!(gems.chance));
+        }
         Entity {
             id: self.id.clone(),
             kind: EntityKind::Resource,
@@ -85,7 +111,7 @@ impl ResourceNode {
             next_attack_at: None,
             attack_interval: None,
             attacking: None,
-            extra: Default::default(),
+            extra,
         }
     }
 }
@@ -437,6 +463,25 @@ impl World {
     pub fn resource(&self, entity_id: &str) -> Option<&ResourceNode> {
         self.resources.get(entity_id)
     }
+    /// M38: бросок бонусного самоцвета жилы. `None` — камень не выпал
+    /// или таблица пуста; иначе id необработанного камня.
+    pub fn roll_resource_gem(&mut self, entity_id: &str) -> Option<String> {
+        let table = self.resources.get(entity_id)?.gems.clone()?;
+        if table.chance <= 0.0 || self.roll01() >= table.chance {
+            return None;
+        }
+        let group = if self.roll01() < table.mixed_share {
+            &table.mixed
+        } else {
+            &table.pure
+        };
+        if group.is_empty() {
+            return None;
+        }
+        let index = ((self.roll01() * group.len() as f64) as usize).min(group.len() - 1);
+        Some(group[index].clone())
+    }
+
     /// M20/F20b: добыть 1 единицу (валидации инструмента/ранга — на
     /// сервере до вызова): `Some(узел после)`; `None` — нет в этой
     /// локации / скрыт / исчерпан.

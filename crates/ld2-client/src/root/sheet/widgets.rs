@@ -382,6 +382,8 @@ pub(crate) fn slot_label(lang: Lang, slot: &str) -> String {
 /// M16/F29e: тип предмета (контент открытый — fallback сырой).
 pub(crate) fn type_label(lang: Lang, item_type: &str) -> String {
     match item_type {
+        other if other.starts_with("ore_") => t(lang, Key::ItemTypeOre),
+        other if other.starts_with("raw_") => t(lang, Key::ItemTypeRawGem),
         domain::ITEM_WEAPON => t(lang, Key::ItemTypeWeapon),
         domain::ITEM_STAFF => t(lang, Key::ItemTypeStaff),
         domain::ITEM_POTION => t(lang, Key::ItemTypePotion),

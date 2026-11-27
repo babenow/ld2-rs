@@ -1647,16 +1647,6 @@
       "qty": 1
     },
     {
-      "id": "ore_copper",
-      "type": "ore_copper",
-      "name": "Медная руда",
-      "rarity": "common",
-      "upgrade": 0,
-      "stats": {},
-      "gold_value": 6,
-      "qty": 1
-    },
-    {
       "id": "branches",
       "type": "branches",
       "name": "Ветки",
@@ -1861,6 +1851,2228 @@
       "rarity": "common",
       "gold_value": 5,
       "qty": 1
+    },
+    {
+      "id": "ore_copper",
+      "type": "ore_copper",
+      "name": "Медная руда",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 6,
+      "qty": 1
+    },
+    {
+      "id": "ore_tin",
+      "type": "ore_tin",
+      "name": "Оловянная руда",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 12,
+      "qty": 1
+    },
+    {
+      "id": "ore_iron",
+      "type": "ore_iron",
+      "name": "Железная руда",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 24,
+      "qty": 1
+    },
+    {
+      "id": "ore_silver",
+      "type": "ore_silver",
+      "name": "Серебряная руда",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 48,
+      "qty": 1
+    },
+    {
+      "id": "ore_gold",
+      "type": "ore_gold",
+      "name": "Золотая руда",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 120,
+      "qty": 1
+    },
+    {
+      "id": "ore_mithril",
+      "type": "ore_mithril",
+      "name": "Мифриловая руда",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 300,
+      "qty": 1
+    },
+    {
+      "id": "raw_agate",
+      "type": "raw_agate",
+      "name": "Необработанный агат",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_agate_1",
+      "type": "gem",
+      "name": "Гранёный агат",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 1
+        },
+        {
+          "kind": "attr",
+          "id": "vit",
+          "value": 1
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_agate_2",
+      "type": "gem",
+      "name": "Огранённый агат",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 2
+        },
+        {
+          "kind": "attr",
+          "id": "vit",
+          "value": 2
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_agate_3",
+      "type": "gem",
+      "name": "Совершенный агат",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 4
+        },
+        {
+          "kind": "attr",
+          "id": "vit",
+          "value": 4
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_malachite",
+      "type": "raw_malachite",
+      "name": "Необработанный малахит",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_malachite_1",
+      "type": "gem",
+      "name": "Гранёный малахит",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 1
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_malachite_2",
+      "type": "gem",
+      "name": "Огранённый малахит",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 2
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_malachite_3",
+      "type": "gem",
+      "name": "Совершенный малахит",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 4
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 3
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_obsidian",
+      "type": "raw_obsidian",
+      "name": "Необработанный обсидиан",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_obsidian_1",
+      "type": "gem",
+      "name": "Гранёный обсидиан",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "vit",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "armor",
+          "value": 1
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_obsidian_2",
+      "type": "gem",
+      "name": "Огранённый обсидиан",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "vit",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "armor",
+          "value": 2
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_obsidian_3",
+      "type": "gem",
+      "name": "Совершенный обсидиан",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "vit",
+          "value": 4
+        },
+        {
+          "kind": "param",
+          "id": "armor",
+          "value": 3
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_amethyst",
+      "type": "raw_amethyst",
+      "name": "Необработанный аметист",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_amethyst_1",
+      "type": "gem",
+      "name": "Гранёный аметист",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "int",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "magic_resist",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_amethyst_2",
+      "type": "gem",
+      "name": "Огранённый аметист",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "int",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "magic_resist",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_amethyst_3",
+      "type": "gem",
+      "name": "Совершенный аметист",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "int",
+          "value": 4
+        },
+        {
+          "kind": "param",
+          "id": "magic_resist",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_topaz",
+      "type": "raw_topaz",
+      "name": "Необработанный топаз",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_topaz_1",
+      "type": "gem",
+      "name": "Гранёный топаз",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_topaz_2",
+      "type": "gem",
+      "name": "Огранённый топаз",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_topaz_3",
+      "type": "gem",
+      "name": "Совершенный топаз",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_ruby",
+      "type": "raw_ruby",
+      "name": "Необработанный рубин",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_ruby_1",
+      "type": "gem",
+      "name": "Гранёный рубин",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "crit_damage",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_ruby_2",
+      "type": "gem",
+      "name": "Огранённый рубин",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "crit_damage",
+          "value": 4,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_ruby_3",
+      "type": "gem",
+      "name": "Совершенный рубин",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "crit_damage",
+          "value": 6,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_sapphire",
+      "type": "raw_sapphire",
+      "name": "Необработанный сапфир",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_sapphire_1",
+      "type": "gem",
+      "name": "Гранёный сапфир",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "parry_min",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "parry_max",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "block_min",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "block_max",
+          "value": 1
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_sapphire_2",
+      "type": "gem",
+      "name": "Огранённый сапфир",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "parry_min",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "parry_max",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "block_min",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "block_max",
+          "value": 2
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_sapphire_3",
+      "type": "gem",
+      "name": "Совершенный сапфир",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "parry_min",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "parry_max",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "block_min",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "block_max",
+          "value": 3
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_emerald",
+      "type": "raw_emerald",
+      "name": "Необработанный изумруд",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_emerald_1",
+      "type": "gem",
+      "name": "Гранёный изумруд",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "dodge",
+          "value": 1,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "parry_chance",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_emerald_2",
+      "type": "gem",
+      "name": "Огранённый изумруд",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "dodge",
+          "value": 1,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "parry_chance",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_emerald_3",
+      "type": "gem",
+      "name": "Совершенный изумруд",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "dodge",
+          "value": 2,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "parry_chance",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_onyx",
+      "type": "raw_onyx",
+      "name": "Необработанный оникс",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_onyx_1",
+      "type": "gem",
+      "name": "Гранёный оникс",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "block_min",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "block_max",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "armor",
+          "value": 1
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_onyx_2",
+      "type": "gem",
+      "name": "Огранённый оникс",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "block_min",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "block_max",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "armor",
+          "value": 2
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_onyx_3",
+      "type": "gem",
+      "name": "Совершенный оникс",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "block_min",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "block_max",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "armor",
+          "value": 3
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_opal",
+      "type": "raw_opal",
+      "name": "Необработанный опал",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_opal_1",
+      "type": "gem",
+      "name": "Гранёный опал",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_crit_chance",
+          "value": 1,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "magic_defense",
+          "value": 1
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_opal_2",
+      "type": "gem",
+      "name": "Огранённый опал",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_crit_chance",
+          "value": 1,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "magic_defense",
+          "value": 2
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_opal_3",
+      "type": "gem",
+      "name": "Совершенный опал",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_crit_chance",
+          "value": 2,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "magic_defense",
+          "value": 3
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_garnet",
+      "type": "raw_garnet",
+      "name": "Необработанный гранат",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_garnet_1",
+      "type": "gem",
+      "name": "Гранёный гранат",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 1
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_garnet_2",
+      "type": "gem",
+      "name": "Огранённый гранат",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 2
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_garnet_3",
+      "type": "gem",
+      "name": "Совершенный гранат",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 4
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 3
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_aquamarine",
+      "type": "raw_aquamarine",
+      "name": "Необработанный аквамарин",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 40,
+      "qty": 1
+    },
+    {
+      "id": "gem_aquamarine_1",
+      "type": "gem",
+      "name": "Гранёный аквамарин",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 1
+        },
+        {
+          "kind": "param",
+          "id": "dodge",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_aquamarine_2",
+      "type": "gem",
+      "name": "Огранённый аквамарин",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "dodge",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_aquamarine_3",
+      "type": "gem",
+      "name": "Совершенный аквамарин",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 4
+        },
+        {
+          "kind": "param",
+          "id": "dodge",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_str",
+      "type": "raw_stone_str",
+      "name": "Необработанный камень силы",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_str_1",
+      "type": "gem",
+      "name": "Гранёный камень силы",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_str_2",
+      "type": "gem",
+      "name": "Огранённый камень силы",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 4
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_str_3",
+      "type": "gem",
+      "name": "Совершенный камень силы",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 7
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_dex",
+      "type": "raw_stone_dex",
+      "name": "Необработанный камень ловкости",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_dex_1",
+      "type": "gem",
+      "name": "Гранёный камень ловкости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_dex_2",
+      "type": "gem",
+      "name": "Огранённый камень ловкости",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 4
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_dex_3",
+      "type": "gem",
+      "name": "Совершенный камень ловкости",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 7
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_vit",
+      "type": "raw_stone_vit",
+      "name": "Необработанный камень стойкости",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_vit_1",
+      "type": "gem",
+      "name": "Гранёный камень стойкости",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "vit",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_vit_2",
+      "type": "gem",
+      "name": "Огранённый камень стойкости",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "vit",
+          "value": 4
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_vit_3",
+      "type": "gem",
+      "name": "Совершенный камень стойкости",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "vit",
+          "value": 7
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_int",
+      "type": "raw_stone_int",
+      "name": "Необработанный камень разума",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_int_1",
+      "type": "gem",
+      "name": "Гранёный камень разума",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "int",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_int_2",
+      "type": "gem",
+      "name": "Огранённый камень разума",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "int",
+          "value": 4
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_int_3",
+      "type": "gem",
+      "name": "Совершенный камень разума",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "int",
+          "value": 7
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_accuracy",
+      "type": "raw_stone_accuracy",
+      "name": "Необработанный камень точности",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_accuracy_1",
+      "type": "gem",
+      "name": "Гранёный камень точности",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_accuracy_2",
+      "type": "gem",
+      "name": "Огранённый камень точности",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 3
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_accuracy_3",
+      "type": "gem",
+      "name": "Совершенный камень точности",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 5
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_damage",
+      "type": "raw_stone_damage",
+      "name": "Необработанный камень урона",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_damage_1",
+      "type": "gem",
+      "name": "Гранёный камень урона",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_damage_2",
+      "type": "gem",
+      "name": "Огранённый камень урона",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 3
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_damage_3",
+      "type": "gem",
+      "name": "Совершенный камень урона",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 5
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_crit_chance",
+      "type": "raw_stone_crit_chance",
+      "name": "Необработанный камень крита",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_crit_chance_1",
+      "type": "gem",
+      "name": "Гранёный камень крита",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_crit_chance_2",
+      "type": "gem",
+      "name": "Огранённый камень крита",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_crit_chance_3",
+      "type": "gem",
+      "name": "Совершенный камень крита",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_crit_damage",
+      "type": "raw_stone_crit_damage",
+      "name": "Необработанный камень силы крита",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_crit_damage_1",
+      "type": "gem",
+      "name": "Гранёный камень силы крита",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "crit_damage",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_crit_damage_2",
+      "type": "gem",
+      "name": "Огранённый камень силы крита",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "crit_damage",
+          "value": 7,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_crit_damage_3",
+      "type": "gem",
+      "name": "Совершенный камень силы крита",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "crit_damage",
+          "value": 10,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_armor",
+      "type": "raw_stone_armor",
+      "name": "Необработанный камень брони",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_armor_1",
+      "type": "gem",
+      "name": "Гранёный камень брони",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "armor",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_armor_2",
+      "type": "gem",
+      "name": "Огранённый камень брони",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "armor",
+          "value": 3
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_armor_3",
+      "type": "gem",
+      "name": "Совершенный камень брони",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "armor",
+          "value": 5
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_dodge",
+      "type": "raw_stone_dodge",
+      "name": "Необработанный камень уклонения",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_dodge_1",
+      "type": "gem",
+      "name": "Гранёный камень уклонения",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "dodge",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_dodge_2",
+      "type": "gem",
+      "name": "Огранённый камень уклонения",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "dodge",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_dodge_3",
+      "type": "gem",
+      "name": "Совершенный камень уклонения",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "dodge",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_parry",
+      "type": "raw_stone_parry",
+      "name": "Необработанный камень парирования",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_parry_1",
+      "type": "gem",
+      "name": "Гранёный камень парирования",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "parry_min",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "parry_max",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_parry_2",
+      "type": "gem",
+      "name": "Огранённый камень парирования",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "parry_min",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "parry_max",
+          "value": 3
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_parry_3",
+      "type": "gem",
+      "name": "Совершенный камень парирования",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "parry_min",
+          "value": 5
+        },
+        {
+          "kind": "param",
+          "id": "parry_max",
+          "value": 5
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_parry_chance",
+      "type": "raw_stone_parry_chance",
+      "name": "Необработанный камень шанса парирования",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_parry_chance_1",
+      "type": "gem",
+      "name": "Гранёный камень шанса парирования",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "parry_chance",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_parry_chance_2",
+      "type": "gem",
+      "name": "Огранённый камень шанса парирования",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "parry_chance",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_parry_chance_3",
+      "type": "gem",
+      "name": "Совершенный камень шанса парирования",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "parry_chance",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_block",
+      "type": "raw_stone_block",
+      "name": "Необработанный камень блока",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_block_1",
+      "type": "gem",
+      "name": "Гранёный камень блока",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "block_min",
+          "value": 2
+        },
+        {
+          "kind": "param",
+          "id": "block_max",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_block_2",
+      "type": "gem",
+      "name": "Огранённый камень блока",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "block_min",
+          "value": 3
+        },
+        {
+          "kind": "param",
+          "id": "block_max",
+          "value": 3
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_block_3",
+      "type": "gem",
+      "name": "Совершенный камень блока",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "block_min",
+          "value": 5
+        },
+        {
+          "kind": "param",
+          "id": "block_max",
+          "value": 5
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_block_chance",
+      "type": "raw_stone_block_chance",
+      "name": "Необработанный камень шанса блока",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_block_chance_1",
+      "type": "gem",
+      "name": "Гранёный камень шанса блока",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "block_chance",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_block_chance_2",
+      "type": "gem",
+      "name": "Огранённый камень шанса блока",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "block_chance",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_block_chance_3",
+      "type": "gem",
+      "name": "Совершенный камень шанса блока",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "block_chance",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_magic_defense",
+      "type": "raw_stone_magic_defense",
+      "name": "Необработанный камень магической защиты",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_magic_defense_1",
+      "type": "gem",
+      "name": "Гранёный камень магической защиты",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_defense",
+          "value": 2
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_magic_defense_2",
+      "type": "gem",
+      "name": "Огранённый камень магической защиты",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_defense",
+          "value": 3
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_magic_defense_3",
+      "type": "gem",
+      "name": "Совершенный камень магической защиты",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_defense",
+          "value": 5
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_magic_dodge",
+      "type": "raw_stone_magic_dodge",
+      "name": "Необработанный камень магического уклонения",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_magic_dodge_1",
+      "type": "gem",
+      "name": "Гранёный камень магического уклонения",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_dodge",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_magic_dodge_2",
+      "type": "gem",
+      "name": "Огранённый камень магического уклонения",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_dodge",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_magic_dodge_3",
+      "type": "gem",
+      "name": "Совершенный камень магического уклонения",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_dodge",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_magic_resist",
+      "type": "raw_stone_magic_resist",
+      "name": "Необработанный камень магического сопротивления",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_magic_resist_1",
+      "type": "gem",
+      "name": "Гранёный камень магического сопротивления",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_resist",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_magic_resist_2",
+      "type": "gem",
+      "name": "Огранённый камень магического сопротивления",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_resist",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_magic_resist_3",
+      "type": "gem",
+      "name": "Совершенный камень магического сопротивления",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_resist",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_magic_dispel",
+      "type": "raw_stone_magic_dispel",
+      "name": "Необработанный камень рассеивания",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_magic_dispel_1",
+      "type": "gem",
+      "name": "Гранёный камень рассеивания",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_dispel",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_magic_dispel_2",
+      "type": "gem",
+      "name": "Огранённый камень рассеивания",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_dispel",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_magic_dispel_3",
+      "type": "gem",
+      "name": "Совершенный камень рассеивания",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_dispel",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_magic_crit_damage",
+      "type": "raw_stone_magic_crit_damage",
+      "name": "Необработанный камень магического крита",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_magic_crit_damage_1",
+      "type": "gem",
+      "name": "Гранёный камень магического крита",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_crit_damage",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_magic_crit_damage_2",
+      "type": "gem",
+      "name": "Огранённый камень магического крита",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_crit_damage",
+          "value": 7,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_magic_crit_damage_3",
+      "type": "gem",
+      "name": "Совершенный камень магического крита",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_crit_damage",
+          "value": 10,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
+    },
+    {
+      "id": "raw_stone_magic_crit_chance",
+      "type": "raw_stone_magic_crit_chance",
+      "name": "Необработанный камень шанса магического крита",
+      "rarity": "common",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 25,
+      "qty": 1
+    },
+    {
+      "id": "gem_stone_magic_crit_chance_1",
+      "type": "gem",
+      "name": "Гранёный камень шанса магического крита",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_crit_chance",
+          "value": 1,
+          "pct": true
+        }
+      ],
+      "gold_value": 150
+    },
+    {
+      "id": "gem_stone_magic_crit_chance_2",
+      "type": "gem",
+      "name": "Огранённый камень шанса магического крита",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_crit_chance",
+          "value": 2,
+          "pct": true
+        }
+      ],
+      "gold_value": 450
+    },
+    {
+      "id": "gem_stone_magic_crit_chance_3",
+      "type": "gem",
+      "name": "Совершенный камень шанса магического крита",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "bonuses": [
+        {
+          "kind": "param",
+          "id": "magic_crit_chance",
+          "value": 3,
+          "pct": true
+        }
+      ],
+      "gold_value": 1200
     }
   ]
 }

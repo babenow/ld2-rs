@@ -23,6 +23,34 @@ const ACCURACY_MAX: i64 = 99;
 const MAX_SUMMONED: i64 = 8;
 const SUMMON_ATTACK_DELAY_MS: i64 = 500;
 
+/// M38: разбор таблицы бонусных самоцветов жилы из `extra.gems`.
+fn parse_gem_table(g: &serde_json::Map<String, serde_json::Value>) -> GemTable {
+    let ids = |key: &str| {
+        g.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    GemTable {
+        chance: g
+            .get("chance")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0),
+        mixed_share: g
+            .get("mixed_share")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.1)
+            .clamp(0.0, 1.0),
+        mixed: ids("mixed"),
+        pure: ids("pure"),
+    }
+}
+
 impl World {
     /// Загрузить живых мобов из сида (вызывается после content-сида).
     /// `default_respawn` — дефолтный диапазон `[world]` для мобов
@@ -88,6 +116,16 @@ impl World {
                                     .clamp(RESOURCE_MIN_RANK, RESOURCE_MAX_RANK)
                                     as i32,
                                 tool: extra.get("tool").and_then(|v| v.as_str()).map(String::from),
+                                required_level: extra
+                                    .get("required_level")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(1)
+                                    .clamp(1, 100)
+                                    as u32,
+                                gems: extra
+                                    .get("gems")
+                                    .and_then(|v| v.as_object())
+                                    .map(parse_gem_table),
                             },
                         );
                     }
