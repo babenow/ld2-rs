@@ -31,6 +31,7 @@
 | [`docs/professions.md`](./docs/professions.md) | Справочник профессий: уровни/ранги, цены, источники опыта, снятие шкур, контент и wire-команды |
 | [`docs/deployment.md`](./docs/deployment.md) | Эксплуатация сервера: установка, reverse-proxy с `wss`, миграции, бэкап/восстановление, конфиг-reference `server.toml` |
 | [`docs/user-manual.md`](./docs/user-manual.md) | Руководство игрока: установка, интерфейс, окна, чат, настройки, диагностика |
+| [`docs/icons.md`](./docs/icons.md) | Иконки: источники (FA/Ely/свои SVG/глифы), каталог каждой иконки и её назначение |
 | [`crates/ld2-editor/README.md`](./crates/ld2-editor/README.md) | Редактор контента: назначение, установка, поток работы контент-мейкера |
 | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | Правила работы: git, Git Flow, Conventional Commits, SemVer lockstep, теги `vX.Y.Z` / `m<n>-done`, PR и ревью, бюджет рефакторинга |
 | [`HISTORY.md`](./HISTORY.md) | Дневник работ: записи по датам, решения, проверки |

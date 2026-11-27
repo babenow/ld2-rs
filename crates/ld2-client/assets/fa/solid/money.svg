@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="currentColor">
+  <path fill-rule="evenodd" d="M80 300 H320 V368 A120 40 0 0 1 80 368 Z M104 320 H296 V338 H104 Z M104 348 H296 V366 H104 Z"/>
+  <ellipse cx="200" cy="300" rx="120" ry="40"/>
+  <path fill-rule="evenodd" d="M392 244 A88 88 0 1 0 392 420 A88 88 0 1 0 392 244 Z M368 308 H416 V356 H368 Z"/>
+</svg>
