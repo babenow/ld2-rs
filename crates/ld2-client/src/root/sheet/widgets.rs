@@ -256,13 +256,13 @@ pub(crate) fn item_tooltip_trigger(
             .gap_1()
             .mx(px(-8.0))
             .my(px(-4.0))
-            .p(px(10.0))
+            .p(px(crate::ui_tokens::SPACE_10))
             .rounded_md()
             .bg(rgb(pal.panel))
             .border_1()
             .border_color(rgb(rarity_color(&rarity, &pal)))
             .text_color(rgb(pal.text))
-            .text_size(px(13.0))
+            .text_size(px(crate::ui_tokens::FONT_MD))
             .child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
@@ -536,7 +536,7 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
         )
         .child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(label),
         )
@@ -549,7 +549,7 @@ pub(crate) fn xp_kv_row(pal: &Palette, label: &str, value: &str) -> Div {
         .flex_row()
         .items_center()
         .justify_between()
-        .text_size(px(12.0))
+        .text_size(px(crate::ui_tokens::FONT_SM))
         .child(div().text_color(rgb(pal.muted)).child(label.to_string()))
         .child(
             div()

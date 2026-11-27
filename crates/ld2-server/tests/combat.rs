@@ -263,7 +263,15 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
     };
-    let ws = common::start_ws_server(&db_url).await;
+    let addr = common::start_server_with(&db_url, |cfg| {
+        cfg.skills
+            .active
+            .get_mut("power_strike")
+            .expect("power_strike в конфиге")
+            .cooldown_s = 0.5;
+    })
+    .await;
+    let ws = format!("ws://{addr}/ws");
     let (mut c, _login, char_id) = in_world(&ws).await;
 
     // 1) Гейт (§4: открывается владением мечом 5) → E_REQUIREMENT_ATTR;
@@ -288,27 +296,38 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
-    let seq = c
-        .send(
-            "cmd/skill.use",
-            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
-        )
-        .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "удар");
-    let cd = c.wait_event("evt/combat/cooldown").await;
-    assert_eq!(cd["payload"]["skill_id"], "power_strike");
-    assert!(
-        cd["payload"]["until_epoch"].as_i64().unwrap_or(0) > 0,
-        "until_epoch: {cd}"
-    );
-    let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
-    assert_eq!(hit["payload"]["kind"], "skill");
-    assert_eq!(hit["payload"]["target"], "m_3");
-    // M32: урон — бросок листа (11) ×1.8 = 20, минус броня волка 6;
-    // парирование моба может вдвое срезать удар.
+    // Бросок попадания случаен — при промахе повторяем после кулдауна.
+    let mut hit = None;
+    for attempt in 0..3 {
+        let seq = c
+            .send(
+                "cmd/skill.use",
+                json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+            )
+            .await;
+        assert_eq!(c.ack(seq).await["result"], "ok", "удар #{attempt}");
+        let cd = c.wait_event("evt/combat/cooldown").await;
+        assert_eq!(cd["payload"]["skill_id"], "power_strike");
+        assert!(
+            cd["payload"]["until_epoch"].as_i64().unwrap_or(0) > 0,
+            "until_epoch: {cd}"
+        );
+        let ev = c
+            .wait(|v| {
+                v["type"] == "evt/combat/hit"
+                    && v["payload"]["kind"] == "skill"
+                    && v["payload"]["target"] == "m_3"
+            })
+            .await;
+        if ev["payload"]["miss"] == false {
+            hit = Some(ev);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    }
+    let hit = hit.expect("способность попала (3 попытки)");
     let amount = hit["payload"]["amount"].as_i64().expect("amount");
     assert!((1..=20).contains(&amount), "урон способности: {hit}");
-    assert_eq!(hit["payload"]["miss"], false, "попали: {hit}");
     let hp = c
         .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
         .await;

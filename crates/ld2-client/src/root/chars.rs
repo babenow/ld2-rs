@@ -17,6 +17,10 @@ use crate::palette::{palette, Palette};
 
 use super::{act_btn, Root, SendSlot};
 
+const MIN_NAME_CHARS: usize = 2;
+const DEATH_TIMER_CHOICES: [i64; 4] = [5, 10, 30, 60];
+const DEATH_TIMER_DEFAULT_S: i64 = 10;
+
 impl Root {
     /// M11.2: диалоги экрана персонажей (ФР-02): создание/удаление.
     pub(crate) fn chars_dialog(
@@ -71,7 +75,7 @@ impl Root {
             .gap_2()
             .items_center()
             .size_full()
-            .p(px(16.0))
+            .p(px(crate::ui_tokens::SPACE_16))
             .child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
@@ -149,7 +153,7 @@ impl Root {
         let mut head = div().flex().flex_row().gap_2().items_center().child(
             div()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_size(px(16.0))
+                .text_size(px(crate::ui_tokens::FONT_TITLE))
                 .text_color(rgb(class_color(character.profile.as_deref(), dark)))
                 .child(name.clone()),
         );
@@ -157,13 +161,13 @@ impl Root {
             // kind — игровые данные сервера (marauder/…) — как есть.
             head = head.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.warn))
                     .child(kind.clone()),
             );
         }
         let meta = div()
-            .text_size(px(12.0))
+            .text_size(px(crate::ui_tokens::FONT_SM))
             .text_color(rgb(pal.muted))
             .child(format!(
                 "{} · {}",
@@ -177,7 +181,7 @@ impl Root {
             let left = (p.deadline - local_epoch()).max(0);
             footer = footer.child(
                 div()
-                    .text_size(px(13.0))
+                    .text_size(px(crate::ui_tokens::FONT_MD))
                     .text_color(rgb(pal.danger))
                     .child(tf(lang, Key::DeleteIn, &[("s", &left.to_string())])),
             );
@@ -258,7 +262,12 @@ impl Root {
         } else {
             t(lang, Key::BtnCreate)
         };
-        let mut toolbar = div().flex().flex_row().gap_2().mt(px(4.0)).flex_shrink_0();
+        let mut toolbar = div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .mt(px(crate::ui_tokens::SPACE_4))
+            .flex_shrink_0();
         if !full && !pending {
             toolbar = toolbar.child(act_btn(
                 cx,
@@ -303,7 +312,7 @@ impl Root {
         let lang = self.lang;
         let pending = self.store.pending == Some(Act::Create);
         let name = self.ti(&self.create_name).read(cx).text().to_string();
-        let name_valid = name.trim().chars().count() >= 2;
+        let name_valid = name.trim().chars().count() >= MIN_NAME_CHARS;
         let profile = self.create_profile;
 
         // Успех (ack без ошибки) — окно закрывается, notice на экране.
@@ -338,7 +347,7 @@ impl Root {
         col = col.child(profiles);
         col = col.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::ProfileHint)),
         );
@@ -375,7 +384,7 @@ impl Root {
         if !name.is_empty() && !name_valid {
             col = col.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.warn))
                     .child(t(lang, Key::NameTooShort)),
             );
@@ -384,7 +393,11 @@ impl Root {
             col = col.child(div().text_color(rgb(pal.danger)).child(err.clone()));
         }
 
-        let mut row = div().flex().flex_row().gap_2().mt(px(6.0));
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .mt(px(crate::ui_tokens::SPACE_6));
         row = row.child(act_btn(
             cx,
             t(lang, Key::Exit),
@@ -449,13 +462,13 @@ impl Root {
             .child(tf(lang, Key::DeleteConfirm, &[("name", name.as_str())]))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.warn))
                     .child(t(lang, Key::DeleteGameHint)),
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::DeleteTypeNick)),
             )
@@ -468,7 +481,7 @@ impl Root {
             // Ник не совпадает — подсказка красным.
             col = col.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.danger))
                     .child(t(lang, Key::DeleteTypeNick)),
             );
@@ -476,7 +489,7 @@ impl Root {
 
         // D21: длительность таймера — Select (5/10/30/60 с, по умолч. 10).
         let delay = self.delete_delay;
-        let choices: Vec<Choice> = [5, 10, 30, 60]
+        let choices: Vec<Choice> = DEATH_TIMER_CHOICES
             .iter()
             .map(|s| Choice::new(s.to_string(), s.to_string()))
             .collect();
@@ -496,13 +509,17 @@ impl Root {
                     Select::new("ld2-delete-timer", choices)
                         .selected(delay.to_string())
                         .on_change(move |v, _window, acx| {
-                            let v: i64 = v.parse().unwrap_or(10);
+                            let v: i64 = v.parse().unwrap_or(DEATH_TIMER_DEFAULT_S);
                             this.update(acx, |root, _cx| root.delete_delay = v);
                         }),
                 ),
         );
 
-        let mut row = div().flex().flex_row().gap_3().mt(px(8.0));
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .gap_3()
+            .mt(px(crate::ui_tokens::SPACE_8));
         row = row.child(act_btn(
             cx,
             t(lang, Key::Exit),

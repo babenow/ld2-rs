@@ -139,14 +139,14 @@ impl Root {
         };
         let line = |text: String, danger: bool| -> Div {
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(if danger { pal.danger } else { pal.warn }))
                 .child(text)
         };
 
         let mut col = div().flex().flex_col().gap_1().child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::RegisterSubtitle)),
         );
@@ -197,7 +197,11 @@ impl Root {
             col = col.child(line(text, true));
         }
 
-        let mut row = div().flex().flex_row().gap_2().mt(px(6.0));
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .mt(px(crate::ui_tokens::SPACE_6));
         row = row.child(act_btn(
             cx,
             t(lang, Key::Exit),

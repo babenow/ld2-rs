@@ -122,7 +122,7 @@ impl Root {
             for (name, qty) in materials {
                 col = col.child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(px(crate::ui_tokens::FONT_SM))
                         .text_color(rgb(pal.muted))
                         .child(format!("  • {name}: {qty}")),
                 );
@@ -144,7 +144,7 @@ impl Root {
         };
         col = col.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(fail_text),
         );
@@ -164,7 +164,7 @@ impl Root {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .mt(px(8.0))
+                    .mt(px(crate::ui_tokens::SPACE_8))
                     .child(
                         div().h(px(6.0)).rounded_md().bg(rgb(pal.border)).child(
                             div()
@@ -176,14 +176,18 @@ impl Root {
                     )
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(crate::ui_tokens::FONT_SM))
                             .text_color(rgb(pal.muted))
                             .child(format!("{}… {} с", t(lang, Key::Loading), secs)),
                     ),
             );
         }
         // M18/F53: внизу только «Улучшить» — закрытие крестиком в шапке.
-        let mut row = div().flex().flex_row().gap_2().mt(px(8.0));
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .mt(px(crate::ui_tokens::SPACE_8));
         let uid = view.item_uid.clone();
         if can_start {
             row = row.child(act_btn(
@@ -293,7 +297,7 @@ impl Root {
                 .py_1()
                 .rounded_md()
                 .bg(rgb(pal.panel))
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(format!(
                     "{}: {}{}%",

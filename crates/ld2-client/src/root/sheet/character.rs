@@ -2,6 +2,9 @@
 
 use super::*;
 
+const CRIME_LOG_LIMIT: u32 = 50;
+const CRIME_LOG_TAKE: usize = 60;
+
 impl Root {
     // ── каркас окна ───────────────────────────────────────────────────────
 
@@ -26,7 +29,12 @@ impl Root {
             // грузим при открытии (вкладки «Статусы» больше нет).
             if !self.store.crime_log_loaded {
                 self.store.crime_log_loaded = true;
-                self.send_cmd(&CrimeLog { limit: Some(50) }, Act::CrimeLog);
+                self.send_cmd(
+                    &CrimeLog {
+                        limit: Some(CRIME_LOG_LIMIT),
+                    },
+                    Act::CrimeLog,
+                );
             }
             if self.sheet_tab == SheetTab::Guild && !self.store.guild_browse_loaded {
                 self.store.guild_browse_loaded = true;
@@ -74,7 +82,11 @@ impl Root {
     ) -> Div {
         // M16/F29f: справа запас под скроллбар — цифры значений не
         // налазили на индикатор прокрутки.
-        let mut col = div().flex().flex_col().gap_2().pr(px(16.0));
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .pr(px(crate::ui_tokens::SPACE_16));
         col = col.child(self.character_xp_block(pal));
         col = col.child(self.equip_block(cx, pal));
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
@@ -197,7 +209,7 @@ impl Root {
         };
         // M16/F29f: справа запас под скроллбар — цифры значений не
         // налазили на индикатор прокрутки (как в левой колонке).
-        let body = body.pr(px(16.0));
+        let body = body.pr(px(crate::ui_tokens::SPACE_16));
         // M14/F3: длинные списки (навыки/профессии с рецептами) —
         // прокручиваются, остальные вкладки ведут себя как раньше.
         col = col.child(match tab {
@@ -272,7 +284,7 @@ impl Root {
         for (header, rows) in groups {
             col = col.child(
                 div()
-                    .mt(px(6.0))
+                    .mt(px(crate::ui_tokens::SPACE_6))
                     .font_weight(gpui::FontWeight::BOLD)
                     .child(t(lang, *header)),
             );
@@ -338,7 +350,7 @@ impl Root {
             let collapsed = self.config.sheet_collapsed.iter().any(|id| id == gid);
             let gid_owned = gid.to_string();
             let label = format!("{} ({})", t(lang, key), group.len());
-            col = col.child(div().mt(px(6.0)).child(act_btn(
+            col = col.child(div().mt(px(crate::ui_tokens::SPACE_6)).child(act_btn(
                 cx,
                 label,
                 if collapsed { pal.panel } else { pal.accent },
@@ -447,7 +459,7 @@ impl Root {
             let cap = skill.rank_cap.unwrap_or(rank);
             row = row.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(crate::ui_tokens::FONT_XS))
                     .text_color(rgb(pal.muted))
                     .child(tf(lang, Key::SkillLevelCap, &[("cap", &cap.to_string())])),
             );
@@ -456,7 +468,7 @@ impl Root {
             // ранга только у тренера в диалоге; при полной шкале — подсказка.
             row = row.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(crate::ui_tokens::FONT_XS))
                     .text_color(rgb(pal.accent))
                     .child(t(lang, Key::SkillReady)),
             );
@@ -509,7 +521,7 @@ impl Root {
         if let Some(cap) = cap {
             body = body.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(tf(lang, Key::SkillLevelCap, &[("cap", &cap.to_string())])),
             );
@@ -544,17 +556,21 @@ impl Root {
             .border_color(rgb(pal.border))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::TrackerLabel)),
             );
         for id in &self.store.quest_tracker {
             if let Some(q) = snap.char.quests.iter().find(|q| &q.id == id) {
-                block = block.child(div().text_size(px(13.0)).child(format!(
-                    "{} — {}",
-                    q.title.clone().unwrap_or_else(|| q.id.clone()),
-                    goals_summary(q)
-                )));
+                block = block.child(
+                    div()
+                        .text_size(px(crate::ui_tokens::FONT_MD))
+                        .child(format!(
+                            "{} — {}",
+                            q.title.clone().unwrap_or_else(|| q.id.clone()),
+                            goals_summary(q)
+                        )),
+                );
             }
         }
         Some(block)
@@ -715,7 +731,9 @@ impl Root {
             pal.panel,
             pal.text,
             |this, cx| {
-                let cmd = CrimeLog { limit: Some(50) };
+                let cmd = CrimeLog {
+                    limit: Some(CRIME_LOG_LIMIT),
+                };
                 this.send_cmd(&cmd, Act::CrimeLog);
                 let _ = cx;
             },
@@ -727,11 +745,11 @@ impl Root {
                     .child(t(lang, Key::JournalEmpty)),
             );
         }
-        for entry in self.store.crime_log.iter().rev().take(60) {
+        for entry in self.store.crime_log.iter().rev().take(CRIME_LOG_TAKE) {
             let title = crime_kind_title(&self.store, &entry.kind);
             col = col.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(format!(
                         "{title}: +{} · {} {}",

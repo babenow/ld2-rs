@@ -247,7 +247,7 @@ impl Root {
         if let Ok(dirs) = ld2_core::config::project_dirs() {
             body = body.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(crate::ui_tokens::FONT_XS))
                     .text_color(rgb(pal.muted))
                     .child(dirs.config_dir().display().to_string()),
             );
@@ -332,7 +332,11 @@ impl Root {
                         .text_color(rgb(pal.muted))
                         .child(t(lang, Key::SettingsHost)),
                 )
-                .child(div().text_size(px(14.0)).child(self.config.host.clone()))
+                .child(
+                    div()
+                        .text_size(px(crate::ui_tokens::FONT_LG))
+                        .child(self.config.host.clone()),
+                )
                 .children((!host_ok).then(|| {
                     div()
                         .text_color(rgb(pal.danger))
@@ -352,7 +356,7 @@ impl Root {
                 )
                 .child(
                     div()
-                        .text_size(px(14.0))
+                        .text_size(px(crate::ui_tokens::FONT_LG))
                         .child(self.config.domain.clone().unwrap_or_else(|| "—".into())),
                 ),
         );
@@ -364,7 +368,7 @@ impl Root {
                     .gap_1()
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(crate::ui_tokens::FONT_SM))
                             .text_color(rgb(pal.muted))
                             .child(t(lang, Key::SettingsHost)),
                     )
@@ -375,7 +379,7 @@ impl Root {
                     )
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(crate::ui_tokens::FONT_SM))
                             .text_color(rgb(pal.muted))
                             .child(t(lang, Key::SettingsDomain)),
                     )
@@ -585,7 +589,7 @@ fn hotkey_row(cx: &mut Context<'_, Root>, lang: Lang, row: &HotkeyRowSpec, spec:
         .flex_row()
         .gap_2()
         .items_center()
-        .text_size(px(13.0))
+        .text_size(px(crate::ui_tokens::FONT_MD))
         .child(
             div()
                 .flex_grow_1()
@@ -696,7 +700,7 @@ fn color_picker_row(
         .gap_1()
         .child(
             div()
-                .text_size(px(13.0))
+                .text_size(px(crate::ui_tokens::FONT_MD))
                 .text_color(rgb(pal.muted))
                 .child(t(lang, label)),
         )
@@ -731,7 +735,7 @@ fn color_picker_row(
                 .child(
                     div()
                         .flex_grow_1()
-                        .text_size(px(13.0))
+                        .text_size(px(crate::ui_tokens::FONT_MD))
                         .text_color(rgb(pal.muted))
                         .child(value.to_string()),
                 )
@@ -776,7 +780,7 @@ fn slider_cell(slider: Slider) -> Div {
 fn value_readout(pal: &Palette, text: String) -> Div {
     div()
         .w(px(56.0))
-        .text_size(px(13.0))
+        .text_size(px(crate::ui_tokens::FONT_MD))
         .text_color(rgb(pal.text))
         .child(text)
 }

@@ -229,14 +229,14 @@ impl Root {
             .children(caps_on.then(|| {
                 div()
                     .w(px(320.0))
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.warn))
                     .child(t(lang, Key::WarnCaps))
             }))
             .children(ru_layout.then(|| {
                 div()
                     .w(px(320.0))
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.warn))
                     .child(t(lang, Key::WarnRuLayout))
             }))
@@ -257,7 +257,7 @@ impl Root {
             .children(error.map(|e| div().text_color(rgb(pal.danger)).child(e)))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child("demo/demo123 · demo2/demo123"),
             )

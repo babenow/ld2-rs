@@ -325,7 +325,7 @@ impl Root {
         div()
             .absolute()
             .left(px(left))
-            .top(px(16.0))
+            .top(px(crate::ui_tokens::SPACE_16))
             .w(px(width))
             // Клики по уведомлению не проходят сквозь него (occlude).
             .occlude()
@@ -340,7 +340,7 @@ impl Root {
                     .bg(rgb(pal.panel))
                     .border_1()
                     .border_color(rgb(pal.accent))
-                    .text_size(px(13.0))
+                    .text_size(px(crate::ui_tokens::FONT_MD))
                     .text_center()
                     .child(title.to_string())
             }))

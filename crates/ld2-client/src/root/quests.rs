@@ -118,7 +118,11 @@ fn quest_details(
     tracked: bool,
 ) -> Div {
     let (badge_key, badge_color) = state_badge(quest.state);
-    let mut col = div().flex().flex_col().gap_2().pr(px(8.0));
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .pr(px(crate::ui_tokens::SPACE_8));
     col = col.child(
         div()
             .flex()
@@ -127,7 +131,7 @@ fn quest_details(
             .items_center()
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(crate::ui_tokens::FONT_XS))
                     .text_color(rgb(badge_color))
                     .child(t(lang, badge_key)),
             )
@@ -144,7 +148,7 @@ fn quest_details(
         };
         col = col.child(
             div()
-                .text_size(px(13.0))
+                .text_size(px(crate::ui_tokens::FONT_MD))
                 .text_color(rgb(pal.text))
                 .child(line),
         );
@@ -153,14 +157,14 @@ fn quest_details(
     if let Some(label) = &quest.reward_label {
         col = col.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(label.clone()),
         );
     } else if let Some(xp) = quest.reward_preview.as_ref().and_then(|r| r.xp) {
         col = col.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(format!("{}: {xp} XP", t(lang, Key::RewardLabel))),
         );
@@ -168,7 +172,11 @@ fn quest_details(
 
     // Действия (логика перенесена из вкладки «Квесты» персонажа, F36).
     if matches!(quest.state, QuestPhase::Active | QuestPhase::TurnIn) {
-        let mut actions = div().flex().flex_row().gap_1().mt(px(4.0));
+        let mut actions = div()
+            .flex()
+            .flex_row()
+            .gap_1()
+            .mt(px(crate::ui_tokens::SPACE_4));
         if quest.state == QuestPhase::TurnIn {
             let qid = quest.id.clone();
             actions = actions.child(act_btn(
@@ -392,7 +400,7 @@ impl Root {
             .border_color(rgb(pal.border))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.text))
                     .child(quest_status_text(lang, tab, cur, done, max)),
             );

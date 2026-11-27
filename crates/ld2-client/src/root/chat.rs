@@ -53,7 +53,7 @@ impl Root {
         if active == domain::CHANNEL_SYSTEM && !self.store.can_moderate() {
             panel = panel.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::SystemChatLocked)),
             );
@@ -236,7 +236,7 @@ impl Root {
                 div()
                     .flex()
                     .items_center()
-                    .text_size(px(11.0))
+                    .text_size(px(crate::ui_tokens::FONT_XS))
                     .text_color(rgb(pal.muted))
                     .child(format!("{:.0}с", cooldown_left.as_secs_f32().ceil())),
             );

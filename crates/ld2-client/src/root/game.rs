@@ -38,6 +38,10 @@ use super::{
     PopupKind, Root,
 };
 
+const POWER_STRIKE_RANK: u32 = 5;
+const MS_PER_SECOND: i64 = 1000;
+const ROUND_UP_MS: i64 = 999;
+
 mod dialog;
 mod entities;
 mod hotbar;
@@ -54,7 +58,7 @@ pub(crate) fn power_strike_open(skills: &[ld2_protocol::types::SkillSnapshot]) -
     skills
         .iter()
         .find(|s| s.id == domain::SKILL_SWORD)
-        .is_some_and(|s| s.rank >= 5)
+        .is_some_and(|s| s.rank >= POWER_STRIKE_RANK)
 }
 
 /// M17/F30b: uid надетого посоха — слот `staff` удалён (посох теперь
@@ -152,7 +156,7 @@ impl Root {
             .gap_3()
             .flex_grow_1()
             .min_h_0()
-            .p(px(12.0))
+            .p(px(crate::ui_tokens::SPACE_12))
             // M14/F18: резиновая вёрстка — min_w_0 позволяет колонкам
             // сжиматься ниже min-content (иначе правая колонка
             // вылезала за рамки окна); min_w(360) у листа остаётся
@@ -201,7 +205,7 @@ impl Root {
                     .child(self.exits_row(cx, pal, &snap.location))
                     .children((self.store.target.is_some()).then(|| {
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(crate::ui_tokens::FONT_SM))
                             .text_color(rgb(pal.muted))
                             .child(t(self.lang, Key::AltNavHint))
                     })),
@@ -281,7 +285,7 @@ fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
         )
         .child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(label),
         )
@@ -367,7 +371,7 @@ fn action_disabled(id: &str, label: String, reason: String, pal: &Palette) -> St
 /// M14/F4: текст причины «кулдаун» — остаток округляется вверх
 /// (100 мс до конца → «1 с»), чтобы значение не мигало в 0.
 fn cooldown_reason(lang: ld2_core::l10n::Lang, left_ms: i64) -> String {
-    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    let secs = ((left_ms.max(0) + ROUND_UP_MS) / MS_PER_SECOND).max(1);
     tf(lang, Key::HotbarCooldown, &[("{s}", &secs.to_string())])
 }
 
@@ -380,7 +384,7 @@ fn cd_disabled(
     lang: ld2_core::l10n::Lang,
     pal: &Palette,
 ) -> Stateful<Div> {
-    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    let secs = ((left_ms.max(0) + ROUND_UP_MS) / MS_PER_SECOND).max(1);
     let short = tf(lang, Key::HotbarCdShort, &[("{s}", &secs.to_string())]);
     action_disabled(
         id,
@@ -401,7 +405,7 @@ fn cd_bar_button(
     lang: ld2_core::l10n::Lang,
     pal: &Palette,
 ) -> Div {
-    let secs = ((left_ms.max(0) + 999) / 1000).max(1);
+    let secs = ((left_ms.max(0) + ROUND_UP_MS) / MS_PER_SECOND).max(1);
     let short = tf(lang, Key::HotbarCdShort, &[("{s}", &secs.to_string())]);
     let frac = (left_ms as f32 / total_ms.max(1) as f32).clamp(0.0, 1.0);
     div()
@@ -607,7 +611,7 @@ pub(crate) fn map_graph_layer(
                 .left(px(mx - 10.0))
                 .top(px(my - 10.0))
                 .w(px(20.0))
-                .text_size(px(14.0))
+                .text_size(px(crate::ui_tokens::FONT_LG))
                 .text_color(rgb(pal.text))
                 .text_center()
                 .tooltip(Tooltip::text(tip))
@@ -698,14 +702,14 @@ fn map_graph_nodes(pal: &Palette, nodes: Vec<MapNodeView>, dot: f32, hit: f32) -
                         .gap_1()
                         .mx(px(-8.0))
                         .my(px(-4.0))
-                        .p(px(10.0))
+                        .p(px(crate::ui_tokens::SPACE_10))
                         .w(px(300.0))
                         .rounded_md()
                         .bg(rgb(tip_panel))
                         .border_1()
                         .border_color(rgb(tip_border))
                         .text_color(rgb(tip_fg))
-                        .text_size(px(13.0))
+                        .text_size(px(crate::ui_tokens::FONT_MD))
                         .child(
                             div()
                                 .font_weight(gpui::FontWeight::BOLD)
@@ -735,7 +739,7 @@ fn map_graph_nodes(pal: &Palette, nodes: Vec<MapNodeView>, dot: f32, hit: f32) -
                         .bg(rgb(tip_panel))
                         .border_1()
                         .border_color(rgb(pal.accent))
-                        .text_size(px(13.0))
+                        .text_size(px(crate::ui_tokens::FONT_MD))
                         .font_weight(gpui::FontWeight::BOLD)
                         .text_color(rgb(pal.accent))
                         .child(n.name.clone())

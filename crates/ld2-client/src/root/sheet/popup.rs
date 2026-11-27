@@ -203,7 +203,7 @@ impl Root {
                     .flex_col()
                     .flex_grow_1()
                     .min_h_0()
-                    .p(px(12.0))
+                    .p(px(crate::ui_tokens::SPACE_12))
                     .child(body),
             )
             // M16/F29g: нижняя панель (по аналогии с верхней) — у рюкзака.

@@ -70,7 +70,7 @@ impl Root {
         // M18/F41: сверху подпись, что вкладка — это валюта торговца.
         col = col.child(
             div()
-                .text_size(px(11.0))
+                .text_size(px(crate::ui_tokens::FONT_XS))
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::ShopCurrency)),
         );
@@ -78,7 +78,7 @@ impl Root {
         col = col.child(div().h(px(1.0)).bg(rgb(pal.border)));
         col = col.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(tf(lang, Key::ShopOwned, &[("n", &balance.to_string())])),
         );
@@ -87,7 +87,7 @@ impl Root {
             let mut right = div().flex().flex_row().gap_2().items_center();
             right = right.child(
                 div()
-                    .text_size(px(13.0))
+                    .text_size(px(crate::ui_tokens::FONT_MD))
                     .font_weight(gpui::FontWeight::BOLD)
                     .text_color(rgb(if afford { pal.text } else { pal.danger }))
                     .child(format!("{}", item.price)),
@@ -112,11 +112,15 @@ impl Root {
                 },
             ));
             let mut left = div().flex().flex_row().gap_2().items_center();
-            left = left.child(div().text_size(px(13.0)).child(item.name.clone()));
+            left = left.child(
+                div()
+                    .text_size(px(crate::ui_tokens::FONT_MD))
+                    .child(item.name.clone()),
+            );
             if item.qty > 1 {
                 left = left.child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(crate::ui_tokens::FONT_XS))
                         .text_color(rgb(pal.muted))
                         .child(format!("×{}", item.qty)),
                 );

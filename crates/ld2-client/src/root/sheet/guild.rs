@@ -119,7 +119,7 @@ impl Root {
             .child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(13.0))
+                    .text_size(px(crate::ui_tokens::FONT_MD))
                     .child(t(lang, Key::GuildMembers)),
             );
         let i_am_master = g
@@ -138,7 +138,7 @@ impl Root {
                 .child(div().flex_grow_1().child(member.name.clone()))
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(px(crate::ui_tokens::FONT_SM))
                         .text_color(rgb(if member.rank == "master" {
                             pal.warn
                         } else {
@@ -149,7 +149,7 @@ impl Root {
             if member.online {
                 row = row.child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(crate::ui_tokens::FONT_XS))
                         .text_color(rgb(pal.success))
                         .child("●"),
                 );
@@ -232,13 +232,13 @@ impl Root {
             col = col.child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(13.0))
+                    .text_size(px(crate::ui_tokens::FONT_MD))
                     .child(t(lang, Key::GuildLogLbl)),
             );
             for entry in self.store.guild_log.iter().rev().take(5) {
                 col = col.child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(px(crate::ui_tokens::FONT_SM))
                         .text_color(rgb(pal.muted))
                         .child(format!("• {}", entry.text)),
                 );
