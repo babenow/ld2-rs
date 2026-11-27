@@ -5,6 +5,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use std::collections::{BTreeMap, HashMap};
 
 use ld2_protocol::cmd::{CharCreate, CharDelete, CharSelect};
@@ -251,7 +253,7 @@ impl Session {
         let mut outs = vec![
             out_ack(Ack::ok(seq, Some(state_version))),
             out_event(
-                "evt/state/snapshot",
+                names::EVT_STATE_SNAPSHOT,
                 Some(state_version),
                 serde_json::to_value(&snapshot).unwrap_or_default(),
             ),
@@ -266,7 +268,7 @@ impl Session {
             for kind in ["stun", "silence", "blind"] {
                 if let Some(until) = world.char_effect_until(&row.id, kind, now) {
                     outs.push(out_event(
-                        "evt/char/afflict",
+                        names::EVT_CHAR_AFFLICT,
                         None,
                         serde_json::to_value(ld2_protocol::evt::CharAfflict {
                             kind: kind.to_string(),

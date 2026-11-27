@@ -1,5 +1,7 @@
 //! RF1v: админ-часть — выдача и удаление.
 
+use ld2_protocol::names;
+
 use super::*;
 
 impl Session {
@@ -51,7 +53,7 @@ impl Session {
         vec![
             Self::ack_payload(seq, &serde_json::json!({})),
             out_event(
-                "evt/dialog/open",
+                names::EVT_DIALOG_OPEN,
                 None,
                 serde_json::to_value(open).unwrap_or_default(),
             ),
@@ -100,7 +102,7 @@ impl Session {
         vec![
             Self::ack_payload(seq, &serde_json::json!({})),
             out_event(
-                "evt/dialog/open",
+                names::EVT_DIALOG_OPEN,
                 None,
                 serde_json::to_value(open).unwrap_or_default(),
             ),
@@ -167,7 +169,7 @@ impl Session {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(row.qty));
             event_text(
-                "evt/item/state",
+                names::EVT_ITEM_STATE,
                 None,
                 serde_json::to_value(ItemState {
                     uid: row.uid.clone(),
@@ -177,7 +179,7 @@ impl Session {
             )
         } else {
             event_text(
-                "evt/item/added",
+                names::EVT_ITEM_ADDED,
                 None,
                 serde_json::to_value(ItemAdded {
                     item: item_snapshot(&row, &def),
@@ -232,7 +234,7 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
             event_text(
-                "evt/item/removed",
+                names::EVT_ITEM_REMOVED,
                 None,
                 serde_json::to_value(ItemRemoved {
                     uid: item.uid.clone(),
@@ -249,7 +251,7 @@ impl Session {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(new_qty));
             event_text(
-                "evt/item/state",
+                names::EVT_ITEM_STATE,
                 None,
                 serde_json::to_value(ItemState {
                     uid: item.uid.clone(),

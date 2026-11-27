@@ -7,6 +7,8 @@
 //! боя, смерти, награды), `jobs` (работы, DoT, баффы), `expire`
 //! (истечение сущностей), `plan` (структуры плана и события).
 
+use ld2_protocol::names;
+
 use tracing::warn;
 
 use crate::state::SharedState;
@@ -43,7 +45,7 @@ pub(super) async fn respawn_step(state: &SharedState) {
                 // Сначала старый труп (вместе с лутом), затем моб.
                 if let Some(corpse_id) = corpse_id {
                     let text = event_text(
-                        "evt/entity/despawn",
+                        names::EVT_ENTITY_DESPAWN,
                         &ld2_protocol::evt::EntityDespawn {
                             entity_id: corpse_id,
                             location_id: entry.location_id.clone(),
@@ -58,7 +60,7 @@ pub(super) async fn respawn_step(state: &SharedState) {
                     }
                 }
                 let text = event_text(
-                    "evt/entity/spawn",
+                    names::EVT_ENTITY_SPAWN,
                     &ld2_protocol::evt::EntitySpawn {
                         entity,
                         location_id: entry.location_id.clone(),
@@ -88,7 +90,7 @@ pub(super) async fn respawn_step(state: &SharedState) {
                 if was_hidden {
                     // Трава исчезала → возвращается видимой.
                     let text = event_text(
-                        "evt/entity/spawn",
+                        names::EVT_ENTITY_SPAWN,
                         &ld2_protocol::evt::EntitySpawn {
                             entity: node.entity(),
                             location_id: entry.location_id.clone(),
@@ -106,7 +108,7 @@ pub(super) async fn respawn_step(state: &SharedState) {
                         serde_json::json!({"cur": node.current, "max": node.max}),
                     );
                     let text = event_text(
-                        "evt/entity/move",
+                        names::EVT_ENTITY_MOVE,
                         &ld2_protocol::evt::EntityMove {
                             entity_id: node.id.clone(),
                             patch,
@@ -146,7 +148,7 @@ pub(super) async fn ground_expire_step(state: &SharedState) {
             .collect()
     };
     for (loc, payload) in expired {
-        let text = event_text("evt/item/expired", &payload);
+        let text = event_text(names::EVT_ITEM_EXPIRED, &payload);
         let world = state.world.lock().expect("мир");
         for addr in world.chars_in_location(&loc) {
             world.send_to_char(&addr, text.clone());
@@ -179,7 +181,7 @@ pub(super) async fn corpse_expire_step(state: &SharedState) {
             picked_gender: None,
             text: None,
         };
-        let text = event_text("evt/entity/despawn", &payload);
+        let text = event_text(names::EVT_ENTITY_DESPAWN, &payload);
         let world = state.world.lock().expect("мир");
         for addr in world.chars_in_location(&loc) {
             world.send_to_char(&addr, text.clone());
@@ -227,7 +229,7 @@ pub(super) async fn buff_expire_step(state: &SharedState) {
             )
             .collect();
         let text = crate::session::event_text(
-            "evt/char/buffs",
+            names::EVT_CHAR_BUFFS,
             None,
             serde_json::to_value(ld2_protocol::evt::CharBuffs { buffs }).unwrap_or_default(),
         );
@@ -258,7 +260,7 @@ pub(super) async fn crime_expire_step(state: &SharedState) {
         };
         for kind in expired {
             let text = crate::session::event_text(
-                "evt/crime/removed",
+                names::EVT_CRIME_REMOVED,
                 None,
                 serde_json::json!({ "kind": kind }),
             );

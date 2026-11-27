@@ -2,6 +2,8 @@
 //! → `ack` + `evt/*` (§2.2: события — строго после своего ack) и
 //! авторизация соединения (ADR-006, D29/D30).
 
+use ld2_protocol::names;
+
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 
@@ -134,7 +136,7 @@ impl Session {
             warn!("конверт v={} (ожидается {PROTOCOL_VERSION}) — игнор", env.v);
             return vec![];
         }
-        if !env.msg_type.starts_with("cmd/") {
+        if !env.msg_type.starts_with(names::CMD_PREFIX) {
             warn!("не-команда от клиента: {}", env.msg_type);
             return vec![];
         }
@@ -148,7 +150,7 @@ impl Session {
         // (ping/time.sync/resync) — не активность.
         let service = matches!(
             env.msg_type.as_str(),
-            "cmd/ping" | "cmd/time.sync" | "cmd/state.resync"
+            names::CMD_PING | names::CMD_TIME_SYNC | names::CMD_STATE_RESYNC
         );
         let mut afk_reset = None;
         if !service {
@@ -156,7 +158,7 @@ impl Session {
             if self.afk_warned {
                 self.afk_warned = false;
                 afk_reset = Some(Out::Text(event_text(
-                    "evt/session/afk",
+                    names::EVT_SESSION_AFK,
                     None,
                     serde_json::json!({ "reset": true }),
                 )));
@@ -203,7 +205,7 @@ impl Session {
             self.location_id = None;
             self.afk_warned = false;
             return vec![Out::Text(event_text(
-                "evt/session/afk",
+                names::EVT_SESSION_AFK,
                 None,
                 serde_json::json!({ "offline": true }),
             ))];
@@ -216,7 +218,7 @@ impl Session {
             let remaining_ms = timeout_ms - elapsed;
             let remaining_s = ((remaining_ms + 999) / 1000).max(1);
             return vec![Out::Text(event_text(
-                "evt/session/afk",
+                names::EVT_SESSION_AFK,
                 None,
                 serde_json::json!({ "remaining_s": remaining_s, "timeout_s": timeout_s }),
             ))];
@@ -224,7 +226,7 @@ impl Session {
         if self.afk_warned {
             self.afk_warned = false;
             return vec![Out::Text(event_text(
-                "evt/session/afk",
+                names::EVT_SESSION_AFK,
                 None,
                 serde_json::json!({ "reset": true }),
             ))];
@@ -250,7 +252,8 @@ impl Session {
         // R15: per-session rate-limit на мутирующие команды (D25: лимит
         // `[gameplay] cmd_rate_per_min`, 0 — выключен). auth/chat — свои
         // лимиты; каждая итерация берёт mutex мира и ходит в БД.
-        if gates::HARVEST_BLOCKED.contains(&env.msg_type.as_str()) || env.msg_type == "cmd/item.use"
+        if gates::HARVEST_BLOCKED.contains(&env.msg_type.as_str())
+            || env.msg_type == names::CMD_ITEM_USE
         {
             if let Some(out) = self.cmd_rate_gate(seq) {
                 return vec![out];
@@ -259,129 +262,129 @@ impl Session {
 
         match env.msg_type.as_str() {
             // auth / session (ADR-006, §4.5)
-            "cmd/auth.register" => self.auth_register(env, seq).await,
-            "cmd/auth.login" => self.auth_login(env, seq).await,
-            "cmd/auth.resume" => self.auth_resume(env, seq).await,
-            "cmd/auth.logout" => self.auth_logout(seq).await,
-            "cmd/session.refresh" => self.auth_refresh(seq).await,
+            names::CMD_AUTH_REGISTER => self.auth_register(env, seq).await,
+            names::CMD_AUTH_LOGIN => self.auth_login(env, seq).await,
+            names::CMD_AUTH_RESUME => self.auth_resume(env, seq).await,
+            names::CMD_AUTH_LOGOUT => self.auth_logout(seq).await,
+            names::CMD_SESSION_REFRESH => self.auth_refresh(seq).await,
             // персонажи (ФР-02, §5/§3)
-            "cmd/char.list" => self.char_list(seq).await,
-            "cmd/char.create" => self.char_create(env, seq).await,
-            "cmd/char.select" => self.char_select(env, seq).await,
+            names::CMD_CHAR_LIST => self.char_list(seq).await,
+            names::CMD_CHAR_CREATE => self.char_create(env, seq).await,
+            names::CMD_CHAR_SELECT => self.char_select(env, seq).await,
             // M35: ПКМ-осмотр чужого персонажа (экипировка/уровень/профессии)
-            "cmd/char.inspect" => self.char_inspect(env, seq).await,
-            "cmd/char.delete" => self.char_delete(env, seq).await,
+            names::CMD_CHAR_INSPECT => self.char_inspect(env, seq).await,
+            names::CMD_CHAR_DELETE => self.char_delete(env, seq).await,
             // мир (ФР-03, M12.3)
-            "cmd/location.look" => self.location_look(seq).await,
-            "cmd/location.move" => self.location_move(env, seq).await,
-            "cmd/map.world" => self.map_world(env, seq).await,
-            "cmd/entity.info" => self.entity_info(env, seq).await,
+            names::CMD_LOCATION_LOOK => self.location_look(seq).await,
+            names::CMD_LOCATION_MOVE => self.location_move(env, seq).await,
+            names::CMD_MAP_WORLD => self.map_world(env, seq).await,
+            names::CMD_ENTITY_INFO => self.entity_info(env, seq).await,
             // M18/F35: диалог NPC (поговорить/квесты)
-            "cmd/npc.talk" => self.npc_talk(env, seq).await,
+            names::CMD_NPC_TALK => self.npc_talk(env, seq).await,
             // M18/F37: ответ персонажа — переход по ветке
-            "cmd/npc.reply" => self.npc_reply(env, seq).await,
+            names::CMD_NPC_REPLY => self.npc_reply(env, seq).await,
             // M18/F39: магазин NPC
-            "cmd/shop.list" => self.shop_list(env, seq).await,
-            "cmd/shop.buy" => self.shop_buy(env, seq).await,
-            "cmd/state.resync" => self.state_resync(env, seq).await,
+            names::CMD_SHOP_LIST => self.shop_list(env, seq).await,
+            names::CMD_SHOP_BUY => self.shop_buy(env, seq).await,
+            names::CMD_STATE_RESYNC => self.state_resync(env, seq).await,
             // бой (ФР-05, M12.5)
-            "cmd/combat.attack" => self.combat_attack(env, seq).await,
-            "cmd/combat.stop" => self.combat_stop(seq).await,
-            "cmd/combat.flee" => self.combat_flee(seq).await,
+            names::CMD_COMBAT_ATTACK => self.combat_attack(env, seq).await,
+            names::CMD_COMBAT_STOP => self.combat_stop(seq).await,
+            names::CMD_COMBAT_FLEE => self.combat_flee(seq).await,
             // гильдия (ФР-16, M12.7d)
-            "cmd/guild.browse" => self.guild_browse(env, seq).await,
-            "cmd/guild.create" => self.guild_create(env, seq).await,
-            "cmd/guild.join" => self.guild_join(env, seq).await,
-            "cmd/guild.leave" => self.guild_leave(seq).await,
-            "cmd/guild.invite" => self.guild_invite(env, seq).await,
-            "cmd/guild.kick" => self.guild_kick(env, seq).await,
-            "cmd/guild.rank_set" => self.guild_rank_set(env, seq).await,
+            names::CMD_GUILD_BROWSE => self.guild_browse(env, seq).await,
+            names::CMD_GUILD_CREATE => self.guild_create(env, seq).await,
+            names::CMD_GUILD_JOIN => self.guild_join(env, seq).await,
+            names::CMD_GUILD_LEAVE => self.guild_leave(seq).await,
+            names::CMD_GUILD_INVITE => self.guild_invite(env, seq).await,
+            names::CMD_GUILD_KICK => self.guild_kick(env, seq).await,
+            names::CMD_GUILD_RANK_SET => self.guild_rank_set(env, seq).await,
             // сделка (ФР-15, M12.7c)
-            "cmd/trade.open" => self.trade_open(env, seq).await,
-            "cmd/trade.add_item" => self.trade_add_item(env, seq).await,
-            "cmd/trade.set_gold" => self.trade_set_gold(env, seq).await,
-            "cmd/trade.propose" => self.trade_lock_cmd(env, seq).await,
-            "cmd/trade.accept" => self.trade_lock_cmd(env, seq).await,
-            "cmd/trade.cancel" => self.trade_cancel(env, seq).await,
+            names::CMD_TRADE_OPEN => self.trade_open(env, seq).await,
+            names::CMD_TRADE_ADD_ITEM => self.trade_add_item(env, seq).await,
+            names::CMD_TRADE_SET_GOLD => self.trade_set_gold(env, seq).await,
+            names::CMD_TRADE_PROPOSE => self.trade_lock_cmd(env, seq).await,
+            names::CMD_TRADE_ACCEPT => self.trade_lock_cmd(env, seq).await,
+            names::CMD_TRADE_CANCEL => self.trade_cancel(env, seq).await,
             // группа (ФР-14, M12.7b)
-            "cmd/party.create" => self.party_create(seq).await,
-            "cmd/party.invite" => self.party_invite(env, seq).await,
-            "cmd/party.accept" => self.party_accept(env, seq).await,
-            "cmd/party.decline" => self.party_decline(env, seq).await,
-            "cmd/party.leave" => self.party_leave(seq).await,
-            "cmd/party.kick" => self.party_kick(env, seq).await,
+            names::CMD_PARTY_CREATE => self.party_create(seq).await,
+            names::CMD_PARTY_INVITE => self.party_invite(env, seq).await,
+            names::CMD_PARTY_ACCEPT => self.party_accept(env, seq).await,
+            names::CMD_PARTY_DECLINE => self.party_decline(env, seq).await,
+            names::CMD_PARTY_LEAVE => self.party_leave(seq).await,
+            names::CMD_PARTY_KICK => self.party_kick(env, seq).await,
             // профессии/крафт (ФР-08, M12.6)
-            "cmd/craft.list" => self.craft_list(seq).await,
-            "cmd/craft.recipes" => self.craft_recipes(env, seq).await,
-            "cmd/craft.learn" => self.craft_learn(env, seq).await,
-            "cmd/craft.reset" => self.craft_reset(env, seq).await,
-            "cmd/craft.rank_up" => self.craft_rank_up(env, seq).await,
-            "cmd/craft.start" => self.craft_start(env, seq).await,
+            names::CMD_CRAFT_LIST => self.craft_list(seq).await,
+            names::CMD_CRAFT_RECIPES => self.craft_recipes(env, seq).await,
+            names::CMD_CRAFT_LEARN => self.craft_learn(env, seq).await,
+            names::CMD_CRAFT_RESET => self.craft_reset(env, seq).await,
+            names::CMD_CRAFT_RANK_UP => self.craft_rank_up(env, seq).await,
+            names::CMD_CRAFT_START => self.craft_start(env, seq).await,
             // квесты (ФР-12, M12.6)
-            "cmd/quest.list" => self.quest_list(seq).await,
-            "cmd/quest.accept" => self.quest_accept(env, seq).await,
-            "cmd/quest.turn_in" => self.quest_turn_in(env, seq).await,
-            "cmd/quest.abandon" => self.quest_abandon(env, seq).await,
+            names::CMD_QUEST_LIST => self.quest_list(seq).await,
+            names::CMD_QUEST_ACCEPT => self.quest_accept(env, seq).await,
+            names::CMD_QUEST_TURN_IN => self.quest_turn_in(env, seq).await,
+            names::CMD_QUEST_ABANDON => self.quest_abandon(env, seq).await,
             // преступность (ФР-11, §10, M12.5d)
-            "cmd/crime.log" => self.crime_log(env, seq).await,
+            names::CMD_CRIME_LOG => self.crime_log(env, seq).await,
             // улучшение предметов (ФР-10, M12.5c)
-            "cmd/upgrade.preview" => self.upgrade_preview(env, seq).await,
-            "cmd/upgrade.start" => self.upgrade_start(env, seq).await,
+            names::CMD_UPGRADE_PREVIEW => self.upgrade_preview(env, seq).await,
+            names::CMD_UPGRADE_START => self.upgrade_start(env, seq).await,
             // активные способности (§4, M14)
-            "cmd/skill.use" => self.skill_use(env, seq).await,
+            names::CMD_SKILL_USE => self.skill_use(env, seq).await,
             // магия и сокеты (ФР-09, M12.5b)
-            "cmd/magic.rune_cast" => self.magic_rune_cast(env, seq).await,
-            "cmd/magic.scroll_cast" => self.magic_scroll_cast(env, seq).await,
-            "cmd/socket.insert" => self.socket_insert(env, seq).await,
-            "cmd/socket.extract" => self.socket_extract(env, seq).await,
+            names::CMD_MAGIC_RUNE_CAST => self.magic_rune_cast(env, seq).await,
+            names::CMD_MAGIC_SCROLL_CAST => self.magic_scroll_cast(env, seq).await,
+            names::CMD_SOCKET_INSERT => self.socket_insert(env, seq).await,
+            names::CMD_SOCKET_EXTRACT => self.socket_extract(env, seq).await,
             // добыча ресурсов (M20/F20b)
-            "cmd/resource.gather" => self.resource_gather(env, seq).await,
+            names::CMD_RESOURCE_GATHER => self.resource_gather(env, seq).await,
             // снятие шкур (сервер-джоб5 с)
-            "cmd/corpse.harvest" => self.corpse_harvest(env, seq).await,
+            names::CMD_CORPSE_HARVEST => self.corpse_harvest(env, seq).await,
             // игровые диалоги (M20 — заготовка)
-            "cmd/dialog.choice" => self.dialog_choice(env, seq).await,
-            "cmd/dialog.submit" => self.dialog_submit(env, seq).await,
+            names::CMD_DIALOG_CHOICE => self.dialog_choice(env, seq).await,
+            names::CMD_DIALOG_SUBMIT => self.dialog_submit(env, seq).await,
             // M24: админ-панель предметов (гейт role=admin)
-            "cmd/admin.items" => self.admin_items(env, seq).await,
-            "cmd/admin.give.ask" => self.admin_give_ask(env, seq).await,
-            "cmd/admin.remove.ask" => self.admin_remove_ask(env, seq).await,
-            "cmd/admin.god_mode" => self.admin_god_mode(env, seq).await,
-            "cmd/admin.target.info" => self.admin_target_info(env, seq).await,
-            "cmd/admin.clear" => self.admin_clear(env, seq).await,
-            "cmd/admin.content.reload" => self.admin_content_reload(env, seq).await,
+            names::CMD_ADMIN_ITEMS => self.admin_items(env, seq).await,
+            names::CMD_ADMIN_GIVE_ASK => self.admin_give_ask(env, seq).await,
+            names::CMD_ADMIN_REMOVE_ASK => self.admin_remove_ask(env, seq).await,
+            names::CMD_ADMIN_GOD_MODE => self.admin_god_mode(env, seq).await,
+            names::CMD_ADMIN_TARGET_INFO => self.admin_target_info(env, seq).await,
+            names::CMD_ADMIN_CLEAR => self.admin_clear(env, seq).await,
+            names::CMD_ADMIN_CONTENT_RELOAD => self.admin_content_reload(env, seq).await,
             // лист/инвентарь/опыт (ФР-04/07, M12.4)
-            "cmd/skill.train" => self.skill_train(env, seq).await,
-            "cmd/item.use" => {
+            names::CMD_SKILL_TRAIN => self.skill_train(env, seq).await,
+            names::CMD_ITEM_USE => {
                 let mut outs = self.maybe_interrupt_harvest(seq).await;
                 outs.extend(self.item_use(env, seq).await);
                 outs
             }
-            "cmd/item.equip" => {
+            names::CMD_ITEM_EQUIP => {
                 let mut outs = self.maybe_interrupt_harvest(seq).await;
                 outs.extend(self.item_equip(env, seq).await);
                 outs
             }
-            "cmd/item.unequip" => {
+            names::CMD_ITEM_UNEQUIP => {
                 let mut outs = self.maybe_interrupt_harvest(seq).await;
                 outs.extend(self.item_unequip(env, seq).await);
                 outs
             }
-            "cmd/item.drop" => {
+            names::CMD_ITEM_DROP => {
                 let mut outs = self.maybe_interrupt_harvest(seq).await;
                 outs.extend(self.item_drop(env, seq).await);
                 outs
             }
-            "cmd/item.move" => {
+            names::CMD_ITEM_MOVE => {
                 let mut outs = self.maybe_interrupt_harvest(seq).await;
                 outs.extend(self.item_move(env, seq).await);
                 outs
             }
             // dev-сценарии (`/scenario …`); чат — ФР-13 в фазе M12.7
-            "cmd/chat.send" => self.chat_send(env, seq).await,
-            "cmd/chat.delete" => self.chat_delete(env, seq).await,
+            names::CMD_CHAT_SEND => self.chat_send(env, seq).await,
+            names::CMD_CHAT_DELETE => self.chat_delete(env, seq).await,
             // Сервисный ping (§7): ack + echo; RTT клиент считает по своему
             // `ts` — сервер отвечает 0, как и мок.
-            "cmd/ping" => {
+            names::CMD_PING => {
                 let pong = Pong {
                     ts: crate::time::now_rfc3339(),
                     rtt_ms: 0,
@@ -389,13 +392,13 @@ impl Session {
                 vec![
                     out_ack(Ack::ok(seq, None)),
                     out_event(
-                        "evt/pong",
+                        names::EVT_PONG,
                         None,
                         serde_json::to_value(&pong).unwrap_or_default(),
                     ),
                 ]
             }
-            "cmd/time.sync" => {
+            names::CMD_TIME_SYNC => {
                 let sync = TimeSync {
                     server_ts: crate::time::now_epoch(),
                     rtt_hint_ms: Some(0),
@@ -403,7 +406,7 @@ impl Session {
                 vec![
                     out_ack(Ack::ok(seq, None)),
                     out_event(
-                        "evt/time.sync",
+                        names::EVT_TIME_SYNC,
                         None,
                         serde_json::to_value(&sync).unwrap_or_default(),
                     ),
@@ -657,7 +660,7 @@ pub(crate) async fn close_char_session(state: &SharedState, char_id: &str, owner
     };
     if let Some((participants, offer_id)) = closed {
         let text = event_text(
-            "evt/trade/closed",
+            names::EVT_TRADE_CLOSED,
             None,
             serde_json::json!({ "offer_id": offer_id, "reason": "cancelled" }),
         );

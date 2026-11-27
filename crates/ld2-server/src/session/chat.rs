@@ -3,6 +3,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{ChatDelete, ChatSend};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::ErrorCode;
@@ -47,7 +49,7 @@ impl Session {
             }
         }
         let payload = ld2_protocol::evt::ChatDeleted { id: cmd.id };
-        if let Some(text) = event_payload_text("evt/chat/deleted", &payload) {
+        if let Some(text) = event_payload_text(names::EVT_CHAT_DELETED, &payload) {
             let world = self.state.world.lock().expect("мир");
             for addr in world.online_chars() {
                 world.send_to_char(&addr, text.clone());
@@ -241,7 +243,7 @@ impl Session {
             sent_at,
             extra: Default::default(),
         };
-        let text = event_payload_text("evt/chat/message", &payload);
+        let text = event_payload_text(names::EVT_CHAT_MESSAGE, &payload);
         if let Some(text) = text {
             let world = self.state.world.lock().expect("мир");
             for addr in recipients {
@@ -283,7 +285,7 @@ impl Session {
                     sent_at,
                     extra,
                 };
-                event_payload_text("evt/chat/message", &payload).map(Out::Text)
+                event_payload_text(names::EVT_CHAT_MESSAGE, &payload).map(Out::Text)
             })
             .collect()
     }

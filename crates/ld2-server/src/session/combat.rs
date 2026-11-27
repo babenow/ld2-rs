@@ -4,6 +4,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{CombatAttack, SkillTrain, SkillUse};
 use ld2_protocol::envelope::{Ack, Envelope};
 use ld2_protocol::evt::{CharStats, CharXp, CombatCooldown, CombatHit, CombatKind, EntityHp};
@@ -264,7 +266,7 @@ impl Session {
 
         let mut mine: Vec<Out> = vec![Self::ack_payload(seq, &serde_json::json!({}))];
         mine.push(out_event(
-            "evt/combat/cooldown",
+            names::EVT_COMBAT_COOLDOWN,
             None,
             serde_json::to_value(CombatCooldown {
                 skill_id: Some(cmd.skill_id.clone()),
@@ -282,7 +284,7 @@ impl Session {
                 serde_json::json!({ "cur": res_cur, "max": res_max }),
             );
             mine.push(out_event(
-                "evt/char/stats",
+                names::EVT_CHAR_STATS,
                 None,
                 serde_json::to_value(CharStats { patch }).unwrap_or_default(),
             ));
@@ -318,7 +320,7 @@ impl Session {
                     extra: Default::default(),
                 };
                 for addr in world.chars_in_location(&location) {
-                    push_evt(&mut others, &addr, "evt/combat/hit", &hit);
+                    push_evt(&mut others, &addr, names::EVT_COMBAT_HIT, &hit);
                 }
             } else if let Some(hp) = world.damage_mob(target, damage) {
                 hit_done = true;
@@ -340,11 +342,11 @@ impl Session {
                     extra: Default::default(),
                 };
                 for addr in world.chars_in_location(&location) {
-                    push_evt(&mut others, &addr, "evt/combat/hit", &hit);
+                    push_evt(&mut others, &addr, names::EVT_COMBAT_HIT, &hit);
                     push_evt(
                         &mut others,
                         &addr,
-                        "evt/entity/hp",
+                        names::EVT_ENTITY_HP,
                         &EntityHp {
                             entity_id: target.to_string(),
                             hp: Hp {
@@ -380,7 +382,7 @@ impl Session {
                             serde_json::json!({ "cur": new_rage, "max": res_max }),
                         );
                         mine.push(out_event(
-                            "evt/char/stats",
+                            names::EVT_CHAR_STATS,
                             None,
                             serde_json::to_value(CharStats { patch }).unwrap_or_default(),
                         ));
@@ -669,7 +671,7 @@ impl Session {
                 }),
             ),
             out_event(
-                "evt/char/xp",
+                names::EVT_CHAR_XP,
                 None,
                 serde_json::to_value(CharXp {
                     skill_id: cmd.skill_id,

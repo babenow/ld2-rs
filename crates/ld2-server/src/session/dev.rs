@@ -4,6 +4,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::envelope::Ack;
 use ld2_protocol::evt::{CharXp, ItemAdded, ItemState, LocationChanged};
 use ld2_protocol::ErrorCode;
@@ -48,7 +50,7 @@ impl Session {
         vec![
             Self::ack_payload(seq, &serde_json::json!({ "premium_until": premium_until })),
             out_event(
-                "evt/account/premium",
+                names::EVT_ACCOUNT_PREMIUM,
                 None,
                 serde_json::json!({ "premium_until": premium_until }),
             ),
@@ -138,7 +140,7 @@ impl Session {
             return vec![
                 Self::ack_payload(seq, &serde_json::json!({})),
                 out_event(
-                    "evt/dialog/open",
+                    names::EVT_DIALOG_OPEN,
                     None,
                     serde_json::to_value(open).unwrap_or_default(),
                 ),
@@ -204,7 +206,7 @@ impl Session {
             return vec![
                 Self::ack_payload(seq, &serde_json::json!({})),
                 out_event(
-                    "evt/char/xp",
+                    names::EVT_CHAR_XP,
                     None,
                     serde_json::to_value(CharXp {
                         skill_id,
@@ -301,7 +303,7 @@ impl Session {
             return vec![
                 Self::ack_payload(seq, &serde_json::json!({})),
                 out_event(
-                    "evt/item/state",
+                    names::EVT_ITEM_STATE,
                     None,
                     serde_json::to_value(ItemState {
                         uid: row.uid,
@@ -425,7 +427,7 @@ impl Session {
             Err(e) => Self::err(seq, ErrorCode::Internal, format!("encode: {e}")),
         };
         let changed = out_event(
-            "evt/location/changed",
+            names::EVT_LOCATION_CHANGED,
             Some(state_version),
             serde_json::to_value(LocationChanged { location }).unwrap_or_default(),
         );
@@ -509,7 +511,7 @@ impl Session {
             }
             let item = item_snapshot(&row, &def);
             outs.push(out_event(
-                "evt/item/added",
+                names::EVT_ITEM_ADDED,
                 None,
                 serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
             ));
@@ -522,7 +524,7 @@ impl Session {
                     let mut patch = serde_json::Map::new();
                     patch.insert("qty".into(), serde_json::json!(row.qty));
                     out_event(
-                        "evt/item/state",
+                        names::EVT_ITEM_STATE,
                         None,
                         serde_json::to_value(ItemState {
                             uid: row.uid,
@@ -534,7 +536,7 @@ impl Session {
                     let def = db::items::def(pool, &row.def_id).await.ok().flatten();
                     match def {
                         Some(def) => out_event(
-                            "evt/item/added",
+                            names::EVT_ITEM_ADDED,
                             None,
                             serde_json::to_value(ItemAdded {
                                 item: item_snapshot(&row, &def),
@@ -602,7 +604,7 @@ impl Session {
         vec![
             Self::ack_payload(seq, &serde_json::json!({})),
             out_event(
-                "evt/item/added",
+                names::EVT_ITEM_ADDED,
                 None,
                 serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
             ),

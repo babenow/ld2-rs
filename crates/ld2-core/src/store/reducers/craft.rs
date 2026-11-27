@@ -1,5 +1,7 @@
 //! Редьюсеры крафта, квестов и криминала (RF4h).
 
+use ld2_protocol::names;
+
 use super::super::*;
 
 impl AppStore {
@@ -10,7 +12,7 @@ impl AppStore {
         payload: serde_json::Value,
     ) -> Vec<Effect> {
         match msg_type {
-            "evt/quest/progress" | "evt/quest/updated" => {
+            names::EVT_QUEST_PROGRESS | names::EVT_QUEST_UPDATED => {
                 #[derive(serde::Deserialize)]
                 struct WithQuest {
                     quest: QuestState,
@@ -45,7 +47,7 @@ impl AppStore {
                 );
                 vec![]
             }
-            "evt/craft/result" => {
+            names::EVT_CRAFT_RESULT => {
                 let Ok(result) = serde_json::from_value::<ld2_protocol::evt::CraftResult>(payload)
                 else {
                     return vec![];
@@ -68,7 +70,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/craft/profession" => {
+            names::EVT_CRAFT_PROFESSION => {
                 #[derive(serde::Deserialize)]
                 struct WithProfession {
                     profession: ld2_protocol::types::ProfessionSnapshot,
@@ -123,7 +125,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/crime/status" => {
+            names::EVT_CRIME_STATUS => {
                 let Ok(update) = serde_json::from_value::<CrimeStatusUpdate>(payload) else {
                     return vec![];
                 };
@@ -143,7 +145,7 @@ impl AppStore {
                 self.push_log(LogKind::Crime, text);
                 vec![]
             }
-            "evt/crime/added" => {
+            names::EVT_CRIME_ADDED => {
                 let Ok(added) = serde_json::from_value::<CrimeAdded>(payload) else {
                     return vec![];
                 };
@@ -165,7 +167,7 @@ impl AppStore {
                 );
                 vec![]
             }
-            "evt/crime/removed" => {
+            names::EVT_CRIME_REMOVED => {
                 let Ok(removed) = serde_json::from_value::<CrimeRemoved>(payload) else {
                     return vec![];
                 };

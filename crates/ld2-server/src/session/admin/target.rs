@@ -1,5 +1,7 @@
 //! RF1v: админ-часть — цели, определения и очистка.
 
+use ld2_protocol::names;
+
 use super::*;
 
 impl Session {
@@ -364,7 +366,7 @@ impl Session {
                 let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
                 for row in rows {
                     outs.push(out_event(
-                        "evt/item/removed",
+                        names::EVT_ITEM_REMOVED,
                         None,
                         serde_json::to_value(ItemRemoved {
                             uid: row.uid,
@@ -383,7 +385,7 @@ impl Session {
                     world.send_to_char(
                         &char_id,
                         event_text(
-                            "evt/item/removed",
+                            names::EVT_ITEM_REMOVED,
                             None,
                             serde_json::to_value(ItemRemoved {
                                 uid: row.uid,

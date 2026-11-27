@@ -1,6 +1,8 @@
 //! Основной цикл транспорта: подключение → (resume → resync) → селект-loop
 //! → backoff/reconnect (`docs/protocol.md` §2.4, §3, §4.5; PLAN-M1 T2).
 
+use ld2_protocol::names;
+
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -399,7 +401,7 @@ fn classify(text: &str) -> Result<ServerMsg, serde_json::Error> {
     if env.msg_type == ACK_TYPE {
         let ack: Ack = serde_json::from_str(text)?;
         Ok(ServerMsg::Ack(ack))
-    } else if env.msg_type.starts_with("evt/") {
+    } else if env.msg_type.starts_with(names::EVT_PREFIX) {
         Ok(ServerMsg::Event(env))
     } else {
         Ok(ServerMsg::Unknown(env.msg_type))

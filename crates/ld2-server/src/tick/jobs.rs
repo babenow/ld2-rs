@@ -7,6 +7,8 @@
 //! боя, смерти, награды), `jobs` (работы, DoT, баффы), `expire`
 //! (истечение сущностей), `plan` (структуры плана и события).
 
+use ld2_protocol::names;
+
 use ld2_protocol::evt::CharStats;
 use serde_json::json;
 use tracing::warn;
@@ -95,7 +97,7 @@ pub(super) async fn rune_recharge_step(state: &SharedState, steps: u32) {
             serde_json::to_value(&sockets_wire).unwrap_or_default(),
         );
         let text = crate::session::event_text(
-            "evt/item/state",
+            names::EVT_ITEM_STATE,
             None,
             serde_json::to_value(ld2_protocol::evt::ItemState {
                 uid: row.uid.clone(),
@@ -176,7 +178,7 @@ pub(super) async fn regen_step(state: &SharedState) {
             patch.insert("hp".into(), json!({ "cur": new, "max": hp_max }));
         }
         let text = crate::session::event_text(
-            "evt/char/stats",
+            names::EVT_CHAR_STATS,
             None,
             serde_json::to_value(CharStats { patch }).unwrap_or_default(),
         );
@@ -237,7 +239,7 @@ pub(super) async fn harvest_step(state: &SharedState) {
             ok,
             ruined: false,
         };
-        let text = crate::session::event_text("evt/harvest/result", None, {
+        let text = crate::session::event_text(names::EVT_HARVEST_RESULT, None, {
             serde_json::to_value(result).unwrap_or_default()
         });
         if !text.is_empty() {
@@ -272,7 +274,7 @@ pub(super) async fn harvest_step(state: &SharedState) {
                                 cfg, "skinning", xp_new, rank_row, level_new,
                             );
                             let text = crate::session::event_text(
-                                "evt/craft/profession",
+                                names::EVT_CRAFT_PROFESSION,
                                 None,
                                 serde_json::to_value(ld2_protocol::evt::CraftProfession {
                                     profession: snapshot,
@@ -304,7 +306,7 @@ pub(super) async fn harvest_step(state: &SharedState) {
             entity: corpse.entity(),
             loot_count: loot_count as u32,
         };
-        let text = crate::session::event_text("evt/corpse/created", None, {
+        let text = crate::session::event_text(names::EVT_CORPSE_CREATED, None, {
             serde_json::to_value(updated).unwrap_or_default()
         });
         if !text.is_empty() {
@@ -388,7 +390,7 @@ pub(super) async fn craft_finish_step(state: &SharedState) {
         events.push((
             char_id.clone(),
             crate::session::event_text(
-                "evt/craft/result",
+                names::EVT_CRAFT_RESULT,
                 None,
                 serde_json::to_value(&result).unwrap_or_default(),
             ),
@@ -464,7 +466,7 @@ pub(super) async fn profession_xp_step(
         .ok()
         .flatten();
     let text = crate::session::event_text(
-        "evt/craft/profession",
+        names::EVT_CRAFT_PROFESSION,
         None,
         serde_json::to_value(ld2_protocol::evt::CraftProfession {
             profession: snapshot,
@@ -534,9 +536,9 @@ pub(crate) async fn quest_kill_progress(
         let p = fresh.iter().find(|(id, _, _)| id == &def.0);
         let state_obj = crate::db::quests::build_state(def, p);
         let ty = if new_state == "turn_in" {
-            "evt/quest/updated"
+            names::EVT_QUEST_UPDATED
         } else {
-            "evt/quest/progress"
+            names::EVT_QUEST_PROGRESS
         };
         let text = crate::session::event_text(ty, None, serde_json::json!({ "quest": state_obj }));
         if !text.is_empty() {

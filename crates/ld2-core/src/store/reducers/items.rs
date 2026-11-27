@@ -1,5 +1,7 @@
 //! Редьюсеры предметов, трупов и улучшения — вынесены из `apply_event` (RF4f).
 
+use ld2_protocol::names;
+
 use super::super::*;
 
 impl AppStore {
@@ -10,12 +12,13 @@ impl AppStore {
         payload: serde_json::Value,
     ) -> Vec<Effect> {
         match msg_type {
-            m if m.starts_with("evt/corpse/") => self.reduce_corpses(m, payload),
-            "evt/item/added" | "evt/item/removed" | "evt/item/dropped" | "evt/item/expired" => {
-                self.reduce_item_events(msg_type, payload)
-            }
-            "evt/item/state" => self.reduce_item_state(msg_type, payload),
-            "evt/upgrade/result" => self.reduce_upgrade(msg_type, payload),
+            m if m.starts_with(names::EVT_CORPSE_PREFIX) => self.reduce_corpses(m, payload),
+            names::EVT_ITEM_ADDED
+            | names::EVT_ITEM_REMOVED
+            | names::EVT_ITEM_DROPPED
+            | names::EVT_ITEM_EXPIRED => self.reduce_item_events(msg_type, payload),
+            names::EVT_ITEM_STATE => self.reduce_item_state(msg_type, payload),
+            names::EVT_UPGRADE_RESULT => self.reduce_upgrade(msg_type, payload),
             _ => vec![],
         }
     }
@@ -23,7 +26,7 @@ impl AppStore {
     /// Трупы: создание и разграбление.
     fn reduce_corpses(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/corpse/created" => {
+            names::EVT_CORPSE_CREATED => {
                 let Ok(corpse) = serde_json::from_value::<CorpseCreated>(payload) else {
                     return vec![];
                 };
@@ -51,7 +54,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/corpse/looted" => {
+            names::EVT_CORPSE_LOOTED => {
                 let Ok(looted) = serde_json::from_value::<CorpseLooted>(payload) else {
                     return vec![];
                 };
@@ -76,7 +79,7 @@ impl AppStore {
     /// Предметы: появление, убыль, выброс, истечение TTL.
     fn reduce_item_events(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/item/added" => {
+            names::EVT_ITEM_ADDED => {
                 let Ok(added) = serde_json::from_value::<ItemAdded>(payload) else {
                     return vec![];
                 };
@@ -102,7 +105,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/item/removed" => {
+            names::EVT_ITEM_REMOVED => {
                 let Ok(removed) = serde_json::from_value::<ItemRemoved>(payload) else {
                     return vec![];
                 };
@@ -155,7 +158,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/item/dropped" => {
+            names::EVT_ITEM_DROPPED => {
                 // M20: выброс предмета — журнал всем в локации; свой
                 // char_id → «Вы выбросили…», иначе по полу «выбросил(а)».
                 let Ok(dropped) = serde_json::from_value::<ItemDropped>(payload) else {
@@ -178,7 +181,7 @@ impl AppStore {
                 self.push_log(LogKind::Loot, text);
                 vec![]
             }
-            "evt/item/expired" => {
+            names::EVT_ITEM_EXPIRED => {
                 // M20: предмет в локации исчез по TTL.
                 let Ok(expired) = serde_json::from_value::<ItemExpired>(payload) else {
                     return vec![];
@@ -193,7 +196,7 @@ impl AppStore {
     /// Патч предмета (upgrade/sockets/qty).
     fn reduce_item_state(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/item/state" => {
+            names::EVT_ITEM_STATE => {
                 // Патч предмета (upgrade/sockets/qty) — ФР-09/ФР-10.
                 #[derive(serde::Deserialize)]
                 struct ItemPatch {
@@ -258,7 +261,7 @@ impl AppStore {
     /// Результат улучшения — журнал и модалка.
     fn reduce_upgrade(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/upgrade/result" => {
+            names::EVT_UPGRADE_RESULT => {
                 // ФР-10: результат — событием; модалка закрывается.
                 let Ok(result) =
                     serde_json::from_value::<ld2_protocol::evt::UpgradeResult>(payload.clone())

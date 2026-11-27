@@ -5,6 +5,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{ItemDrop, ItemEquip, ItemMove, ItemUnequip, ItemUse};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::{CharStats, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState};
@@ -198,7 +200,7 @@ impl Session {
                     let mut patch = serde_json::Map::new();
                     patch.insert("qty".into(), serde_json::json!(new_qty));
                     outs.push(out_event(
-                        "evt/item/state",
+                        names::EVT_ITEM_STATE,
                         None,
                         serde_json::to_value(ItemState {
                             uid: item.uid.clone(),
@@ -212,7 +214,7 @@ impl Session {
                         return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                     }
                     outs.push(out_event(
-                        "evt/item/removed",
+                        names::EVT_ITEM_REMOVED,
                         None,
                         serde_json::to_value(ItemRemoved {
                             uid: item.uid.clone(),
@@ -235,7 +237,7 @@ impl Session {
                     serde_json::json!({ "cur": hp_cur, "max": hp_max }),
                 );
                 outs.push(out_event(
-                    "evt/char/stats",
+                    names::EVT_CHAR_STATS,
                     None,
                     serde_json::to_value(CharStats { patch }).unwrap_or_default(),
                 ));
@@ -287,7 +289,7 @@ impl Session {
             ok: false,
             ruined,
         };
-        let text = event_payload_text("evt/harvest/result", &result);
+        let text = event_payload_text(names::EVT_HARVEST_RESULT, &result);
         text.map(|t| vec![Out::Text(t)]).unwrap_or_default()
     }
 
@@ -385,7 +387,7 @@ impl Session {
                 let mut patch = serde_json::Map::new();
                 patch.insert("qty".into(), serde_json::json!(row.qty));
                 out_event(
-                    "evt/item/state",
+                    names::EVT_ITEM_STATE,
                     None,
                     serde_json::to_value(ItemState {
                         uid: row.uid.clone(),
@@ -395,7 +397,7 @@ impl Session {
                 )
             } else {
                 out_event(
-                    "evt/item/added",
+                    names::EVT_ITEM_ADDED,
                     None,
                     serde_json::to_value(ItemAdded {
                         item: item_snapshot(&row, &def),
@@ -500,7 +502,7 @@ impl Session {
                     let mut patch = serde_json::Map::new();
                     patch.insert("qty".into(), serde_json::json!(row.qty));
                     out_event(
-                        "evt/item/state",
+                        names::EVT_ITEM_STATE,
                         None,
                         serde_json::to_value(ItemState {
                             uid: row.uid.clone(),
@@ -510,7 +512,7 @@ impl Session {
                     )
                 } else {
                     out_event(
-                        "evt/item/added",
+                        names::EVT_ITEM_ADDED,
                         None,
                         serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
                     )
@@ -892,7 +894,7 @@ impl Session {
             // появлялся только после resync).
             if let Some(entity) = self.ground_entity_for(location_id, &dropped) {
                 let spawn_text = event_payload_text(
-                    "evt/entity/spawn",
+                    names::EVT_ENTITY_SPAWN,
                     &ld2_protocol::evt::EntitySpawn {
                         entity,
                         location_id: location_id.clone(),
@@ -913,7 +915,8 @@ impl Session {
                 qty,
                 item_name: def.name,
             };
-            let dropped_text = crate::session::event_payload_text("evt/item/dropped", &payload);
+            let dropped_text =
+                crate::session::event_payload_text(names::EVT_ITEM_DROPPED, &payload);
             let world = self.state.world.lock().expect("мир");
             for addr in world.chars_in_location(location_id) {
                 if let Some(text) = &dropped_text {
@@ -930,7 +933,7 @@ impl Session {
             vec![
                 Self::ack_payload(seq, &serde_json::json!({})),
                 out_event(
-                    "evt/item/removed",
+                    names::EVT_ITEM_REMOVED,
                     None,
                     serde_json::to_value(ItemRemoved {
                         uid: item.uid.clone(),
@@ -950,7 +953,7 @@ impl Session {
             vec![
                 Self::ack_payload(seq, &serde_json::json!({})),
                 out_event(
-                    "evt/item/state",
+                    names::EVT_ITEM_STATE,
                     None,
                     serde_json::to_value(ItemState {
                         uid: item.uid.clone(),
