@@ -34,7 +34,7 @@ crates/ld2-server/src/session/magic.rs 607 331
 crates/ld2-server/src/session/quests.rs 322 253
 crates/ld2-server/src/session/socketing.rs 515 312
 crates/ld2-server/src/session/upgrade.rs 479 345
-crates/ld2-server/src/tick/combat.rs 1187 167
+crates/ld2-server/src/tick/combat.rs 1198 167
 crates/ld2-test-kit/src/fixtures.rs 652 150
 
 # --- минимум тестов по крейтам ---

@@ -1,6 +1,12 @@
 //! Мобы, боссы и таблицы дропа/респавна мира (D26/M20/M25).
 
 use super::*;
+use crate::consts::{EFFECT_BLEED, EFFECT_BLIND, EFFECT_SILENCE, EFFECT_STUN, MS_PER_SECOND};
+
+const RANDOM_BUF_LEN: usize = 2;
+const DEFAULT_SUMMON_COUNT: i64 = 2;
+const MIN_INTERVAL_MULT: f64 = 0.05;
+const DEFAULT_ACCURACY: i64 = 75;
 
 /// M20: что возрождается (дизайн M20: `RespawnEntry {entity_id,
 /// location_id, kind, at}`; `at = now + random(min..max)`).
@@ -43,7 +49,7 @@ pub fn roll_chance(chance: f64) -> bool {
     if chance <= 0.0 {
         return false;
     }
-    let mut buf = [0u8; 2];
+    let mut buf = [0u8; RANDOM_BUF_LEN];
     if getrandom::fill(&mut buf).is_err() {
         return true; // без RNG лут не теряем (как раньше — всегда)
     }
@@ -84,7 +90,7 @@ pub struct BossSummon {
 }
 
 fn boss_summon_count() -> i64 {
-    2
+    DEFAULT_SUMMON_COUNT
 }
 
 /// M25: навык босса — кулдаун, каст (подготовка) и урон/бафф.
@@ -126,10 +132,10 @@ pub struct BossEffect {
 /// M25: название эффекта контроля (сервер — истина, RU).
 pub fn effect_title(kind: &str) -> String {
     match kind {
-        "stun" => "Оглушение".to_string(),
-        "silence" => "Немота".to_string(),
-        "blind" => "Ослепление".to_string(),
-        "bleed" => "Кровотечение".to_string(),
+        EFFECT_STUN => "Оглушение".to_string(),
+        EFFECT_SILENCE => "Немота".to_string(),
+        EFFECT_BLIND => "Ослепление".to_string(),
+        EFFECT_BLEED => "Кровотечение".to_string(),
         other => other.to_string(),
     }
 }
@@ -203,9 +209,9 @@ impl BossRuntime {
     /// M25: применить self_buff навыка (множители до duration_s).
     fn apply_self_buff(&mut self, skill: &BossSkill, now_ms: i64) {
         if let Some(buff) = &skill.self_buff {
-            self.buff_until = now_ms + buff.duration_s.max(1) * 1000;
+            self.buff_until = now_ms + buff.duration_s.max(1) * MS_PER_SECOND;
             self.buff_damage_mult = buff.damage_mult.max(0.0);
-            self.buff_interval_mult = buff.interval_mult.max(0.05);
+            self.buff_interval_mult = buff.interval_mult.max(MIN_INTERVAL_MULT);
         }
     }
 }
@@ -360,7 +366,7 @@ impl World {
     /// R-контент: продвинуть тик горения (следующий — через период).
     pub fn advance_burn_tick(&mut self, mob_id: &str, now_ms: i64) {
         if let Some(mob) = self.mobs.get_mut(mob_id) {
-            mob.burn_next_at = now_ms + mob.burn_period.max(1000);
+            mob.burn_next_at = now_ms + mob.burn_period.max(MS_PER_SECOND);
             if mob.burn_until <= now_ms {
                 mob.burn_dps = 0;
             }
@@ -369,7 +375,7 @@ impl World {
     /// M18/F58d: продвинуть тик кровоточащего моба (следующий через 1 с).
     pub fn advance_bleed_tick(&mut self, mob_id: &str, now_ms: i64) {
         if let Some(mob) = self.mobs.get_mut(mob_id) {
-            mob.bleed_next_at = now_ms + 1000;
+            mob.bleed_next_at = now_ms + MS_PER_SECOND;
             if mob.bleed_until <= now_ms {
                 mob.bleed_dps = 0; // срок истёк — чистим
             }
@@ -417,7 +423,7 @@ impl World {
             .cfg
             .phases
             .iter()
-            .rposition(|p| fight_ms >= p.after_s.saturating_mul(1000))
+            .rposition(|p| fight_ms >= p.after_s.saturating_mul(MS_PER_SECOND))
             .unwrap_or(0);
         let changed = target != boss.phase;
         boss.phase = target;
@@ -430,7 +436,10 @@ impl World {
             return (1.0, 1.0);
         };
         let (mut damage, mut interval) = match boss.cfg.phases.get(boss.phase) {
-            Some(p) => (p.damage_mult.max(0.0), p.interval_mult.max(0.05)),
+            Some(p) => (
+                p.damage_mult.max(0.0),
+                p.interval_mult.max(MIN_INTERVAL_MULT),
+            ),
             None => (1.0, 1.0),
         };
         // M25: бафф босса на себя (self_buff) — множит фазу.
@@ -454,7 +463,7 @@ impl World {
         if let Some(cast) = boss.casting.clone() {
             if now_ms >= cast.ends_at {
                 boss.casting = None;
-                boss.next_skill_at = now_ms + cast.skill.cooldown_s.max(1) * 1000;
+                boss.next_skill_at = now_ms + cast.skill.cooldown_s.max(1) * MS_PER_SECOND;
                 boss.apply_self_buff(&cast.skill, now_ms);
                 return (BossSkillTick::Applied(cast.skill), false);
             }
@@ -467,13 +476,13 @@ impl World {
         boss.skill_i += 1;
         if skill.cast_s <= 0 {
             // Мгновенный навык — применяем сразу.
-            boss.next_skill_at = now_ms + skill.cooldown_s.max(1) * 1000;
+            boss.next_skill_at = now_ms + skill.cooldown_s.max(1) * MS_PER_SECOND;
             boss.apply_self_buff(&skill, now_ms);
             return (BossSkillTick::Applied(skill), false);
         }
         // Каст: во время подготовки босс не атакует.
-        let ends_at = now_ms + skill.cast_s.max(1) * 1000;
-        boss.next_skill_at = ends_at + skill.cooldown_s.max(1) * 1000;
+        let ends_at = now_ms + skill.cast_s.max(1) * MS_PER_SECOND;
+        boss.next_skill_at = ends_at + skill.cooldown_s.max(1) * MS_PER_SECOND;
         boss.casting = Some(BossCast {
             skill: skill.clone(),
             ends_at,
@@ -525,7 +534,7 @@ impl World {
         self.mobs
             .get(mob_id)
             .map(|m| (m.armor, m.dodge, m.parry, m.resist, m.accuracy))
-            .unwrap_or((0, 0, 0, 0, 75))
+            .unwrap_or((0, 0, 0, 0, DEFAULT_ACCURACY))
     }
     /// M32: магическое сопротивление моба, %.
     pub fn mob_resist(&self, mob_id: &str) -> i64 {

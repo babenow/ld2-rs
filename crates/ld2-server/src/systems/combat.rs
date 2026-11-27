@@ -1,5 +1,15 @@
 //! Бой и ресурсы: ярость, шаг ресурса, интервал атаки мобов, преступность (M17/M25).
 
+use crate::consts::{PROFILE_ARCHER, PROFILE_WARRIOR};
+
+const HIT_CHANCE_MIN: i64 = 5;
+const HIT_CHANCE_MAX: i64 = 95;
+const ROLL_EPSILON: f64 = 0.999_999;
+const PERCENT_MAX: i64 = 100;
+const PARRY_DAMAGE_DIV: i64 = 2;
+const RESIST_MAX: i64 = 90;
+const PERCENT_DIVISOR: f64 = 100.0;
+
 /// Вклад нового преступления в общий срок (§10).
 ///
 /// `T = 0` (первое преступление) → полный срок `t` — так согласован пример
@@ -26,7 +36,7 @@ pub fn crime_blend(t_cur: i64, t_new: i64, t_max: i64, k: f64) -> (i64, i64) {
 /// Шанс попадания, %: `точность − уклонение`, кламп 5..95 — полный
 /// промах или полная неуязвимость невозможны.
 pub fn hit_chance(accuracy: i64, dodge: i64) -> i64 {
-    (accuracy - dodge).clamp(5, 95)
+    (accuracy - dodge).clamp(HIT_CHANCE_MIN, HIT_CHANCE_MAX)
 }
 
 /// Попал ли удар: бросок `0..100` меньше шанса попадания.
@@ -43,7 +53,7 @@ pub fn roll_damage(min: i64, max: i64, roll01: f64) -> i64 {
         return min;
     }
     let span = (max - min + 1) as f64;
-    let offset = (roll01.clamp(0.0, 0.999_999) * span).floor() as i64;
+    let offset = (roll01.clamp(0.0, ROLL_EPSILON) * span).floor() as i64;
     (min + offset).clamp(min, max)
 }
 
@@ -68,7 +78,7 @@ pub fn ability_damage(
     }
     let roll = roll_damage(damage_min, damage_max, dmg_roll);
     let mut damage = ((roll as f64) * mult).round().max(1.0) as i64;
-    if parry_roll < parry.clamp(0, 100) as f64 {
+    if parry_roll < parry.clamp(0, PERCENT_MAX) as f64 {
         damage = after_parry(damage);
     }
     Some(after_armor(damage, armor))
@@ -76,7 +86,7 @@ pub fn ability_damage(
 
 /// Парирование — половина урона с округлением вверх, минимум 1.
 pub fn after_parry(damage: i64) -> i64 {
-    (damage.max(1) + 1) / 2
+    (damage.max(1) + 1) / PARRY_DAMAGE_DIV
 }
 
 /// Броня — плоское снижение урона, минимум 1 (удар всегда ранит).
@@ -86,8 +96,8 @@ pub fn after_armor(damage: i64, armor: i64) -> i64 {
 
 /// Магическое сопротивление, % — снижение урона, минимум 1.
 pub fn after_resist(damage: i64, resist: i64) -> i64 {
-    let r = resist.clamp(0, 90) as f64;
-    (((damage.max(1) as f64) * (1.0 - r / 100.0)).round() as i64).max(1)
+    let r = resist.clamp(0, RESIST_MAX) as f64;
+    (((damage.max(1) as f64) * (1.0 - r / PERCENT_DIVISOR)).round() as i64).max(1)
 }
 
 // ─── M17/F30e: ресурсы по классам (WoW-модель) ─────────────────────────────
@@ -96,8 +106,8 @@ pub fn after_resist(damage: i64, resist: i64) -> i64 {
 /// (из `[gameplay.resource]`), остальные (мана) — колонка персонажа.
 pub fn resource_max(profile: &str, res: &crate::config::ResourceSection, mp_max: i64) -> i64 {
     match profile {
-        "warrior" => i64::from(res.rage_max),
-        "archer" => i64::from(res.energy_max),
+        PROFILE_WARRIOR => i64::from(res.rage_max),
+        PROFILE_ARCHER => i64::from(res.energy_max),
         _ => mp_max,
     }
 }
@@ -106,8 +116,8 @@ pub fn resource_max(profile: &str, res: &crate::config::ResourceSection, mp_max:
 /// «не хватает ярости/энергии/маны».
 pub fn resource_name(profile: &str) -> &'static str {
     match profile {
-        "warrior" => "ярости",
-        "archer" => "энергии",
+        PROFILE_WARRIOR => "ярости",
+        PROFILE_ARCHER => "энергии",
         _ => "маны",
     }
 }
@@ -122,7 +132,7 @@ pub fn mob_attack_interval(base_ms: i64, phase_mult: f64, min_ms: i64) -> i64 {
 /// Прирост ярости за урон (воин): доля `rage_gain_pct`, округление
 /// вверх; не-воин или нулевой урон → 0.
 pub fn rage_gain(res: &crate::config::ResourceSection, profile: &str, damage: i64) -> i64 {
-    if profile != "warrior" || damage <= 0 {
+    if profile != PROFILE_WARRIOR || damage <= 0 {
         return 0;
     }
     (damage as f64 * res.rage_gain_pct).ceil() as i64
@@ -145,7 +155,7 @@ pub fn resource_step(
 ) -> Option<i64> {
     let cur = cur.min(max);
     let new = match profile {
-        "warrior" => {
+        PROFILE_WARRIOR => {
             if in_combat {
                 return None;
             }
@@ -153,7 +163,7 @@ pub fn resource_step(
                 .max(0.0)
                 .round() as i64
         }
-        "archer" => {
+        PROFILE_ARCHER => {
             if cur >= max {
                 return None;
             }
@@ -166,14 +176,16 @@ pub fn resource_step(
             }
             let mana = &cfg.gameplay.magic.mana;
             let base = if in_combat {
-                (max as f64 * mana.regen_in_pct_s / 100.0).ceil().max(1.0) as i64
+                (max as f64 * mana.regen_in_pct_s / PERCENT_DIVISOR)
+                    .ceil()
+                    .max(1.0) as i64
             } else {
                 (max as f64 / mana.regen_out_s.max(1) as f64)
                     .ceil()
                     .max(1.0) as i64
             };
             // M30: духовность ускоряет реген маны (в бое и вне).
-            let spirit_mult = 1.0 + spir.max(0) as f64 * mana.spirit_regen_pct / 100.0;
+            let spirit_mult = 1.0 + spir.max(0) as f64 * mana.spirit_regen_pct / PERCENT_DIVISOR;
             let delta = ((base as f64) * spirit_mult).ceil() as i64;
             (cur + delta).min(max)
         }
@@ -197,7 +209,9 @@ pub fn health_step(
     }
     let health = &cfg.gameplay.health;
     let delta = if in_combat {
-        (max as f64 * health.regen_in_pct_s / 100.0).ceil().max(1.0) as i64
+        (max as f64 * health.regen_in_pct_s / PERCENT_DIVISOR)
+            .ceil()
+            .max(1.0) as i64
     } else {
         (max as f64 / health.regen_out_s.max(1) as f64)
             .ceil()

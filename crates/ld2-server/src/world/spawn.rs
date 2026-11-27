@@ -2,6 +2,27 @@
 
 use super::*;
 
+const DEFAULT_RESOURCE_RESPAWN: (i64, i64) = (60, 120);
+const DEFAULT_RESOURCE_MAX: i64 = 1;
+const RESOURCE_MIN_RANK: i64 = 1;
+const RESOURCE_MAX_RANK: i64 = 30;
+const DEFAULT_DIFFICULTY: i64 = 1;
+const MIN_DIFFICULTY: i64 = 1;
+const MAX_DIFFICULTY: i64 = 10;
+const DEFAULT_DROP_CHANCE: f64 = 1.0;
+const MIN_DROP_CHANCE: f64 = 0.0;
+const DEFAULT_DAMAGE: i64 = 4;
+const ARMOR_PER_DIFFICULTY: i64 = 2;
+const DODGE_BASE: i64 = 3;
+const STAT_CHANCE_MAX: i64 = 60;
+const RESIST_PER_DIFFICULTY: i64 = 2;
+const RESIST_MAX: i64 = 80;
+const BASE_ACCURACY: i64 = 75;
+const ACCURACY_PER_DIFFICULTY: i64 = 2;
+const ACCURACY_MAX: i64 = 99;
+const MAX_SUMMONED: i64 = 8;
+const SUMMON_ATTACK_DELAY_MS: i64 = 500;
+
 impl World {
     /// Загрузить живых мобов из сида (вызывается после content-сида).
     /// `default_respawn` — дефолтный диапазон `[world]` для мобов
@@ -39,8 +60,8 @@ impl World {
                         let max = extra
                             .get("max")
                             .and_then(|v| v.as_i64())
-                            .unwrap_or(1)
-                            .max(1);
+                            .unwrap_or(DEFAULT_RESOURCE_MAX)
+                            .max(DEFAULT_RESOURCE_MAX);
                         self.resources.insert(
                             e.id.clone(),
                             ResourceNode {
@@ -50,7 +71,7 @@ impl World {
                                 def_id: def_id.to_string(),
                                 max,
                                 current: max,
-                                respawn: respawn.unwrap_or((60, 120)),
+                                respawn: respawn.unwrap_or(DEFAULT_RESOURCE_RESPAWN),
                                 despawn_when_empty: extra
                                     .get("despawn_when_empty")
                                     .and_then(|v| v.as_bool())
@@ -63,8 +84,9 @@ impl World {
                                 min_rank: extra
                                     .get("min_rank")
                                     .and_then(|v| v.as_i64())
-                                    .unwrap_or(1)
-                                    .clamp(1, 30) as i32,
+                                    .unwrap_or(RESOURCE_MIN_RANK)
+                                    .clamp(RESOURCE_MIN_RANK, RESOURCE_MAX_RANK)
+                                    as i32,
                                 tool: extra.get("tool").and_then(|v| v.as_str()).map(String::from),
                             },
                         );
@@ -77,8 +99,8 @@ impl World {
                 let difficulty = extra
                     .get("difficulty")
                     .and_then(|v| v.as_i64())
-                    .unwrap_or(1)
-                    .clamp(1, 10);
+                    .unwrap_or(DEFAULT_DIFFICULTY)
+                    .clamp(MIN_DIFFICULTY, MAX_DIFFICULTY);
                 // M20: drops — строки (шанс1.0) или объекты
                 // {def_id|id, chance 0..1} (таблица лута).
                 let drops: Vec<DropEntry> = extra
@@ -101,8 +123,8 @@ impl World {
                                 let chance = obj
                                     .get("chance")
                                     .and_then(|x| x.as_f64())
-                                    .unwrap_or(1.0)
-                                    .clamp(0.0, 1.0);
+                                    .unwrap_or(DEFAULT_DROP_CHANCE)
+                                    .clamp(MIN_DROP_CHANCE, DEFAULT_DROP_CHANCE);
                                 Some(DropEntry {
                                     def_id: def_id.to_string(),
                                     chance,
@@ -111,7 +133,10 @@ impl World {
                             .collect()
                     })
                     .unwrap_or_default();
-                let damage = extra.get("damage").and_then(|v| v.as_i64()).unwrap_or(4);
+                let damage = extra
+                    .get("damage")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(DEFAULT_DAMAGE);
                 // M32: боевые статы — объект `combat` или плоские поля;
                 // дефолты от сложности: старый контент играет без правок.
                 let combat = extra.get("combat").and_then(|v| v.as_object());
@@ -122,11 +147,16 @@ impl World {
                         .and_then(|v| v.as_i64())
                         .unwrap_or(default)
                 };
-                let armor = stat("armor", difficulty * 2).max(0);
-                let dodge = stat("dodge", 3 + difficulty).clamp(0, 60);
-                let parry = stat("parry", difficulty).clamp(0, 60);
-                let resist = stat("resist", difficulty * 2).clamp(0, 80);
-                let accuracy = stat("accuracy", 75 + difficulty * 2).clamp(1, 99);
+                let armor = stat("armor", difficulty * ARMOR_PER_DIFFICULTY).max(0);
+                let dodge = stat("dodge", DODGE_BASE + difficulty).clamp(0, STAT_CHANCE_MAX);
+                let parry = stat("parry", difficulty).clamp(0, STAT_CHANCE_MAX);
+                let resist =
+                    stat("resist", difficulty * RESIST_PER_DIFFICULTY).clamp(0, RESIST_MAX);
+                let accuracy = stat(
+                    "accuracy",
+                    BASE_ACCURACY + difficulty * ACCURACY_PER_DIFFICULTY,
+                )
+                .clamp(1, ACCURACY_MAX);
                 let hp_start = e.hp.map(|hp| hp.cur).unwrap_or(1);
                 let mob = LiveMob {
                     id: e.id.clone(),
@@ -192,14 +222,14 @@ impl World {
             return Vec::new();
         };
         let mut out = Vec::new();
-        for _ in 0..count.clamp(1, 8) {
+        for _ in 0..count.clamp(1, MAX_SUMMONED) {
             self.summon_seq += 1;
             let mut mob = template.clone();
             mob.id = format!("{template_id}_summon_{}", self.summon_seq);
             mob.location_id = location_id.to_string();
             mob.hp = mob.hp_start;
             mob.hp_max = template.hp_max;
-            mob.next_attack_at = now_ms + 500;
+            mob.next_attack_at = now_ms + SUMMON_ATTACK_DELAY_MS;
             mob.boss = None;
             mob.respawn = None;
             mob.target = None;

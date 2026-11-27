@@ -9,6 +9,7 @@ pub mod app;
 pub mod auth;
 pub mod combat_log;
 pub mod config;
+pub mod consts;
 pub mod content;
 pub mod db;
 pub mod death;

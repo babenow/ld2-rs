@@ -172,11 +172,14 @@ def audit_file(path: str, vocab: set[str]) -> dict:
         clean = strip_comment(line)
         if "#[cfg(test)]" in clean:
             in_test_mod = True
+        # Строка определения const/static (в т.ч. однострочного) — не
+        # кандидат; многострочное тело остаётся под in_const до `;`.
+        const_line = in_const or CONST_RE.match(clean) is not None
         if CONST_RE.match(clean):
             in_const = True
         if in_const and clean.rstrip().endswith(";"):
             in_const = False
-        if is_test or in_test_mod or in_const:
+        if is_test or in_test_mod or const_line:
             continue
         for word in STR_RE.findall(clean):
             if word in vocab or word.startswith(("evt/", "cmd/", "E_")):
