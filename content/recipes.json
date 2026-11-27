@@ -81,6 +81,2502 @@
         "qty": 1
       },
       "station_label": "Стол начертателя (деревня)"
+    },
+    {
+      "id": "rec_cut_agate_1",
+      "name": "Гранёный агат",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_agate",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_agate_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_agate_2",
+      "name": "Огранённый агат",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_agate",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_agate_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_agate_3",
+      "name": "Совершенный агат",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_agate",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_agate_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_malachite_1",
+      "name": "Гранёный малахит",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_malachite",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_malachite_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_malachite_2",
+      "name": "Огранённый малахит",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_malachite",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_malachite_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_malachite_3",
+      "name": "Совершенный малахит",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_malachite",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_malachite_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_obsidian_1",
+      "name": "Гранёный обсидиан",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_obsidian",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_obsidian_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_obsidian_2",
+      "name": "Огранённый обсидиан",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_obsidian",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_obsidian_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_obsidian_3",
+      "name": "Совершенный обсидиан",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_obsidian",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_obsidian_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_amethyst_1",
+      "name": "Гранёный аметист",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_amethyst",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_amethyst_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_amethyst_2",
+      "name": "Огранённый аметист",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_amethyst",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_amethyst_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_amethyst_3",
+      "name": "Совершенный аметист",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_amethyst",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_amethyst_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_topaz_1",
+      "name": "Гранёный топаз",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_topaz",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_topaz_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_topaz_2",
+      "name": "Огранённый топаз",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_topaz",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_topaz_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_topaz_3",
+      "name": "Совершенный топаз",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_topaz",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_topaz_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_ruby_1",
+      "name": "Гранёный рубин",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_ruby",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_ruby_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_ruby_2",
+      "name": "Огранённый рубин",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_ruby",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_ruby_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_ruby_3",
+      "name": "Совершенный рубин",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_ruby",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_ruby_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_sapphire_1",
+      "name": "Гранёный сапфир",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_sapphire",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_sapphire_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_sapphire_2",
+      "name": "Огранённый сапфир",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_sapphire",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_sapphire_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_sapphire_3",
+      "name": "Совершенный сапфир",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_sapphire",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_sapphire_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_emerald_1",
+      "name": "Гранёный изумруд",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_emerald",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_emerald_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_emerald_2",
+      "name": "Огранённый изумруд",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_emerald",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_emerald_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_emerald_3",
+      "name": "Совершенный изумруд",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_emerald",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_emerald_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_onyx_1",
+      "name": "Гранёный оникс",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_onyx",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_onyx_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_onyx_2",
+      "name": "Огранённый оникс",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_onyx",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_onyx_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_onyx_3",
+      "name": "Совершенный оникс",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_onyx",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_onyx_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_opal_1",
+      "name": "Гранёный опал",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_opal",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_opal_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_opal_2",
+      "name": "Огранённый опал",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_opal",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_opal_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_opal_3",
+      "name": "Совершенный опал",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_opal",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_opal_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_garnet_1",
+      "name": "Гранёный гранат",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_garnet",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_garnet_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_garnet_2",
+      "name": "Огранённый гранат",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_garnet",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_garnet_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_garnet_3",
+      "name": "Совершенный гранат",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_garnet",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_garnet_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_aquamarine_1",
+      "name": "Гранёный аквамарин",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_aquamarine",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_aquamarine_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_aquamarine_2",
+      "name": "Огранённый аквамарин",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_aquamarine",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_aquamarine_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_aquamarine_3",
+      "name": "Совершенный аквамарин",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_aquamarine",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_aquamarine_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_str_1",
+      "name": "Гранёный камень силы",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_str",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_str_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_str_2",
+      "name": "Огранённый камень силы",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_str",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_str_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_str_3",
+      "name": "Совершенный камень силы",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_str",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_str_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_dex_1",
+      "name": "Гранёный камень ловкости",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_dex",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_dex_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_dex_2",
+      "name": "Огранённый камень ловкости",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_dex",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_dex_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_dex_3",
+      "name": "Совершенный камень ловкости",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_dex",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_dex_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_vit_1",
+      "name": "Гранёный камень стойкости",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_vit",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_vit_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_vit_2",
+      "name": "Огранённый камень стойкости",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_vit",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_vit_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_vit_3",
+      "name": "Совершенный камень стойкости",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_vit",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_vit_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_int_1",
+      "name": "Гранёный камень разума",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_int",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_int_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_int_2",
+      "name": "Огранённый камень разума",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_int",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_int_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_int_3",
+      "name": "Совершенный камень разума",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_int",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_int_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_accuracy_1",
+      "name": "Гранёный камень точности",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_accuracy",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_accuracy_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_accuracy_2",
+      "name": "Огранённый камень точности",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_accuracy",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_accuracy_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_accuracy_3",
+      "name": "Совершенный камень точности",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_accuracy",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_accuracy_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_damage_1",
+      "name": "Гранёный камень урона",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_damage",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_damage_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_damage_2",
+      "name": "Огранённый камень урона",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_damage",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_damage_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_damage_3",
+      "name": "Совершенный камень урона",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_damage",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_damage_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_crit_chance_1",
+      "name": "Гранёный камень крита",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_crit_chance",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_crit_chance_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_crit_chance_2",
+      "name": "Огранённый камень крита",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_crit_chance",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_crit_chance_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_crit_chance_3",
+      "name": "Совершенный камень крита",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_crit_chance",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_crit_chance_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_crit_damage_1",
+      "name": "Гранёный камень силы крита",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_crit_damage",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_crit_damage_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_crit_damage_2",
+      "name": "Огранённый камень силы крита",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_crit_damage",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_crit_damage_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_crit_damage_3",
+      "name": "Совершенный камень силы крита",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_crit_damage",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_crit_damage_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_armor_1",
+      "name": "Гранёный камень брони",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_armor",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_armor_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_armor_2",
+      "name": "Огранённый камень брони",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_armor",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_armor_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_armor_3",
+      "name": "Совершенный камень брони",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_armor",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_armor_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_dodge_1",
+      "name": "Гранёный камень уклонения",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_dodge",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_dodge_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_dodge_2",
+      "name": "Огранённый камень уклонения",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_dodge",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_dodge_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_dodge_3",
+      "name": "Совершенный камень уклонения",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_dodge",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_dodge_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_parry_1",
+      "name": "Гранёный камень парирования",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_parry",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_parry_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_parry_2",
+      "name": "Огранённый камень парирования",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_parry",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_parry_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_parry_3",
+      "name": "Совершенный камень парирования",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_parry",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_parry_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_parry_chance_1",
+      "name": "Гранёный камень шанса парирования",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_parry_chance",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_parry_chance_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_parry_chance_2",
+      "name": "Огранённый камень шанса парирования",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_parry_chance",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_parry_chance_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_parry_chance_3",
+      "name": "Совершенный камень шанса парирования",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_parry_chance",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_parry_chance_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_block_1",
+      "name": "Гранёный камень блока",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_block",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_block_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_block_2",
+      "name": "Огранённый камень блока",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_block",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_block_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_block_3",
+      "name": "Совершенный камень блока",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_block",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_block_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_block_chance_1",
+      "name": "Гранёный камень шанса блока",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_block_chance",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_block_chance_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_block_chance_2",
+      "name": "Огранённый камень шанса блока",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_block_chance",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_block_chance_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_block_chance_3",
+      "name": "Совершенный камень шанса блока",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_block_chance",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_block_chance_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_defense_1",
+      "name": "Гранёный камень магической защиты",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_defense",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_magic_defense_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_defense_2",
+      "name": "Огранённый камень магической защиты",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_defense",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_magic_defense_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_defense_3",
+      "name": "Совершенный камень магической защиты",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_defense",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_magic_defense_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_dodge_1",
+      "name": "Гранёный камень магического уклонения",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_dodge",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_magic_dodge_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_dodge_2",
+      "name": "Огранённый камень магического уклонения",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_dodge",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_magic_dodge_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_dodge_3",
+      "name": "Совершенный камень магического уклонения",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_dodge",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_magic_dodge_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_resist_1",
+      "name": "Гранёный камень магического сопротивления",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_resist",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_magic_resist_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_resist_2",
+      "name": "Огранённый камень магического сопротивления",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_resist",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_magic_resist_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_resist_3",
+      "name": "Совершенный камень магического сопротивления",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_resist",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_magic_resist_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_dispel_1",
+      "name": "Гранёный камень рассеивания",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_dispel",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_magic_dispel_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_dispel_2",
+      "name": "Огранённый камень рассеивания",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_dispel",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_magic_dispel_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_dispel_3",
+      "name": "Совершенный камень рассеивания",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_dispel",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_magic_dispel_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_crit_damage_1",
+      "name": "Гранёный камень магического крита",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_crit_damage",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_magic_crit_damage_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_crit_damage_2",
+      "name": "Огранённый камень магического крита",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_crit_damage",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_magic_crit_damage_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_crit_damage_3",
+      "name": "Совершенный камень магического крита",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_crit_damage",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_magic_crit_damage_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_crit_chance_1",
+      "name": "Гранёный камень шанса магического крита",
+      "profession": "jeweler",
+      "rank": 1,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_crit_chance",
+          "qty": 1
+        }
+      ],
+      "time_s": 3,
+      "xp": {
+        "profession": 40
+      },
+      "output": {
+        "type": "gem_stone_magic_crit_chance_1",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_crit_chance_2",
+      "name": "Огранённый камень шанса магического крита",
+      "profession": "jeweler",
+      "rank": 2,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_crit_chance",
+          "qty": 2
+        }
+      ],
+      "time_s": 5,
+      "xp": {
+        "profession": 70
+      },
+      "output": {
+        "type": "gem_stone_magic_crit_chance_2",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
+    },
+    {
+      "id": "rec_cut_stone_magic_crit_chance_3",
+      "name": "Совершенный камень шанса магического крита",
+      "profession": "jeweler",
+      "rank": 3,
+      "station": "jeweler_table",
+      "tool": {
+        "type": "chisel"
+      },
+      "requires": {},
+      "inputs": [
+        {
+          "type": "raw_stone_magic_crit_chance",
+          "qty": 3
+        }
+      ],
+      "time_s": 7,
+      "xp": {
+        "profession": 110
+      },
+      "output": {
+        "type": "gem_stone_magic_crit_chance_3",
+        "qty": 1
+      },
+      "station_label": "Ювелирный стол"
     }
   ]
 }

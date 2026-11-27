@@ -480,6 +480,8 @@ pub(super) fn t(key: Key) -> &'static str {
         ItemTypeShield => "Shield",
         ItemTypeArtifact => "Artifact",
         ItemTypeGem => "Gem",
+        ItemTypeOre => "Ore",
+        ItemTypeRawGem => "Raw gem",
         BpTabGem => "Gems",
         StatAttr => "Attribute",
         StatValue => "Bonus",

@@ -588,6 +588,8 @@ pub enum Key {
     ItemTypeArtifact,
     // M17/F30c: самоцветы и их статы
     ItemTypeGem,
+    ItemTypeOre,
+    ItemTypeRawGem,
     BpTabGem,
     StatAttr,
     StatValue,
@@ -1242,6 +1244,8 @@ mod tests {
         Key::ItemTypeArtifact,
         // M17/F30c: самоцветы и их статы
         Key::ItemTypeGem,
+        Key::ItemTypeOre,
+        Key::ItemTypeRawGem,
         Key::BpTabGem,
         Key::StatAttr,
         Key::StatValue,

@@ -91,4 +91,5 @@ pub const SKILL_HAGGLE: &str = "haggle";
 
 /// Профессия «Снятие шкур» и её инструмент.
 pub const PROFESSION_SKINNING: &str = "skinning";
+pub const PROFESSION_MINING: &str = "mining";
 pub const ITEM_SKINNING_KNIFE: &str = "skinning_knife";

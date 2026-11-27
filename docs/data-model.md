@@ -28,11 +28,11 @@
 
 | Файл | Содержимое | Куда попадает |
 |---|---|---|
-| `locations.json` | 1189 локаций | `locations` |
-| `items.json` | 122 определения | `item_defs` |
+| `locations.json` | 1192 локации | `locations` |
+| `items.json` | 255 определений | `item_defs` |
 | `skills.json` | 34 навыка | `skills` |
 | `professions.json` | 14 профессий | `professions` |
-| `recipes.json` | 3 рецепта | `recipes` |
+| `recipes.json` | 99 рецептов | `recipes` |
 | `quests.json` | 1 квест | `quests` |
 | `dialogs.json` | 5 NPC | только память |
 | `shops.json` | 5 NPC | только память |
@@ -67,7 +67,7 @@
 сохраняются, редактор их не теряет. Валидация проверяет обязательные поля
 и типы, но не запрещает расширения.
 
-### 1.1 `items.json` → предметы (122, сид в `item_defs`)
+### 1.1 `items.json` → предметы (255, сид в `item_defs`)
 
 | Поле | Тип | Смысл |
 |---|---|---|
@@ -88,13 +88,15 @@
 | `bonuses` | list | `[{kind, id, value, pct?}]`, `kind ∈ attr \| param \| skill` |
 | `extra` | obj | неизвестные поля |
 
-Типы (122): `armor` 23, `gem` 21, `rune` 18, `weapon` 11, `bag` 8,
-`hide` 6, `hide_scraps` 5, `upgrade_stone` 3, `shield` 3, `staff` 2,
-`artifact` 2; `wood_oak`, `skinning_knife`, `sickle`, `scroll`, `quill`,
-`potion`, `pickaxe`, `parchment`, `ore_copper`, `offal`, `money`, `meat`,
-`ink`, `herb`, `flask`, `chisel`, `branches`, `axe`, `ammo`, `key` — по 1.
+Типы (255): `gem` 117, `armor` 23, `rune` 18, `weapon` 11, `bag` 8,
+`hide` 6, `hide_scraps` 5, `shield` 3, `upgrade_stone` 3, `staff` 2,
+`artifact` 2; `raw_*` 32 (12 смешанных + 20 чистых), `ore_*` 6
+(`ore_copper`…`ore_mithril`); `wood_oak`, `skinning_knife`, `sickle`,
+`scroll`, `quill`, `potion`, `pickaxe`, `parchment`, `offal`, `money`,
+`meat`, `ink`, `herb`, `flask`, `chisel`, `branches`, `axe`, `ammo`,
+`key` — по 1.
 
-Редкости: `common` 51, `uncommon` 29, `rare` 19, `epic` 16,
+Редкости: `common` 72, `uncommon` 75, `rare` 52, `epic` 49,
 `legendary` 7.
 
 Слоты (13): `main_hand`, `off_hand`, `head`, `body`, `legs`, `feet`,
@@ -144,6 +146,10 @@
 | `shield_1000_true` | «Щит тысячи истин», `legendary`, `off_hand`, `armor: 15`, `block 12..18`, `block_chance 12%`, 5 сокетов (2 рунных + 3 самоцветных) |
 | `pelt_white_wolf` | «Шкура белого волка», `rare`, `hide`; редкий трофей со снятия шкуры Белого волка — `harvest.skin_extra`, шанс 3 % |
 | `shield_wood` / `shield_iron` | базовый шанс блока `5%` / `8%` (`stats.param.block_chance`); сила и ловкость добавляют `(str+dex)/10` к общему шансу |
+| `ore_tin` … `ore_mithril` | руды 6 уровней; тип = id руды, добываются киркой |
+| `raw_agate` … | необработанные смешанные самоцветы (12) |
+| `raw_stone_armor` … | необработанные чистые камни (20 параметров) |
+| `gem_agate_1/2/3` | обработанные самоцветы: `bonuses` attr+param, 3 версии |
 
 ### 1.2 `skills.json` → навыки (34, сид в `skills`)
 
@@ -373,6 +379,8 @@ interval = max(round(base_ms × phase.interval_mult), min_attack_interval_s × 1
 | `despawn_when_empty` | скрывать узел при нуле зарядов |
 | `profession`, `min_rank` | гейт профессии |
 | `tool` | тип нужного инструмента |
+| `required_level` | M38: требуемый уровень профессии (допуск 25) |
+| `gems` | M38: `{chance, mixed_share, mixed[], pure[]}` — бонусные камни |
 
 Четыре узла: `r_forest_herb` (`herb`, 1, 30–60, `despawn_when_empty`,
 herbalist, ранг 1, `sickle`), `r_forest_tree` (`wood_oak`, 2, 60–120,
@@ -599,8 +607,9 @@ price        = max(round(price_gold × rate), 1)
 ### 3.4 `ResourceNode`
 
 `id`, `location_id`, `name`, `def_id`, `max`, `current`, `respawn`,
-`despawn_when_empty`, `hidden`, `profession`, `min_rank`, `tool`.
-`entity()` отдаёт `kind: resource`, `hp {cur: current, max}`; при
+`despawn_when_empty`, `hidden`, `profession`, `min_rank`, `tool`,
+`required_level`, `gems`. `entity()` отдаёт `kind: resource`,
+`hp {cur: current, max}`; при
 `despawn_when_empty` и `current == 0` узел скрывается. Сбор —
 `cmd/resource.gather`; после опустошения — респавн по `respawn`.
 
