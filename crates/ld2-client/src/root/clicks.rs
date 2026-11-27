@@ -2,6 +2,8 @@
 //! по экранам/доменам, чтобы каждая функция была не длиннее 200 строк.
 //! Вынесено из `root.rs` (RF3h).
 
+use ld2_core::domain;
+
 use super::*;
 
 impl Root {
@@ -220,7 +222,7 @@ impl Root {
             // справа); данные — отдельный `entity.info` → `pickup`.
             Click::PowerStrike => {
                 let cmd = ld2_protocol::cmd::SkillUse {
-                    skill_id: "power_strike".into(),
+                    skill_id: domain::SKILL_POWER_STRIKE.into(),
                     target_id: self.store.target.clone(),
                 };
                 if self.send_or_notice(&cmd, SendSlot::World) {
@@ -261,7 +263,11 @@ impl Root {
                 });
                 let combat_item = self.store.snapshot.as_ref().is_some_and(|s| {
                     s.char.inventory.iter().any(|i| {
-                        i.uid == uid && matches!(i.item_type.as_str(), "scroll" | "potion")
+                        i.uid == uid
+                            && matches!(
+                                i.item_type.as_str(),
+                                domain::ITEM_SCROLL | domain::ITEM_POTION
+                            )
                     })
                 });
                 // M23: взятие из окна подятия (`loot:`/`inner:`) —
@@ -408,7 +414,7 @@ impl Root {
                     // entity_id (M24): итог другого трупа бар не гасит.
                     let label = format!(
                         "{} · {}",
-                        if action == "skin" {
+                        if action == domain::ACTION_SKIN {
                             t(self.lang, Key::SkinBtn)
                         } else {
                             t(self.lang, Key::GutBtn)

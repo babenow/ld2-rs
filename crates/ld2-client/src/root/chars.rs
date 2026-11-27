@@ -2,6 +2,8 @@
 //! цветом ника по классу, создание (имя + профиль), удаление: ввод ника
 //! + таймер (вход в игру отменяет). Диалоги — Ely `Dialog` поверх.
 
+use ld2_core::domain;
+
 use ely::forms::{Choice, Input, Select};
 use ely::layout::{Card, ScrollArea};
 use ely::overlays::Dialog;
@@ -105,7 +107,7 @@ impl Root {
             );
         }
 
-        let dark = pal.bg == palette("dark").bg;
+        let dark = pal.bg == palette(domain::THEME_DARK).bg;
         for character in &session.characters {
             list = list.child(self.chars_card(cx, pal, character, dark));
         }
@@ -551,16 +553,16 @@ impl Root {
 fn class_color(profile: Option<&str>, dark: bool) -> u32 {
     if !dark {
         return match profile {
-            Some("warrior") => 0xa1_34_39,
-            Some("archer") => 0x4c_7a_2f,
-            Some("mage") => 0x2e_65_b8,
+            Some(domain::PROFILE_WARRIOR) => 0xa1_34_39,
+            Some(domain::PROFILE_ARCHER) => 0x4c_7a_2f,
+            Some(domain::PROFILE_MAGE) => 0x2e_65_b8,
             _ => 0x5a_5e_66,
         };
     }
     match profile {
-        Some("warrior") => 0xe0_6c_75,
-        Some("archer") => 0x98_c3_79,
-        Some("mage") => 0x61_af_ef,
+        Some(domain::PROFILE_WARRIOR) => 0xe0_6c_75,
+        Some(domain::PROFILE_ARCHER) => 0x98_c3_79,
+        Some(domain::PROFILE_MAGE) => 0x61_af_ef,
         _ => 0xab_b2_bf,
     }
 }

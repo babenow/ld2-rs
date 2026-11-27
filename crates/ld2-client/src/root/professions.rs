@@ -16,6 +16,7 @@
 //! надпись ранга под полосами (обучение — у тренера в диалоге).
 
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, Window};
+use ld2_core::domain;
 use ld2_core::l10n::{t, tf, Key, Lang};
 use ld2_core::store::{Act, Screen};
 use ld2_protocol::cmd::{CraftRankUp, CraftReset};
@@ -43,26 +44,30 @@ const PRIMARY: [&str; 11] = [
 
 /// M21: дополнительные профессии (изучаются параллельно, лимит
 /// primary не действуют) — в одну строку под основными.
-const SECONDARY: [&str; 3] = ["cook", "fishing", "medic"];
+const SECONDARY: [&str; 3] = [
+    domain::PROFESSION_COOK,
+    domain::PROFESSION_FISHING,
+    domain::PROFESSION_MEDIC,
+];
 
 /// Название профессии: l10n-ключ по id, фолбэк — сам id
 /// (используется и панелью обучения в диалоге НПС — M21).
 pub(crate) fn prof_label(lang: Lang, id: &str) -> String {
     let key = match id {
-        "herbalist" => Some(Key::ProfHerbalist),
-        "alchemist" => Some(Key::ProfAlchemist),
-        "mining" => Some(Key::ProfMining),
-        "blacksmith" => Some(Key::ProfBlacksmith),
-        "skinning" => Some(Key::ProfSkinning),
-        "leatherworking" => Some(Key::ProfLeatherworking),
-        "tailor" => Some(Key::ProfTailor),
-        "scribe" => Some(Key::ProfScribe),
-        "woodcutting" => Some(Key::ProfWoodcutting),
-        "woodcarver" => Some(Key::ProfWoodcarver),
-        "jeweler" => Some(Key::ProfJeweler),
-        "cook" => Some(Key::ProfCook),
-        "fishing" => Some(Key::ProfFishing),
-        "medic" => Some(Key::ProfMedic),
+        domain::PROFESSION_HERBALIST => Some(Key::ProfHerbalist),
+        domain::PROFESSION_ALCHEMIST => Some(Key::ProfAlchemist),
+        domain::PROFESSION_MINING => Some(Key::ProfMining),
+        domain::PROFESSION_BLACKSMITH => Some(Key::ProfBlacksmith),
+        domain::PROFESSION_SKINNING => Some(Key::ProfSkinning),
+        domain::PROFESSION_LEATHERWORKING => Some(Key::ProfLeatherworking),
+        domain::PROFESSION_TAILOR => Some(Key::ProfTailor),
+        domain::PROFESSION_SCRIBE => Some(Key::ProfScribe),
+        domain::PROFESSION_WOODCUTTING => Some(Key::ProfWoodcutting),
+        domain::PROFESSION_WOODCARVER => Some(Key::ProfWoodcarver),
+        domain::PROFESSION_JEWELER => Some(Key::ProfJeweler),
+        domain::PROFESSION_COOK => Some(Key::ProfCook),
+        domain::PROFESSION_FISHING => Some(Key::ProfFishing),
+        domain::PROFESSION_MEDIC => Some(Key::ProfMedic),
         _ => None,
     };
     key.map(|k| t(lang, k).to_string())

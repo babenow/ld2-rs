@@ -11,6 +11,8 @@
 //! оба действия открывают execute-диалог количества (`*.ask` →
 //! `evt/dialog/open` → `cmd/dialog.submit`).
 
+use ld2_core::domain;
+
 use ely::forms::{Choice, SearchInput, Switch};
 use ely::navigation::Tabs;
 use ely::primitives::{DragGhost, Icon, IconName, Tooltip};
@@ -502,7 +504,7 @@ impl Root {
 fn catalog_row(this: Entity<Root>, pal: Palette, item: &serde_json::Value) -> Stateful<Div> {
     let def_id = item["id"].as_str().unwrap_or_default().to_string();
     let name = item["name"].as_str().unwrap_or("?").to_string();
-    let rarity = item["rarity"].as_str().unwrap_or("common");
+    let rarity = item["rarity"].as_str().unwrap_or(domain::RARITY_COMMON);
     let qty = item["qty"].as_i64().unwrap_or(1);
     // Отображение — как в правой колонке (указание заказчика): имя
     // цветом качества/ранга, количество справа; без суффикса типа
@@ -637,7 +639,7 @@ fn rarity_filter_row(
 ) -> Div {
     const OPTIONS: [(&str, Key); 6] = [
         ("all", Key::RarityAll),
-        ("common", Key::RarityCommon),
+        (domain::RARITY_COMMON, Key::RarityCommon),
         ("uncommon", Key::RarityUncommon),
         ("rare", Key::RarityRare),
         ("epic", Key::RarityEpic),

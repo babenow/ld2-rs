@@ -1,3 +1,5 @@
+use ld2_core::domain;
+
 use super::*;
 
 /// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
@@ -22,14 +24,14 @@ impl Root {
         // растяжение на остаток, чтобы тело скроллилось внутри.
         let mut root = div().flex().flex_col().gap_3().flex_grow_1().min_h_0();
         let active = match self.settings_tab {
-            SettingsTab::General => "general",
+            SettingsTab::General => domain::BAG_KIND_GENERAL,
             SettingsTab::Fonts => "fonts",
             SettingsTab::Connection => "connection",
             SettingsTab::Hotkeys => "hotkeys",
         };
         // M14/F12: иконки вкладок (метки без изменений).
         let choices = vec![
-            Choice::new("general", t(self.lang, Key::SettingsGeneral))
+            Choice::new(domain::BAG_KIND_GENERAL, t(self.lang, Key::SettingsGeneral))
                 .icon(IconName::SlidersHorizontal),
             Choice::new("fonts", t(self.lang, Key::SettingsFonts)).icon(IconName::Type),
             Choice::new("connection", t(self.lang, Key::SettingsConnection)).icon(IconName::Server),
@@ -85,13 +87,13 @@ impl Root {
                 btn(
                     cx,
                     t(lang, Key::ThemeDark).to_string(),
-                    if theme == "dark" {
+                    if theme == domain::THEME_DARK {
                         pal.accent
                     } else {
                         pal.panel
                     },
                     pal.text,
-                    Click::Theme("dark"),
+                    Click::Theme(domain::THEME_DARK),
                 ),
                 btn(
                     cx,

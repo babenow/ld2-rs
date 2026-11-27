@@ -1,5 +1,7 @@
 //! Окно персонажа: upgrade (RF3l).
 
+use ld2_core::domain;
+
 use super::*;
 
 impl Root {
@@ -304,8 +306,10 @@ impl Root {
         let mut found = false;
         for item in &snap.char.inventory {
             // Все улучшаемые типы (M18/F54: камни — для всех), до потолка.
-            if !matches!(item.item_type.as_str(), "weapon" | "armor" | "staff")
-                || item.upgrade >= max_level
+            if !matches!(
+                item.item_type.as_str(),
+                domain::ITEM_WEAPON | "armor" | domain::ITEM_STAFF
+            ) || item.upgrade >= max_level
             {
                 continue;
             }

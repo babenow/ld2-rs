@@ -1,6 +1,8 @@
 //! Горячие клавиши: гейт фокуса набора, ремаппинг действий и разбор
 //! спецификаций `alt+up`/`1`…/`c`,`i`,`j`,`p`,`m`. Вынесено из `root.rs` (RF3d).
 
+use ld2_core::domain;
+
 use super::*;
 
 impl Root {
@@ -64,10 +66,10 @@ impl Root {
             return;
         }
         for (spec, dir) in [
-            (self.config.hotkeys.nav_up.clone(), "north"),
-            (self.config.hotkeys.nav_down.clone(), "south"),
-            (self.config.hotkeys.nav_left.clone(), "west"),
-            (self.config.hotkeys.nav_right.clone(), "east"),
+            (self.config.hotkeys.nav_up.clone(), domain::DIR_NORTH),
+            (self.config.hotkeys.nav_down.clone(), domain::DIR_SOUTH),
+            (self.config.hotkeys.nav_left.clone(), domain::DIR_WEST),
+            (self.config.hotkeys.nav_right.clone(), domain::DIR_EAST),
         ] {
             if keystroke_matches(&spec, ks) {
                 self.nav_direction(dir);
@@ -314,7 +316,7 @@ impl Root {
             }
             Action::PowerStrike => {
                 // Собственный кулдаун активки + гейт навыка (§4).
-                let own = self.own_cd_left_ms("power_strike", now);
+                let own = self.own_cd_left_ms(domain::SKILL_POWER_STRIKE, now);
                 let open = self
                     .store
                     .snapshot

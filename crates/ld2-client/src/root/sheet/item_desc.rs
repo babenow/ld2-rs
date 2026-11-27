@@ -1,6 +1,7 @@
 //! Окно персонажа: описание предмета (RF3l).
 
 use super::*;
+use ld2_core::domain;
 
 /// Тело описания предмета — самостоятельный виджет: и окно описания,
 /// и тултипы рюкзака/экипировки (заказчик 2026-11-20). Без `self`:
@@ -11,14 +12,14 @@ pub(crate) fn item_description_body(
     detail: &serde_json::Value,
     skill_names: &std::collections::HashMap<String, String>,
 ) -> Div {
-    let rarity = detail["rarity"].as_str().unwrap_or("common");
+    let rarity = detail["rarity"].as_str().unwrap_or(domain::RARITY_COMMON);
     let item_type = detail["type"].as_str().unwrap_or("?");
     // M18/F57: справа запас под скроллбар (приём character_left_column)
     // — иначе индикатор прокрутки наезжал на жирные значения статов.
     let mut col = div().flex().flex_col().gap_1().pr(px(16.0));
     // M18/F58f: у рун — глиф предмета сразу под названием (шапка
     // окна), вверху тела (указание заказчика).
-    if item_type == "rune" {
+    if item_type == domain::ITEM_RUNE {
         let name = detail["name"].as_str().unwrap_or("rune");
         let glyph = detail["stats"].get("glyph").and_then(|v| v.as_str());
         col = col.child(
@@ -28,7 +29,7 @@ pub(crate) fn item_description_body(
                 .items_baseline()
                 .child(crate::rune_glyph::glyph_div_for(glyph, name)),
         );
-    } else if item_type == "gem" {
+    } else if item_type == domain::ITEM_GEM {
         // M18/F58f: у самоцвета — знак раритета под названием
         // (указание заказчика: рюкзак и описание).
         col = col.child(div().flex().flex_row().items_baseline().child(
@@ -37,7 +38,7 @@ pub(crate) fn item_description_body(
     }
     // M18/F58f: у рун уровень заточки в описании не нужен
     // (указание заказчика) — только «редкость · тип».
-    let header = if item_type == "rune" {
+    let header = if item_type == domain::ITEM_RUNE {
         format!(
             "{} · {}",
             rarity_label(lang, rarity),
@@ -245,17 +246,17 @@ fn item_stats_block(
                         e.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(0),
                     );
                     let (label, val_s) = match kind {
-                        "bleed" => (
+                        domain::EFFECT_BLEED => (
                             t(lang, Key::EffectBleed).to_string(),
                             format!("{val}{} · {dur}", t(lang, Key::PerSecond)),
                         ),
                         // R-контент: «горение» — урон за тик с периодом.
-                        "burn" => (
+                        domain::EFFECT_BURN => (
                             t(lang, Key::EffectBurn).to_string(),
                             format!("{val}{} · {dur}", t(lang, Key::PerTick),),
                         ),
-                        "stun" => (t(lang, Key::EffectStun).to_string(), dur.clone()),
-                        "root" => (t(lang, Key::EffectRoot).to_string(), dur.clone()),
+                        domain::EFFECT_STUN => (t(lang, Key::EffectStun).to_string(), dur.clone()),
+                        domain::EFFECT_ROOT => (t(lang, Key::EffectRoot).to_string(), dur.clone()),
                         other => (other.to_string(), dur),
                     };
                     col = col.child(kv(label, val_s));
@@ -277,9 +278,9 @@ fn item_stats_block(
             } else if key == "class" {
                 // Класс руны: warrior/mage/archer → метка языка.
                 match raw.as_str() {
-                    "warrior" => t(lang, Key::ProfileWarrior).to_string(),
-                    "mage" => t(lang, Key::ProfileMage).to_string(),
-                    "archer" => t(lang, Key::ProfileArcher).to_string(),
+                    domain::PROFILE_WARRIOR => t(lang, Key::ProfileWarrior).to_string(),
+                    domain::PROFILE_MAGE => t(lang, Key::ProfileMage).to_string(),
+                    domain::PROFILE_ARCHER => t(lang, Key::ProfileArcher).to_string(),
                     _ => raw.clone(),
                 }
             } else if key == "attr" {
@@ -303,7 +304,12 @@ fn item_stats_block(
                     .rounded_md()
                     .bg(rgb(pal.panel))
                     .child(div().text_color(rgb(pal.muted)).child({
-                        if key == "spell" && matches!(rune_class.as_str(), "warrior" | "archer") {
+                        if key == "spell"
+                            && matches!(
+                                rune_class.as_str(),
+                                domain::PROFILE_WARRIOR | domain::PROFILE_ARCHER
+                            )
+                        {
                             // У воина/лучника это приём, не заклинание.
                             t(lang, Key::SpellTechnique).to_string()
                         } else {
@@ -378,7 +384,7 @@ fn item_extra_block(
         for socket in sockets {
             // M18/F58f: знаки рунных слотов — глифы шрифта Dwarven
             // Runes (rune_glyph); слоты самоцветов — прежние ◈/○.
-            let is_rune_slot = socket["accepts"].as_str() != Some("gem");
+            let is_rune_slot = socket["accepts"].as_str() != Some(domain::ITEM_GEM);
             if let Some(rune) = socket["rune"].as_object() {
                 // M17/F30c: самоцвет — без зарядов (заряды у рун).
                 // M18/F58f: знак — контент-поле `glyph`, фолбэк — хеш.

@@ -1,5 +1,7 @@
 //! Окно персонажа: equip (RF3l).
 
+use ld2_core::domain;
+
 use super::*;
 
 impl Root {
@@ -37,7 +39,10 @@ impl Root {
         let mut hand_rows: Vec<AnyElement> = Vec::new();
         for slot in &equip_slots {
             let row = self.equip_row(slot, &snap, lang, cx, pal);
-            if matches!(slot.as_str(), "main_hand" | "off_hand") {
+            if matches!(
+                slot.as_str(),
+                domain::SLOT_MAIN_HAND | domain::SLOT_OFF_HAND
+            ) {
                 hand_rows.push(row.into_any_element());
             } else {
                 rows.push(row.into_any_element());
@@ -168,8 +173,10 @@ impl Root {
         // наведении играет ЯРКОСТЬ цвета редкости (бриллиант);
         // без наведения — статичное внутреннее свечение.
         let hover_key = format!("eq:{slot}");
-        let shimmering = matches!(item.rarity.as_str(), "epic" | "legendary")
-            && self.hovered_item.as_deref() == Some(hover_key.as_str());
+        let shimmering = matches!(
+            item.rarity.as_str(),
+            domain::RARITY_EPIC | domain::RARITY_LEGENDARY
+        ) && self.hovered_item.as_deref() == Some(hover_key.as_str());
         let hover_this = cx.entity();
         let hover_key_hover = hover_key.clone();
         let row = row.on_hover(move |hovered, _, cx| {
@@ -293,7 +300,10 @@ impl Root {
 
         // M17/F30a/F30c: инкрустация руны ИЛИ самоцвета — окно
         // выбора предмета + каст-бар.
-        if matches!(item.item_type.as_str(), "rune" | "gem") {
+        if matches!(
+            item.item_type.as_str(),
+            domain::ITEM_RUNE | domain::ITEM_GEM
+        ) {
             let uid = item.uid.clone();
             menu = menu.item(menu_item(
                 cx,
@@ -353,8 +363,10 @@ impl Root {
             .as_ref()
             .map(|s| s.upgrade.max_level)
             .unwrap_or(9) as i32;
-        let upgradable = matches!(item.item_type.as_str(), "weapon" | "armor" | "staff")
-            && self.store.sharpen_stone.is_some();
+        let upgradable = matches!(
+            item.item_type.as_str(),
+            domain::ITEM_WEAPON | "armor" | domain::ITEM_STAFF
+        ) && self.store.sharpen_stone.is_some();
         if upgradable && item.upgrade < max_level {
             let uid = item.uid.clone();
             let name = item.name.clone();
