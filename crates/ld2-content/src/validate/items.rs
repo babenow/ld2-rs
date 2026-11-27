@@ -2,6 +2,13 @@
 
 use super::*;
 
+const EFFECT_BLEED: &str = "bleed";
+const EFFECT_BURN: &str = "burn";
+const ITEM_WEAPON: &str = "weapon";
+const ITEM_STAFF: &str = "staff";
+const ITEM_RUNE: &str = "rune";
+const MIN_BURN_PERIOD_S: f64 = 0.5;
+
 // ─── Схема предметов (§1.1 docs/data-model.md) ─────────────────────────────
 
 /// Редкости предмета (`items.json`: `rarity`).
@@ -183,7 +190,7 @@ fn validate_item_effect(
     let kind = effect.get("kind").and_then(|value| value.as_str());
     match kind {
         Some(kind) if EFFECT_KINDS.contains(&kind) => {
-            if matches!(kind, "bleed" | "burn") {
+            if matches!(kind, EFFECT_BLEED | EFFECT_BURN) {
                 match effect.get("value").and_then(num) {
                     Some(value) if value >= 1.0 => {}
                     Some(_) => warnings.push(format!(
@@ -194,9 +201,9 @@ fn validate_item_effect(
                     }
                 }
             }
-            if kind == "burn" {
+            if kind == EFFECT_BURN {
                 if let Some(period) = effect.get("period_s").and_then(num) {
-                    if period < 0.5 {
+                    if period < MIN_BURN_PERIOD_S {
                         warnings.push(format!(
                             "предмет {item_id}: stats.effect.burn.period_s должен быть >= 0.5"
                         ));
@@ -318,7 +325,7 @@ pub fn validate_items(content: &GameContent) -> Vec<String> {
 
         // Броня/оружие/посох с сокетами обязаны объяснить, сколько из них
         // принимают руны (ADR-012).
-        if matches!(item.item_type.as_str(), "weapon" | "staff")
+        if matches!(item.item_type.as_str(), ITEM_WEAPON | ITEM_STAFF)
             && item.sockets > 0
             && item.rune_sockets.is_none()
         {
@@ -336,7 +343,7 @@ pub fn validate_items(content: &GameContent) -> Vec<String> {
                 ));
             }
         }
-        if item.item_type == "rune" {
+        if item.item_type == ITEM_RUNE {
             match stats.get("glyph").and_then(|value| value.as_str()) {
                 Some(glyph)
                     if !glyph.is_empty() && glyph.chars().all(|ch| ch.is_ascii_alphabetic()) => {}

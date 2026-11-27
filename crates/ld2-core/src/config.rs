@@ -98,7 +98,7 @@ pub struct Config {
 }
 
 fn default_theme() -> String {
-    "dark".into()
+    crate::domain::THEME_DARK.into()
 }
 fn default_chat_font_px() -> f32 {
     12.0
