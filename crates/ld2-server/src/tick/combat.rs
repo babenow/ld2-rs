@@ -22,6 +22,17 @@ use crate::world::World;
 
 use super::plan::{event_text, push_event, push_text, KillXp, MobHit, Plan, RuneWork};
 
+/// Базовые константы боевого тика.
+const DEFAULT_ACCURACY: i64 = 80;
+const MS_PER_SECOND: i64 = 1000;
+const MS_PER_SECOND_F: f64 = 1000.0;
+const RANDOM_BUF_LEN: usize = 8;
+const PROFILE_WARRIOR: &str = "warrior";
+const GENDER_MALE: &str = "male";
+const ACTION_SKIN: &str = "skin";
+const SKILL_UNARMED: &str = "unarmed";
+const EFFECT_BLEED: &str = "bleed";
+
 /// M32: исход одного физического удара (без событий — их шлёт вызывающая
 /// точка).
 enum MeleeOutcome {
@@ -42,7 +53,7 @@ fn char_melee_outcome(
         .unwrap_or(crate::world::CharCombat {
             damage_min: cfg.base_damage,
             damage_max: cfg.base_damage,
-            accuracy: 80,
+            accuracy: DEFAULT_ACCURACY,
             dodge: 0,
             parry: 0,
             armor: 0,
@@ -77,7 +88,7 @@ fn mob_melee_outcome(
         .unwrap_or(crate::world::CharCombat {
             damage_min: 0,
             damage_max: 0,
-            accuracy: 80,
+            accuracy: DEFAULT_ACCURACY,
             dodge: 0,
             parry: 0,
             armor: 0,
@@ -103,7 +114,7 @@ pub(super) fn plan_combat(
     skills_cfg: &SkillsSection,
 ) -> Plan {
     let mut plan = Plan::default();
-    let attack_interval_ms = ((cfg.attack_interval_s * 1000.0).round() as i64).max(1);
+    let attack_interval_ms = ((cfg.attack_interval_s * MS_PER_SECOND_F).round() as i64).max(1);
 
     plan_char_attacks(
         &mut plan,
@@ -359,7 +370,7 @@ fn rune_procs(
             if rune.charges < rune.cost {
                 continue; // нет зарядов → не срабатывает (ADR-012 §5)
             }
-            let mut buf = [0u8; 8];
+            let mut buf = [0u8; RANDOM_BUF_LEN];
             // [0,1): u64::MAX + 1.0 как знаменатель (иначе 1.0 ∈ диапазону).
             let roll = if getrandom::fill(&mut buf).is_ok() {
                 (u64::from_le_bytes(buf) as f64) / (u64::MAX as f64 + 1.0)
@@ -620,7 +631,7 @@ fn plan_mob_attacks(
         let interval_ms = crate::systems::mob_attack_interval(
             attack_interval_ms + world.mob_attack_speed(&mob_id),
             interval_mult,
-            (cfg.min_attack_interval_s * 1000.0).round() as i64,
+            (cfg.min_attack_interval_s * MS_PER_SECOND_F).round() as i64,
         );
         world.set_mob_next_attack(&mob_id, now_ms + interval_ms);
         world.set_mob_attack_interval(&mob_id, interval_ms);
@@ -738,7 +749,7 @@ pub(crate) fn mob_kill_effects(
         .mob(target)
         .map(|m| m.name.clone())
         .unwrap_or_default();
-    let died = crate::session::presence::died_line(&mob_name, "male");
+    let died = crate::session::presence::died_line(&mob_name, GENDER_MALE);
     let difficulty = world.mob(target).map(|m| m.difficulty).unwrap_or(1);
     let amount = skills_cfg.kill_xp_base + difficulty * skills_cfg.kill_xp_per_difficulty;
     let corpse_id = world.kill_mob(target);
@@ -843,7 +854,7 @@ pub(super) async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(Str
     let harvest_evt = {
         let mut world = state.world.lock().expect("мир");
         world.cancel_harvest(&hit.char_id).map(|job| {
-            let ruined = job.action == "skin";
+            let ruined = job.action == ACTION_SKIN;
             if ruined {
                 world.ruin_skin(&job.corpse_id);
             }
@@ -899,11 +910,11 @@ pub(super) async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(Str
     let mut patch = serde_json::Map::new();
     patch.insert("hp".into(), json!({ "cur": hp_cur, "max": hp_max }));
     // M17/F30e: ярость воина за полученный урон — в тот же патч mp.
-    if row.profile == "warrior" {
+    if row.profile == PROFILE_WARRIOR {
         let res = &state.config.gameplay.resource;
-        let max = crate::systems::resource_max("warrior", res, i64::from(row.mp_max));
+        let max = crate::systems::resource_max(PROFILE_WARRIOR, res, i64::from(row.mp_max));
         let cur = i64::from(row.mp_cur).min(max);
-        let new = (cur + crate::systems::rage_gain(res, "warrior", hit.amount)).min(max);
+        let new = (cur + crate::systems::rage_gain(res, PROFILE_WARRIOR, hit.amount)).min(max);
         if new > cur {
             match crate::db::characters::set_mp(pool, &hit.char_id, new as i32).await {
                 Ok(()) => {
@@ -949,7 +960,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
             .await
             .unwrap_or_else(|e| {
                 warn!("тик (навык оружия {}): {e}", work.char_id);
-                "unarmed".to_string()
+                SKILL_UNARMED.to_string()
             })
         }
     };
@@ -1107,7 +1118,7 @@ fn apply_boss_skill(
                         source_name: boss_name.clone(),
                         name: skill.name.clone(),
                         glyph: skill.glyph.clone(),
-                        ends_at: now_ms + skill.cast_s.max(1) * 1000,
+                        ends_at: now_ms + skill.cast_s.max(1) * MS_PER_SECOND,
                     },
                 );
             }
@@ -1138,8 +1149,8 @@ fn apply_boss_skill(
             // M37: кровотечение — периодический урон (Белый волк).
             if let Some(effect) = &skill.effect {
                 for addr in world.chars_in_location(&loc) {
-                    let until = now_ms + effect.duration_s.max(1) * 1000;
-                    let applied = if effect.kind == "bleed" {
+                    let until = now_ms + effect.duration_s.max(1) * MS_PER_SECOND;
+                    let applied = if effect.kind == EFFECT_BLEED {
                         world.set_char_bleed(&addr, effect.value.unwrap_or(1), until, now_ms);
                         true
                     } else {

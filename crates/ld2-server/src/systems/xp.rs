@@ -2,6 +2,24 @@
 
 use super::*;
 
+const HIDE_CHANCE_BASE: f64 = 0.01;
+const HIDE_CHANCE_PER_LEVEL: f64 = 0.02;
+const HIDE_CHANCE_MAX: f64 = 0.6;
+const CRIT_CHANCE_PER_RANK: f64 = 0.05;
+const RANK_MIN: u32 = 1;
+const RANK_MAX: u32 = 5;
+const HARVEST_XP_BASE: f64 = 10.0;
+const HARVEST_XP_PER_REQUIRED: f64 = 1.5;
+const HARVEST_DIFF_LOW: f64 = -10.0;
+const HARVEST_DIFF_MID: f64 = 9.0;
+const HARVEST_DIFF_HIGH: f64 = 24.0;
+const HARVEST_MULT_LOW: f64 = 1.5;
+const HARVEST_MULT_NORMAL: f64 = 1.0;
+const HARVEST_MULT_HIGH: f64 = 0.5;
+const HARVEST_MULT_ZERO: f64 = 0.0;
+const HARVEST_XP_MAX: i64 = 40;
+const SKILL_GROUP_WEAPON: &str = "weapon";
+
 /// Порог ранга: `round(base_xp × growth^rank)` (skills.md §2.2, D25).
 /// M21: порог **уровня** профессии: `round(base × growth^L)` — каждый
 /// уровень дороже (согласованная формула `40 × 1.02^L`).
@@ -43,14 +61,14 @@ pub fn profession_level_up(
 /// профессии: `min(60%, 1% + 2% × уровень)` — на старте практически
 /// невозможно (ур.0 →1 %), потолок с ур.30. При провале — обрезки.
 pub fn hide_chance(level: u32) -> f64 {
-    (0.01 + 0.02 * f64::from(level)).min(0.6)
+    (HIDE_CHANCE_BASE + HIDE_CHANCE_PER_LEVEL * f64::from(level)).min(HIDE_CHANCE_MAX)
 }
 
 /// Снятие шкур: шанс **крита** — по рангу профессии (р1 →5 % …
 /// р5 →25 %); при крите в лут сверх обычного результата падает
 /// **+2 шкуры** текущего качества.
 pub fn harvest_crit(rank: u32) -> f64 {
-    f64::from(rank.clamp(1, 5)) * 0.05
+    f64::from(rank.clamp(RANK_MIN, RANK_MAX)) * CRIT_CHANCE_PER_RANK
 }
 
 /// Снятие шкур: опыт за «Снятие шкуры» (освежевание не даёт опыта) —
@@ -61,18 +79,18 @@ pub fn harvest_crit(rank: u32) -> f64 {
 /// «максимум30-40»). Животное с требуемым уровнем выше персонажа на
 /// 25+ разделать нельзя (гейт — на сервере).
 pub fn harvest_xp_gain(required: u32, char_level: u32) -> i64 {
-    let base = 10.0 + f64::from(required) * 1.5;
+    let base = HARVEST_XP_BASE + f64::from(required) * HARVEST_XP_PER_REQUIRED;
     let diff = f64::from(char_level) - f64::from(required);
-    let mult = if diff <= -10.0 {
-        1.5
-    } else if diff <= 9.0 {
-        1.0
-    } else if diff <= 24.0 {
-        0.5
+    let mult = if diff <= HARVEST_DIFF_LOW {
+        HARVEST_MULT_LOW
+    } else if diff <= HARVEST_DIFF_MID {
+        HARVEST_MULT_NORMAL
+    } else if diff <= HARVEST_DIFF_HIGH {
+        HARVEST_MULT_HIGH
     } else {
-        0.0
+        HARVEST_MULT_ZERO
     };
-    ((base * mult).round() as i64).min(40)
+    ((base * mult).round() as i64).min(HARVEST_XP_MAX)
 }
 
 /// M21: снимок профессии для wire (§6): `xp_to_next` — порог
@@ -177,7 +195,7 @@ pub fn premium_gain(amount: i64, mult: f64) -> i64 {
 /// M31: группы, для которых ранг ограничен уровнем персонажа
 /// (заказчик: боевые/защитные/магические — не более 2 за уровень).
 pub fn level_capped_group(group: &str) -> bool {
-    matches!(group, "weapon" | "defense" | "magic")
+    group == SKILL_GROUP_WEAPON || group == "defense" || group == "magic"
 }
 
 /// M31: потолок ранга навыка. Для боевых/защитных/магических —

@@ -30,6 +30,57 @@ const WEAPON_EFFECTS: &[(&str, f64, f64, f64)] = &[
     ("unarmed", 2.0, 0.0, 0.5),
 ];
 
+// ─── Константы формул (GDD §1, §A/B) ────────────────────────────────────────
+
+const STR_DAMAGE_DIV: i64 = 2;
+const BASE_ACCURACY: i64 = 75;
+const DEX_ACCURACY_DIV: i64 = 2;
+const ACCURACY_MAX: i64 = 99;
+const BASE_CRIT_CHANCE: f64 = 5.0;
+const DEX_CRIT_MULT: f64 = 0.3;
+const CRIT_CHANCE_MAX: i64 = 100;
+const BASE_CRIT_DAMAGE: i64 = 50;
+const DEX_CRIT_DAMAGE_DIV: i64 = 5;
+const BASE_DODGE: f64 = 3.0;
+const DEX_DODGE_MULT: f64 = 0.4;
+const DODGE_MAX: i64 = 60;
+const BASE_PARRY_CHANCE: i64 = 5;
+const DEX_PARRY_DIV: i64 = 10;
+const PARRY_CHANCE_MAX: i64 = 60;
+const PARRY_DAMAGE_MIN_DIV: i64 = 4;
+const PARRY_DAMAGE_MAX_DIV: i64 = 2;
+const BLOCK_CHANCE_PER_RANK: i64 = 2;
+const BLOCK_ATTR_DIV: i64 = 10;
+const BLOCK_CHANCE_MAX: i64 = 60;
+const MAGIC_DEF_PER_RANK: i64 = 2;
+const MAGIC_DODGE_INT_MULT: i64 = 3;
+const MAGIC_DODGE_INT_DIV: i64 = 10;
+const MAGIC_CHANCE_MAX: i64 = 60;
+const MAGIC_RESIST_VIT_DIV: i64 = 2;
+const MAGIC_DISPEL_INT_DIV: i64 = 2;
+const MAGIC_DISPEL_MAX: i64 = 99;
+const MAGIC_CRIT_DAMAGE_BASE: i64 = 50;
+const MAGIC_CRIT_DAMAGE_INT_DIV: i64 = 5;
+const MAGIC_CRIT_CHANCE_BASE: i64 = 5;
+const MAGIC_CRIT_CHANCE_INT_MULT: i64 = 3;
+const MAGIC_CRIT_CHANCE_INT_DIV: i64 = 10;
+const ARCANA_CRIT_DIV: i64 = 2;
+const PERCENT_MAX: i64 = 100;
+const PERCENT_DIVISOR: f64 = 100.0;
+const MAGIC_DODGE_BONUS_MAX: i64 = 100;
+const WEAPON_HANDS_TWO: i32 = 2;
+
+// Доменные id, участвующие в формулах.
+const SKILL_EVASION: &str = "evasion";
+const SKILL_ARMOR_LIGHT: &str = "armor_light";
+const SKILL_PARRY: &str = "parring";
+const SKILL_BLOCK: &str = "block";
+const SKILL_M_ARMOR: &str = "m_armor";
+const SKILL_M_EVASION: &str = "m_evasion";
+const SKILL_M_DISPEL: &str = "m_dispel";
+const SKILL_ARCANA: &str = "arcana";
+const ITEM_TYPE_WEAPON: &str = "weapon";
+
 fn attr(attrs: &BTreeMap<String, i64>, id: &str) -> i64 {
     attrs.get(id).copied().unwrap_or(0)
 }
@@ -49,7 +100,7 @@ fn rank(skills: &[SkillSnapshot], id: &str) -> i64 {
 fn socketed_rune_damage(equipped: &[ItemSnapshot]) -> i64 {
     equipped
         .iter()
-        .filter(|i| i.item_type == "weapon")
+        .filter(|i| i.item_type == ITEM_TYPE_WEAPON)
         .flat_map(|i| i.sockets.iter().flatten())
         .filter_map(|s| s.rune.as_ref())
         .filter_map(|r| r.damage)
@@ -76,9 +127,9 @@ fn weapon_damage(equipped: &[ItemSnapshot], base: i64) -> (i64, i64) {
 fn weapon_is_twohanded(equipped: &[ItemSnapshot]) -> bool {
     equipped
         .iter()
-        .find(|i| i.item_type == "weapon" && i.stats.contains_key("dmg"))
+        .find(|i| i.item_type == ITEM_TYPE_WEAPON && i.stats.contains_key("dmg"))
         .and_then(|i| i.hands)
-        == Some(2)
+        == Some(WEAPON_HANDS_TWO)
 }
 
 /// Навык снаряжённого оружия из `extra["skill"]` (см. док модуля).
@@ -121,52 +172,72 @@ pub fn derive(
     // ── физические ──
     // M32 (заказчик): урон = оружие + сила/2 (+ руны); навык оружия
     // урон не множит.
-    let damage_min = w_min + strg / 2;
-    let damage_max = w_max + strg / 2;
+    let damage_min = w_min + strg / STR_DAMAGE_DIV;
+    let damage_max = w_max + strg / STR_DAMAGE_DIV;
     // Точность: ловкость (GDD §1) + оружейный навык (M32).
-    let accuracy = (75 + dex / 2 + acc_pct.round() as i64).clamp(1, 99);
-    let crit_chance = ((5.0 + dex as f64 * 0.3 + crit_pct).round() as i64).clamp(0, 100);
-    let crit_damage = 50 + dex / 5;
+    let accuracy =
+        (BASE_ACCURACY + dex / DEX_ACCURACY_DIV + acc_pct.round() as i64).clamp(1, ACCURACY_MAX);
+    let crit_chance = ((BASE_CRIT_CHANCE + dex as f64 * DEX_CRIT_MULT + crit_pct).round() as i64)
+        .clamp(0, CRIT_CHANCE_MAX);
+    let crit_damage = BASE_CRIT_DAMAGE + dex / DEX_CRIT_DAMAGE_DIV;
     // Броня — сумма статов экипировки (контент брони пока пуст → 0).
     let armor: i64 = equipped
         .iter()
         .filter_map(|i| i.stats.get("armor").and_then(|v| v.as_i64()))
         .sum();
     // Уклон: база + dex + защитные навыки §B (за ранг) + вклад оружия.
-    let dodge = ((3.0
-        + dex as f64 * 0.4
-        + (rank(skills, "evasion") + rank(skills, "armor_light")) as f64
+    let dodge = ((BASE_DODGE
+        + dex as f64 * DEX_DODGE_MULT
+        + (rank(skills, SKILL_EVASION) + rank(skills, SKILL_ARMOR_LIGHT)) as f64
         + dodge_pct)
         .round() as i64)
-        .clamp(0, 60);
+        .clamp(0, DODGE_MAX);
     // Парирование (заказчик 2026-11-27): только двуручное оружие —
     // у одноручного парирования нет. Урон контрудара зависит от силы,
     // а не от оружия: `str/4 .. str/2`.
     let twohanded = weapon_is_twohanded(equipped);
     let parry_chance = if twohanded {
-        (5 + rank(skills, "parring") + dex / 10).clamp(0, 60)
+        (BASE_PARRY_CHANCE + rank(skills, SKILL_PARRY) + dex / DEX_PARRY_DIV)
+            .clamp(0, PARRY_CHANCE_MAX)
     } else {
         0
     };
-    let parry_min = if twohanded { strg / 4 } else { 0 };
-    let parry_max = if twohanded { strg / 2 } else { 0 };
+    let parry_min = if twohanded {
+        strg / PARRY_DAMAGE_MIN_DIV
+    } else {
+        0
+    };
+    let parry_max = if twohanded {
+        strg / PARRY_DAMAGE_MAX_DIV
+    } else {
+        0
+    };
     // Блок: §B «+2% шанса полного блока за ранг»; сила и ловкость
     // тоже дают шанс (заказчик), а базовый шанс — у щита
     // (`stats.param.block_chance`). `block_min/max` — сколько урона
     // блокирует щит.
-    let block_chance = (rank(skills, "block") * 2 + (strg + dex) / 10).clamp(0, 60);
+    let block_chance = (rank(skills, SKILL_BLOCK) * BLOCK_CHANCE_PER_RANK
+        + (strg + dex) / BLOCK_ATTR_DIV)
+        .clamp(0, BLOCK_CHANCE_MAX);
 
     // ── магические ──
     let staff_magic: i64 = equipped
         .iter()
         .filter_map(|i| i.stats.get("magic").and_then(|v| v.as_i64()))
         .sum();
-    let magic_defense = int + rank(skills, "m_armor") * 2 + staff_magic;
-    let magic_dodge = ((int * 3 / 10) + rank(skills, "m_evasion")).clamp(0, 60);
-    let magic_resist = (vit / 2 + rank(skills, "m_armor")).clamp(0, 60);
-    let magic_dispel = (int / 2 + rank(skills, "m_dispel")).clamp(0, 99);
-    let magic_crit_damage = 50 + int / 5;
-    let magic_crit_chance = (5 + int * 3 / 10 + rank(skills, "arcana") / 2).clamp(0, 100);
+    let magic_defense = int + rank(skills, SKILL_M_ARMOR) * MAGIC_DEF_PER_RANK + staff_magic;
+    let magic_dodge = ((int * MAGIC_DODGE_INT_MULT / MAGIC_DODGE_INT_DIV)
+        + rank(skills, SKILL_M_EVASION))
+    .clamp(0, MAGIC_CHANCE_MAX);
+    let magic_resist =
+        (vit / MAGIC_RESIST_VIT_DIV + rank(skills, SKILL_M_ARMOR)).clamp(0, MAGIC_CHANCE_MAX);
+    let magic_dispel =
+        (int / MAGIC_DISPEL_INT_DIV + rank(skills, SKILL_M_DISPEL)).clamp(0, MAGIC_DISPEL_MAX);
+    let magic_crit_damage = MAGIC_CRIT_DAMAGE_BASE + int / MAGIC_CRIT_DAMAGE_INT_DIV;
+    let magic_crit_chance = (MAGIC_CRIT_CHANCE_BASE
+        + int * MAGIC_CRIT_CHANCE_INT_MULT / MAGIC_CRIT_CHANCE_INT_DIV
+        + rank(skills, SKILL_ARCANA) / ARCANA_CRIT_DIV)
+        .clamp(0, PERCENT_MAX);
 
     let mut params = DerivedParams {
         accuracy,
@@ -221,7 +292,7 @@ pub fn max_mp(
     let mana = &cfg.gameplay.magic.mana;
     let raw = mana.mp_max_base as f64
         + attr(attrs, "int") as f64 * mana.mp_per_int
-        + rank(skills, "arcana") as f64 * mana.mp_per_arcana
+        + rank(skills, SKILL_ARCANA) as f64 * mana.mp_per_arcana
         + attr(attrs, "spir") as f64 * mana.mp_per_spir;
     (raw.round() as i64).max(1)
 }
@@ -332,34 +403,35 @@ fn apply_maps(params: &mut DerivedParams, flat: &BTreeMap<&str, i64>, pct: &BTre
     let add = |value: i64, id: &str| -> i64 {
         let base = value + flat.get(id).copied().unwrap_or(0);
         let p = pct.get(id).copied().unwrap_or(0);
-        ((base as f64) * (1.0 + p as f64 / 100.0)).round() as i64
+        ((base as f64) * (1.0 + p as f64 / PERCENT_DIVISOR)).round() as i64
     };
     // `damage` — общая метка: двигает и минимум, и максимум.
     let dmg_flat = flat.get("damage").copied().unwrap_or(0);
     let dmg_pct = pct.get("damage").copied().unwrap_or(0);
     let dmg = |value: i64| -> i64 {
         let base = value + dmg_flat;
-        ((base as f64) * (1.0 + dmg_pct as f64 / 100.0)).round() as i64
+        ((base as f64) * (1.0 + dmg_pct as f64 / PERCENT_DIVISOR)).round() as i64
     };
-    params.accuracy = add(params.accuracy, "accuracy").clamp(1, 99);
+    params.accuracy = add(params.accuracy, "accuracy").clamp(1, ACCURACY_MAX);
     params.damage_min = dmg(params.damage_min).max(0);
     params.damage_max = dmg(params.damage_max).max(0);
-    params.crit_chance = add(params.crit_chance, "crit_chance").clamp(0, 100);
+    params.crit_chance = add(params.crit_chance, "crit_chance").clamp(0, PERCENT_MAX);
     params.crit_damage = add(params.crit_damage, "crit_damage").max(0);
     params.armor = add(params.armor, "armor").max(0);
-    params.dodge = add(params.dodge, "dodge").clamp(0, 60);
+    params.dodge = add(params.dodge, "dodge").clamp(0, DODGE_MAX);
     params.parry_min = add(params.parry_min, "parry_min").max(0);
     params.parry_max = add(params.parry_max, "parry_max").max(0);
-    params.parry_chance = add(params.parry_chance, "parry_chance").clamp(0, 60);
+    params.parry_chance = add(params.parry_chance, "parry_chance").clamp(0, PARRY_CHANCE_MAX);
     params.block_min = add(params.block_min, "block_min").max(0);
     params.block_max = add(params.block_max, "block_max").max(0);
-    params.block_chance = add(params.block_chance, "block_chance").clamp(0, 60);
+    params.block_chance = add(params.block_chance, "block_chance").clamp(0, BLOCK_CHANCE_MAX);
     params.magic_defense = add(params.magic_defense, "magic_defense").max(0);
-    params.magic_dodge = add(params.magic_dodge, "magic_dodge").clamp(0, 100);
+    params.magic_dodge = add(params.magic_dodge, "magic_dodge").clamp(0, MAGIC_DODGE_BONUS_MAX);
     params.magic_resist = add(params.magic_resist, "magic_resist").max(0);
-    params.magic_dispel = add(params.magic_dispel, "magic_dispel").clamp(0, 99);
+    params.magic_dispel = add(params.magic_dispel, "magic_dispel").clamp(0, MAGIC_DISPEL_MAX);
     params.magic_crit_damage = add(params.magic_crit_damage, "magic_crit_damage").max(0);
-    params.magic_crit_chance = add(params.magic_crit_chance, "magic_crit_chance").clamp(0, 100);
+    params.magic_crit_chance =
+        add(params.magic_crit_chance, "magic_crit_chance").clamp(0, PERCENT_MAX);
 }
 
 #[cfg(test)]
