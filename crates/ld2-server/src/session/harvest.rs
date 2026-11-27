@@ -8,16 +8,12 @@ use ld2_protocol::names;
 
 use ld2_protocol::cmd::ResourceGather;
 use ld2_protocol::envelope::Envelope;
-use ld2_protocol::evt::{CraftProfession, EntityDespawn, EntityMove, ItemAdded, ItemState};
 use ld2_protocol::ErrorCode;
 use tracing::warn;
 
 use super::event_payload_text;
-use super::rules::item_snapshot;
-use super::{out_event, Out, Session};
-use crate::consts::{
-    ACTION_GUT, ACTION_SKIN, ITEM_SKINNING_KNIFE, PROFESSION_MINING, PROFESSION_SKINNING,
-};
+use super::{Out, Session};
+use crate::consts::{ACTION_GUT, ACTION_SKIN, ITEM_SKINNING_KNIFE, PROFESSION_SKINNING};
 use crate::db;
 
 const MIN_LEVEL: i64 = 1;
@@ -198,99 +194,9 @@ impl Session {
         outs
     }
 
-    /// M20/F20b: добыча ресурса — инструмент (`item_type` в
-    /// инвентаре), ранг профессии, выдача 1 шт. + XP (паритет крафта),
-    /// уменьшение запаса; патч шкалы/десктронизация — всем в локации.
-    /// M38: XP профессии за добычу. Горное дело — формула снятия шкур
-    /// (по уровню жилы), остальные ресурсы — прежняя формула крафта.
-    async fn grant_gather_profession_xp(
-        &self,
-        pool: &sqlx::PgPool,
-        char_id: &str,
-        prof_xp: Option<(String, i64, i32, i32)>,
-        node: &crate::world::ResourceNode,
-    ) -> Option<Out> {
-        let (prof, xp_old, rank, level) = prof_xp?;
-        let cfg = &self.state.config.gameplay.professions;
-        let gain = if node.profession.as_deref() == Some(PROFESSION_MINING) {
-            crate::systems::harvest_xp_gain(node.required_level, level.max(0) as u32)
-        } else {
-            cfg.xp_per_craft_base + cfg.xp_per_craft_per_rank * i64::from(rank)
-        };
-        // M33/M34: премиум и другие множители опыта профессии.
-        let gain = crate::progress::profession_xp(&self.state, char_id, gain).await;
-        // M21: опыт растит УРОВЕНЬ; ранг меняет только тренер/квест.
-        let (xp_new, level_new) =
-            crate::systems::profession_level_up(cfg, xp_old, level.max(0) as u32, gain);
-        if let Err(e) =
-            db::professions::grant_progress(pool, char_id, &prof, xp_new, rank, level_new as i32)
-                .await
-        {
-            warn!("gather (XP профессии {char_id}): {e}");
-            return None;
-        }
-        let snapshot = crate::systems::profession_snapshot(cfg, &prof, xp_new, rank, level_new);
-        let name = db::professions::profession_name(pool, &prof)
-            .await
-            .ok()
-            .flatten();
-        event_payload_text(
-            names::EVT_CRAFT_PROFESSION,
-            &CraftProfession {
-                profession: snapshot,
-                name,
-                gain: Some(gain),
-            },
-        )
-        .map(Out::Text)
-    }
-
-    /// M38: выдать бонусный камень из жилы (если есть место).
-    async fn grant_gather_gem(
-        pool: &sqlx::PgPool,
-        char_id: &str,
-        gem_id: &str,
-        slots: u32,
-        outs: &mut Vec<Out>,
-    ) {
-        match Self::take_loot_fits(pool, char_id, gem_id, slots).await {
-            Ok(true) => match db::items::def(pool, gem_id).await {
-                Ok(Some(gem_def)) => {
-                    match db::items::grant_stacking(pool, char_id, gem_id, 1).await {
-                        Ok((gem_row, stacked)) => {
-                            let gem_item = item_snapshot(&gem_row, &gem_def);
-                            outs.push(if stacked {
-                                let mut patch = serde_json::Map::new();
-                                patch.insert("qty".into(), serde_json::json!(gem_row.qty));
-                                out_event(
-                                    names::EVT_ITEM_STATE,
-                                    None,
-                                    serde_json::to_value(ItemState {
-                                        uid: gem_row.uid.clone(),
-                                        patch,
-                                    })
-                                    .unwrap_or_default(),
-                                )
-                            } else {
-                                out_event(
-                                    names::EVT_ITEM_ADDED,
-                                    None,
-                                    serde_json::to_value(ItemAdded { item: gem_item })
-                                        .unwrap_or_default(),
-                                )
-                            });
-                        }
-                        Err(e) => warn!("gather (камень): {e}"),
-                    }
-                }
-                Ok(None) => warn!("gather: нет определения камня {gem_id}"),
-                Err(e) => warn!("gather (камень {gem_id}): {e}"),
-            },
-            Ok(false) => {} // нет места — камень не выдаём, руда уже получена
-            Err(e) => warn!("gather (место под камень): {e}"),
-        }
-    }
-
+    /// M20/F20b + M39: добыча ресурса — валидации (инструмент, ранг,
+    /// уровень, место в инвентаре), затем сервер-джоб 5 с; выдача руды,
+    /// камня, XP и обновление запаса — в `gather_step`.
     pub(super) async fn resource_gather(&mut self, env: &Envelope, seq: u32) -> Vec<Out> {
         if let Some(err) = self.require_auth(seq) {
             return vec![err];
@@ -328,7 +234,6 @@ impl Session {
             }
         }
         // 3) ранг/уровень профессии (профессия должна быть изучена).
-        let mut prof_xp: Option<(String, i64, i32, i32)> = None;
         if let Some(prof) = &node.profession {
             let learned = match db::professions::learned(pool, &char_id).await {
                 Ok(v) => v,
@@ -337,7 +242,7 @@ impl Session {
                     return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                 }
             };
-            let Some((_, xp, rank, level)) = learned.iter().find(|(id, _, _, _)| id == prof) else {
+            let Some((_, _, rank, level)) = learned.iter().find(|(id, _, _, _)| id == prof) else {
                 return vec![Self::err(
                     seq,
                     ErrorCode::Profession,
@@ -364,7 +269,6 @@ impl Session {
                     ),
                 )];
             }
-            prof_xp = Some((prof.clone(), *xp, *rank, *level));
         }
         // 4) место в инвентаре до уменьшения запаса (паритет take_loot).
         let slots = self.state.config.gameplay.inventory.slots;
@@ -382,105 +286,17 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         }
-        // 5) добыча в мире: −1 запас (при 0 — респавн, трава — скрытие).
-        let after = {
+        // 5) M39: сбор по времени — сервер-джоб 5 с, выдача в тике.
+        let at = crate::time::now_epoch() + JOB_SECONDS;
+        {
             let mut world = self.state.world.lock().expect("мир");
-            world.try_gather(&cmd.entity_id, &current)
-        };
-        let Some(after) = after else {
-            return vec![Self::err(seq, ErrorCode::TargetGone, "ресурс исчерпан")];
-        };
-        // 6) выдача предмета (место проверено выше).
-        let Some(def) = (match db::items::def(pool, &node.def_id).await {
-            Ok(def) => def,
-            Err(e) => {
-                warn!("gather (определение): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        }) else {
-            return vec![Self::err(seq, ErrorCode::Internal, "нет определения")];
-        };
-        let (row, stacked) = match db::items::grant_stacking(pool, &char_id, &node.def_id, 1).await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                warn!("gather (выдача): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
-        };
-        let mut outs = vec![Self::ack_payload(seq, &serde_json::json!({}))];
-        let item = item_snapshot(&row, &def);
-        outs.push(if stacked {
-            let mut patch = serde_json::Map::new();
-            patch.insert("qty".into(), serde_json::json!(row.qty));
-            out_event(
-                names::EVT_ITEM_STATE,
-                None,
-                serde_json::to_value(ItemState {
-                    uid: row.uid.clone(),
-                    patch,
-                })
-                .unwrap_or_default(),
-            )
-        } else {
-            out_event(
-                names::EVT_ITEM_ADDED,
-                None,
-                serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
-            )
-        });
-        // 6b) M38: бонусный необработанный самоцвет из жилы.
-        let gem_drop = {
-            let mut world = self.state.world.lock().expect("мир");
-            world.roll_resource_gem(&cmd.entity_id)
-        };
-        if let Some(gem_id) = gem_drop {
-            Self::grant_gather_gem(pool, &char_id, &gem_id, slots, &mut outs).await;
+            world.start_gather(crate::world::GatherJob {
+                char_id: char_id.clone(),
+                entity_id: cmd.entity_id.clone(),
+                name: node.name.clone(),
+                at,
+            });
         }
-
-        // 7) XP профессии → снапшот себе.
-        if let Some(out) = self
-            .grant_gather_profession_xp(pool, &char_id, prof_xp, &node)
-            .await
-        {
-            outs.push(out);
-        }
-        // 8) запас в локации: трава исчезла → despawn, жила/дерево →
-        // патч шкалы (паттерн entity/move).
-        let world_evt = if after.hidden {
-            event_payload_text(
-                names::EVT_ENTITY_DESPAWN,
-                &EntityDespawn {
-                    entity_id: after.id.clone(),
-                    location_id: after.location_id.clone(),
-                    kind: Some(ld2_protocol::types::EntityKind::Resource),
-                    picked_by: None,
-                    picked_gender: None,
-                    text: None,
-                },
-            )
-        } else {
-            let mut patch = serde_json::Map::new();
-            patch.insert(
-                "hp".into(),
-                serde_json::json!({"cur": after.current, "max": after.max}),
-            );
-            event_payload_text(
-                names::EVT_ENTITY_MOVE,
-                &EntityMove {
-                    entity_id: after.id.clone(),
-                    patch,
-                },
-            )
-        };
-        {
-            let world = self.state.world.lock().expect("мир");
-            for addr in world.chars_in_location(&after.location_id) {
-                if let Some(text) = &world_evt {
-                    world.send_to_char(&addr, text.clone());
-                }
-            }
-        }
-        outs
+        vec![Self::ack_payload(seq, &serde_json::json!({}))]
     }
 }

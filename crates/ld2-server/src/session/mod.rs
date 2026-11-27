@@ -242,7 +242,7 @@ impl Session {
         // (переключение на другой труп разрешено; E_COOLDOWN — только
         // повторный старт на том же трупе).
         if gates::HARVEST_BLOCKED.contains(&env.msg_type.as_str()) && self.char_is_harvesting() {
-            return vec![Self::err(seq, ErrorCode::Busy, "персонаж занят разделкой")];
+            return vec![Self::err(seq, ErrorCode::Busy, "персонаж занят")];
         }
         // M25: дебаффы контроля (эффекты приёмов босса): стан — ничего,
         // немота — магия, ослепление — атаки/навыки.

@@ -418,11 +418,13 @@ impl Root {
         let dark = pal.bg == crate::palette::palette(domain::THEME_DARK).bg;
         // M14/F8: размер шрифта лога из настроек (10…20 px).
         let log_font = self.config.log_font_px;
+        // M39: высота фрейма журнала из настроек (60…240 px).
+        let log_height = self.config.log_height_px.clamp(60.0, 240.0);
         // M14/F13: цвета/жирность строк боя — из настроек.
         let damage_color = self.config.log_damage_color.clone();
         let attack_color = self.config.log_attack_color.clone();
         let damage_bold = self.config.log_damage_bold;
-        div().flex().flex_col().min_h_0().h(px(96.0)).child(
+        div().flex().flex_col().min_h_0().h(px(log_height)).child(
             ScrollArea::new("ld2-log-scroll")
                 .vertical()
                 .track_scroll(&self.journal_scroll)

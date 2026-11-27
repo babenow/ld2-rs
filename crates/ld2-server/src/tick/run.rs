@@ -21,7 +21,8 @@ use super::expire::{
     buff_expire_step, corpse_expire_step, crime_expire_step, ground_expire_step, respawn_step,
 };
 use super::jobs::{
-    craft_finish_step, harvest_step, quest_kill_progress, regen_step, rune_recharge_step,
+    craft_finish_step, gather_step, harvest_step, quest_kill_progress, regen_step,
+    rune_recharge_step,
 };
 use super::plan::RuneWork;
 
@@ -80,6 +81,8 @@ pub async fn run(state: SharedState) {
             respawn_step(&state).await;
             // Снятие шкур: готовые разделки (сервер-джобы5 с).
             harvest_step(&state).await;
+            // M39: завершённые сборы ресурсов (сервер-джоб5 с).
+            gather_step(&state).await;
             // M18/F58c: заряды рун (режим `time`; `item` — без тикера).
             recharge_acc += 1.0;
             let interval_s = state.config.gameplay.magic.rune_recharge_s;

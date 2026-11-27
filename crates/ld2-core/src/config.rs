@@ -44,6 +44,9 @@ pub struct Config {
     /// Размер шрифта **строк лога мира**, px (M14/F8: 10…20, дефолт 12).
     #[serde(default = "default_log_font_px")]
     pub log_font_px: f32,
+    /// Высота фрейма журнала мира, px (M39: 60…240, дефолт 96).
+    #[serde(default = "default_log_height_px")]
+    pub log_height_px: f32,
     /// Цвет строк «урон по персонажу» в журнале, hex (M14/F13).
     #[serde(default = "default_log_damage_color")]
     pub log_damage_color: String,
@@ -106,6 +109,10 @@ fn default_chat_font_px() -> f32 {
 
 fn default_log_font_px() -> f32 {
     12.0
+}
+
+fn default_log_height_px() -> f32 {
+    96.0
 }
 
 fn default_log_damage_color() -> String {
@@ -360,6 +367,7 @@ impl Config {
         // диапазона, как у chat_limit).
         self.chat_font_px = self.chat_font_px.clamp(10.0, 20.0);
         self.log_font_px = self.log_font_px.clamp(10.0, 20.0);
+        self.log_height_px = self.log_height_px.clamp(60.0, 240.0);
         // M14/F13: битый hex → дефолтный цвет (записан ColorPicker'ом
         // или отредактирован руками в config.toml).
         if !is_hex_color(&self.log_damage_color) {
@@ -396,6 +404,7 @@ impl Default for Config {
             font_scale: default_font_scale(),
             chat_font_px: default_chat_font_px(),
             log_font_px: default_log_font_px(),
+            log_height_px: default_log_height_px(),
             log_damage_color: default_log_damage_color(),
             log_attack_color: default_log_attack_color(),
             log_damage_bold: true,
@@ -542,6 +551,8 @@ mod tests {
         // M14/F8: шрифты чата/лога в старом конфиге — дефолт 12 px.
         assert_eq!(cfg.chat_font_px, 12.0);
         assert_eq!(cfg.log_font_px, 12.0);
+        // M39: высота журнала в старом конфиге — дефолт 96 px.
+        assert_eq!(cfg.log_height_px, 96.0);
         // M14/F13: цвета/жирность строк боя в старом конфиге — дефолты.
         assert_eq!(cfg.log_damage_color, "#e06c75");
         assert_eq!(cfg.log_attack_color, "#61afef");
@@ -591,24 +602,29 @@ mod tests {
         let def = Config::default();
         assert_eq!(def.chat_font_px, 12.0, "дефолт 12");
         assert_eq!(def.log_font_px, 12.0, "дефолт 12");
+        assert_eq!(def.log_height_px, 96.0, "высота журнала — 96 px");
 
         let out_of_range = Config {
             chat_font_px: 1.0,
             log_font_px: 99.0,
+            log_height_px: 1.0,
             ..Config::default()
         }
         .sanitize();
         assert_eq!(out_of_range.chat_font_px, 10.0, "пол 10 px");
         assert_eq!(out_of_range.log_font_px, 20.0, "потолок 20 px");
+        assert_eq!(out_of_range.log_height_px, 60.0, "пол высоты 60 px");
 
         let in_range = Config {
             chat_font_px: 15.0,
             log_font_px: 17.0,
+            log_height_px: 140.0,
             ..Config::default()
         }
         .sanitize();
         assert_eq!(in_range.chat_font_px, 15.0, "в диапазоне не трогаем");
         assert_eq!(in_range.log_font_px, 17.0, "в диапазоне не трогаем");
+        assert_eq!(in_range.log_height_px, 140.0, "высота в диапазоне");
     }
 
     /// M9: sanitize чинит выходящие за пределы значения.

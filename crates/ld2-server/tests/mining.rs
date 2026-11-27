@@ -89,6 +89,16 @@ async fn learn(c: &mut WsClient, id: &str) {
     c.wait_event("evt/craft/profession").await;
 }
 
+/// M39: волк в лесу агрессивен — урон прерывает сбор; убиваем до добычи.
+async fn kill_wolf(c: &mut WsClient) {
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "атака волка");
+    c.wait_event("evt/corpse/created").await;
+    c.wait_event("evt/combat/end").await;
+}
+
 #[tokio::test]
 async fn mining_drops_gem_and_jeweler_cuts_it() {
     let Some(db_url) = common::test_url() else {
@@ -115,6 +125,7 @@ async fn mining_drops_gem_and_jeweler_cuts_it() {
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    kill_wolf(&mut c).await;
     let seq = c
         .send(
             "cmd/resource.gather",

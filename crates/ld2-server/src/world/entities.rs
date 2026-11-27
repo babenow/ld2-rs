@@ -29,6 +29,17 @@ pub struct LiveCorpse {
     pub inner_loot: Vec<Option<String>>,
 }
 
+/// M39: сбор ресурса по времени (рудная жила/трава/дерево): сервер-джоб
+/// на 5 с; ключ в мире — персонаж, одно действие за раз.
+#[derive(Debug, Clone)]
+pub struct GatherJob {
+    pub char_id: String,
+    pub entity_id: String,
+    pub name: String,
+    /// Epoch-с окончания.
+    pub at: i64,
+}
+
 /// Снятие шкур: активная разделка (сервер-джоб; ключ в мире —
 /// персонаж, одно действие за раз).
 #[derive(Debug, Clone)]
@@ -93,6 +104,9 @@ impl ResourceNode {
             serde_json::json!(self.required_level),
         );
         extra.insert("min_rank".into(), serde_json::json!(self.min_rank));
+        if let Some(profession) = &self.profession {
+            extra.insert("profession".into(), serde_json::json!(profession));
+        }
         if let Some(gems) = &self.gems {
             extra.insert("gem_chance".into(), serde_json::json!(gems.chance));
         }
@@ -346,16 +360,37 @@ impl World {
     pub fn start_harvest(&mut self, job: HarvestJob) {
         self.harvest_jobs.insert(job.char_id.clone(), job);
     }
-    /// M24: идёт ли у персонажа активная разделка (блок действий,
-    /// `E_BUSY`; item-команды — исключение, прерывают по M23).
+    /// M24/M39: идёт ли у персонажа активная разделка или сбор
+    /// ресурса (блок действий, `E_BUSY`; item-команды прерывают
+    /// только разделку — M23).
     pub fn is_harvesting(&self, char_id: &str) -> bool {
-        self.harvest_jobs.contains_key(char_id)
+        self.harvest_jobs.contains_key(char_id) || self.gather_jobs.contains_key(char_id)
     }
     /// M24: прервать активную разделку (взаимодействие с предметом)
     /// → джоб изымается; для skin вызывающий помечает труп
     /// «шкура испорчена» ([`Self::ruin_skin`]).
     pub fn cancel_harvest(&mut self, char_id: &str) -> Option<HarvestJob> {
         self.harvest_jobs.remove(char_id)
+    }
+    /// M39: запустить сбор (старый джоб персонажа вытесняется).
+    pub fn start_gather(&mut self, job: GatherJob) -> Option<GatherJob> {
+        self.gather_jobs.insert(job.char_id.clone(), job)
+    }
+    /// M39: отменить сбор (выход из мира, урон).
+    pub fn cancel_gather(&mut self, char_id: &str) -> Option<GatherJob> {
+        self.gather_jobs.remove(char_id)
+    }
+    /// M39: сборы, срок которых наступил (извлекаются из очереди).
+    pub fn due_gathers(&mut self, now: i64) -> Vec<GatherJob> {
+        let due: Vec<String> = self
+            .gather_jobs
+            .values()
+            .filter(|g| now >= g.at)
+            .map(|g| g.char_id.clone())
+            .collect();
+        due.into_iter()
+            .filter_map(|id| self.gather_jobs.remove(&id))
+            .collect()
     }
     /// M22: шкура испорчена — повторное снятие с трупа невозможно
     /// (труп мог уже истечь — тогда просто no-op).

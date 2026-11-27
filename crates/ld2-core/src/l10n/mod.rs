@@ -115,7 +115,7 @@ pub enum Key {
     NpcsLabel,
     CorpsesLabel,
     MapLabel,
-    LogLabel,
+    SettingsLogHeight,
     Examine,
     // M35: карточка осмотра чужого персонажа (ПКМ).
     InspectTitle,
@@ -850,7 +850,7 @@ mod tests {
         Key::NpcsLabel,
         Key::CorpsesLabel,
         Key::MapLabel,
-        Key::LogLabel,
+        Key::SettingsLogHeight,
         Key::Examine,
         Key::InspectTitle,
         Key::InspectLevel,

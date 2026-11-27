@@ -268,7 +268,9 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
             .active
             .get_mut("power_strike")
             .expect("power_strike в конфиге")
-            .cooldown_s = 0.5;
+            // Кулдаун в целых секундах (сервер округляет вверх): 3 с
+            // даёт надёжное окно для проверки E_COOLDOWN.
+            .cooldown_s = 3.0;
     })
     .await;
     let ws = format!("ws://{addr}/ws");
@@ -298,14 +300,20 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
     assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
     // Бросок попадания случаен — при промахе повторяем после кулдауна.
     let mut hit = None;
-    for attempt in 0..3 {
+    for attempt in 0..4 {
         let seq = c
             .send(
                 "cmd/skill.use",
                 json!({ "skill_id": "power_strike", "target_id": "m_3" }),
             )
             .await;
-        assert_eq!(c.ack(seq).await["result"], "ok", "удар #{attempt}");
+        let ack = c.ack(seq).await;
+        if ack["error"]["code"] == "E_COOLDOWN" {
+            let wait = ack["error"]["retry_after_s"].as_u64().unwrap_or(1).max(1);
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            continue;
+        }
+        assert_eq!(ack["result"], "ok", "удар #{attempt}: {ack}");
         let cd = c.wait_event("evt/combat/cooldown").await;
         assert_eq!(cd["payload"]["skill_id"], "power_strike");
         assert!(
@@ -323,9 +331,9 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
             hit = Some(ev);
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
     }
-    let hit = hit.expect("способность попала (3 попытки)");
+    let hit = hit.expect("способность попала (4 попытки)");
     let amount = hit["payload"]["amount"].as_i64().expect("amount");
     assert!((1..=20).contains(&amount), "урон способности: {hit}");
     let hp = c
@@ -396,14 +404,22 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     // Бросок попадания случаен, а точная последовательность ГПСЧ зависит
     // от тиков мобов — при промахе повторяем после кулдауна (до 3 раз).
     let mut hit = None;
-    for attempt in 0..3 {
+    for attempt in 0..4 {
         let seq = c
             .send(
                 "cmd/skill.use",
                 json!({ "skill_id": "power_strike", "target_id": "m_3" }),
             )
             .await;
-        assert_eq!(c.ack(seq).await["result"], "ok", "удар #{attempt}");
+        let ack = c.ack(seq).await;
+        // Кулдаун на сервере округляется вверх до целой секунды —
+        // 0.5 с из конфига может держаться до 1 с; ждём retry_after_s.
+        if ack["error"]["code"] == "E_COOLDOWN" {
+            let wait = ack["error"]["retry_after_s"].as_u64().unwrap_or(1).max(1);
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            continue;
+        }
+        assert_eq!(ack["result"], "ok", "удар #{attempt}: {ack}");
         c.wait_event("evt/combat/cooldown").await;
         let ev = c
             .wait(|v| {
@@ -416,7 +432,7 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
             hit = Some(ev);
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
     }
     let hit = hit.expect("способность попала (3 попытки)");
     let amount = hit["payload"]["amount"].as_i64().expect("amount");

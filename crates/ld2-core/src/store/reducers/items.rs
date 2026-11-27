@@ -93,15 +93,27 @@ impl AppStore {
                 // подбор (extra.picked) строку даёт despawn — без дубля.
                 if added.item.extra.get("picked").and_then(|v| v.as_bool()) != Some(true) {
                     let qty = added.item.qty.unwrap_or(1).max(1);
-                    let upg = if added.item.upgrade > 0 {
-                        format!(" +{}", added.item.upgrade)
+                    // M39: отдельная строка только для камня из жилы
+                    // (во время сбора); прочие источники raw_* — обычная.
+                    let gathering = self.harvest.as_ref().is_some_and(|h| h.action == "gather");
+                    if gathering && added.item.item_type.starts_with("raw_") {
+                        // M39: найденный в жиле камень — отдельная строка
+                        // (руда — обычная «Вы получили…»).
+                        self.push_log(
+                            LogKind::Loot,
+                            format!("Найден самоцвет: {}", added.item.name),
+                        );
                     } else {
-                        String::new()
-                    };
-                    self.push_log(
-                        LogKind::Loot,
-                        format!("Вы получили {qty} {}{upg}", added.item.name),
-                    );
+                        let upg = if added.item.upgrade > 0 {
+                            format!(" +{}", added.item.upgrade)
+                        } else {
+                            String::new()
+                        };
+                        self.push_log(
+                            LogKind::Loot,
+                            format!("Вы получили {qty} {}{upg}", added.item.name),
+                        );
+                    }
                 }
                 vec![]
             }
@@ -206,6 +218,10 @@ impl AppStore {
                 let Ok(update) = serde_json::from_value::<ItemPatch>(payload) else {
                     return vec![];
                 };
+                let gathering = self.harvest.as_ref().is_some_and(|h| h.action == "gather");
+                // M39: прирост стака — это получение предмета (руда из
+                // жилы, покупка, лут); уменьшение (продажа/расход) молчит.
+                let mut gained: Option<(String, String, i64)> = None;
                 if let Some(snap) = self.snapshot.as_mut() {
                     if let Some(item) = snap.char.inventory.iter_mut().find(|i| i.uid == update.uid)
                     {
@@ -248,8 +264,20 @@ impl AppStore {
                                 }
                             }
                         } else if let Some(qty) = update.patch.get("qty").and_then(|v| v.as_i64()) {
+                            let old = item.qty.unwrap_or(0);
                             item.qty = Some(qty);
+                            if qty > old {
+                                gained =
+                                    Some((item.name.clone(), item.item_type.clone(), qty - old));
+                            }
                         }
+                    }
+                }
+                if let Some((name, item_type, delta)) = gained {
+                    if gathering && item_type.starts_with("raw_") {
+                        self.push_log(LogKind::Loot, format!("Найден самоцвет: {name}"));
+                    } else {
+                        self.push_log(LogKind::Loot, format!("Вы получили {delta} {name}"));
                     }
                 }
                 vec![]
