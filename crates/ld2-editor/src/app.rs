@@ -4,6 +4,7 @@
 //! Логика — в [`crate::project::EditorProject`] (без gpui, юнит-тесты);
 //! здесь только рендер и обработка ввода.
 
+use crate::ui_tokens as tokens;
 use ely::forms::{Choice, Input, InputEvent, Select, TextInput};
 use gpui::{
     div, prelude::*, px, rgb, uniform_list, Context, ElementId, EmptyView, Entity, IntoElement,
@@ -3126,7 +3127,7 @@ impl EditorApp {
                 .gap_1()
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .text_color(rgb(MUTED))
                         .child(spec.label),
                 )
@@ -3153,7 +3154,7 @@ impl EditorApp {
                         .border_1()
                         .border_color(rgb(BORDER))
                         .bg(rgb(PANEL_ALT))
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .cursor_pointer()
                         .child(picker_label)
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -3204,7 +3205,7 @@ impl EditorApp {
                     .on_click(cx.listener(move |this, _, _, cx| this.choose_picker(id.clone(), cx)))
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(tokens::FONT_SM))
                             .child(SharedString::from(choice.label)),
                     ),
             );
@@ -3224,7 +3225,7 @@ impl EditorApp {
                     .gap_2()
                     .child(
                         div()
-                            .text_size(px(15.0))
+                            .text_size(px(tokens::FONT_XL))
                             .child(format!("Выбор: {}", picker.title)),
                     )
                     .child(
@@ -3235,7 +3236,7 @@ impl EditorApp {
                             .rounded_md()
                             .border_1()
                             .border_color(rgb(BORDER))
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .cursor_pointer()
                             .child("× отмена")
                             .on_click(cx.listener(|this, _, _, cx| this.cancel_picker(cx))),
@@ -3244,7 +3245,7 @@ impl EditorApp {
             .child(Input::new(&picker.search))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(MUTED))
                     .child(format!("{count} вариантов")),
             )
@@ -3380,12 +3381,17 @@ impl EditorApp {
                     .child(
                         div()
                             .w(px(130.0))
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child(id),
                     )
-                    .child(div().flex_1().text_size(px(12.0)).child(name))
-                    .child(div().text_size(px(11.0)).text_color(rgb(MUTED)).child(meta)),
+                    .child(div().flex_1().text_size(px(tokens::FONT_SM)).child(name))
+                    .child(
+                        div()
+                            .text_size(px(tokens::FONT_XS))
+                            .text_color(rgb(MUTED))
+                            .child(meta),
+                    ),
             );
         }
         let new_label = match section {
@@ -3419,7 +3425,7 @@ impl EditorApp {
                             .gap_2()
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(px(tokens::FONT_XS))
                                     .text_color(rgb(MUTED))
                                     .child(format!("{count} записей")),
                             )
@@ -3432,7 +3438,7 @@ impl EditorApp {
                                     .border_1()
                                     .border_color(rgb(BORDER))
                                     .bg(rgb(PANEL_ALT))
-                                    .text_size(px(11.0))
+                                    .text_size(px(tokens::FONT_XS))
                                     .cursor_pointer()
                                     .child(new_label)
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -3473,7 +3479,7 @@ impl EditorApp {
                     .border_1()
                     .border_color(rgb(BORDER))
                     .bg(rgb(PANEL_ALT))
-                    .text_size(px(12.0))
+                    .text_size(px(tokens::FONT_SM))
                     .cursor_pointer()
                     .child(apply_label)
                     .on_click(cx.listener(move |this, _, _, cx| this.apply_group(group, cx))),
@@ -3517,7 +3523,7 @@ impl EditorApp {
         panel = panel
             .child(
                 div()
-                    .text_size(px(15.0))
+                    .text_size(px(tokens::FONT_XL))
                     .child(format!("{} · {}", quest.id, quest.title)),
             )
             .child(
@@ -3534,7 +3540,7 @@ impl EditorApp {
                     .gap_2()
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child("giver — ещё и локация:"),
                     )
@@ -3547,7 +3553,7 @@ impl EditorApp {
                             .border_1()
                             .border_color(rgb(BORDER))
                             .bg(rgb(PANEL_ALT))
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .cursor_pointer()
                             .child("… локация")
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -3569,7 +3575,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child(format!("Цели ({})", quest.goals.len())),
                 )
                 .child(
@@ -3591,7 +3597,7 @@ impl EditorApp {
                 .when(selected_goal == Some(goal_index), |d| d.bg(rgb(PANEL_ALT)))
                 .hover(|d| d.bg(rgb(PANEL_ALT)))
                 .on_click(cx.listener(move |this, _, _, cx| this.select_goal(goal_index, cx)))
-                .child(div().flex_1().text_size(px(12.0)).child(format!(
+                .child(div().flex_1().text_size(px(tokens::FONT_SM)).child(format!(
                     "{} · {} × {}",
                     goal.goal_type,
                     goal.target.clone().unwrap_or_else(|| "—".into()),
@@ -3603,7 +3609,7 @@ impl EditorApp {
                     .px_1()
                     .cursor_pointer()
                     .text_color(rgb(ERR))
-                    .text_size(px(13.0))
+                    .text_size(px(tokens::FONT_MD))
                     .child("×")
                     .on_click(cx.listener(|this, _, _, cx| this.delete_goal(cx))),
             );
@@ -3623,7 +3629,7 @@ impl EditorApp {
                             .border_1()
                             .border_color(rgb(BORDER))
                             .bg(rgb(PANEL_ALT))
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .cursor_pointer()
                             .child("… монстр")
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -3652,7 +3658,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child(format!("Предметы награды ({})", quest.reward.items.len())),
                 )
                 .child(
@@ -3681,7 +3687,7 @@ impl EditorApp {
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(12.0))
+                        .text_size(px(tokens::FONT_SM))
                         .child(format!("{} × {}", item.item_type, item.qty)),
                 );
             row = row.child(
@@ -3690,7 +3696,7 @@ impl EditorApp {
                     .px_1()
                     .cursor_pointer()
                     .text_color(rgb(ERR))
-                    .text_size(px(13.0))
+                    .text_size(px(tokens::FONT_MD))
                     .child("×")
                     .on_click(cx.listener(|this, _, _, cx| this.delete_reward_item(cx))),
             );
@@ -3711,7 +3717,7 @@ impl EditorApp {
         for error in project.report().errors.iter().take(5) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(ERR))
                     .child(format!("✗ {error}")),
             );
@@ -3719,7 +3725,7 @@ impl EditorApp {
         for warning in project.report().warnings.iter().take(3) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(WARN))
                     .child(format!("⚠ {warning}")),
             );
@@ -3760,7 +3766,7 @@ impl EditorApp {
         panel = panel
             .child(
                 div()
-                    .text_size(px(15.0))
+                    .text_size(px(tokens::FONT_XL))
                     .child(format!("{} · {}", recipe.id, recipe.name)),
             )
             .child(
@@ -3780,7 +3786,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child(format!("Ингредиенты ({})", recipe.inputs.len())),
                 )
                 .child(
@@ -3809,7 +3815,7 @@ impl EditorApp {
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(12.0))
+                        .text_size(px(tokens::FONT_SM))
                         .child(format!("{} × {}", input.item_type, input.qty)),
                 );
             row = row.child(
@@ -3818,7 +3824,7 @@ impl EditorApp {
                     .px_1()
                     .cursor_pointer()
                     .text_color(rgb(ERR))
-                    .text_size(px(13.0))
+                    .text_size(px(tokens::FONT_MD))
                     .child("×")
                     .on_click(cx.listener(|this, _, _, cx| this.delete_input(cx))),
             );
@@ -3838,7 +3844,7 @@ impl EditorApp {
         for error in project.report().errors.iter().take(5) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(ERR))
                     .child(format!("✗ {error}")),
             );
@@ -3846,7 +3852,7 @@ impl EditorApp {
         for warning in project.report().warnings.iter().take(3) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(WARN))
                     .child(format!("⚠ {warning}")),
             );
@@ -3915,7 +3921,7 @@ impl EditorApp {
             }
         );
         panel = panel
-            .child(div().text_size(px(15.0)).child(title))
+            .child(div().text_size(px(tokens::FONT_XL)).child(title))
             .child(
                 div()
                     .flex()
@@ -3928,7 +3934,7 @@ impl EditorApp {
         for error in project.report().errors.iter().take(5) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(ERR))
                     .child(format!("✗ {error}")),
             );
@@ -3936,7 +3942,7 @@ impl EditorApp {
         for warning in project.report().warnings.iter().take(3) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(WARN))
                     .child(format!("⚠ {warning}")),
             );
@@ -3956,7 +3962,7 @@ impl EditorApp {
             .border_1()
             .border_color(rgb(BORDER))
             .bg(rgb(PANEL_ALT))
-            .text_size(px(12.0))
+            .text_size(px(tokens::FONT_SM))
             .cursor_pointer()
             .child(label)
     }
@@ -3972,7 +3978,7 @@ impl EditorApp {
             .gap_1()
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(MUTED))
                     .child(label),
             )
@@ -4012,8 +4018,13 @@ impl EditorApp {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().text_size(px(16.0)).child(title))
-                    .child(div().text_size(px(11.0)).text_color(rgb(MUTED)).child(meta)),
+                    .child(div().text_size(px(tokens::FONT_TITLE)).child(title))
+                    .child(
+                        div()
+                            .text_size(px(tokens::FONT_XS))
+                            .text_color(rgb(MUTED))
+                            .child(meta),
+                    ),
             )
             .child(
                 div()
@@ -4780,12 +4791,12 @@ impl EditorApp {
         panel = panel
             .child(
                 div()
-                    .text_size(px(15.0))
+                    .text_size(px(tokens::FONT_XL))
                     .child(format!("{} · диалог", npc.id)),
             )
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(MUTED))
                     .child("root — id стартовой строки; Enter в поле — применить формы"),
             )
@@ -4807,7 +4818,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child(format!("Обучение ({})", npc.training.len())),
                 )
                 .child(
@@ -4830,7 +4841,7 @@ impl EditorApp {
                 })
                 .hover(|d| d.bg(rgb(PANEL_ALT)))
                 .on_click(cx.listener(move |this, _, _, cx| this.select_training(entry_index, cx)))
-                .child(div().flex_1().text_size(px(12.0)).child(format!(
+                .child(div().flex_1().text_size(px(tokens::FONT_SM)).child(format!(
                     "{} · {} очк. · {} зол.",
                     entry.skill, entry.points, entry.gold
                 )))
@@ -4840,7 +4851,7 @@ impl EditorApp {
                         .px_1()
                         .cursor_pointer()
                         .text_color(rgb(ERR))
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child("×")
                         .on_click(cx.listener(|this, _, _, cx| this.delete_training_click(cx))),
                 );
@@ -4865,7 +4876,7 @@ impl EditorApp {
                                 .border_1()
                                 .border_color(rgb(BORDER))
                                 .bg(rgb(PANEL_ALT))
-                                .text_size(px(11.0))
+                                .text_size(px(tokens::FONT_XS))
                                 .cursor_pointer()
                                 .child("… навык")
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -4890,7 +4901,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child(format!("Строки ({})", npc.lines.len())),
                 )
                 .child(
@@ -4918,19 +4929,19 @@ impl EditorApp {
                 .child(
                     div()
                         .w(px(110.0))
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .text_color(rgb(MUTED))
                         .child(line.id.clone()),
                 )
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(12.0))
+                        .text_size(px(tokens::FONT_SM))
                         .child(clip(&line.text, 46)),
                 )
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .text_color(rgb(MUTED))
                         .child(format!("{} отв.", line.replies.len())),
                 )
@@ -4940,7 +4951,7 @@ impl EditorApp {
                         .px_1()
                         .cursor_pointer()
                         .text_color(rgb(ERR))
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child("×")
                         .on_click(cx.listener(|this, _, _, cx| this.delete_dialog_line_click(cx))),
                 );
@@ -4967,7 +4978,7 @@ impl EditorApp {
                                 .border_1()
                                 .border_color(rgb(BORDER))
                                 .bg(rgb(PANEL_ALT))
-                                .text_size(px(11.0))
+                                .text_size(px(tokens::FONT_XS))
                                 .cursor_pointer()
                                 .child("… квест")
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -4994,7 +5005,7 @@ impl EditorApp {
                         .gap_2()
                         .child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(tokens::FONT_SM))
                                 .text_color(rgb(MUTED))
                                 .child(format!("Реплики ({})", line.replies.len())),
                         )
@@ -5023,30 +5034,33 @@ impl EditorApp {
                         .child(
                             div()
                                 .w(px(90.0))
-                                .text_size(px(11.0))
+                                .text_size(px(tokens::FONT_XS))
                                 .text_color(rgb(MUTED))
                                 .child(reply.id.clone()),
                         )
                         .child(
                             div()
                                 .flex_1()
-                                .text_size(px(12.0))
+                                .text_size(px(tokens::FONT_SM))
                                 .child(clip(&reply.text, 36)),
                         )
-                        .child(div().text_size(px(11.0)).text_color(rgb(MUTED)).child(
-                            match (&reply.next, &reply.action) {
-                                (_, Some(action)) => format!("→ {action}"),
-                                (Some(next), None) => format!("→ {next}"),
-                                (None, None) => "—".into(),
-                            },
-                        ))
+                        .child(
+                            div()
+                                .text_size(px(tokens::FONT_XS))
+                                .text_color(rgb(MUTED))
+                                .child(match (&reply.next, &reply.action) {
+                                    (_, Some(action)) => format!("→ {action}"),
+                                    (Some(next), None) => format!("→ {next}"),
+                                    (None, None) => "—".into(),
+                                }),
+                        )
                         .child(
                             div()
                                 .id(("reply-del", reply_index))
                                 .px_1()
                                 .cursor_pointer()
                                 .text_color(rgb(ERR))
-                                .text_size(px(13.0))
+                                .text_size(px(tokens::FONT_MD))
                                 .child("×")
                                 .on_click(
                                     cx.listener(|this, _, _, cx| this.delete_reply_click(cx)),
@@ -5075,7 +5089,7 @@ impl EditorApp {
                                         .border_1()
                                         .border_color(rgb(BORDER))
                                         .bg(rgb(PANEL_ALT))
-                                        .text_size(px(11.0))
+                                        .text_size(px(tokens::FONT_XS))
                                         .cursor_pointer()
                                         .child("… строка")
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -5099,7 +5113,7 @@ impl EditorApp {
         for error in project.report().errors.iter().take(5) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(ERR))
                     .child(format!("✗ {error}")),
             );
@@ -5107,7 +5121,7 @@ impl EditorApp {
         for warning in project.report().warnings.iter().take(5) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(WARN))
                     .child(format!("! {warning}")),
             );
@@ -5148,7 +5162,7 @@ impl EditorApp {
         panel = panel
             .child(
                 div()
-                    .text_size(px(15.0))
+                    .text_size(px(tokens::FONT_XL))
                     .child(format!("{} · магазин", npc.id)),
             )
             .child(
@@ -5169,7 +5183,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child(format!("Валюты ({})", npc.currencies.len())),
                 )
                 .child(
@@ -5197,12 +5211,12 @@ impl EditorApp {
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(12.0))
+                        .text_size(px(tokens::FONT_SM))
                         .child(format!("{} · rate {}", currency.currency, currency.rate)),
                 )
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .text_color(rgb(MUTED))
                         .child(format!("{} товаров", currency.items.len())),
                 )
@@ -5212,7 +5226,7 @@ impl EditorApp {
                         .px_1()
                         .cursor_pointer()
                         .text_color(rgb(ERR))
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child("×")
                         .on_click(cx.listener(|this, _, _, cx| this.delete_currency_click(cx))),
                 );
@@ -5236,7 +5250,7 @@ impl EditorApp {
                                 .border_1()
                                 .border_color(rgb(BORDER))
                                 .bg(rgb(PANEL_ALT))
-                                .text_size(px(11.0))
+                                .text_size(px(tokens::FONT_XS))
                                 .cursor_pointer()
                                 .child("… предмет")
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -5264,7 +5278,7 @@ impl EditorApp {
                             .gap_2()
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(px(tokens::FONT_SM))
                                     .text_color(rgb(MUTED))
                                     .child(format!("Товары ({})", currency.items.len())),
                             )
@@ -5290,14 +5304,19 @@ impl EditorApp {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.select_shop_item(item_index, cx)
                             }))
-                            .child(div().flex_1().text_size(px(12.0)).child(item.clone()))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_size(px(tokens::FONT_SM))
+                                    .child(item.clone()),
+                            )
                             .child(
                                 div()
                                     .id(("shop-item-del", item_index))
                                     .px_1()
                                     .cursor_pointer()
                                     .text_color(rgb(ERR))
-                                    .text_size(px(13.0))
+                                    .text_size(px(tokens::FONT_MD))
                                     .child("×")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.delete_shop_item_click(cx)
@@ -5322,7 +5341,7 @@ impl EditorApp {
                                         .border_1()
                                         .border_color(rgb(BORDER))
                                         .bg(rgb(PANEL_ALT))
-                                        .text_size(px(11.0))
+                                        .text_size(px(tokens::FONT_XS))
                                         .cursor_pointer()
                                         .child("… предмет")
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -5346,7 +5365,7 @@ impl EditorApp {
         for error in project.report().errors.iter().take(5) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(ERR))
                     .child(format!("✗ {error}")),
             );
@@ -5354,7 +5373,7 @@ impl EditorApp {
         for warning in project.report().warnings.iter().take(5) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(WARN))
                     .child(format!("! {warning}")),
             );
@@ -5516,7 +5535,7 @@ impl EditorApp {
                 .px_3()
                 .py_1()
                 .rounded_md()
-                .text_size(px(12.0))
+                .text_size(px(tokens::FONT_SM))
                 .cursor_pointer()
                 .child(entry.label.clone());
             if selected {
@@ -5555,10 +5574,14 @@ impl EditorApp {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(div().text_size(px(13.0)).child("Быстрый переход"))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_MD))
+                            .child("Быстрый переход"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child(format!("{count} записей")),
                     ),
@@ -5569,7 +5592,7 @@ impl EditorApp {
                     .py_1()
                     .rounded_md()
                     .bg(rgb(PANEL_ALT))
-                    .text_size(px(12.0))
+                    .text_size(px(tokens::FONT_SM))
                     .text_color(filter_color)
                     .child(filter),
             )
@@ -5602,11 +5625,11 @@ impl EditorApp {
                 .child(
                     div()
                         .w(px(190.0))
-                        .text_size(px(12.0))
+                        .text_size(px(tokens::FONT_SM))
                         .text_color(rgb(ACCENT))
                         .child(key),
                 )
-                .child(div().flex_1().text_size(px(12.0)).child(text))
+                .child(div().flex_1().text_size(px(tokens::FONT_SM)).child(text))
         };
         div()
             .id("help-scroll")
@@ -5620,11 +5643,11 @@ impl EditorApp {
             .child(div().text_size(px(20.0)).child("ld2-editor — помощь"))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(tokens::FONT_SM))
                     .text_color(rgb(MUTED))
                     .child("Контент — файлы content/*.json; скрытого состояния нет, всё хранится в git."),
             )
-            .child(div().mt_3().text_size(px(14.0)).child("Горячие клавиши"))
+            .child(div().mt_3().text_size(px(tokens::FONT_LG)).child("Горячие клавиши"))
             .child(row("Ctrl/Cmd + P", "быстрый переход по разделам и записям"))
             .child(row("F1", "эта справка"))
             .child(row("Ctrl/Cmd + S", "сохранить изменённые файлы"))
@@ -5632,31 +5655,31 @@ impl EditorApp {
             .child(row("Ctrl/Cmd + Shift + Z / Y", "повторить правку"))
             .child(row("Ctrl/Cmd + R", "перечитать файлы с диска"))
             .child(row("Карта: стрелки, +/- и L", "сдвинуть узел, зум, режим связей"))
-            .child(div().mt_3().text_size(px(14.0)).child("Поток работы"))
+            .child(div().mt_3().text_size(px(tokens::FONT_LG)).child("Поток работы"))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(tokens::FONT_SM))
                     .child("1. Правьте контент в разделах; сохранение — кнопка «Сохранить» или Ctrl+S."),
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(tokens::FONT_SM))
                     .child("2. Красные ошибки блокируют сохранение; жёлтые предупреждения — висячие ссылки, их можно оставить."),
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(tokens::FONT_SM))
                     .child("3. Отправьте изменённые файлы в git и примените на сервере кнопкой Seed (или `ld2-server seed`)."),
             )
-            .child(div().mt_3().text_size(px(14.0)).child("Ограничения"))
+            .child(div().mt_3().text_size(px(tokens::FONT_LG)).child("Ограничения"))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(tokens::FONT_SM))
                     .child("Порядок ключей сохраняется; незнакомые поля не теряются."),
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(tokens::FONT_SM))
                     .child("Seed использует конфиг по умолчанию; свой — LD2_EDITOR_SEED_CMD или `ld2-server --config … seed`."),
             )
     }
@@ -5775,7 +5798,7 @@ impl EditorApp {
         rail.child(
             div()
                 .mt_2()
-                .text_size(px(11.0))
+                .text_size(px(tokens::FONT_XS))
                 .text_color(rgb(MUTED))
                 .child("E0–E4: каркас,\nконтент, предметы,\nлокации, карта.\nE5: диалоги, магазины,\nквесты, рецепты,\nнавыки, профессии.\nE6: переход, справка,\nseed."),
         )
@@ -5823,14 +5846,14 @@ impl EditorApp {
                     .child(
                         div()
                             .w(px(130.0))
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child(id),
                     )
-                    .child(div().flex_1().text_size(px(12.0)).child(name))
+                    .child(div().flex_1().text_size(px(tokens::FONT_SM)).child(name))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child(rarity),
                     ),
@@ -5858,7 +5881,7 @@ impl EditorApp {
                             .justify_between()
                             .child(
                                 div()
-                                    .text_size(px(11.0))
+                                    .text_size(px(tokens::FONT_XS))
                                     .text_color(rgb(MUTED))
                                     .child(format!("{count} предметов")),
                             )
@@ -5912,7 +5935,7 @@ impl EditorApp {
                 .min_h_0()
                 .px_2()
                 .py_2()
-                .text_size(px(12.0))
+                .text_size(px(tokens::FONT_SM))
                 .text_color(rgb(MUTED))
                 .child("ничего не найдено — измените поиск")
                 .into_any_element()
@@ -5944,7 +5967,7 @@ impl EditorApp {
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .text_size(px(11.0))
+                                    .text_size(px(tokens::FONT_XS))
                                     .text_color(rgb(MUTED))
                                     .child(id),
                             )
@@ -5955,10 +5978,15 @@ impl EditorApp {
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .text_size(px(12.0))
+                                    .text_size(px(tokens::FONT_SM))
                                     .child(name),
                             )
-                            .child(div().text_size(px(11.0)).text_color(rgb(MUTED)).child(meta))
+                            .child(
+                                div()
+                                    .text_size(px(tokens::FONT_XS))
+                                    .text_color(rgb(MUTED))
+                                    .child(meta),
+                            )
                     })
                     .collect::<Vec<gpui::Stateful<gpui::Div>>>()
             })
@@ -5989,7 +6017,7 @@ impl EditorApp {
                     ))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child(counter),
                     ),
@@ -6490,7 +6518,7 @@ impl EditorApp {
             .bg(rgb(PANEL))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(tokens::FONT_SM))
                     .text_color(rgb(ACCENT))
                     .child(title),
             )
@@ -6528,7 +6556,7 @@ impl EditorApp {
             .gap_1()
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(MUTED))
                     .child(label),
             )
@@ -6556,7 +6584,7 @@ impl EditorApp {
             .border_color(rgb(if active { ACCENT } else { BORDER }))
             .bg(rgb(if active { ACCENT } else { PANEL_ALT }))
             .text_color(rgb(if active { 0x101010 } else { TEXT }))
-            .text_size(px(11.0))
+            .text_size(px(tokens::FONT_XS))
             .cursor_pointer()
             .child(label)
     }
@@ -6783,11 +6811,16 @@ impl EditorApp {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.item_select_param(click_param.clone(), cx)
                     }))
-                    .child(div().w(px(200.0)).text_size(px(12.0)).child(param.clone()))
+                    .child(
+                        div()
+                            .w(px(200.0))
+                            .text_size(px(tokens::FONT_SM))
+                            .child(param.clone()),
+                    )
                     .child(
                         div()
                             .flex_1()
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child(shown),
                     )
@@ -6833,7 +6866,7 @@ impl EditorApp {
         } else {
             params_body = params_body.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(MUTED))
                     .child("Выберите параметр или добавьте новый."),
             );
@@ -6854,7 +6887,7 @@ impl EditorApp {
             };
             let mut block = div().flex().flex_col().gap_2().child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(MUTED))
                     .child(title),
             );
@@ -6989,7 +7022,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .text_color(rgb(MUTED))
                         .child("Эффект не задан."),
                 )
@@ -7033,15 +7066,15 @@ impl EditorApp {
                     .child(
                         div()
                             .w(px(90.0))
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child(kind),
                     )
-                    .child(div().w(px(220.0)).text_size(px(12.0)).child(id))
+                    .child(div().w(px(220.0)).text_size(px(tokens::FONT_SM)).child(id))
                     .child(
                         div()
                             .flex_1()
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child(format!("{value}{}", if pct { "%" } else { "" })),
                     ),
@@ -7106,7 +7139,7 @@ impl EditorApp {
         } else {
             bonus_body = bonus_body.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(MUTED))
                     .child("Выберите бонус или добавьте новый."),
             );
@@ -7155,7 +7188,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .text_color(rgb(MUTED))
                         .child("Требований нет."),
                 )
@@ -7168,12 +7201,12 @@ impl EditorApp {
         panel = panel
             .child(
                 div()
-                    .text_size(px(15.0))
+                    .text_size(px(tokens::FONT_XL))
                     .child(format!("{} · {}", item.id, item.name)),
             )
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(MUTED))
                     .child(format!(
                         "type: {} · rarity: {} · бонусов: {} · параметров: {}",
@@ -7194,7 +7227,7 @@ impl EditorApp {
         for error in project.report().errors.iter().take(5) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(ERR))
                     .child(format!("✗ {error}")),
             );
@@ -7202,7 +7235,7 @@ impl EditorApp {
         for warning in project.report().warnings.iter().take(3) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(WARN))
                     .child(format!("⚠ {warning}")),
             );
@@ -7244,7 +7277,7 @@ impl EditorApp {
         panel = panel
             .child(
                 div()
-                    .text_size(px(15.0))
+                    .text_size(px(tokens::FONT_XL))
                     .child(format!("{} · {}", location.id, location.name)),
             )
             .child(self.text_field("Имя", &self.loc_name))
@@ -7265,7 +7298,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child(format!("Выходы ({})", location.exits.len())),
                 )
                 .child(
@@ -7290,7 +7323,7 @@ impl EditorApp {
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(12.0))
+                        .text_size(px(tokens::FONT_SM))
                         .child(format!("{} → {}", exit.label, exit.to)),
                 );
             row = row.child(
@@ -7299,7 +7332,7 @@ impl EditorApp {
                     .px_1()
                     .cursor_pointer()
                     .text_color(rgb(ERR))
-                    .text_size(px(13.0))
+                    .text_size(px(tokens::FONT_MD))
                     .child("×")
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.delete_exit(location_index, exit_index, cx);
@@ -7328,7 +7361,7 @@ impl EditorApp {
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child(format!("Сущности ({})", location.entities.len())),
                 )
                 .child(
@@ -7367,21 +7400,21 @@ impl EditorApp {
                 .child(
                     div()
                         .w(px(70.0))
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .text_color(rgb(MUTED))
                         .child(kind_str(entity.kind)),
                 )
                 .child(
                     div()
                         .w(px(120.0))
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .text_color(rgb(MUTED))
                         .child(entity.id.clone()),
                 )
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(12.0))
+                        .text_size(px(tokens::FONT_SM))
                         .child(entity.name.clone()),
                 )
                 .child(
@@ -7390,7 +7423,7 @@ impl EditorApp {
                         .px_1()
                         .cursor_pointer()
                         .text_color(rgb(ERR))
-                        .text_size(px(13.0))
+                        .text_size(px(tokens::FONT_MD))
                         .child("×")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.delete_entity(location_index, entity_index, cx);
@@ -7406,7 +7439,7 @@ impl EditorApp {
                 entities = entities
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(tokens::FONT_XS))
                             .text_color(rgb(MUTED))
                             .child(format!("id: {}", entity.id)),
                     )
@@ -7425,7 +7458,7 @@ impl EditorApp {
         for error in project.report().errors.iter().take(5) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(ERR))
                     .child(format!("✗ {error}")),
             );
@@ -7433,7 +7466,7 @@ impl EditorApp {
         for warning in project.report().warnings.iter().take(3) {
             panel = panel.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(WARN))
                     .child(format!("⚠ {warning}")),
             );
@@ -7486,7 +7519,7 @@ impl EditorApp {
             .py_1()
             .border_t_1()
             .border_color(rgb(BORDER))
-            .text_size(px(12.0))
+            .text_size(px(tokens::FONT_SM))
             .text_color(rgb(color))
             .child(label)
     }
@@ -8013,7 +8046,7 @@ impl EditorApp {
                         .bg(rgb(PANEL))
                         .border_1()
                         .border_color(rgb(ACCENT))
-                        .text_size(px(11.0))
+                        .text_size(px(tokens::FONT_XS))
                         .child(name)
                         .into_any_element(),
                 );
@@ -8031,7 +8064,7 @@ impl EditorApp {
         let toolbar = div()
             .absolute()
             .left(px(10.0))
-            .top(px(10.0))
+            .top(px(tokens::SPACE_10))
             .flex()
             .items_center()
             .gap_2()
@@ -8084,7 +8117,7 @@ impl EditorApp {
             )
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(tokens::FONT_XS))
                     .text_color(rgb(MUTED))
                     .child(format!("зум {zoom:.2}{dirty}")),
             );

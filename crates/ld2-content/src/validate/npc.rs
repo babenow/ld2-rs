@@ -7,6 +7,9 @@ use ld2_protocol::types::EntityKind;
 
 use super::report::ValidationReport;
 
+const GENDER_MALE: &str = "male";
+const GENDER_FEMALE: &str = "female";
+
 /// Наборы id контента для проверок ссылок диалогов.
 struct DialogRefs<'a> {
     item_ids: &'a HashSet<&'a str>,
@@ -361,7 +364,7 @@ fn validate_dialog_when(
         }
     }
     if let Some(gender) = &when.gender {
-        if !matches!(gender.as_str(), "male" | "female") {
+        if !matches!(gender.as_str(), GENDER_MALE | GENDER_FEMALE) {
             warnings.push(format!(
                 "{context}: условие gender — неизвестный пол {gender}"
             ));

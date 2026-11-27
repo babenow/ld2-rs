@@ -130,3 +130,9 @@ pub const ACTION_GUT: &str = "gut";
 
 /// Навык «Меч».
 pub const SKILL_SWORD: &str = "sword";
+
+/// Единицы времени.
+pub const SECONDS_PER_MINUTE: i64 = 60;
+pub const SECONDS_PER_HOUR: i64 = 3600;
+pub const SECONDS_PER_DAY: i64 = 86_400;
+pub const MS_PER_SECOND: i64 = 1000;

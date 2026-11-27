@@ -24,7 +24,7 @@ impl NpcNode {
         let now = local_epoch_ms();
         for reply in &mut self.replies {
             if let Some(wait_s) = reply.wait_s {
-                reply.wait_until_ms = Some(now + (wait_s as i64) * 1000);
+                reply.wait_until_ms = Some(now + (wait_s as i64) * crate::domain::MS_PER_SECOND);
             }
         }
     }
