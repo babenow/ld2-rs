@@ -46,7 +46,8 @@
             "herbalist_bag",
             "reagent_bag",
             "keyring",
-            "old_key"
+            "old_key",
+            "tool_chisel"
           ]
         }
       ]

@@ -91,8 +91,8 @@ async fn premium_boosts_profession_xp_on_gather() {
     let prof = c.wait_event("evt/craft/profession").await;
     assert_eq!(prof["payload"]["profession"]["id"], "mining");
     assert_eq!(
-        prof["payload"]["gain"], 98,
-        "65 × 1.5 = 97.5 → 98 (премиум): {prof}"
+        prof["payload"]["gain"], 18,
+        "12 × 1.5 = 18 (премиум, медная жила ур.1): {prof}"
     );
 }
 
@@ -213,8 +213,8 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         .sum();
     assert_eq!(herb, 1, "собрана1 трава: {inv:?}");
 
-    // M21: добыча растит УРОВЕНЬ (3×65 XP → уровень ≥4, остаток
-    // переносится); ранг остаётся1 — его даёт тренер/награда.
+    // M38: опыт горного дела — как у снятия шкур (за ур.1 даёт 12 XP);
+    // 3 добычи = 36 XP, до уровня 1 (порог 40) не хватает. Ранг остаётся1.
     let profs = snap["payload"]["char"]["professions"]
         .as_array()
         .expect("professions");
@@ -222,12 +222,12 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         .iter()
         .find(|p| p["id"] == "mining")
         .expect("шахтёр в снапшоте");
-    // M22: не больше1 уровня за действие →3 добычи = уровень3.
     assert_eq!(
         mining["level"].as_i64().unwrap_or(0),
-        3,
-        "уровень за3 добычи: {profs:?}"
+        0,
+        "уровень за3 добычи (36/40 XP): {profs:?}"
     );
+    assert_eq!(mining["xp"].as_i64().unwrap_or(0), 36, "3×12 XP");
     assert_eq!(mining["rank"], 1, "ранг без тренера не растёт");
     assert_eq!(mining["rank_span"], 50, "границы рангов в extra");
 }

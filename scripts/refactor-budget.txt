@@ -6,7 +6,7 @@
 
 # --- прод-лимиты (файлы > 600 строк и целевые модули) ---
 crates/ld2-client/src/root/admin.rs 726 167
-crates/ld2-client/src/root/backpack.rs 1106 150
+crates/ld2-client/src/root/backpack.rs 1107 150
 crates/ld2-client/src/root/game/dialog.rs 851 161
 crates/ld2-client/src/root/game/entities.rs 700 188
 crates/ld2-client/src/root/game.rs 754 150
@@ -16,19 +16,19 @@ crates/ld2-client/src/root/sheet/equip.rs 659 183
 crates/ld2-client/src/root/social.rs 613 150
 crates/ld2-client/src/root.rs 905 176
 crates/ld2-client/src/text_input.rs 699 150
-crates/ld2-core/src/l10n/en.rs 568 564
-crates/ld2-core/src/l10n/mod.rs 776 150
-crates/ld2-core/src/l10n/ru.rs 568 564
+crates/ld2-core/src/l10n/en.rs 570 566
+crates/ld2-core/src/l10n/mod.rs 778 150
+crates/ld2-core/src/l10n/ru.rs 570 566
 crates/ld2-core/src/store.rs 868 150
 crates/ld2-editor/src/app.rs 8369 653
 crates/ld2-editor/src/project.rs 1982 150
 crates/ld2-protocol/src/cmd.rs 661 150
 crates/ld2-protocol/src/evt.rs 711 150
-crates/ld2-server/src/session/chars.rs 737 249
+crates/ld2-server/src/session/chars.rs 763 249
 crates/ld2-server/src/session/combat.rs 825 316
 crates/ld2-server/src/session/dev.rs 661 294
 crates/ld2-server/src/session/entity.rs 455 238
-crates/ld2-server/src/session/harvest.rs 409 215
+crates/ld2-server/src/session/harvest.rs 486 215
 crates/ld2-server/src/session/items.rs 983 250
 crates/ld2-server/src/session/magic.rs 608 331
 crates/ld2-server/src/session/quests.rs 322 253
