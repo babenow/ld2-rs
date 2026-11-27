@@ -4,6 +4,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{SocketExtract, SocketInsert};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::{ItemAdded, ItemRemovalReason, ItemRemoved, ItemState};
@@ -252,7 +254,7 @@ impl Session {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(new_qty));
             outs.push(out_event(
-                "evt/item/state",
+                names::EVT_ITEM_STATE,
                 None,
                 serde_json::to_value(ItemState {
                     uid: rune.uid.clone(),
@@ -266,7 +268,7 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
             outs.push(out_event(
-                "evt/item/removed",
+                names::EVT_ITEM_REMOVED,
                 None,
                 serde_json::to_value(ItemRemoved {
                     uid: rune.uid.clone(),
@@ -291,7 +293,7 @@ impl Session {
         // убыль старого стака; идут после событий руны, до ack клиента.
         if let Some((old_uid, new_qty)) = &split {
             outs.push(out_event(
-                "evt/item/added",
+                names::EVT_ITEM_ADDED,
                 None,
                 serde_json::to_value(ItemAdded {
                     item: item_snapshot(&staff_row, &staff_def),
@@ -301,7 +303,7 @@ impl Session {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(new_qty));
             outs.push(out_event(
-                "evt/item/state",
+                names::EVT_ITEM_STATE,
                 None,
                 serde_json::to_value(ItemState {
                     uid: old_uid.clone(),

@@ -5,6 +5,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::EntityInfo;
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::{EntityDespawn, ItemAdded, ItemState};
@@ -373,7 +375,7 @@ impl Session {
             .map(|c| (c.name.clone(), c.gender.clone()))
             .unwrap_or_else(|| ("Игрок".into(), "male".into()));
         let despawn_text = event_payload_text(
-            "evt/entity/despawn",
+            names::EVT_ENTITY_DESPAWN,
             &EntityDespawn {
                 entity_id: taken.id.clone(),
                 location_id: taken.location_id.clone(),
@@ -397,7 +399,7 @@ impl Session {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(row.qty));
             out_event(
-                "evt/item/state",
+                names::EVT_ITEM_STATE,
                 None,
                 serde_json::to_value(ItemState {
                     uid: row.uid.clone(),
@@ -411,7 +413,7 @@ impl Session {
             // не дублирует.
             item.extra.insert("picked".into(), serde_json::json!(true));
             out_event(
-                "evt/item/added",
+                names::EVT_ITEM_ADDED,
                 None,
                 serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
             )
@@ -430,7 +432,7 @@ impl Session {
             };
             let loot_count = corpse.loot.iter().filter(|l| l.is_some()).count() as u32;
             event_text(
-                "evt/corpse/created",
+                names::EVT_CORPSE_CREATED,
                 None,
                 serde_json::to_value(ld2_protocol::evt::CorpseCreated {
                     entity: corpse.entity(),

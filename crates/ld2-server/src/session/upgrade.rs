@@ -4,6 +4,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{UpgradePreview, UpgradeStart};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::{ItemAdded, ItemRemovalReason, ItemRemoved, ItemState, UpgradeResult};
@@ -238,7 +240,7 @@ impl Session {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(new_qty));
             vec![out_event(
-                "evt/item/state",
+                names::EVT_ITEM_STATE,
                 None,
                 serde_json::to_value(ItemState {
                     uid: stone_item.uid.clone(),
@@ -254,7 +256,7 @@ impl Session {
             // Последняя штука — выбор снимается.
             self.sharpen_stone = None;
             vec![out_event(
-                "evt/item/removed",
+                names::EVT_ITEM_REMOVED,
                 None,
                 serde_json::to_value(ItemRemoved {
                     uid: stone_item.uid.clone(),
@@ -330,7 +332,7 @@ impl Session {
                 }
                 // События (после итога): новый предмет + убыль стака.
                 let mut events = vec![out_event(
-                    "evt/item/added",
+                    names::EVT_ITEM_ADDED,
                     None,
                     serde_json::to_value(ItemAdded {
                         item: item_snapshot(&new_row, &def),
@@ -340,7 +342,7 @@ impl Session {
                 let mut patch = serde_json::Map::new();
                 patch.insert("qty".into(), serde_json::json!(new_qty));
                 events.push(out_event(
-                    "evt/item/state",
+                    names::EVT_ITEM_STATE,
                     None,
                     serde_json::to_value(ItemState {
                         uid: item.uid.clone(),
@@ -357,7 +359,7 @@ impl Session {
                 let mut patch = serde_json::Map::new();
                 patch.insert("upgrade".into(), serde_json::json!(new_level));
                 let event = out_event(
-                    "evt/item/state",
+                    names::EVT_ITEM_STATE,
                     None,
                     serde_json::to_value(ItemState {
                         uid: item.uid.clone(),
@@ -368,7 +370,7 @@ impl Session {
                 (item.uid.clone(), vec![event])
             };
             outs.push(out_event(
-                "evt/upgrade/result",
+                names::EVT_UPGRADE_RESULT,
                 None,
                 serde_json::to_value(UpgradeResult {
                     uid: result_uid,
@@ -398,7 +400,7 @@ impl Session {
                     let mut patch = serde_json::Map::new();
                     patch.insert("qty".into(), serde_json::json!(new_qty));
                     outs.push(out_event(
-                        "evt/item/state",
+                        names::EVT_ITEM_STATE,
                         None,
                         serde_json::to_value(ItemState {
                             uid: item.uid.clone(),
@@ -412,7 +414,7 @@ impl Session {
                         return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
                     }
                     outs.push(out_event(
-                        "evt/item/removed",
+                        names::EVT_ITEM_REMOVED,
                         None,
                         serde_json::to_value(ItemRemoved {
                             uid: item.uid.clone(),
@@ -432,7 +434,7 @@ impl Session {
                 let mut patch = serde_json::Map::new();
                 patch.insert("upgrade".into(), serde_json::json!(new_upgrade));
                 outs.push(out_event(
-                    "evt/item/state",
+                    names::EVT_ITEM_STATE,
                     None,
                     serde_json::to_value(ItemState {
                         uid: item.uid.clone(),
@@ -460,7 +462,7 @@ impl Session {
             outs.insert(
                 0,
                 out_event(
-                    "evt/upgrade/result",
+                    names::EVT_UPGRADE_RESULT,
                     None,
                     serde_json::to_value(result).unwrap_or_default(),
                 ),

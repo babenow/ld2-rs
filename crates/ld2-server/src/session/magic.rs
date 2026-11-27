@@ -4,6 +4,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{MagicRuneCast, MagicScrollCast};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::{
@@ -203,7 +205,7 @@ impl Session {
             .unwrap_or(Value::Null),
         );
         let charge_event = out_event(
-            "evt/item/state",
+            names::EVT_ITEM_STATE,
             None,
             serde_json::to_value(ItemState {
                 uid: staff.uid.clone(),
@@ -233,7 +235,7 @@ impl Session {
             ok: true,
             extra: Default::default(),
         };
-        let cast_json = event_payload_text("evt/magic/cast", &cast);
+        let cast_json = event_payload_text(names::EVT_MAGIC_CAST, &cast);
 
         let mut mine: Vec<Out> = vec![Self::ack_payload(seq, &serde_json::json!({}))];
         if !matches!(&charge_event, Out::Text(t) if t.is_empty()) {
@@ -292,12 +294,12 @@ impl Session {
                         );
                         plan.push((
                             addr.clone(),
-                            event_payload_text("evt/combat/hit", &per).unwrap_or_default(),
+                            event_payload_text(names::EVT_COMBAT_HIT, &per).unwrap_or_default(),
                         ));
                         plan.push((
                             addr,
                             event_payload_text(
-                                "evt/entity/hp",
+                                names::EVT_ENTITY_HP,
                                 &EntityHp {
                                     entity_id: target.to_string(),
                                     hp: Hp {
@@ -444,7 +446,7 @@ impl Session {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(new_qty));
             consumable.push(out_event(
-                "evt/item/state",
+                names::EVT_ITEM_STATE,
                 None,
                 serde_json::to_value(ItemState {
                     uid: scroll.uid.clone(),
@@ -458,7 +460,7 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
             consumable.push(out_event(
-                "evt/item/removed",
+                names::EVT_ITEM_REMOVED,
                 None,
                 serde_json::to_value(ItemRemoved {
                     uid: scroll.uid.clone(),
@@ -488,7 +490,7 @@ impl Session {
             ok: true,
             extra: Default::default(),
         };
-        let cast_json = event_payload_text("evt/magic/cast", &cast);
+        let cast_json = event_payload_text(names::EVT_MAGIC_CAST, &cast);
 
         let mut mine: Vec<Out> = vec![Self::ack_payload(seq, &serde_json::json!({}))];
         if let Some(text) = &cast_json {
@@ -545,12 +547,12 @@ impl Session {
                         );
                         plan.push((
                             addr.clone(),
-                            event_payload_text("evt/combat/hit", &per).unwrap_or_default(),
+                            event_payload_text(names::EVT_COMBAT_HIT, &per).unwrap_or_default(),
                         ));
                         plan.push((
                             addr,
                             event_payload_text(
-                                "evt/entity/hp",
+                                names::EVT_ENTITY_HP,
                                 &EntityHp {
                                     entity_id: target.to_string(),
                                     hp: Hp {

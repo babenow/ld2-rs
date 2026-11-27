@@ -3,6 +3,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::CraftProfession;
 use ld2_protocol::types::ProfessionSnapshot;
@@ -290,7 +292,7 @@ impl Session {
             &serde_json::json!({ "quest": state }),
         ));
         outs.push(out_event(
-            "evt/quest/updated",
+            names::EVT_QUEST_UPDATED,
             None,
             serde_json::json!({ "quest": state }),
         ));
@@ -305,7 +307,7 @@ impl Session {
         // M21: награда-ранг — событие после ack (см. объявление выше).
         if let Some(profession) = rank_up_evt {
             outs.push(out_event(
-                "evt/craft/profession",
+                names::EVT_CRAFT_PROFESSION,
                 None,
                 serde_json::to_value(CraftProfession {
                     profession,

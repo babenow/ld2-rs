@@ -4,6 +4,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{ShopBuy, ShopList};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::{ItemAdded, ItemRemovalReason, ItemRemoved, ItemState};
@@ -25,13 +27,13 @@ impl Session {
                     let mut patch = serde_json::Map::new();
                     patch.insert("qty".into(), serde_json::json!(qty));
                     out_event(
-                        "evt/item/state",
+                        names::EVT_ITEM_STATE,
                         None,
                         serde_json::to_value(ItemState { uid, patch }).unwrap_or_default(),
                     )
                 }
                 None => out_event(
-                    "evt/item/removed",
+                    names::EVT_ITEM_REMOVED,
                     None,
                     serde_json::to_value(ItemRemoved {
                         uid,
@@ -333,7 +335,7 @@ impl Session {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(row.qty));
             outs.push(out_event(
-                "evt/item/state",
+                names::EVT_ITEM_STATE,
                 None,
                 serde_json::to_value(ItemState {
                     uid: row.uid.clone(),
@@ -344,7 +346,7 @@ impl Session {
         } else {
             let item = item_snapshot(&row, &item_def);
             outs.push(out_event(
-                "evt/item/added",
+                names::EVT_ITEM_ADDED,
                 None,
                 serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
             ));

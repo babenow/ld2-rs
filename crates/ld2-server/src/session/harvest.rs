@@ -4,6 +4,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::ResourceGather;
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::{CraftProfession, EntityDespawn, EntityMove, ItemAdded, ItemState};
@@ -161,7 +163,7 @@ impl Session {
                 ok: false,
                 ruined: true,
             };
-            if let Some(text) = event_payload_text("evt/harvest/result", &result) {
+            if let Some(text) = event_payload_text(names::EVT_HARVEST_RESULT, &result) {
                 outs.push(Out::Text(text));
             }
             // Флаги «шкура испорчена» — всем в локации (окно подятия).
@@ -303,7 +305,7 @@ impl Session {
             let mut patch = serde_json::Map::new();
             patch.insert("qty".into(), serde_json::json!(row.qty));
             out_event(
-                "evt/item/state",
+                names::EVT_ITEM_STATE,
                 None,
                 serde_json::to_value(ItemState {
                     uid: row.uid.clone(),
@@ -313,7 +315,7 @@ impl Session {
             )
         } else {
             out_event(
-                "evt/item/added",
+                names::EVT_ITEM_ADDED,
                 None,
                 serde_json::to_value(ItemAdded { item }).unwrap_or_default(),
             )
@@ -346,7 +348,7 @@ impl Session {
                     .ok()
                     .flatten();
                 let text = event_payload_text(
-                    "evt/craft/profession",
+                    names::EVT_CRAFT_PROFESSION,
                     &CraftProfession {
                         profession: snapshot,
                         name,
@@ -362,7 +364,7 @@ impl Session {
         // патч шкалы (паттерн entity/move).
         let world_evt = if after.hidden {
             event_payload_text(
-                "evt/entity/despawn",
+                names::EVT_ENTITY_DESPAWN,
                 &EntityDespawn {
                     entity_id: after.id.clone(),
                     location_id: after.location_id.clone(),
@@ -379,7 +381,7 @@ impl Session {
                 serde_json::json!({"cur": after.current, "max": after.max}),
             );
             event_payload_text(
-                "evt/entity/move",
+                names::EVT_ENTITY_MOVE,
                 &EntityMove {
                     entity_id: after.id.clone(),
                     patch,

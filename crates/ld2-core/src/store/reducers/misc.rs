@@ -1,5 +1,7 @@
 //! Редьюсеры сессионных и системных событий — вынесено из `apply_event` (RF4j).
 
+use ld2_protocol::names;
+
 use super::super::*;
 
 impl AppStore {
@@ -10,7 +12,7 @@ impl AppStore {
         payload: serde_json::Value,
     ) -> Vec<Effect> {
         match msg_type {
-            "evt/time.sync" => {
+            names::EVT_TIME_SYNC => {
                 // §1.1: server = local + offset — база всех обратных отсчётов.
                 let Ok(sync) = serde_json::from_value::<TimeSyncEvent>(payload) else {
                     return vec![];
@@ -30,8 +32,8 @@ impl AppStore {
                 self.time_offset = sorted[sorted.len() / 2];
                 vec![]
             }
-            "evt/session/afk" => self.reduce_afk(payload),
-            "evt/session/replaced" => {
+            names::EVT_SESSION_AFK => self.reduce_afk(payload),
+            names::EVT_SESSION_REPLACED => {
                 // M34: в аккаунт вошли из другого окна — разлогиниваем
                 // эту сессию и показываем ошибку-тост (заказчик).
                 let msg = t(self.lang, Key::SessionReplaced).to_string();
@@ -39,7 +41,7 @@ impl AppStore {
                 self.notice = Some(msg);
                 effects
             }
-            "evt/account/premium" => {
+            names::EVT_ACCOUNT_PREMIUM => {
                 // M33: срок премиума изменился (админ/покупка) — title bar.
                 let until = payload.get("premium_until").and_then(|v| v.as_i64());
                 if let Some(session) = self.session.as_mut() {
@@ -47,7 +49,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/session.start" => {
+            names::EVT_SESSION_START => {
                 let Ok(cfg) = serde_json::from_value::<SessionConfig>(payload) else {
                     tracing::warn!("некорректный evt/session.start — игнор");
                     // R21: login-ack уже ok — без notice UI висит молча.
@@ -99,7 +101,7 @@ impl AppStore {
                     Effect::TransportToken(refresh),
                 ]
             }
-            "evt/state/snapshot" => {
+            names::EVT_STATE_SNAPSHOT => {
                 // M24: снапшот — новая фаза такта зарядов (серверную
                 // фазу клиент не знает; по патчу тикера самокоррекция).
                 self.rune_recharge_phase_ms = Some(local_epoch_ms() + self.time_offset * 1000);
@@ -133,7 +135,7 @@ impl AppStore {
                 self.notice = None;
                 vec![]
             }
-            "evt/dialog/open" => {
+            names::EVT_DIALOG_OPEN => {
                 // M20: игровой диалог (заготовка) — гейт рендера окна
                 // (`PopupKind::Dialog`) — наличие состояния, как у NPC.
                 let Ok(open) = serde_json::from_value::<ld2_protocol::evt::DialogOpen>(payload)
@@ -143,7 +145,7 @@ impl AppStore {
                 self.dialog = Some(open);
                 vec![]
             }
-            "evt/state/delta" => {
+            names::EVT_STATE_DELTA => {
                 // R11 (§3/§12.4): после state.resync сервер может ответить
                 // дельтой — применяем JSON-patch к снапшоту; база не
                 // совпала, неприменимый путь или битый результат →
@@ -183,7 +185,7 @@ impl AppStore {
                     }
                 }
             }
-            "evt/error" => {
+            names::EVT_ERROR => {
                 // R11 (§8): не-фатальные ошибки сервера — notice;
                 // фатальная — notice + resync (восстановление состояния).
                 let Ok(err) = serde_json::from_value::<ErrorNotice>(payload) else {

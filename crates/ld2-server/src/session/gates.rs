@@ -6,6 +6,8 @@
 //! `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::envelope::{Ack, Envelope};
 use ld2_protocol::evt::CombatCooldown;
 use ld2_protocol::ErrorCode;
@@ -17,51 +19,51 @@ use crate::db;
 
 /// M24: команды, блокируемые активной разделкой (RF5a: один источник правды).
 pub(super) const HARVEST_BLOCKED: &[&str] = &[
-    "cmd/location.move",
-    "cmd/combat.attack",
-    "cmd/combat.stop",
-    "cmd/combat.flee",
-    "cmd/skill.use",
-    "cmd/magic.rune_cast",
-    "cmd/magic.scroll_cast",
-    "cmd/resource.gather",
-    "cmd/craft.start",
-    "cmd/quest.accept",
-    "cmd/quest.turn_in",
-    "cmd/quest.abandon",
-    "cmd/trade.open",
-    "cmd/trade.add_item",
-    "cmd/trade.set_gold",
-    "cmd/trade.propose",
-    "cmd/trade.accept",
-    "cmd/trade.cancel",
-    "cmd/party.create",
-    "cmd/party.invite",
-    "cmd/party.accept",
-    "cmd/party.decline",
-    "cmd/party.leave",
-    "cmd/party.kick",
-    "cmd/guild.create",
-    "cmd/guild.join",
-    "cmd/guild.leave",
-    "cmd/guild.invite",
-    "cmd/guild.kick",
-    "cmd/guild.rank_set",
-    "cmd/shop.buy",
-    "cmd/upgrade.preview",
-    "cmd/upgrade.start",
-    "cmd/socket.insert",
-    "cmd/socket.extract",
+    names::CMD_LOCATION_MOVE,
+    names::CMD_COMBAT_ATTACK,
+    names::CMD_COMBAT_STOP,
+    names::CMD_COMBAT_FLEE,
+    names::CMD_SKILL_USE,
+    names::CMD_MAGIC_RUNE_CAST,
+    names::CMD_MAGIC_SCROLL_CAST,
+    names::CMD_RESOURCE_GATHER,
+    names::CMD_CRAFT_START,
+    names::CMD_QUEST_ACCEPT,
+    names::CMD_QUEST_TURN_IN,
+    names::CMD_QUEST_ABANDON,
+    names::CMD_TRADE_OPEN,
+    names::CMD_TRADE_ADD_ITEM,
+    names::CMD_TRADE_SET_GOLD,
+    names::CMD_TRADE_PROPOSE,
+    names::CMD_TRADE_ACCEPT,
+    names::CMD_TRADE_CANCEL,
+    names::CMD_PARTY_CREATE,
+    names::CMD_PARTY_INVITE,
+    names::CMD_PARTY_ACCEPT,
+    names::CMD_PARTY_DECLINE,
+    names::CMD_PARTY_LEAVE,
+    names::CMD_PARTY_KICK,
+    names::CMD_GUILD_CREATE,
+    names::CMD_GUILD_JOIN,
+    names::CMD_GUILD_LEAVE,
+    names::CMD_GUILD_INVITE,
+    names::CMD_GUILD_KICK,
+    names::CMD_GUILD_RANK_SET,
+    names::CMD_SHOP_BUY,
+    names::CMD_UPGRADE_PREVIEW,
+    names::CMD_UPGRADE_START,
+    names::CMD_SOCKET_INSERT,
+    names::CMD_SOCKET_EXTRACT,
 ];
 
 /// M25: команды предметов и трупа — в стан блокируются сверх разделки.
 pub(super) const ITEM_ACTIONS: &[&str] = &[
-    "cmd/item.use",
-    "cmd/item.drop",
-    "cmd/item.equip",
-    "cmd/item.unequip",
-    "cmd/item.move",
-    "cmd/corpse.harvest",
+    names::CMD_ITEM_USE,
+    names::CMD_ITEM_DROP,
+    names::CMD_ITEM_EQUIP,
+    names::CMD_ITEM_UNEQUIP,
+    names::CMD_ITEM_MOVE,
+    names::CMD_CORPSE_HARVEST,
 ];
 
 /// M25: стан блокирует `HARVEST_BLOCKED ∪ ITEM_ACTIONS` (RF5a: без дублей списка).
@@ -81,8 +83,9 @@ impl Session {
     /// M25: активные дебаффы контроля → (код, сообщение) по типу
     /// команды; блокируемые списки — внутри (const в fn).
     pub(super) fn char_effect_gate(&self, msg_type: &str) -> Option<(ErrorCode, String)> {
-        const SILENCE_BLOCKED: &[&str] = &["cmd/magic.rune_cast", "cmd/magic.scroll_cast"];
-        const BLIND_BLOCKED: &[&str] = &["cmd/combat.attack", "cmd/skill.use"];
+        const SILENCE_BLOCKED: &[&str] =
+            &[names::CMD_MAGIC_RUNE_CAST, names::CMD_MAGIC_SCROLL_CAST];
+        const BLIND_BLOCKED: &[&str] = &[names::CMD_COMBAT_ATTACK, names::CMD_SKILL_USE];
         let now = crate::time::now_ms();
         let char_id = self.selected_char_id.as_deref()?;
         let (stunned, silenced, blinded) = {
@@ -238,7 +241,7 @@ impl Session {
             world.set_ability_cooldown(char_id, &format!("item:{}", def.id), until);
         }
         out_event(
-            "evt/combat/cooldown",
+            names::EVT_COMBAT_COOLDOWN,
             None,
             serde_json::to_value(CombatCooldown {
                 skill_id: Some(format!("item:{}", def.id)),

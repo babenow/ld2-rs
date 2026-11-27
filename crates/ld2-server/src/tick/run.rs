@@ -7,6 +7,8 @@
 //! боя, смерти, награды), `jobs` (работы, DoT, баффы), `expire`
 //! (истечение сущностей), `plan` (структуры плана и события).
 
+use ld2_protocol::names;
+
 use std::time::Duration;
 
 use serde_json::json;
@@ -199,7 +201,7 @@ pub(super) async fn apply_rune_work(state: &SharedState, work: &[RuneWork]) {
                             serde_json::to_value(&sockets_wire).unwrap_or_default(),
                         );
                         let text = crate::session::event_text(
-                            "evt/item/state",
+                            names::EVT_ITEM_STATE,
                             None,
                             serde_json::to_value(ld2_protocol::evt::ItemState {
                                 uid: w.staff_uid.clone(),
@@ -267,7 +269,7 @@ pub(super) async fn apply_rune_work(state: &SharedState, work: &[RuneWork]) {
             )
             .collect();
         let text = crate::session::event_text(
-            "evt/char/buffs",
+            names::EVT_CHAR_BUFFS,
             None,
             serde_json::to_value(ld2_protocol::evt::CharBuffs { buffs }).unwrap_or_default(),
         );

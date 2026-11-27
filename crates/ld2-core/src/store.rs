@@ -5,6 +5,8 @@
 //! Побочные эффекты (keyring, токен в транспорт) возвращаются из [`AppStore::apply`]
 //! и исполняются слоем приложения — редьюсер остаётся детерминированным.
 
+use ld2_protocol::names;
+
 use std::collections::{BTreeMap, VecDeque};
 
 use ld2_protocol::evt::{
@@ -257,48 +259,48 @@ impl AppStore {
             return vec![];
         };
         match msg_type {
-            m if m == "evt/location/changed"
-                || m.starts_with("evt/entity/")
-                || (m.starts_with("evt/char/") && m != "evt/char/afflict") =>
+            m if m == names::EVT_LOCATION_CHANGED
+                || m.starts_with(names::EVT_ENTITY_PREFIX)
+                || (m.starts_with(names::EVT_CHAR_PREFIX) && m != names::EVT_CHAR_AFFLICT) =>
             {
                 self.reduce_world(m, payload)
             }
-            m if m.starts_with("evt/combat/")
-                || m.starts_with("evt/mob/")
-                || m == "evt/magic/cast"
-                || m == "evt/harvest/result"
-                || m == "evt/char/afflict" =>
+            m if m.starts_with(names::EVT_COMBAT_PREFIX)
+                || m.starts_with(names::EVT_MOB_PREFIX)
+                || m == names::EVT_MAGIC_CAST
+                || m == names::EVT_HARVEST_RESULT
+                || m == names::EVT_CHAR_AFFLICT =>
             {
                 self.reduce_combat(m, payload)
             }
-            m if m.starts_with("evt/item/")
-                || m.starts_with("evt/corpse/")
-                || m == "evt/upgrade/result" =>
+            m if m.starts_with(names::EVT_ITEM_PREFIX)
+                || m.starts_with(names::EVT_CORPSE_PREFIX)
+                || m == names::EVT_UPGRADE_RESULT =>
             {
                 self.reduce_items(m, payload)
             }
-            m if m.starts_with("evt/chat/")
-                || m == "evt/party/updated"
-                || m.starts_with("evt/trade/")
-                || m.starts_with("evt/guild/") =>
+            m if m.starts_with(names::EVT_CHAT_PREFIX)
+                || m == names::EVT_PARTY_UPDATED
+                || m.starts_with(names::EVT_TRADE_PREFIX)
+                || m.starts_with(names::EVT_GUILD_PREFIX) =>
             {
                 self.reduce_social(m, payload)
             }
-            m if m.starts_with("evt/craft/")
-                || m.starts_with("evt/quest/")
-                || m.starts_with("evt/crime/") =>
+            m if m.starts_with(names::EVT_CRAFT_PREFIX)
+                || m.starts_with(names::EVT_QUEST_PREFIX)
+                || m.starts_with(names::EVT_CRIME_PREFIX) =>
             {
                 self.reduce_craft(m, payload)
             }
-            m if m == "evt/time.sync"
-                || m == "evt/session.start"
-                || m == "evt/session/replaced"
-                || m == "evt/session/afk"
-                || m == "evt/account/premium"
-                || m == "evt/state/snapshot"
-                || m == "evt/state/delta"
-                || m == "evt/dialog/open"
-                || m == "evt/error" =>
+            m if m == names::EVT_TIME_SYNC
+                || m == names::EVT_SESSION_START
+                || m == names::EVT_SESSION_REPLACED
+                || m == names::EVT_SESSION_AFK
+                || m == names::EVT_ACCOUNT_PREMIUM
+                || m == names::EVT_STATE_SNAPSHOT
+                || m == names::EVT_STATE_DELTA
+                || m == names::EVT_DIALOG_OPEN
+                || m == names::EVT_ERROR =>
             {
                 self.reduce_misc(m, payload)
             }

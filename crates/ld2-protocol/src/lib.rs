@@ -16,6 +16,7 @@ pub mod envelope;
 pub mod errors;
 pub mod evt;
 pub mod features;
+pub mod names;
 pub mod spells;
 pub mod types;
 

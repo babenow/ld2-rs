@@ -5,6 +5,8 @@
 //! Снапшот строит `World::build_location` (там же фильтр по `char_loc`);
 //! здесь — проводной вид сущности и рассылка событий по реестру мира.
 
+use ld2_protocol::names;
+
 use ld2_protocol::evt::{EntityDespawn, EntitySpawn};
 use ld2_protocol::types::{Entity, EntityKind, Hp};
 
@@ -82,7 +84,7 @@ pub(crate) fn announce_spawn(
         text,
     };
     let text = event_text(
-        "evt/entity/spawn",
+        names::EVT_ENTITY_SPAWN,
         None,
         serde_json::to_value(payload).unwrap_or_default(),
     );
@@ -107,7 +109,7 @@ pub(crate) fn announce_despawn(
         text,
     };
     let wire = event_text(
-        "evt/entity/despawn",
+        names::EVT_ENTITY_DESPAWN,
         None,
         serde_json::to_value(payload).unwrap_or_default(),
     );

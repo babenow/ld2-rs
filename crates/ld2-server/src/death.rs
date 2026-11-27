@@ -5,6 +5,8 @@
 //! когда персонажа убивает моб (M12.5). Возвращает события, адресованные
 //! соединению погибшего (адресат — char_id).
 
+use ld2_protocol::names;
+
 use ld2_protocol::evt::ItemRemovalReason;
 use ld2_protocol::evt::{CharDeath, CharStats, ItemRemoved, LocationChanged, LostItem, Respawn};
 use serde_json::json;
@@ -138,7 +140,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     let mut events = vec![(
         addr.clone(),
         crate::session::event_text(
-            "evt/char/death",
+            names::EVT_CHAR_DEATH,
             Some(state_version),
             serde_json::to_value(&death).unwrap_or_default(),
         ),
@@ -147,7 +149,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
         events.push((
             addr.clone(),
             crate::session::event_text(
-                "evt/item/removed",
+                names::EVT_ITEM_REMOVED,
                 Some(state_version),
                 serde_json::to_value(ItemRemoved {
                     uid: item.uid.clone(),
@@ -162,7 +164,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     events.push((
         addr.clone(),
         crate::session::event_text(
-            "evt/char/stats",
+            names::EVT_CHAR_STATS,
             Some(state_version),
             serde_json::to_value(CharStats { patch }).unwrap_or_default(),
         ),
@@ -170,7 +172,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     events.push((
         addr,
         crate::session::event_text(
-            "evt/location/changed",
+            names::EVT_LOCATION_CHANGED,
             Some(state_version),
             serde_json::to_value(LocationChanged { location }).unwrap_or_default(),
         ),

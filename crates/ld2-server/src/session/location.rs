@@ -5,6 +5,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{LocationMove, MapWorld, StateResync};
 use ld2_protocol::envelope::{Ack, Envelope};
 use ld2_protocol::evt::{LocationChanged, StateSnapshot};
@@ -235,7 +237,7 @@ impl Session {
             Err(e) => Self::err(seq, ErrorCode::Internal, format!("encode: {e}")),
         };
         let changed = out_event(
-            "evt/location/changed",
+            names::EVT_LOCATION_CHANGED,
             Some(state_version),
             serde_json::to_value(LocationChanged { location }).unwrap_or_default(),
         );
@@ -290,7 +292,7 @@ impl Session {
         vec![
             out_ack(Ack::ok(seq, Some(state_version))),
             out_event(
-                "evt/state/snapshot",
+                names::EVT_STATE_SNAPSHOT,
                 Some(state_version),
                 serde_json::to_value(&snapshot).unwrap_or_default(),
             ),
