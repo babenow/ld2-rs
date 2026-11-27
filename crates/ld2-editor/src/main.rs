@@ -9,6 +9,7 @@
 mod app;
 mod map;
 mod project;
+mod ui_tokens;
 
 const HELP: &str = "\
 ld2-editor — редактор контента ld2 (gpui + Ely)

@@ -3,10 +3,16 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+const MAX_EXPONENT: u32 = 20;
+const JITTER_BUCKETS: u64 = 1000;
+const JITTER_FRACTION_DIVISOR: f64 = 1000.0;
+const JITTER_FACTOR_MIN: f64 = 0.8;
+const JITTER_FACTOR_RANGE: f64 = 0.4;
+
 /// Задержка перед попыткой `attempt` (1-based): `base·2^(attempt−1)` с
 /// jitter ±20%, всегда ≤ `max`.
 pub(super) fn delay(base: Duration, max: Duration, attempt: u32) -> Duration {
-    let exp = attempt.saturating_sub(1).min(20);
+    let exp = attempt.saturating_sub(1).min(MAX_EXPONENT);
     let base_ms = base.as_millis() as u64;
     let raw = base_ms.saturating_mul(1u64 << exp);
     let capped = raw.min(max.as_millis() as u64);
@@ -15,8 +21,8 @@ pub(super) fn delay(base: Duration, max: Duration, attempt: u32) -> Duration {
 
 /// ±20% вокруг `ms`.
 fn with_jitter(ms: u64, salt: u64) -> Duration {
-    let frac = (splitmix64(salt) % 1000) as f64 / 1000.0; // 0.0 … 0.999
-    let factor = 0.8 + 0.4 * frac; // 0.8 … 1.2
+    let frac = (splitmix64(salt) % JITTER_BUCKETS) as f64 / JITTER_FRACTION_DIVISOR; // 0.0 … 0.999
+    let factor = JITTER_FACTOR_MIN + JITTER_FACTOR_RANGE * frac; // 0.8 … 1.2
     Duration::from_millis((ms as f64 * factor) as u64)
 }
 

@@ -705,7 +705,11 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
 pub fn format_duration(lang: crate::l10n::Lang, secs: i64) -> String {
     use crate::l10n::{tf, Key};
     let secs = secs.max(0);
-    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    let (h, m, s) = (
+        secs / crate::domain::SECONDS_PER_HOUR,
+        (secs % crate::domain::SECONDS_PER_HOUR) / crate::domain::SECONDS_PER_MINUTE,
+        secs % crate::domain::SECONDS_PER_MINUTE,
+    );
     if h > 0 {
         tf(
             lang,
@@ -729,14 +733,14 @@ pub fn format_duration_ceil(lang: crate::l10n::Lang, secs: i64) -> String {
     if secs <= 0 {
         return tf(lang, Key::DurS, &[("s", "0")]);
     }
-    let mins = (secs + 59) / 60;
-    if mins >= 60 {
+    let mins = (secs + crate::domain::SECONDS_PER_MINUTE - 1) / crate::domain::SECONDS_PER_MINUTE;
+    if mins >= crate::domain::SECONDS_PER_MINUTE {
         tf(
             lang,
             Key::DurHm,
             &[
-                ("h", &(mins / 60).to_string()),
-                ("m", &(mins % 60).to_string()),
+                ("h", &(mins / crate::domain::SECONDS_PER_MINUTE).to_string()),
+                ("m", &(mins % crate::domain::SECONDS_PER_MINUTE).to_string()),
             ],
         )
     } else {

@@ -14,6 +14,20 @@ use std::path::{Path, PathBuf};
 use ld2_content::ContentLocation;
 use serde::{Deserialize, Serialize};
 
+const NODE_SIZE_SCALE: f32 = 0.55;
+const NODE_MIN_PX: f32 = 12.0;
+const NODE_MAX_PX: f32 = 38.0;
+const BFS_SEED_BASE: i32 = 10_000;
+const BFS_SEED_STEP: i32 = 1_000;
+const DIR_NORTH: &str = "north";
+const DIR_SOUTH: &str = "south";
+const DIR_EAST: &str = "east";
+const DIR_WEST: &str = "west";
+const DIR_NORTH_EAST: &str = "north_east";
+const DIR_NORTH_WEST: &str = "north_west";
+const DIR_SOUTH_EAST: &str = "south_east";
+const DIR_SOUTH_WEST: &str = "south_west";
+
 /// Подкаталог sidecar-файлов редактора внутри каталога контента.
 const EDITOR_DIR: &str = "editor";
 const LAYOUT_NAME: &str = "layout.json";
@@ -115,14 +129,14 @@ impl MapLayout {
 /// Смещение по каноническому направлению выхода (`dir`).
 pub fn dir_offset(dir: &str) -> Option<(i32, i32)> {
     match dir {
-        "north" => Some((0, -1)),
-        "south" => Some((0, 1)),
-        "east" => Some((1, 0)),
-        "west" => Some((-1, 0)),
-        "north_east" => Some((1, -1)),
-        "north_west" => Some((-1, -1)),
-        "south_east" => Some((1, 1)),
-        "south_west" => Some((-1, 1)),
+        DIR_NORTH => Some((0, -1)),
+        DIR_SOUTH => Some((0, 1)),
+        DIR_EAST => Some((1, 0)),
+        DIR_WEST => Some((-1, 0)),
+        DIR_NORTH_EAST => Some((1, -1)),
+        DIR_NORTH_WEST => Some((-1, -1)),
+        DIR_SOUTH_EAST => Some((1, 1)),
+        DIR_SOUTH_WEST => Some((-1, 1)),
         _ => None,
     }
 }
@@ -131,17 +145,17 @@ pub fn dir_offset(dir: &str) -> Option<(i32, i32)> {
 /// как в контенте; диагонали в `dir` не используются).
 pub fn compass_dir(from: Cell, to: Cell) -> Option<&'static str> {
     match (to.x - from.x, to.y - from.y) {
-        (0, -1) => Some("north"),
-        (1, 0) => Some("east"),
-        (0, 1) => Some("south"),
-        (-1, 0) => Some("west"),
+        (0, -1) => Some(DIR_NORTH),
+        (1, 0) => Some(DIR_EAST),
+        (0, 1) => Some(DIR_SOUTH),
+        (-1, 0) => Some(DIR_WEST),
         _ => None,
     }
 }
 
 /// Размер узла на полотне для текущего масштаба клетки.
 pub fn node_size(cell_px: f32) -> f32 {
-    (cell_px * 0.55).clamp(12.0, 38.0)
+    (cell_px * NODE_SIZE_SCALE).clamp(NODE_MIN_PX, NODE_MAX_PX)
 }
 
 /// Клетка под курсором при перетаскивании узла.
@@ -200,7 +214,7 @@ pub fn auto_layout(locations: &[ContentLocation]) -> MapLayout {
         }
         bfs_from(
             id,
-            (10_000 + secondary * 1_000, 0),
+            (BFS_SEED_BASE + secondary * BFS_SEED_STEP, 0),
             &adj,
             &mut taken,
             &mut placed,
@@ -272,6 +286,7 @@ fn spiral_free(taken: &mut HashSet<(i32, i32)>, origin: (i32, i32)) -> (i32, i32
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use ld2_content::ContentExit;
     use serde_json::Value;
 

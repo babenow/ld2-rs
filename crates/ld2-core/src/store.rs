@@ -25,6 +25,9 @@ use ld2_protocol::{ErrorCode, SessionConfig};
 use crate::l10n::{t, Key, Lang};
 use crate::transport::{IngressEvent, TransportStatus};
 
+const DEFAULT_CHAT_LIMIT: usize = 5_000;
+const QUEST_TRACKER_LIMIT: usize = 3;
+
 mod npc;
 mod patch;
 mod reducers;
@@ -166,7 +169,7 @@ impl AppStore {
             guild_browse: Vec::new(),
             guild_log: Vec::new(),
             guild_browse_loaded: false,
-            chat_limit: 5_000,
+            chat_limit: DEFAULT_CHAT_LIMIT,
             rtt_ms: None,
             recipes: Vec::new(),
             recipes_loaded: false,
@@ -333,7 +336,7 @@ impl AppStore {
         if ttl_s <= 0 {
             return false;
         }
-        let limit = ttl_s.saturating_mul(1000);
+        let limit = ttl_s.saturating_mul(crate::domain::MS_PER_SECOND);
         let mut removed = false;
         while let Some(front) = self.log.front() {
             if now_ms.saturating_sub(front.at) < limit {
@@ -493,7 +496,7 @@ impl AppStore {
     pub fn toggle_quest_tracker(&mut self, quest_id: &str) {
         if let Some(pos) = self.quest_tracker.iter().position(|q| q == quest_id) {
             self.quest_tracker.remove(pos);
-        } else if self.quest_tracker.len() < 3 {
+        } else if self.quest_tracker.len() < QUEST_TRACKER_LIMIT {
             self.quest_tracker.push(quest_id.to_string());
         }
     }
@@ -776,7 +779,7 @@ pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&s
                 return ChatDraft::Unknown("/w".into());
             }
             ChatDraft::Send {
-                channel: "whisper".into(),
+                channel: crate::domain::CHANNEL_WHISPER.into(),
                 to: Some(to),
                 text,
             }
@@ -784,7 +787,7 @@ pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&s
         // `/r текст` → ответ последнему адресату whisper.
         "r" | "reply" => match whisper_to {
             Some(to) if !arg.is_empty() => ChatDraft::Send {
-                channel: "whisper".into(),
+                channel: crate::domain::CHANNEL_WHISPER.into(),
                 to: Some(to.to_string()),
                 text: arg.to_string(),
             },
@@ -792,12 +795,12 @@ pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&s
         },
         // `/p` / `/g` → каналы группы/гильдии.
         "p" | "party" if !arg.is_empty() => ChatDraft::Send {
-            channel: "party".into(),
+            channel: crate::domain::CHANNEL_PARTY.into(),
             to: None,
             text: arg.to_string(),
         },
         "g" | "guild" if !arg.is_empty() => ChatDraft::Send {
-            channel: "guild".into(),
+            channel: crate::domain::CHANNEL_GUILD.into(),
             to: None,
             text: arg.to_string(),
         },
@@ -813,9 +816,9 @@ impl Profile {
     /// Wire-значение `cmd/char.create.profile`.
     pub fn value(self) -> &'static str {
         match self {
-            Profile::Warrior => "warrior",
-            Profile::Archer => "archer",
-            Profile::Mage => "mage",
+            Profile::Warrior => crate::domain::PROFILE_WARRIOR,
+            Profile::Archer => crate::domain::PROFILE_ARCHER,
+            Profile::Mage => crate::domain::PROFILE_MAGE,
         }
     }
 
@@ -838,8 +841,8 @@ impl Gender {
     /// Wire-значение `cmd/char.create.gender`.
     pub fn value(self) -> &'static str {
         match self {
-            Gender::Male => "male",
-            Gender::Female => "female",
+            Gender::Male => crate::domain::GENDER_MALE,
+            Gender::Female => crate::domain::GENDER_FEMALE,
         }
     }
 
@@ -1089,7 +1092,7 @@ mod tests {
         assert_eq!(
             parse_chat_input("/w Астра привет!", "location", None),
             ChatDraft::Send {
-                channel: "whisper".into(),
+                channel: crate::domain::CHANNEL_WHISPER.into(),
                 to: Some("Астра".into()),
                 text: "привет!".into()
             }
@@ -1098,7 +1101,7 @@ mod tests {
         assert_eq!(
             parse_chat_input("/p идём в лес", "location", None),
             ChatDraft::Send {
-                channel: "party".into(),
+                channel: crate::domain::CHANNEL_PARTY.into(),
                 to: None,
                 text: "идём в лес".into()
             }
@@ -1106,7 +1109,7 @@ mod tests {
         assert_eq!(
             parse_chat_input("/g привет гильдии", "global", None),
             ChatDraft::Send {
-                channel: "guild".into(),
+                channel: crate::domain::CHANNEL_GUILD.into(),
                 to: None,
                 text: "привет гильдии".into()
             }
@@ -1128,7 +1131,7 @@ mod tests {
         assert_eq!(
             parse_chat_input("/r тоже привет", "location", Some("Астра")),
             ChatDraft::Send {
-                channel: "whisper".into(),
+                channel: crate::domain::CHANNEL_WHISPER.into(),
                 to: Some("Астра".into()),
                 text: "тоже привет".into()
             }

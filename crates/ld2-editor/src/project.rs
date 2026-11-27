@@ -19,6 +19,13 @@ use ld2_content::{
 };
 use serde_json::{json, Value};
 
+const ITEM_WEAPON: &str = "weapon";
+const ITEM_MONEY: &str = "money";
+const RARITY_COMMON: &str = "common";
+const DEMO_DIALOG_LINE: &str = "l_hello";
+const PROJECT_SEARCH_DEPTH: usize = 6;
+const DIALOG_LABEL_MAX: usize = 40;
+
 /// Предел истории undo (правок, не мегабайт — история лёгкая).
 const UNDO_LIMIT: usize = 200;
 
@@ -179,7 +186,7 @@ impl EditorProject {
     /// Найти проект вверх от `start` (CWD редактора — обычно корень репо).
     pub fn discover(start: impl AsRef<Path>) -> Result<Self, ProjectError> {
         let start = start.as_ref();
-        for dir in start.ancestors().take(6) {
+        for dir in start.ancestors().take(PROJECT_SEARCH_DEPTH) {
             if resolve_dirs(dir).is_some() {
                 return Self::open(dir);
             }
@@ -604,9 +611,9 @@ impl EditorProject {
             ContentFile::Items,
             serde_json::json!({
                 "id": id,
-                "type": "weapon",
+                "type": ITEM_WEAPON,
                 "name": "Новый предмет",
-                "rarity": "common",
+                "rarity": RARITY_COMMON,
                 "upgrade": 0,
                 "gold_value": 0,
             }),
@@ -1241,7 +1248,7 @@ impl EditorProject {
             .find(|id| !existing.contains(id))
             .map(str::to_string);
         let id = candidate.unwrap_or_else(|| unique_id(&existing, "npc_new_"));
-        let line_id = "l_hello".to_string();
+        let line_id = DEMO_DIALOG_LINE.to_string();
         let value = json!({
             "id": id,
             "root": line_id,
@@ -1448,7 +1455,7 @@ impl EditorProject {
             .content
             .items
             .iter()
-            .find(|item| item.item_type == "money")
+            .find(|item| item.item_type == ITEM_MONEY)
             .or_else(|| self.content.items.first())
             .map(|item| item.id.clone())
             .unwrap_or_default();
@@ -1674,8 +1681,8 @@ fn field_edits(base: Vec<PathSeg>, fields: Vec<(&str, Value)>) -> Vec<Edit> {
 
 /// Подпись строки диалога в пикере (короткий текст).
 fn short_text(text: &str) -> String {
-    let mut label: String = text.chars().take(40).collect();
-    if text.chars().count() > 40 {
+    let mut label: String = text.chars().take(DIALOG_LABEL_MAX).collect();
+    if text.chars().count() > DIALOG_LABEL_MAX {
         label.push('…');
     }
     label
