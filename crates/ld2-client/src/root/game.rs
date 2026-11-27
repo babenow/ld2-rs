@@ -6,6 +6,8 @@
 //! Отличия от egui: модалки заменяют контент (шапка остаётся), контекстное
 //! меню — инлайн под строкой (вместо попапа по курсору), тултипы не используются.
 
+use ld2_core::domain;
+
 use ely::overlays::Dialog;
 use gpui::{
     div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, EmptyView,
@@ -51,7 +53,7 @@ mod hud;
 pub(crate) fn power_strike_open(skills: &[ld2_protocol::types::SkillSnapshot]) -> bool {
     skills
         .iter()
-        .find(|s| s.id == "sword")
+        .find(|s| s.id == domain::SKILL_SWORD)
         .is_some_and(|s| s.rank >= 5)
 }
 
@@ -125,7 +127,12 @@ impl Root {
             .char
             .inventory
             .iter()
-            .find(|i| matches!(i.item_type.as_str(), "scroll" | "potion"))
+            .find(|i| {
+                matches!(
+                    i.item_type.as_str(),
+                    domain::ITEM_SCROLL | domain::ITEM_POTION
+                )
+            })
             .map(|i| i.uid.clone())
     }
 

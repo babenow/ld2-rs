@@ -69,6 +69,8 @@ pub(crate) enum SheetTab {
     Guild,
 }
 
+const TAB_GUILD: &str = "guild";
+
 impl SheetTab {
     /// M16/F29b: «Инвентарь» убран из окна — он живёт в отдельном
     /// окне рюкзака (правило дубликатов).
@@ -96,7 +98,7 @@ impl SheetTab {
             SheetTab::Params => "params",
             SheetTab::Skills => "skills",
             SheetTab::Reputation => "reputation",
-            SheetTab::Guild => "guild",
+            SheetTab::Guild => TAB_GUILD,
         }
     }
 
@@ -104,7 +106,7 @@ impl SheetTab {
         match s {
             "skills" => SheetTab::Skills,
             "reputation" => SheetTab::Reputation,
-            "guild" => SheetTab::Guild,
+            TAB_GUILD => SheetTab::Guild,
             // M15/F25: старые значения удалённых вкладок (attrs/statuses)
             // из сохранённого конфига → «Параметры» (ближайшая инфо-вкладка);
             // M16/F29b: «inventory» переехал в окно рюкзака;

@@ -1,5 +1,7 @@
 //! Окно персонажа: socket (RF3l).
 
+use ld2_core::domain;
+
 use super::*;
 
 impl Root {
@@ -76,8 +78,8 @@ impl Root {
         // M18/F32: от оружия/посоха — только руны, от брони — только
         // самоцветы; у цели иного типа вставлять нечего.
         let insert_type = match staff.item_type.as_str() {
-            "weapon" | "staff" => "rune",
-            "armor" => "gem",
+            domain::ITEM_WEAPON | domain::ITEM_STAFF => domain::ITEM_RUNE,
+            "armor" => domain::ITEM_GEM,
             _ => "",
         };
         let runes: Vec<ItemSnapshot> = snap
@@ -92,7 +94,7 @@ impl Root {
             // M18/F58f: уже вставленные руны не предлагаем (дубликаты
             // не стакаются — сервер и так откажет, §9).
             .filter(|i| {
-                insert_type != "rune"
+                insert_type != domain::ITEM_RUNE
                     || !rune_already_inserted(&i.name, staff.sockets.iter().flatten())
             })
             .cloned()
@@ -105,7 +107,7 @@ impl Root {
             // (пустой слот — свой глиф); слот самоцвета — ◈, а у
             // **инкрустированного** — знак его раритета (Symbola):
             // указание заказчика — глиф по рангу рядом со selfцветом.
-            if socket.accepts.as_deref() == Some("gem") {
+            if socket.accepts.as_deref() == Some(domain::ITEM_GEM) {
                 // M18 (указание заказчика): **пустой** слот после
                 // извлечения камня — пустой кружочек (как у рунного),
                 // а не ромбик ◈ (читался как занятый).
@@ -186,7 +188,7 @@ impl Root {
                         // M18 (указание заказчика): подсказка — по типу
                         // слота (самоцвет/руна), не многоточие.
                         let hint = match socket.accepts.as_deref() {
-                            Some("gem") => t(lang, Key::PickGem),
+                            Some(domain::ITEM_GEM) => t(lang, Key::PickGem),
                             Some(_) => t(lang, Key::PickRune),
                             None => t(
                                 lang,
@@ -279,7 +281,7 @@ impl Root {
                 None => inscribe_target_allowed(&i.item_type, staff.item_type.as_str()),
             })
             .filter(|i| {
-                i.item_type != "rune"
+                i.item_type != domain::ITEM_RUNE
                     || !rune_already_inserted(&i.name, staff.sockets.iter().flatten())
             })
             .cloned()

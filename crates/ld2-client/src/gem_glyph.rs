@@ -5,6 +5,8 @@
 //! информации — предмет и слот) зависит от раритета: закрашенные
 //! фигуры **по числу сторон**. Код-поинты проверены по cmap шрифта.
 
+use ld2_core::domain;
+
 use gpui::{div, prelude::*, Div, SharedString};
 
 /// Семейство шрифта знаков (name-таблица `symbola.ttf`).
@@ -16,11 +18,11 @@ pub(crate) const GEM_FONT: &str = "Symbola";
 /// как руна). Неизвестный раритет — `None` (без знака).
 pub(crate) fn gem_symbol(rarity: &str) -> Option<char> {
     match rarity {
-        "common" => Some('\u{25B2}'),
-        "uncommon" => Some('\u{25A0}'),
-        "rare" => Some('\u{2B1F}'),
-        "epic" => Some('\u{2B22}'),
-        "legendary" => Some('\u{2BC4}'),
+        domain::RARITY_COMMON => Some('\u{25B2}'),
+        domain::RARITY_UNCOMMON => Some('\u{25A0}'),
+        domain::RARITY_RARE => Some('\u{2B1F}'),
+        domain::RARITY_EPIC => Some('\u{2B22}'),
+        domain::RARITY_LEGENDARY => Some('\u{2BC4}'),
         _ => None,
     }
 }
@@ -44,12 +46,28 @@ mod tests {
     /// неизвестное значение — без знака.
     #[test]
     fn gem_symbol_covers_all_rarities() {
-        assert_eq!(gem_symbol("common"), Some('\u{25B2}'), "треугольник");
-        assert_eq!(gem_symbol("uncommon"), Some('\u{25A0}'), "квадрат");
-        assert_eq!(gem_symbol("rare"), Some('\u{2B1F}'), "пентагон");
-        assert_eq!(gem_symbol("epic"), Some('\u{2B22}'), "гексагон");
         assert_eq!(
-            gem_symbol("legendary"),
+            gem_symbol(domain::RARITY_COMMON),
+            Some('\u{25B2}'),
+            "треугольник"
+        );
+        assert_eq!(
+            gem_symbol(domain::RARITY_UNCOMMON),
+            Some('\u{25A0}'),
+            "квадрат"
+        );
+        assert_eq!(
+            gem_symbol(domain::RARITY_RARE),
+            Some('\u{2B1F}'),
+            "пентагон"
+        );
+        assert_eq!(
+            gem_symbol(domain::RARITY_EPIC),
+            Some('\u{2B22}'),
+            "гексагон"
+        );
+        assert_eq!(
+            gem_symbol(domain::RARITY_LEGENDARY),
             Some('\u{2BC4}'),
             "BLACK OCTAGON (код заказчика)"
         );

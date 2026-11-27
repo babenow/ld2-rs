@@ -4,6 +4,8 @@
 //! корни в отдельной области) + окрестность для компактной карты.
 //! Детерминизм: порядок входа (сервер — ORDER BY id) + порядок выходов.
 
+use ld2_core::domain;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Позиция узла на компасной сетке (клетки; y растёт вниз — север −1).
@@ -25,10 +27,10 @@ pub struct MapNode {
 /// Смещение по каноническому направлению выхода (§6 `dir`).
 pub fn dir_offset(dir: &str) -> Option<(i32, i32)> {
     match dir {
-        "north" => Some((0, -1)),
-        "south" => Some((0, 1)),
-        "east" => Some((1, 0)),
-        "west" => Some((-1, 0)),
+        domain::DIR_NORTH => Some((0, -1)),
+        domain::DIR_SOUTH => Some((0, 1)),
+        domain::DIR_EAST => Some((1, 0)),
+        domain::DIR_WEST => Some((-1, 0)),
         "north_east" => Some((1, -1)),
         "north_west" => Some((-1, -1)),
         "south_east" => Some((1, 1)),
@@ -41,10 +43,10 @@ pub fn dir_offset(dir: &str) -> Option<(i32, i32)> {
 /// выходов» видны на карте).
 pub fn dir_glyph(dir: Option<&str>) -> &'static str {
     match dir {
-        Some("north") => "↑",
-        Some("south") => "↓",
-        Some("east") => "→",
-        Some("west") => "←",
+        Some(domain::DIR_NORTH) => "↑",
+        Some(domain::DIR_SOUTH) => "↓",
+        Some(domain::DIR_EAST) => "→",
+        Some(domain::DIR_WEST) => "←",
         Some("north_east") => "↗",
         Some("north_west") => "↖",
         Some("south_east") => "↘",
@@ -274,15 +276,15 @@ mod tests {
     /// M26: компасные смещения — 8 канонических направлений.
     #[test]
     fn dir_offsets_follow_compass() {
-        assert_eq!(dir_offset("north"), Some((0, -1)));
-        assert_eq!(dir_offset("south"), Some((0, 1)));
-        assert_eq!(dir_offset("east"), Some((1, 0)));
-        assert_eq!(dir_offset("west"), Some((-1, 0)));
+        assert_eq!(dir_offset(domain::DIR_NORTH), Some((0, -1)));
+        assert_eq!(dir_offset(domain::DIR_SOUTH), Some((0, 1)));
+        assert_eq!(dir_offset(domain::DIR_EAST), Some((1, 0)));
+        assert_eq!(dir_offset(domain::DIR_WEST), Some((-1, 0)));
         assert_eq!(dir_offset("north_east"), Some((1, -1)));
         assert_eq!(dir_offset("south_west"), Some((-1, 1)));
         assert_eq!(dir_offset("diagonal_up"), None);
         assert_eq!(dir_offset(""), None);
-        assert_eq!(dir_glyph(Some("north")), "↑");
+        assert_eq!(dir_glyph(Some(domain::DIR_NORTH)), "↑");
         assert_eq!(dir_glyph(None), "•");
     }
 
@@ -292,9 +294,12 @@ mod tests {
         let locations = vec![
             loc(
                 "a",
-                serde_json::json!([exit("b", Some("north")), exit("c", Some("east"))]),
+                serde_json::json!([
+                    exit("b", Some(domain::DIR_NORTH)),
+                    exit("c", Some(domain::DIR_EAST))
+                ]),
             ),
-            loc("b", serde_json::json!([exit("d", Some("west"))])),
+            loc("b", serde_json::json!([exit("d", Some(domain::DIR_WEST))])),
             loc("c", serde_json::json!([])),
             loc("d", serde_json::json!([])),
         ];
@@ -312,7 +317,10 @@ mod tests {
         let locations = vec![
             loc(
                 "a",
-                serde_json::json!([exit("b", Some("north")), exit("c", Some("north"))]),
+                serde_json::json!([
+                    exit("b", Some(domain::DIR_NORTH)),
+                    exit("c", Some(domain::DIR_NORTH))
+                ]),
             ),
             loc("b", serde_json::json!([])),
             loc("c", serde_json::json!([])),
@@ -349,9 +357,9 @@ mod tests {
     #[test]
     fn unreachable_component_gets_secondary_root() {
         let locations = vec![
-            loc("a", serde_json::json!([exit("b", Some("north"))])),
+            loc("a", serde_json::json!([exit("b", Some(domain::DIR_NORTH))])),
             loc("b", serde_json::json!([])),
-            loc("x", serde_json::json!([exit("y", Some("east"))])),
+            loc("x", serde_json::json!([exit("y", Some(domain::DIR_EAST))])),
             loc("y", serde_json::json!([])),
         ];
         let map = layout(&locations, "a");
@@ -376,10 +384,13 @@ mod tests {
         let locations = vec![
             loc(
                 "a",
-                serde_json::json!([exit("b", Some("north")), exit("c", Some("east"))]),
+                serde_json::json!([
+                    exit("b", Some(domain::DIR_NORTH)),
+                    exit("c", Some(domain::DIR_EAST))
+                ]),
             ),
-            loc("b", serde_json::json!([exit("c", Some("south"))])),
-            loc("c", serde_json::json!([exit("d", Some("west"))])),
+            loc("b", serde_json::json!([exit("c", Some(domain::DIR_SOUTH))])),
+            loc("c", serde_json::json!([exit("d", Some(domain::DIR_WEST))])),
             loc("d", serde_json::json!([])),
             loc("z", serde_json::json!([])),
         ];
@@ -394,9 +405,9 @@ mod tests {
     #[test]
     fn neighborhood_limits_depth_and_edges() {
         let locations = vec![
-            loc("a", serde_json::json!([exit("b", Some("north"))])),
-            loc("b", serde_json::json!([exit("c", Some("north"))])),
-            loc("c", serde_json::json!([exit("d", Some("north"))])),
+            loc("a", serde_json::json!([exit("b", Some(domain::DIR_NORTH))])),
+            loc("b", serde_json::json!([exit("c", Some(domain::DIR_NORTH))])),
+            loc("c", serde_json::json!([exit("d", Some(domain::DIR_NORTH))])),
             loc("d", serde_json::json!([])),
         ];
         let nb = neighborhood(&locations, "a", 2);
@@ -405,6 +416,10 @@ mod tests {
         assert_eq!(nb.edges.len(), 2, "только внутренние плечи");
         assert!(nb.edges.iter().all(|(f, t, _, _)| f != "c" || t != "d"));
         assert_eq!(nb.edges[0].2, "", "label из контента");
-        assert_eq!(nb.edges[0].3.as_deref(), Some("north"), "dir из контента");
+        assert_eq!(
+            nb.edges[0].3.as_deref(),
+            Some(domain::DIR_NORTH),
+            "dir из контента"
+        );
     }
 }

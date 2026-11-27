@@ -1,6 +1,7 @@
 //! Общие виджеты окна персонажа (RF3l).
 
 use super::*;
+use ld2_core::domain;
 
 /// M18/F58f: как рисовать слот — **рунный знаком руны** (шрифт
 /// Dwarven Runes), слот самоцвета — прежними ◈/○. Пустой рунный слот
@@ -26,9 +27,9 @@ pub(crate) enum SlotIcon {
 pub(crate) fn slot_icon(item_type: &str, socket: &ld2_protocol::types::Socket) -> SlotIcon {
     // Неизвестное/отсутствующее значение — фолбэк по типу (§11).
     let is_gem = match socket.accepts.as_deref() {
-        Some("gem") => true,
-        Some("rune") => false,
-        _ => item_type == "armor",
+        Some(domain::ITEM_GEM) => true,
+        Some(domain::ITEM_RUNE) => false,
+        _ => item_type == domain::ITEM_ARMOR,
     };
     if is_gem {
         SlotIcon::Gem {
@@ -52,7 +53,7 @@ pub(crate) fn socket_icons_row(item_type: &str, sockets: &[ld2_protocol::types::
     let mut gem_slots: Vec<&ld2_protocol::types::Socket> = Vec::new();
     for s in sockets {
         match s.accepts.as_deref() {
-            Some("gem") => gem_slots.push(s),
+            Some(domain::ITEM_GEM) => gem_slots.push(s),
             // Рунный (и неизвестный/отсутствующий — фолбэк §11) —
             // старый сервер: сохраняем прежний порядок.
             _ => rune_slots.push(s),
@@ -112,7 +113,7 @@ pub(crate) fn item_label_stack(item: &ItemSnapshot, color: u32) -> Div {
         .text_color(rgb(color));
     // M18/F58f: у самоцвета — знак раритета (Symbola) перед названием
     // (указание заказчика: рюкзак и описание).
-    if item.item_type == "gem" {
+    if item.item_type == domain::ITEM_GEM {
         row = row.child(crate::gem_glyph::gem_symbol_div(&item.rarity));
     }
     row = row.child(div().child(item.name.clone()));
@@ -177,7 +178,7 @@ pub(crate) fn menu_item(
 /// в покое; анимация (переливание) запускается только по наведению
 /// (заказчик 2026-11-20). Пустой vec — без свечения.
 pub(crate) fn rarity_glow_inset(rarity: &str, pal: &Palette) -> Vec<gpui::BoxShadow> {
-    if !matches!(rarity, "epic" | "legendary") {
+    if !matches!(rarity, domain::RARITY_EPIC | domain::RARITY_LEGENDARY) {
         return vec![];
     }
     let base = rarity_color(rarity, pal) & 0xff_ffff;
@@ -192,13 +193,13 @@ pub(crate) fn rarity_glow_inset(rarity: &str, pal: &Palette) -> Vec<gpui::BoxSha
 
 pub(crate) fn rarity_color(rarity: &str, pal: &Palette) -> u32 {
     match rarity {
-        "common" => pal.muted,
-        "uncommon" => 0x98_c3_79,
-        "rare" => 0x61_af_ef,
-        "epic" => 0xa0_52_2d,
+        domain::RARITY_COMMON => pal.muted,
+        domain::RARITY_UNCOMMON => 0x98_c3_79,
+        domain::RARITY_RARE => 0x61_af_ef,
+        domain::RARITY_EPIC => 0xa0_52_2d,
         // Легендарка: яркий фиолетовый (орхидея) — тёмный
         // 0x6606b2 плохо читался на тёмной теме (заказчик).
-        "legendary" => 0xc0_60_f0,
+        domain::RARITY_LEGENDARY => 0xc0_60_f0,
         _ => pal.text,
     }
 }
@@ -292,11 +293,11 @@ pub(crate) fn item_tooltip_trigger(
 /// M16/F29e: название редкости (l10n; неизвестная — как есть).
 pub(crate) fn rarity_label(lang: Lang, rarity: &str) -> String {
     match rarity {
-        "common" => t(lang, Key::RarityCommon),
-        "uncommon" => t(lang, Key::RarityUncommon),
-        "rare" => t(lang, Key::RarityRare),
-        "epic" => t(lang, Key::RarityEpic),
-        "legendary" => t(lang, Key::RarityLegendary),
+        domain::RARITY_COMMON => t(lang, Key::RarityCommon),
+        domain::RARITY_UNCOMMON => t(lang, Key::RarityUncommon),
+        domain::RARITY_RARE => t(lang, Key::RarityRare),
+        domain::RARITY_EPIC => t(lang, Key::RarityEpic),
+        domain::RARITY_LEGENDARY => t(lang, Key::RarityLegendary),
         other => other,
     }
     .to_string()
@@ -357,22 +358,22 @@ pub(crate) fn param_tip(key: Key) -> Option<Key> {
 /// M16/F29e: слот экипировки (конфиг открытый — fallback сырой).
 pub(crate) fn slot_label(lang: Lang, slot: &str) -> String {
     match slot {
-        "head" => t(lang, Key::SlotHead),
-        "body" => t(lang, Key::SlotBody),
-        "main_hand" => t(lang, Key::SlotMainHand),
-        "staff" => t(lang, Key::SlotStaff),
-        "feet" => t(lang, Key::SlotFeet),
-        "shoulders" => t(lang, Key::SlotShoulders),
-        "bracers" => t(lang, Key::SlotBracers),
-        "gloves" => t(lang, Key::SlotGloves),
-        "legs" => t(lang, Key::SlotLegs),
-        "cloak" => t(lang, Key::SlotCloak),
-        "ring1" => t(lang, Key::SlotRing1),
-        "ring2" => t(lang, Key::SlotRing2),
-        "amulet" => t(lang, Key::SlotAmulet),
-        "off_hand" => t(lang, Key::SlotOffHand),
-        "artifact1" => t(lang, Key::SlotArtifact1),
-        "artifact2" => t(lang, Key::SlotArtifact2),
+        domain::SLOT_HEAD => t(lang, Key::SlotHead),
+        domain::SLOT_BODY => t(lang, Key::SlotBody),
+        domain::SLOT_MAIN_HAND => t(lang, Key::SlotMainHand),
+        domain::SLOT_STAFF => t(lang, Key::SlotStaff),
+        domain::SLOT_FEET => t(lang, Key::SlotFeet),
+        domain::SLOT_SHOULDERS => t(lang, Key::SlotShoulders),
+        domain::SLOT_BRACERS => t(lang, Key::SlotBracers),
+        domain::SLOT_GLOVES => t(lang, Key::SlotGloves),
+        domain::SLOT_LEGS => t(lang, Key::SlotLegs),
+        domain::SLOT_CLOAK => t(lang, Key::SlotCloak),
+        domain::SLOT_RING1 => t(lang, Key::SlotRing1),
+        domain::SLOT_RING2 => t(lang, Key::SlotRing2),
+        domain::SLOT_AMULET => t(lang, Key::SlotAmulet),
+        domain::SLOT_OFF_HAND => t(lang, Key::SlotOffHand),
+        domain::SLOT_ARTIFACT1 => t(lang, Key::SlotArtifact1),
+        domain::SLOT_ARTIFACT2 => t(lang, Key::SlotArtifact2),
         other => other,
     }
     .to_string()
@@ -381,25 +382,25 @@ pub(crate) fn slot_label(lang: Lang, slot: &str) -> String {
 /// M16/F29e: тип предмета (контент открытый — fallback сырой).
 pub(crate) fn type_label(lang: Lang, item_type: &str) -> String {
     match item_type {
-        "weapon" => t(lang, Key::ItemTypeWeapon),
-        "staff" => t(lang, Key::ItemTypeStaff),
-        "potion" => t(lang, Key::ItemTypePotion),
-        "rune" => t(lang, Key::ItemTypeRune),
-        "scroll" => t(lang, Key::ItemTypeScroll),
-        "armor" => t(lang, Key::ItemTypeArmor),
-        "money" => t(lang, Key::ItemTypeMoney),
-        "herb" => t(lang, Key::ItemTypeHerb),
-        "wood_oak" => t(lang, Key::ItemTypeWoodOak),
-        "parchment" => t(lang, Key::ItemTypeParchment),
-        "ink" => t(lang, Key::ItemTypeInk),
-        "flask" => t(lang, Key::ItemTypeFlask),
-        "chisel" => t(lang, Key::ItemTypeChisel),
-        "quill" => t(lang, Key::ItemTypeQuill),
-        "shield" => t(lang, Key::ItemTypeShield),
-        "artifact" => t(lang, Key::ItemTypeArtifact),
-        "gem" => t(lang, Key::ItemTypeGem),
+        domain::ITEM_WEAPON => t(lang, Key::ItemTypeWeapon),
+        domain::ITEM_STAFF => t(lang, Key::ItemTypeStaff),
+        domain::ITEM_POTION => t(lang, Key::ItemTypePotion),
+        domain::ITEM_RUNE => t(lang, Key::ItemTypeRune),
+        domain::ITEM_SCROLL => t(lang, Key::ItemTypeScroll),
+        domain::ITEM_ARMOR => t(lang, Key::ItemTypeArmor),
+        domain::ITEM_MONEY => t(lang, Key::ItemTypeMoney),
+        domain::ITEM_HERB => t(lang, Key::ItemTypeHerb),
+        domain::ITEM_WOOD_OAK => t(lang, Key::ItemTypeWoodOak),
+        domain::ITEM_PARCHMENT => t(lang, Key::ItemTypeParchment),
+        domain::ITEM_INK => t(lang, Key::ItemTypeInk),
+        domain::ITEM_FLASK => t(lang, Key::ItemTypeFlask),
+        domain::ITEM_CHISEL => t(lang, Key::ItemTypeChisel),
+        domain::ITEM_QUILL => t(lang, Key::ItemTypeQuill),
+        domain::ITEM_SHIELD => t(lang, Key::ItemTypeShield),
+        domain::ITEM_ARTIFACT => t(lang, Key::ItemTypeArtifact),
+        domain::ITEM_GEM => t(lang, Key::ItemTypeGem),
         // M18/F54: камни усиления (заточка).
-        "upgrade_stone" => t(lang, Key::ItemTypeStone),
+        domain::ITEM_UPGRADE_STONE => t(lang, Key::ItemTypeStone),
         other => other,
     }
     .to_string()
@@ -475,9 +476,9 @@ pub(crate) fn param_is_percent(id: &str) -> bool {
 /// M16/F29e: школа магии (значение `school`; fallback — сырое).
 pub(crate) fn school_label(lang: Lang, school: &str) -> String {
     match school {
-        "fire" => t(lang, Key::SchoolFire),
-        "frost" => t(lang, Key::SchoolFrost),
-        "storm" => t(lang, Key::SchoolStorm),
+        domain::SCHOOL_FIRE => t(lang, Key::SchoolFire),
+        domain::SCHOOL_FROST => t(lang, Key::SchoolFrost),
+        domain::SCHOOL_STORM => t(lang, Key::SchoolStorm),
         other => other,
     }
     .to_string()
@@ -490,11 +491,11 @@ pub(crate) fn slot_for(item: &ItemSnapshot, ch: &CharacterState) -> Option<Strin
     let slot = item.slot.as_deref()?;
     let free = |s: &str| ch.equip.get(s).map(|v| v.is_none()).unwrap_or(true);
     match slot {
-        "ring" => ["ring1", "ring2"]
+        domain::SLOT_RING => [domain::SLOT_RING1, domain::SLOT_RING2]
             .into_iter()
             .find(|s| free(s))
             .map(str::to_string),
-        "artifact" => ["artifact1", "artifact2"]
+        domain::SLOT_ARTIFACT => [domain::SLOT_ARTIFACT1, domain::SLOT_ARTIFACT2]
             .into_iter()
             .find(|s| free(s))
             .map(str::to_string),
@@ -593,8 +594,8 @@ pub(crate) fn rune_already_inserted<'a>(
 /// проверяет то же правило (`socket.insert`, истина §7).
 pub(crate) fn inscribe_target_allowed(insert_type: &str, target_type: &str) -> bool {
     match insert_type {
-        "gem" => target_type == "armor",
-        "rune" => matches!(target_type, "weapon" | "staff"),
+        domain::ITEM_GEM => target_type == domain::ITEM_ARMOR,
+        domain::ITEM_RUNE => matches!(target_type, domain::ITEM_WEAPON | domain::ITEM_STAFF),
         _ => false,
     }
 }
@@ -606,7 +607,7 @@ pub(crate) fn inscribe_target_allowed(insert_type: &str, target_type: &str) -> b
 /// У старого сервера поля `accepts` нет → прежнее правило по типу
 /// предмета (`inscribe_target_allowed`), §11 — клиент фолбэчит.
 pub(crate) fn inscribe_target_possible(insert_type: &str, item: &ItemSnapshot) -> bool {
-    if !matches!(insert_type, "rune" | "gem") {
+    if !matches!(insert_type, domain::ITEM_RUNE | domain::ITEM_GEM) {
         return false;
     }
     item.sockets.iter().flatten().any(|socket| {

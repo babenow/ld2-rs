@@ -4,6 +4,7 @@
 //! (ФР-13), «ответить» последнему адресату whisper.
 
 use gpui::{div, prelude::*, px, rgb, Context, Div};
+use ld2_core::domain;
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::{parse_chat_input, Act, ChatDraft, CHAT_CHANNELS};
 use ld2_protocol::cmd::{ChatDelete, ChatSend};
@@ -49,7 +50,7 @@ impl Root {
 
         // M14/F19: system-канал — ввод только для админ/модераторов
         // (сервер и так режет E_PERMISSION, здесь — UX без обмана).
-        if active == "system" && !self.store.can_moderate() {
+        if active == domain::CHANNEL_SYSTEM && !self.store.can_moderate() {
             panel = panel.child(
                 div()
                     .text_size(px(12.0))
@@ -75,8 +76,8 @@ impl Root {
             .iter()
             .map(|channel| {
                 let count = self.store.chat.get(*channel).map(|h| h.len()).unwrap_or(0);
-                let locked = (*channel == "party" && self.store.party.is_none())
-                    || (*channel == "guild" && self.store.guild.is_none());
+                let locked = (*channel == domain::CHANNEL_PARTY && self.store.party.is_none())
+                    || (*channel == domain::CHANNEL_GUILD && self.store.guild.is_none());
                 let lock = if locked { " 🔒" } else { "" };
                 Choice::new(
                     *channel,
@@ -92,12 +93,12 @@ impl Root {
                     let value = value.to_string();
                     this.update(acx, |root, cx| {
                         let locked = match value.as_str() {
-                            "party" => root.store.party.is_none(),
-                            "guild" => root.store.guild.is_none(),
+                            domain::CHANNEL_PARTY => root.store.party.is_none(),
+                            domain::CHANNEL_GUILD => root.store.guild.is_none(),
                             _ => false,
                         };
                         if locked {
-                            root.store.notice = Some(if value == "party" {
+                            root.store.notice = Some(if value == domain::CHANNEL_PARTY {
                                 t(root.lang, Key::ChNeedParty).to_string()
                             } else {
                                 t(root.lang, Key::ChNeedGuild).to_string()
@@ -141,7 +142,7 @@ impl Root {
                     .collect()
             })
             .unwrap_or_default();
-        let dark = pal.bg == palette("dark").bg;
+        let dark = pal.bg == palette(domain::THEME_DARK).bg;
         let color = channel_color(active, dark);
         // M11.4: stick-to-bottom — новая строка доскроливается вниз
         // (ScrollHandle + ScrollArea; egui-паритет ФР-13).
@@ -327,11 +328,11 @@ impl Root {
         let channel = self.chat_channel.clone();
         // Заказчик 2026-11-20: отправка в канал группы/гильдии — только
         // при membership (сервер и так отклонит; здесь — UX без обмана).
-        if channel == "party" && self.store.party.is_none() {
+        if channel == domain::CHANNEL_PARTY && self.store.party.is_none() {
             self.store.notice = Some(t(self.lang, Key::ChNeedParty).to_string());
             return;
         }
-        if channel == "guild" && self.store.guild.is_none() {
+        if channel == domain::CHANNEL_GUILD && self.store.guild.is_none() {
             self.store.notice = Some(t(self.lang, Key::ChNeedGuild).to_string());
             return;
         }
@@ -416,11 +417,11 @@ impl Root {
 /// Локализованное название канала (вкладки).
 fn channel_key(channel: &str) -> Key {
     match channel {
-        "system" => Key::ChSystem,
-        "global" => Key::ChGlobal,
-        "party" => Key::ChParty,
-        "guild" => Key::ChGuild,
-        "whisper" => Key::ChWhisper,
+        domain::CHANNEL_SYSTEM => Key::ChSystem,
+        domain::CHANNEL_GLOBAL => Key::ChGlobal,
+        domain::CHANNEL_PARTY => Key::ChParty,
+        domain::CHANNEL_GUILD => Key::ChGuild,
+        domain::CHANNEL_WHISPER => Key::ChWhisper,
         _ => Key::ChLocation,
     }
 }
@@ -429,17 +430,17 @@ fn channel_key(channel: &str) -> Key {
 fn channel_color(channel: &str, dark: bool) -> u32 {
     if !dark {
         return match channel {
-            "system" => 0x5a_5e_66,
-            "location" => 0x4a_4e_58,
+            domain::CHANNEL_SYSTEM => 0x5a_5e_66,
+            domain::CHANNEL_LOCATION => 0x4a_4e_58,
             _ => channel_color(channel, true),
         };
     }
     match channel {
-        "system" => 0x7f_84_8e,
-        "global" => 0x61_af_ef,
-        "party" => 0x98_c3_79,
-        "guild" => 0xc6_78_dd,
-        "whisper" => 0xe0_6c_75,
+        domain::CHANNEL_SYSTEM => 0x7f_84_8e,
+        domain::CHANNEL_GLOBAL => 0x61_af_ef,
+        domain::CHANNEL_PARTY => 0x98_c3_79,
+        domain::CHANNEL_GUILD => 0xc6_78_dd,
+        domain::CHANNEL_WHISPER => 0xe0_6c_75,
         _ => 0xab_b2_bf, // location
     }
 }
