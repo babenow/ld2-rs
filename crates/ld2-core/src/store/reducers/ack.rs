@@ -111,7 +111,14 @@ impl AppStore {
             // Игровые диалоги (M20, заготовка) — ошибки тостом.
             Act::DialogChoice | Act::DialogSubmit => self.notice = Some(msg),
             // Добыча (M20/F20b): отказы — в мир (как Examine/Move).
-            Act::Gather => self.world_error = Some(msg),
+            Act::Gather => {
+                // M39: гасим бар только своего действия — отказ сбора
+                // не должен убирать прогресс разделки и наоборот.
+                if self.harvest.as_ref().is_some_and(|h| h.action == "gather") {
+                    self.harvest = None;
+                }
+                self.world_error = Some(msg);
+            }
             // Профессии (M21): ранг/сброс — тосты (у тренера/граница).
             Act::CraftRankUp | Act::ProfessionReset => self.notice = Some(msg),
             // Админ-панель (M24): отказы — тост (каталог/ask/god/цель).
@@ -128,7 +135,9 @@ impl AppStore {
             }
             // Снятие шкур (M22): отказ до старта — чистим бар.
             Act::Harvest => {
-                self.harvest = None;
+                if self.harvest.as_ref().is_some_and(|h| h.action != "gather") {
+                    self.harvest = None;
+                }
                 self.world_error = Some(msg);
             }
         }

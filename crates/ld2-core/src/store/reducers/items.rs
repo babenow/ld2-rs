@@ -93,15 +93,27 @@ impl AppStore {
                 // подбор (extra.picked) строку даёт despawn — без дубля.
                 if added.item.extra.get("picked").and_then(|v| v.as_bool()) != Some(true) {
                     let qty = added.item.qty.unwrap_or(1).max(1);
-                    let upg = if added.item.upgrade > 0 {
-                        format!(" +{}", added.item.upgrade)
+                    // M39: отдельная строка только для камня из жилы
+                    // (во время сбора); прочие источники raw_* — обычная.
+                    let gathering = self.harvest.as_ref().is_some_and(|h| h.action == "gather");
+                    if gathering && added.item.item_type.starts_with("raw_") {
+                        // M39: найденный в жиле камень — отдельная строка
+                        // (руда — обычная «Вы получили…»).
+                        self.push_log(
+                            LogKind::Loot,
+                            format!("Найден самоцвет: {}", added.item.name),
+                        );
                     } else {
-                        String::new()
-                    };
-                    self.push_log(
-                        LogKind::Loot,
-                        format!("Вы получили {qty} {}{upg}", added.item.name),
-                    );
+                        let upg = if added.item.upgrade > 0 {
+                            format!(" +{}", added.item.upgrade)
+                        } else {
+                            String::new()
+                        };
+                        self.push_log(
+                            LogKind::Loot,
+                            format!("Вы получили {qty} {}{upg}", added.item.name),
+                        );
+                    }
                 }
                 vec![]
             }
@@ -206,6 +218,8 @@ impl AppStore {
                 let Ok(update) = serde_json::from_value::<ItemPatch>(payload) else {
                     return vec![];
                 };
+                let gathering = self.harvest.as_ref().is_some_and(|h| h.action == "gather");
+                let mut gem_stack: Option<String> = None;
                 if let Some(snap) = self.snapshot.as_mut() {
                     if let Some(item) = snap.char.inventory.iter_mut().find(|i| i.uid == update.uid)
                     {
@@ -249,8 +263,14 @@ impl AppStore {
                             }
                         } else if let Some(qty) = update.patch.get("qty").and_then(|v| v.as_i64()) {
                             item.qty = Some(qty);
+                            if gathering && item.item_type.starts_with("raw_") {
+                                gem_stack = Some(item.name.clone());
+                            }
                         }
                     }
+                }
+                if let Some(name) = gem_stack {
+                    self.push_log(LogKind::Loot, format!("Найден самоцвет: {name}"));
                 }
                 vec![]
             }

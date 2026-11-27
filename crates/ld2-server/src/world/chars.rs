@@ -316,6 +316,7 @@ impl World {
         self.ability_cd.retain(|(c, _), _| c != char_id);
         self.char_bleed.remove(char_id);
         self.char_effects.remove(char_id);
+        self.gather_jobs.remove(char_id);
         self.char_owner.remove(char_id);
         true
     }

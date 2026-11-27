@@ -31,12 +31,11 @@ use ely::navigation::Tabs;
 use ely::primitives::{Divider, IconName, Tooltip, TooltipTrigger};
 
 use super::quests::goals_summary;
-use super::sheet::rarity_label;
-use super::social::show_party;
 use super::{
     act_btn, act_btn_hover, btn, hex_to_u32, scrollable_tab, status_badge, Click, MapPan,
     PopupKind, Root,
 };
+use super::{sheet::rarity_label, social::show_party};
 
 const POWER_STRIKE_RANK: u32 = 5;
 const MS_PER_SECOND: i64 = 1000;
@@ -44,6 +43,7 @@ const ROUND_UP_MS: i64 = 999;
 
 mod dialog;
 mod entities;
+mod gather;
 mod hotbar;
 mod map;
 mod shop;

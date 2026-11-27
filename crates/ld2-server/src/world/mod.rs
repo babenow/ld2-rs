@@ -145,6 +145,8 @@ pub struct World {
     /// Снятие шкур: активные разделки (ключ — персонаж, одна за раз;
     /// сервер-джоб на5 с).
     harvest_jobs: HashMap<String, HarvestJob>,
+    /// M39: активный сбор ресурса (ключ — персонаж, один за раз).
+    gather_jobs: HashMap<String, GatherJob>,
     /// M25: дебаффы контроля персонажей (эффекты приёмов босса):
     /// char_id → (kind → until, epoch мс).
     char_effects: HashMap<String, HashMap<String, i64>>,
