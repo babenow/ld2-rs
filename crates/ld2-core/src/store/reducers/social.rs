@@ -1,5 +1,7 @@
 //! Редьюсеры соцсвязей — чат, пати, торговля, гильдия (RF4g).
 
+use ld2_protocol::names;
+
 use super::super::*;
 
 impl AppStore {
@@ -10,10 +12,10 @@ impl AppStore {
         payload: serde_json::Value,
     ) -> Vec<Effect> {
         match msg_type {
-            m if m.starts_with("evt/chat/") => self.reduce_chat(m, payload),
-            "evt/party/updated" => self.reduce_party(msg_type, payload),
-            m if m.starts_with("evt/trade/") => self.reduce_trade(m, payload),
-            m if m.starts_with("evt/guild/") => self.reduce_guild(m, payload),
+            m if m.starts_with(names::EVT_CHAT_PREFIX) => self.reduce_chat(m, payload),
+            names::EVT_PARTY_UPDATED => self.reduce_party(msg_type, payload),
+            m if m.starts_with(names::EVT_TRADE_PREFIX) => self.reduce_trade(m, payload),
+            m if m.starts_with(names::EVT_GUILD_PREFIX) => self.reduce_guild(m, payload),
             _ => vec![],
         }
     }
@@ -21,7 +23,7 @@ impl AppStore {
     /// Чат: сообщения и удаление.
     fn reduce_chat(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/chat/message" => {
+            names::EVT_CHAT_MESSAGE => {
                 let Ok(msg) = serde_json::from_value::<ChatMessage>(payload) else {
                     return vec![];
                 };
@@ -60,7 +62,7 @@ impl AppStore {
                 self.push_log(kind, format!("[{}] {}: {}", label, msg.name, msg.text));
                 effects
             }
-            "evt/chat/deleted" => {
+            names::EVT_CHAT_DELETED => {
                 // M14/F19: модератор удалил сообщение — убираем из всех
                 // каналов (id один на историю сервера).
                 let Ok(del) = serde_json::from_value::<ld2_protocol::evt::ChatDeleted>(payload)
@@ -79,7 +81,7 @@ impl AppStore {
     /// Пати: обновление состава.
     fn reduce_party(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/party/updated" => {
+            names::EVT_PARTY_UPDATED => {
                 #[derive(serde::Deserialize)]
                 struct WithParty {
                     #[serde(default)]
@@ -112,7 +114,7 @@ impl AppStore {
     /// Торговля: состояние сделки и закрытие.
     fn reduce_trade(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/trade/state" => {
+            names::EVT_TRADE_STATE => {
                 let Ok(trade) = serde_json::from_value::<ld2_protocol::evt::TradeState>(payload)
                 else {
                     return vec![];
@@ -126,7 +128,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/trade/closed" => {
+            names::EVT_TRADE_CLOSED => {
                 #[derive(serde::Deserialize)]
                 struct Closed {
                     offer_id: String,
@@ -155,7 +157,7 @@ impl AppStore {
     /// Гильдия: состав и журнал.
     fn reduce_guild(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/guild/updated" => {
+            names::EVT_GUILD_UPDATED => {
                 #[derive(serde::Deserialize)]
                 struct WithGuild {
                     #[serde(default)]
@@ -177,7 +179,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/guild/log" => {
+            names::EVT_GUILD_LOG => {
                 #[derive(serde::Deserialize)]
                 struct WithEntry {
                     entry: GuildLogEntry,

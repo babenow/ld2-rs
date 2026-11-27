@@ -4,6 +4,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{TradeAddItem, TradeCancel, TradeOpen, TradePropose, TradeSetGold};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::ErrorCode;
@@ -62,8 +64,8 @@ impl Session {
         let (a, b) = (trade.a.clone(), trade.b.clone());
         let payload_a = self.trade_state_payload(&a, trade).await;
         let payload_b = self.trade_state_payload(&b, trade).await;
-        let text_a = event_payload_text("evt/trade/state", &payload_a);
-        let text_b = event_payload_text("evt/trade/state", &payload_b);
+        let text_a = event_payload_text(names::EVT_TRADE_STATE, &payload_a);
+        let text_b = event_payload_text(names::EVT_TRADE_STATE, &payload_b);
         let world = self.state.world.lock().expect("мир");
         if let Some(t) = text_a {
             world.send_to_char(&a, t);
@@ -85,7 +87,7 @@ impl Session {
         if let Some(result) = result {
             payload["result"] = result;
         }
-        let Some(text) = event_payload_text("evt/trade/closed", &payload) else {
+        let Some(text) = event_payload_text(names::EVT_TRADE_CLOSED, &payload) else {
             return;
         };
         let world = self.state.world.lock().expect("мир");

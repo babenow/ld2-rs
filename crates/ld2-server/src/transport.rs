@@ -1,6 +1,8 @@
 //! WS-транспорт §1: апгрейд с subprotocol `ld2.v1`, лимит фрейма 64 KiB,
 //! бинарные кадры = ошибка протокола; цикл соединения → [`Session`].
 
+use ld2_protocol::names;
+
 use std::net::SocketAddr;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -55,7 +57,7 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
                             // §1: >64 KiB → видимая ошибка и закрытие (паритет с моком).
                             warn!("ws {peer}: фрейм {} KiB > 64 KiB", text.len() / 1024);
                             let notice = Envelope::new(
-                                "evt/error",
+                                names::EVT_ERROR,
                                 Some(json!({
                                     "code": "E_TOO_LARGE",
                                     "message": "фрейм больше 64 KiB",

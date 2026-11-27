@@ -374,15 +374,32 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
 
     // Первый удар способностью (M32: урон листа ×1.8 − броня моба).
-    let seq = c
-        .send(
-            "cmd/skill.use",
-            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
-        )
-        .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "первый удар");
-    c.wait_event("evt/combat/cooldown").await;
-    let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
+    // Бросок попадания случаен, а точная последовательность ГПСЧ зависит
+    // от тиков мобов — при промахе повторяем после кулдауна (до 3 раз).
+    let mut hit = None;
+    for attempt in 0..3 {
+        let seq = c
+            .send(
+                "cmd/skill.use",
+                json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+            )
+            .await;
+        assert_eq!(c.ack(seq).await["result"], "ok", "удар #{attempt}");
+        c.wait_event("evt/combat/cooldown").await;
+        let ev = c
+            .wait(|v| {
+                v["type"] == "evt/combat/hit"
+                    && v["payload"]["kind"] == "skill"
+                    && v["payload"]["target"] == "m_3"
+            })
+            .await;
+        if ev["payload"]["miss"] == false {
+            hit = Some(ev);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    }
+    let hit = hit.expect("способность попала (3 попытки)");
     let amount = hit["payload"]["amount"].as_i64().expect("amount");
     assert!(amount > 0, "удар нанёс урон: {hit}");
     // M17/F30f: в логе имя способности (не id) и жирный урон.

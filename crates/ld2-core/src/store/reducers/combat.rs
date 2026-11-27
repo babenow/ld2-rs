@@ -2,6 +2,8 @@
 //! результат сбора и аффликты. Вынесено из `apply_event` (§7), тела
 //! веток перенесены как есть.
 
+use ld2_protocol::names;
+
 use super::super::*;
 
 impl AppStore {
@@ -12,11 +14,11 @@ impl AppStore {
         payload: serde_json::Value,
     ) -> Vec<Effect> {
         match msg_type {
-            "evt/combat/hit" | "evt/combat/cooldown" => {
+            names::EVT_COMBAT_HIT | names::EVT_COMBAT_COOLDOWN => {
                 self.reduce_combat_events(msg_type, payload)
             }
-            m if m.starts_with("evt/mob/") => self.reduce_mob(m, payload),
-            "evt/magic/cast" | "evt/harvest/result" | "evt/char/afflict" => {
+            m if m.starts_with(names::EVT_MOB_PREFIX) => self.reduce_mob(m, payload),
+            names::EVT_MAGIC_CAST | names::EVT_HARVEST_RESULT | names::EVT_CHAR_AFFLICT => {
                 self.reduce_effects(msg_type, payload)
             }
             _ => vec![],
@@ -25,7 +27,7 @@ impl AppStore {
 
     fn reduce_combat_events(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/combat/cooldown" => {
+            names::EVT_COMBAT_COOLDOWN => {
                 // ФР-05: блокировка действия до until_epoch.
                 let Ok(cd) = serde_json::from_value::<CombatCooldown>(payload) else {
                     return vec![];
@@ -44,7 +46,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/combat/hit" => {
+            names::EVT_COMBAT_HIT => {
                 let Ok(hit) = serde_json::from_value::<CombatHit>(payload) else {
                     return vec![];
                 };
@@ -68,7 +70,7 @@ impl AppStore {
 
     fn reduce_mob(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/mob/attack" => {
+            names::EVT_MOB_ATTACK => {
                 let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobAttack>(payload) else {
                     return vec![];
                 };
@@ -85,7 +87,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/mob/phase" => {
+            names::EVT_MOB_PHASE => {
                 let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobPhase>(payload) else {
                     return vec![];
                 };
@@ -113,7 +115,7 @@ impl AppStore {
                 );
                 vec![]
             }
-            "evt/mob/cast" => {
+            names::EVT_MOB_CAST => {
                 let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobCast>(payload) else {
                     return vec![];
                 };
@@ -137,7 +139,7 @@ impl AppStore {
                 );
                 vec![]
             }
-            "evt/mob/skill" => {
+            names::EVT_MOB_SKILL => {
                 let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobSkill>(payload) else {
                     return vec![];
                 };
@@ -165,7 +167,7 @@ impl AppStore {
 
     fn reduce_effects(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/magic/cast" => {
+            names::EVT_MAGIC_CAST => {
                 let Ok(cast) = serde_json::from_value::<MagicCast>(payload) else {
                     return vec![];
                 };
@@ -188,7 +190,7 @@ impl AppStore {
                 self.push_log(LogKind::Magic, text);
                 vec![]
             }
-            "evt/harvest/result" => {
+            names::EVT_HARVEST_RESULT => {
                 // Снятие шкур (M22): чистим бар, пишем в журнал.
                 let Ok(result) =
                     serde_json::from_value::<ld2_protocol::evt::HarvestResult>(payload)
@@ -221,7 +223,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/char/afflict" => {
+            names::EVT_CHAR_AFFLICT => {
                 let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::CharAfflict>(payload)
                 else {
                     return vec![];

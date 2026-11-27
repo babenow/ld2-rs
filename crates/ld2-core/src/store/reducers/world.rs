@@ -2,6 +2,8 @@
 //! смерть и повышение уровня. Вынесено из `apply_event` (§7), тела веток
 //! перенесены как есть.
 
+use ld2_protocol::names;
+
 use super::super::*;
 
 impl AppStore {
@@ -12,9 +14,9 @@ impl AppStore {
         payload: serde_json::Value,
     ) -> Vec<Effect> {
         match msg_type {
-            "evt/location/changed" => self.reduce_location(payload),
-            m if m.starts_with("evt/entity/") => self.reduce_entity(m, payload),
-            m if m.starts_with("evt/char/") => self.reduce_char(m, payload),
+            names::EVT_LOCATION_CHANGED => self.reduce_location(payload),
+            m if m.starts_with(names::EVT_ENTITY_PREFIX) => self.reduce_entity(m, payload),
+            m if m.starts_with(names::EVT_CHAR_PREFIX) => self.reduce_char(m, payload),
             _ => vec![],
         }
     }
@@ -56,7 +58,7 @@ impl AppStore {
 
     fn reduce_entity(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/entity/spawn" => {
+            names::EVT_ENTITY_SPAWN => {
                 let Ok(spawn) = serde_json::from_value::<EntitySpawn>(payload) else {
                     return vec![];
                 };
@@ -83,7 +85,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/entity/move" => {
+            names::EVT_ENTITY_MOVE => {
                 let Ok(moved) = serde_json::from_value::<EntityMove>(payload) else {
                     return vec![];
                 };
@@ -103,7 +105,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/entity/hp" => {
+            names::EVT_ENTITY_HP => {
                 let Ok(update) = serde_json::from_value::<EntityHp>(payload) else {
                     return vec![];
                 };
@@ -119,7 +121,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/entity/despawn" => {
+            names::EVT_ENTITY_DESPAWN => {
                 let Ok(gone) = serde_json::from_value::<EntityDespawn>(payload) else {
                     return vec![];
                 };
@@ -200,7 +202,7 @@ impl AppStore {
 
     fn reduce_char(&mut self, msg_type: &str, payload: serde_json::Value) -> Vec<Effect> {
         match msg_type {
-            "evt/char/level_up" => {
+            names::EVT_CHAR_LEVEL_UP => {
                 // M22: новый уровень — журнал: себе «Вы получили…»,
                 // остальным в локации «{имя} получил(а)…».
                 let Ok(up) = serde_json::from_value::<ld2_protocol::evt::CharLevelUp>(payload)
@@ -226,7 +228,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/char/xp" => {
+            names::EVT_CHAR_XP => {
                 let Ok(xp) = serde_json::from_value::<CharXp>(payload) else {
                     return vec![];
                 };
@@ -267,7 +269,7 @@ impl AppStore {
                 self.push_log(LogKind::Xp, text);
                 vec![]
             }
-            "evt/char/stats" => {
+            names::EVT_CHAR_STATS => {
                 // Патч ресурсов/атрибутов (respawn, зелья) — ФР-06/ФР-07.
                 let Ok(stats) = serde_json::from_value::<CharStats>(payload) else {
                     return vec![];
@@ -293,7 +295,7 @@ impl AppStore {
                 }
                 vec![]
             }
-            "evt/char/death" => {
+            names::EVT_CHAR_DEATH => {
                 // ФР-06: сводка утраченного — модалка, закрывается подтверждением.
                 // M18: в журнал НЕ выводим — утраченное видно в самой
                 // модалке (полный список, со скроллом).
@@ -304,7 +306,7 @@ impl AppStore {
                 self.target = None;
                 vec![Effect::Notify(NotifyKind::Death)]
             }
-            "evt/char/buffs" => {
+            names::EVT_CHAR_BUFFS => {
                 // M18/F58d (ADR-012 §6): полная замена списка баффов рун.
                 let Ok(update) = serde_json::from_value::<ld2_protocol::evt::CharBuffs>(payload)
                 else {

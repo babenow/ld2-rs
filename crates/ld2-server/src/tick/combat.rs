@@ -7,6 +7,8 @@
 //! боя, смерти, награды), `jobs` (работы, DoT, баффы), `expire`
 //! (истечение сущностей), `plan` (структуры плана и события).
 
+use ld2_protocol::names;
+
 use ld2_protocol::evt::{
     CharStats, CombatEnd, CombatHit, CombatKind, CorpseCreated, EntityDespawn, EntityHp,
 };
@@ -183,7 +185,7 @@ fn char_attack(
         push_event(
             plan,
             &char_id,
-            "evt/combat/end",
+            names::EVT_COMBAT_END,
             &CombatEnd {
                 reason: "цель недоступна".into(),
             },
@@ -215,7 +217,7 @@ fn char_attack(
             push_event(
                 plan,
                 &char_id,
-                "evt/combat/hit",
+                names::EVT_COMBAT_HIT,
                 &mk(format!("Вы промахиваетесь по {mob_name}")),
             );
             for addr in world.chars_in_location(&loc) {
@@ -225,7 +227,7 @@ fn char_attack(
                 push_event(
                     plan,
                     &addr,
-                    "evt/combat/hit",
+                    names::EVT_COMBAT_HIT,
                     &mk(format!("{source_name} промахивается по {mob_name}")),
                 );
             }
@@ -238,7 +240,7 @@ fn char_attack(
         push_event(
             plan,
             &char_id,
-            "evt/combat/end",
+            names::EVT_COMBAT_END,
             &CombatEnd {
                 reason: "цель недоступна".into(),
             },
@@ -271,7 +273,7 @@ fn char_attack(
     push_event(
         plan,
         &char_id,
-        "evt/combat/hit",
+        names::EVT_COMBAT_HIT,
         &mk_hit(format!(
             "{}{parry_note}",
             crate::combat_log::melee_hit_text(&source_name, &mob_name, hits_as, damage, true)
@@ -284,7 +286,7 @@ fn char_attack(
         push_event(
             plan,
             &addr,
-            "evt/combat/hit",
+            names::EVT_COMBAT_HIT,
             &mk_hit(format!(
                 "{}{parry_note}",
                 crate::combat_log::melee_hit_text(&source_name, &mob_name, hits_as, damage, false)
@@ -294,7 +296,7 @@ fn char_attack(
     push_event(
         plan,
         &char_id,
-        "evt/entity/hp",
+        names::EVT_ENTITY_HP,
         &EntityHp {
             entity_id: target.clone(),
             hp: Hp {
@@ -402,7 +404,7 @@ fn rune_procs(
             push_event(
                 plan,
                 &char_id,
-                "evt/combat/hit",
+                names::EVT_COMBAT_HIT,
                 &rune_hit(crate::combat_log::spell_hit_text(
                     &rune.spell,
                     &source_name,
@@ -418,7 +420,7 @@ fn rune_procs(
                 push_event(
                     plan,
                     &addr,
-                    "evt/combat/hit",
+                    names::EVT_COMBAT_HIT,
                     &rune_hit(crate::combat_log::spell_hit_text(
                         &rune.spell,
                         &source_name,
@@ -431,7 +433,7 @@ fn rune_procs(
             push_event(
                 plan,
                 &char_id,
-                "evt/entity/hp",
+                names::EVT_ENTITY_HP,
                 &EntityHp {
                     entity_id: target.clone(),
                     hp: Hp {
@@ -482,12 +484,12 @@ fn plan_bleed_ticks(plan: &mut Plan, world: &mut World, now_ms: i64, skills_cfg:
             extra: Default::default(),
         };
         for addr in world.chars_in_location(&loc) {
-            push_event(plan, &addr, "evt/combat/hit", &dot_hit);
+            push_event(plan, &addr, names::EVT_COMBAT_HIT, &dot_hit);
         }
         push_event(
             plan,
             &src.clone().unwrap_or_default(),
-            "evt/entity/hp",
+            names::EVT_ENTITY_HP,
             &EntityHp {
                 entity_id: mob_id.clone(),
                 hp: Hp {
@@ -534,12 +536,12 @@ fn plan_burn_ticks(plan: &mut Plan, world: &mut World, now_ms: i64, skills_cfg: 
             extra: Default::default(),
         };
         for addr in world.chars_in_location(&loc) {
-            push_event(plan, &addr, "evt/combat/hit", &dot_hit);
+            push_event(plan, &addr, names::EVT_COMBAT_HIT, &dot_hit);
         }
         push_event(
             plan,
             &src.clone().unwrap_or_default(),
-            "evt/entity/hp",
+            names::EVT_ENTITY_HP,
             &EntityHp {
                 entity_id: mob_id.clone(),
                 hp: Hp {
@@ -598,7 +600,7 @@ fn plan_mob_attacks(
                     push_event(
                         plan,
                         &addr,
-                        "evt/mob/phase",
+                        names::EVT_MOB_PHASE,
                         &ld2_protocol::evt::MobPhase {
                             entity_id: mob_id.clone(),
                             phase: state.phase,
@@ -643,7 +645,7 @@ fn plan_mob_attacks(
                 push_event(
                     plan,
                     &victim,
-                    "evt/combat/hit",
+                    names::EVT_COMBAT_HIT,
                     &CombatHit {
                         source: mob_id.clone(),
                         source_name: mob_name.clone(),
@@ -662,7 +664,7 @@ fn plan_mob_attacks(
                     push_event(
                         plan,
                         &addr,
-                        "evt/mob/attack",
+                        names::EVT_MOB_ATTACK,
                         &ld2_protocol::evt::MobAttack {
                             entity_id: mob_id.clone(),
                             next_attack_at: now_ms + interval_ms,
@@ -685,7 +687,7 @@ fn plan_mob_attacks(
         push_event(
             plan,
             &victim,
-            "evt/combat/hit",
+            names::EVT_COMBAT_HIT,
             &CombatHit {
                 source: mob_id.clone(),
                 source_name: mob_name.clone(),
@@ -704,7 +706,7 @@ fn plan_mob_attacks(
             push_event(
                 plan,
                 &addr,
-                "evt/mob/attack",
+                names::EVT_MOB_ATTACK,
                 &ld2_protocol::evt::MobAttack {
                     entity_id: mob_id.clone(),
                     next_attack_at: now_ms + interval_ms,
@@ -744,7 +746,7 @@ pub(crate) fn mob_kill_effects(
         push_text(
             plan,
             &addr,
-            "evt/entity/despawn",
+            names::EVT_ENTITY_DESPAWN,
             &EntityDespawn {
                 entity_id: target.to_string(),
                 location_id: loc.to_string(),
@@ -760,7 +762,7 @@ pub(crate) fn mob_kill_effects(
                 push_text(
                     plan,
                     &addr,
-                    "evt/corpse/created",
+                    names::EVT_CORPSE_CREATED,
                     &CorpseCreated {
                         entity: corpse.entity(),
                         loot_count,
@@ -773,7 +775,7 @@ pub(crate) fn mob_kill_effects(
     push_text(
         plan,
         attacker,
-        "evt/combat/end",
+        names::EVT_COMBAT_END,
         &CombatEnd {
             reason: "цель уничтожена".into(),
         },
@@ -817,7 +819,7 @@ pub(super) async fn apply_rage_dealt(
     let mut patch = serde_json::Map::new();
     patch.insert("mp".into(), json!({ "cur": new, "max": max }));
     let text = crate::session::event_text(
-        "evt/char/stats",
+        names::EVT_CHAR_STATS,
         None,
         serde_json::to_value(CharStats { patch }).unwrap_or_default(),
     );
@@ -846,7 +848,7 @@ pub(super) async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(Str
                 world.ruin_skin(&job.corpse_id);
             }
             event_text(
-                "evt/harvest/result",
+                names::EVT_HARVEST_RESULT,
                 &serde_json::to_value(ld2_protocol::evt::HarvestResult {
                     entity_id: job.corpse_id,
                     name: job.name,
@@ -912,7 +914,7 @@ pub(super) async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(Str
         }
     }
     let text = crate::session::event_text(
-        "evt/char/stats",
+        names::EVT_CHAR_STATS,
         None,
         serde_json::to_value(CharStats { patch }).unwrap_or_default(),
     );
@@ -1023,7 +1025,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
                 level: level_after,
             };
             let text = crate::session::event_text(
-                "evt/char/level_up",
+                names::EVT_CHAR_LEVEL_UP,
                 None,
                 serde_json::to_value(payload).unwrap_or_default(),
             );
@@ -1063,7 +1065,7 @@ pub(crate) async fn grant_kill_xp(state: &SharedState, work: &KillXp) -> Option<
     // evt/char/xp — навыку; pool_left не трогаем (вклад идёт напрямую).
     let need = crate::systems::xp_to_next(new_rank.max(0) as u32, &state.config.skills);
     Some(event_text(
-        "evt/char/xp",
+        names::EVT_CHAR_XP,
         &ld2_protocol::evt::CharXp {
             skill_id,
             amount: gain,
@@ -1099,7 +1101,7 @@ fn apply_boss_skill(
                 push_event(
                     plan,
                     &addr,
-                    "evt/mob/cast",
+                    names::EVT_MOB_CAST,
                     &ld2_protocol::evt::MobCast {
                         entity_id: mob_id.clone(),
                         source_name: boss_name.clone(),
@@ -1116,7 +1118,7 @@ fn apply_boss_skill(
                 push_event(
                     plan,
                     &addr,
-                    "evt/mob/skill",
+                    names::EVT_MOB_SKILL,
                     &ld2_protocol::evt::MobSkill {
                         entity_id: mob_id.clone(),
                         source_name: boss_name.clone(),
@@ -1147,7 +1149,7 @@ fn apply_boss_skill(
                         push_event(
                             plan,
                             &addr,
-                            "evt/char/afflict",
+                            names::EVT_CHAR_AFFLICT,
                             &ld2_protocol::evt::CharAfflict {
                                 kind: effect.kind.clone(),
                                 title: crate::world::effect_title(&effect.kind),
@@ -1169,7 +1171,7 @@ fn apply_boss_skill(
                         text: (i == 0).then(|| format!("{boss_name} призывает волков")),
                     };
                     for addr in &addrs {
-                        push_event(plan, addr, "evt/entity/spawn", &spawn);
+                        push_event(plan, addr, names::EVT_ENTITY_SPAWN, &spawn);
                     }
                 }
             }

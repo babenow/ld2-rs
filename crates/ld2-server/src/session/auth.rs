@@ -5,6 +5,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{AuthLogin, AuthRegister, AuthResume};
 use ld2_protocol::envelope::{Ack, Envelope};
 use ld2_protocol::ErrorCode;
@@ -264,8 +266,11 @@ impl Session {
         };
         if let Some((old_owner, old_tx)) = previous {
             if old_owner != owner {
-                let text =
-                    crate::session::event_text("evt/session/replaced", None, serde_json::json!({}));
+                let text = crate::session::event_text(
+                    names::EVT_SESSION_REPLACED,
+                    None,
+                    serde_json::json!({}),
+                );
                 if !text.is_empty() {
                     let _ = old_tx.try_send(text);
                 }
@@ -318,7 +323,7 @@ impl Session {
                 }),
             ),
             out_event(
-                "evt/session.start",
+                names::EVT_SESSION_START,
                 None,
                 serde_json::to_value(&config).unwrap_or_default(),
             ),

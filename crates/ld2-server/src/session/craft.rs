@@ -4,6 +4,8 @@
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
 
+use ld2_protocol::names;
+
 use ld2_protocol::cmd::{CraftLearn, CraftRankUp, CraftRecipes, CraftReset, CraftStart};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::CraftProfession;
@@ -201,7 +203,7 @@ impl Session {
             &serde_json::json!({ "profession": snapshot }),
         )];
         outs.push(out_event(
-            "evt/craft/profession",
+            names::EVT_CRAFT_PROFESSION,
             None,
             serde_json::to_value(CraftProfession {
                 profession: snapshot,
@@ -345,7 +347,7 @@ impl Session {
             &serde_json::json!({ "profession": snapshot }),
         )];
         outs.push(out_event(
-            "evt/craft/profession",
+            names::EVT_CRAFT_PROFESSION,
             None,
             serde_json::to_value(CraftProfession {
                 profession: snapshot,

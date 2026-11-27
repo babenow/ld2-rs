@@ -75,15 +75,33 @@ fn dispatch_body() -> &'static str {
     panic!("незакрытое тело dispatch");
 }
 
-/// Уникальные литералы `"cmd/..."` в теле `dispatch`.
-fn dispatch_commands() -> Vec<&'static str> {
+/// Имя константы `ld2_protocol::names` для wire-команды (та же схема,
+/// что в `names.rs`: `CMD_` + хвост после `/`, не-алфанумерика → `_`).
+fn const_name(wire: &str) -> String {
+    let tail = wire.split_once('/').map(|(_, tail)| tail).unwrap_or(wire);
+    let mut out = String::from("CMD_");
+    for ch in tail.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_uppercase());
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
+
+/// Уникальные `names::CMD_*` в теле `dispatch` — после M38 wire-строки
+/// заменены константами протокола.
+fn dispatch_commands() -> Vec<String> {
     let body = dispatch_body();
     let mut out = Vec::new();
     let mut rest = body;
-    while let Some(pos) = rest.find("\"cmd/") {
-        let tail = &rest[pos + 1..];
-        let end = tail.find('"').expect("закрывающая кавычка");
-        let name = &tail[..end];
+    while let Some(pos) = rest.find("names::CMD_") {
+        let tail = &rest[pos + "names::CMD_".len()..];
+        let end = tail
+            .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+            .unwrap_or(tail.len());
+        let name = format!("CMD_{}", &tail[..end]);
         if !out.contains(&name) {
             out.push(name);
         }
@@ -94,22 +112,26 @@ fn dispatch_commands() -> Vec<&'static str> {
 
 #[test]
 fn dispatch_covers_every_registered_command() {
-    let registered: Vec<&str> = ALL_COMMANDS.iter().map(|c| c.name).collect();
+    let registered: Vec<(String, String)> = ALL_COMMANDS
+        .iter()
+        .map(|c| (c.name.to_string(), const_name(c.name)))
+        .collect();
     let handled = dispatch_commands();
     assert!(
         !handled.is_empty(),
         "в dispatch не найдено ни одной команды"
     );
 
-    for name in &registered {
+    for (wire, name) in &registered {
         assert!(
             handled.contains(name),
-            "команда `{name}` есть в ALL_COMMANDS, но не в dispatch — уйдёт в catch-all"
+            "команда `{wire}` ({name}) есть в ALL_COMMANDS, но не в dispatch — уйдёт в catch-all"
         );
     }
+    let known: Vec<&String> = registered.iter().map(|(_, name)| name).collect();
     for name in &handled {
         assert!(
-            registered.contains(name),
+            known.contains(&name),
             "dispatch обрабатывает `{name}`, которой нет в ALL_COMMANDS/protocol.md §7"
         );
     }
