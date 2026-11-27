@@ -1,6 +1,8 @@
 //! M35: ПКМ-осмотр чужого персонажа — всплывающая карточка по клику
 //! (не по наведению): уровень, класс, экипировка и профессии.
 
+use ld2_core::domain;
+
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, MouseButton};
 
 use ld2_core::l10n::{t, Key};
@@ -42,9 +44,9 @@ impl Root {
     /// Название класса персонажа (warrior/archer/mage) из l10n.
     fn inspect_profile(&self, profile: Option<&str>) -> Option<String> {
         let key = match profile? {
-            "warrior" => Key::ProfileWarrior,
-            "archer" => Key::ProfileArcher,
-            "mage" => Key::ProfileMage,
+            domain::PROFILE_WARRIOR => Key::ProfileWarrior,
+            domain::PROFILE_ARCHER => Key::ProfileArcher,
+            domain::PROFILE_MAGE => Key::ProfileMage,
             _ => return None,
         };
         Some(t(self.lang, key).to_string())

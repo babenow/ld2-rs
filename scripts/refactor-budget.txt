@@ -5,14 +5,14 @@
 # Пересчёт: scripts/refactor-audit.sh --update
 
 # --- прод-лимиты (файлы > 600 строк и целевые модули) ---
-crates/ld2-client/src/root/admin.rs 724 167
-crates/ld2-client/src/root/backpack.rs 1074 150
+crates/ld2-client/src/root/admin.rs 726 167
+crates/ld2-client/src/root/backpack.rs 1106 150
 crates/ld2-client/src/root/game/dialog.rs 848 161
-crates/ld2-client/src/root/game/entities.rs 672 187
-crates/ld2-client/src/root/game.rs 743 150
-crates/ld2-client/src/root/settings.rs 780 183
+crates/ld2-client/src/root/game/entities.rs 692 187
+crates/ld2-client/src/root/game.rs 750 150
+crates/ld2-client/src/root/settings.rs 782 183
 crates/ld2-client/src/root/sheet/character.rs 770 150
-crates/ld2-client/src/root/sheet/equip.rs 647 181
+crates/ld2-client/src/root/sheet/equip.rs 659 183
 crates/ld2-client/src/root/social.rs 613 150
 crates/ld2-client/src/root.rs 905 176
 crates/ld2-client/src/text_input.rs 699 150

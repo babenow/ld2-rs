@@ -12,6 +12,8 @@
 //! лут перезапрашивается из `tick` (см. `Root::pump_pickup`).
 //! Колонки окна (лут, рюкзак, «Забрать») — `pickup/columns.rs`.
 
+use ld2_core::domain;
+
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, MouseButton, SharedString, Window};
 use ld2_core::l10n::{t, tf, Key};
 use ld2_core::store::{Act, Screen};
@@ -96,17 +98,19 @@ impl Root {
         let entity = &detail["entity"];
         let entity_id = entity["id"].as_str().unwrap_or_default().to_string();
         let harvest = entity["harvest"].as_object();
-        let learned = self
-            .store
-            .snapshot
-            .as_ref()
-            .is_some_and(|s| s.char.professions.iter().any(|p| p.id == "skinning"));
+        let learned = self.store.snapshot.as_ref().is_some_and(|s| {
+            s.char
+                .professions
+                .iter()
+                .any(|p| p.id == domain::PROFESSION_SKINNING)
+        });
         let flag = |h: &serde_json::Map<String, serde_json::Value>, key: &str| {
             h.get(key).and_then(|v| v.as_bool()) == Some(true)
         };
-        let skin_ready =
-            learned && harvest.is_some_and(|h| flag(h, "skin") && !flag(h, "skin_done"));
-        let gut_ready = learned && harvest.is_some_and(|h| flag(h, "gut") && !flag(h, "gut_done"));
+        let skin_ready = learned
+            && harvest.is_some_and(|h| flag(h, domain::ACTION_SKIN) && !flag(h, "skin_done"));
+        let gut_ready =
+            learned && harvest.is_some_and(|h| flag(h, domain::ACTION_GUT) && !flag(h, "gut_done"));
         let mut harvest_btns = div().flex().flex_row().gap_1();
         // M24: глифы выбраны заказчиком — FA scissors (снятие шкур) и
         // FA drumstick-bite (освежевание, «мясо» — результат).
@@ -119,7 +123,7 @@ impl Root {
                 pal.warn,
                 0xffffff,
                 move |root, cx| {
-                    root.on_click(Click::Harvest(skin_id, "skin".into()), cx);
+                    root.on_click(Click::Harvest(skin_id, domain::ACTION_SKIN.into()), cx);
                 },
             ));
         }
@@ -131,7 +135,7 @@ impl Root {
                 pal.warn,
                 0xffffff,
                 move |root, cx| {
-                    root.on_click(Click::Harvest(entity_id, "gut".into()), cx);
+                    root.on_click(Click::Harvest(entity_id, domain::ACTION_GUT.into()), cx);
                 },
             ));
         }

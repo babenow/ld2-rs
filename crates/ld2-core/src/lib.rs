@@ -16,6 +16,7 @@
 
 pub mod config;
 pub mod discovery;
+pub mod domain;
 pub mod l10n;
 pub mod logging;
 pub mod notify;

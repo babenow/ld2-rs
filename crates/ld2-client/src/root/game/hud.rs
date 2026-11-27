@@ -1,6 +1,8 @@
 //! HUD игрового экрана: статус-бар, левая колонка, цель/локация,
 //! история, журнал (RF3m).
 
+use ld2_core::domain;
+
 use super::*;
 
 impl Root {
@@ -157,8 +159,8 @@ impl Root {
         // (тёмно-жёлтый), мана (акцентный); длина бара — общая
         // константа со шкалой здоровья.
         let (resource_label, resource_color) = match snap.char.profile.as_deref() {
-            Some("warrior") => (t(lang, Key::RageLabel), 0xd1_3b_3b),
-            Some("archer") => (t(lang, Key::EnergyLabel), 0xb8_96_1e),
+            Some(domain::PROFILE_WARRIOR) => (t(lang, Key::RageLabel), 0xd1_3b_3b),
+            Some(domain::PROFILE_ARCHER) => (t(lang, Key::EnergyLabel), 0xb8_96_1e),
             _ => (t(lang, Key::MpLabel), pal.accent),
         };
         // M25: шкала ресурса — тот же виджет (цвет по профилю).
@@ -340,10 +342,10 @@ impl Root {
         for exit in &loc.exits {
             let id = exit.id.clone();
             let arrow = match exit.dir.as_deref() {
-                Some("north") => "↑",
-                Some("south") => "↓",
-                Some("east") => "→",
-                Some("west") => "←",
+                Some(domain::DIR_NORTH) => "↑",
+                Some(domain::DIR_SOUTH) => "↓",
+                Some(domain::DIR_EAST) => "→",
+                Some(domain::DIR_WEST) => "←",
                 _ => "",
             };
             let label = if arrow.is_empty() {
@@ -409,7 +411,7 @@ impl Root {
             self.journal_scroll.scroll_to_bottom();
         }
         self.journal_seen = len;
-        let dark = pal.bg == crate::palette::palette("dark").bg;
+        let dark = pal.bg == crate::palette::palette(domain::THEME_DARK).bg;
         // M14/F8: размер шрифта лога из настроек (10…20 px).
         let log_font = self.config.log_font_px;
         // M14/F13: цвета/жирность строк боя — из настроек.

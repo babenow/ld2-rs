@@ -1,5 +1,7 @@
 //! Сущности локации: строки, руны, шкалы (RF3m).
 
+use ld2_core::domain;
+
 use super::*;
 
 impl Root {
@@ -264,7 +266,10 @@ impl Root {
                 let mut tip = vec![format!(
                     "{} · {}",
                     rune.name,
-                    rarity_label(lang, rune.rarity.as_deref().unwrap_or("common"))
+                    rarity_label(
+                        lang,
+                        rune.rarity.as_deref().unwrap_or(domain::RARITY_COMMON)
+                    )
                 )];
                 tip.extend(rune.detail.iter().flatten().cloned());
                 tip.push(format!(
@@ -583,23 +588,32 @@ impl Root {
         if entity.kind == EntityKind::Corpse {
             if let Some(harv) = entity.extra.get("harvest") {
                 let snap = self.store.snapshot.as_ref();
-                let learned =
-                    snap.is_some_and(|s| s.char.professions.iter().any(|p| p.id == "skinning"));
+                let learned = snap.is_some_and(|s| {
+                    s.char
+                        .professions
+                        .iter()
+                        .any(|p| p.id == domain::PROFESSION_SKINNING)
+                });
                 let knife = snap.is_some_and(|s| {
                     s.char
                         .inventory
                         .iter()
-                        .any(|i| i.item_type == "skinning_knife")
+                        .any(|i| i.item_type == domain::ITEM_SKINNING_KNIFE)
                 });
                 if learned && knife {
                     let level = snap
-                        .and_then(|s| s.char.professions.iter().find(|p| p.id == "skinning"))
+                        .and_then(|s| {
+                            s.char
+                                .professions
+                                .iter()
+                                .find(|p| p.id == domain::PROFESSION_SKINNING)
+                        })
                         .map(|p| p.level as i64)
                         .unwrap_or(0);
                     let required = harv.get("level").and_then(|v| v.as_i64()).unwrap_or(1);
                     let diff = level - required;
                     let blocked = required - level >= 25;
-                    if harv.get("skin").and_then(|v| v.as_bool()) == Some(true)
+                    if harv.get(domain::ACTION_SKIN).and_then(|v| v.as_bool()) == Some(true)
                         && harv.get("skin_done").and_then(|v| v.as_bool()) != Some(true)
                     {
                         // Ожидаемый опыт — формула сервера (дубль на
@@ -631,17 +645,23 @@ impl Root {
                         menu = menu.item(if blocked {
                             item.disabled(true)
                         } else {
-                            mk_item(item, Click::Harvest(id.clone(), "skin".to_string()))
+                            mk_item(
+                                item,
+                                Click::Harvest(id.clone(), domain::ACTION_SKIN.to_string()),
+                            )
                         });
                     }
-                    if harv.get("gut").and_then(|v| v.as_bool()) == Some(true)
+                    if harv.get(domain::ACTION_GUT).and_then(|v| v.as_bool()) == Some(true)
                         && harv.get("gut_done").and_then(|v| v.as_bool()) != Some(true)
                     {
                         let item = MenuItem::new(t(lang, Key::GutBtn));
                         menu = menu.item(if blocked {
                             item.icon(IconName::Lock).disabled(true)
                         } else {
-                            mk_item(item, Click::Harvest(id.clone(), "gut".to_string()))
+                            mk_item(
+                                item,
+                                Click::Harvest(id.clone(), domain::ACTION_GUT.to_string()),
+                            )
                         });
                     }
                 }

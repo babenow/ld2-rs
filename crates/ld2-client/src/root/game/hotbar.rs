@@ -1,5 +1,7 @@
 //! Хотбар боевых действий (RF3m).
 
+use ld2_core::domain;
+
 use super::*;
 
 impl Root {
@@ -69,7 +71,7 @@ impl Root {
         // ── 2) Активки: «Мощный удар» (гейт §4); Раскол скрыт ──
         if power_strike_open(&snap.char.skills) {
             let label = t(lang, Key::PowerStrike).to_string();
-            let (ok, left) = ready(self.own_cd_left_ms("power_strike", now_ms));
+            let (ok, left) = ready(self.own_cd_left_ms(domain::SKILL_POWER_STRIKE, now_ms));
             if ok {
                 row = row.child(btn(cx, label, pal.warn, 0xffffff, Click::PowerStrike));
             } else {
@@ -219,7 +221,12 @@ impl Root {
             .char
             .inventory
             .iter()
-            .filter(|i| matches!(i.item_type.as_str(), "scroll" | "potion"))
+            .filter(|i| {
+                matches!(
+                    i.item_type.as_str(),
+                    domain::ITEM_SCROLL | domain::ITEM_POTION
+                )
+            })
             .cloned()
             .collect();
         for item in consumables {

@@ -15,6 +15,7 @@ use gpui::{
     div, prelude::*, px, rgb, Animation, AnimationExt, AnyElement, Context, Div, MouseButton,
     SharedString, Window,
 };
+use ld2_core::domain;
 use ld2_core::l10n::{t, tf, Key, Lang};
 use ld2_core::store::Screen;
 use ld2_protocol::cmd::ItemMove;
@@ -124,6 +125,19 @@ use super::{scrollable_tab, BpHold, DragSource, ItemDrag, PopupKind, Root, SendS
 /// M16/F29b: вкладки рюкзака — группы типов предметов; «Валюты»
 /// всегда последняя (спека пользователя), остальные — по маппингу
 /// [`tab_for_type`].
+const TAB_ALL: &str = "all";
+const TAB_WEAPON: &str = "weapon";
+const TAB_ARMOR: &str = "armor";
+const TAB_POTION: &str = "potion";
+const TAB_MAGIC: &str = "magic";
+const TAB_MATERIAL: &str = "material";
+const TAB_TOOL: &str = "tool";
+const TAB_BAG: &str = "bag";
+const TAB_OTHER: &str = "other";
+const TAB_ARTIFACT: &str = "artifact";
+const TAB_GEM: &str = "gem";
+const TAB_CURRENCIES: &str = "currencies";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum BackpackTab {
     /// Все предметы без фильтра (M16/F29g) — дефолтная вкладка.
@@ -190,34 +204,34 @@ impl BackpackTab {
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            BackpackTab::All => "all",
-            BackpackTab::Weapon => "weapon",
-            BackpackTab::Armor => "armor",
-            BackpackTab::Potion => "potion",
-            BackpackTab::Magic => "magic",
-            BackpackTab::Material => "material",
-            BackpackTab::Tool => "tool",
-            BackpackTab::Bag => "bag",
-            BackpackTab::Other => "other",
-            BackpackTab::Artifact => "artifact",
-            BackpackTab::Gem => "gem",
-            BackpackTab::Currencies => "currencies",
+            BackpackTab::All => TAB_ALL,
+            BackpackTab::Weapon => TAB_WEAPON,
+            BackpackTab::Armor => TAB_ARMOR,
+            BackpackTab::Potion => TAB_POTION,
+            BackpackTab::Magic => TAB_MAGIC,
+            BackpackTab::Material => TAB_MATERIAL,
+            BackpackTab::Tool => TAB_TOOL,
+            BackpackTab::Bag => TAB_BAG,
+            BackpackTab::Other => TAB_OTHER,
+            BackpackTab::Artifact => TAB_ARTIFACT,
+            BackpackTab::Gem => TAB_GEM,
+            BackpackTab::Currencies => TAB_CURRENCIES,
         }
     }
 
     pub(crate) fn parse(s: &str) -> Self {
         match s {
-            "all" => BackpackTab::All,
-            "armor" => BackpackTab::Armor,
-            "potion" => BackpackTab::Potion,
-            "magic" => BackpackTab::Magic,
-            "material" => BackpackTab::Material,
-            "tool" => BackpackTab::Tool,
-            "bag" => BackpackTab::Bag,
-            "other" => BackpackTab::Other,
-            "artifact" => BackpackTab::Artifact,
-            "gem" => BackpackTab::Gem,
-            "currencies" => BackpackTab::Currencies,
+            TAB_ALL => BackpackTab::All,
+            TAB_ARMOR => BackpackTab::Armor,
+            TAB_POTION => BackpackTab::Potion,
+            TAB_MAGIC => BackpackTab::Magic,
+            TAB_MATERIAL => BackpackTab::Material,
+            TAB_TOOL => BackpackTab::Tool,
+            TAB_BAG => BackpackTab::Bag,
+            TAB_OTHER => BackpackTab::Other,
+            TAB_ARTIFACT => BackpackTab::Artifact,
+            TAB_GEM => BackpackTab::Gem,
+            TAB_CURRENCIES => BackpackTab::Currencies,
             _ => BackpackTab::Weapon,
         }
     }
@@ -234,19 +248,35 @@ impl BackpackTab {
 /// `content/items.json`).
 pub(crate) fn tab_for_type(item_type: &str) -> BackpackTab {
     match item_type {
-        "weapon" | "staff" => BackpackTab::Weapon,
-        "potion" => BackpackTab::Potion,
-        "rune" | "scroll" => BackpackTab::Magic,
-        "herb" | "wood_oak" | "parchment" | "ink" | "ore_copper" | "branches" | "hide_scraps"
-        | "hide" | "meat" | "offal" | "ammo" | "key" => BackpackTab::Material,
+        domain::ITEM_WEAPON | domain::ITEM_STAFF => BackpackTab::Weapon,
+        domain::ITEM_POTION => BackpackTab::Potion,
+        domain::ITEM_RUNE | domain::ITEM_SCROLL => BackpackTab::Magic,
+        domain::ITEM_HERB
+        | domain::ITEM_WOOD_OAK
+        | domain::ITEM_PARCHMENT
+        | domain::ITEM_INK
+        | domain::ITEM_ORE_COPPER
+        | domain::ITEM_BRANCHES
+        | domain::ITEM_HIDE_SCRAPS
+        | domain::ITEM_HIDE
+        | domain::ITEM_MEAT
+        | domain::ITEM_OFFAL
+        | domain::ITEM_AMMO
+        | domain::ITEM_KEY => BackpackTab::Material,
         // M20/F20b: инструменты добычи (топор/кирка/серп) — к инструментам.
-        "flask" | "chisel" | "quill" | "upgrade_stone" | "axe" | "pickaxe" | "sickle"
-        | "skinning_knife" => BackpackTab::Tool,
-        "bag" => BackpackTab::Bag,
-        "money" => BackpackTab::Currencies,
-        "armor" | "shield" => BackpackTab::Armor,
-        "artifact" => BackpackTab::Artifact,
-        "gem" => BackpackTab::Gem,
+        domain::ITEM_FLASK
+        | domain::ITEM_CHISEL
+        | domain::ITEM_QUILL
+        | domain::ITEM_UPGRADE_STONE
+        | domain::ITEM_AXE
+        | domain::ITEM_PICKAXE
+        | domain::ITEM_SICKLE
+        | domain::ITEM_SKINNING_KNIFE => BackpackTab::Tool,
+        domain::ITEM_BAG => BackpackTab::Bag,
+        domain::ITEM_MONEY => BackpackTab::Currencies,
+        domain::ITEM_ARMOR | domain::ITEM_SHIELD => BackpackTab::Armor,
+        domain::ITEM_ARTIFACT => BackpackTab::Artifact,
+        domain::ITEM_GEM => BackpackTab::Gem,
         _ => BackpackTab::Other,
     }
 }
@@ -254,10 +284,10 @@ pub(crate) fn tab_for_type(item_type: &str) -> BackpackTab {
 /// M28: подпись типа предмета для `bag_types` (неизвестный — как есть).
 fn bag_type_label(lang: Lang, item_type: &str) -> String {
     match item_type {
-        "ammo" => t(lang, Key::BagTypeAmmo).to_string(),
-        "herb" => t(lang, Key::BagTypeHerb).to_string(),
-        "gem" => t(lang, Key::BagTypeGem).to_string(),
-        "key" => t(lang, Key::BagTypeKey).to_string(),
+        domain::ITEM_AMMO => t(lang, Key::BagTypeAmmo).to_string(),
+        domain::ITEM_HERB => t(lang, Key::BagTypeHerb).to_string(),
+        domain::ITEM_GEM => t(lang, Key::BagTypeGem).to_string(),
+        domain::ITEM_KEY => t(lang, Key::BagTypeKey).to_string(),
         other => other.to_string(),
     }
 }
@@ -266,7 +296,7 @@ fn bag_type_label(lang: Lang, item_type: &str) -> String {
 /// данные строки валюты внизу окна.
 fn money_totals(items: &[ItemSnapshot]) -> Vec<(String, i64)> {
     let mut out: Vec<(String, i64)> = Vec::new();
-    for item in items.iter().filter(|i| i.item_type == "money") {
+    for item in items.iter().filter(|i| i.item_type == domain::ITEM_MONEY) {
         let qty = item.qty.unwrap_or(1);
         match out.iter_mut().find(|(name, _)| *name == item.name) {
             Some((_, total)) => *total += qty,
@@ -942,8 +972,10 @@ impl Root {
         // Переливание (заказчик 2026-11-20): эпик/легендарка — на
         // наведении оттенок рамки и свечения циклится (~4 с).
         let hover_key = format!("bp:{uid}");
-        let shimmering = matches!(item.rarity.as_str(), "epic" | "legendary")
-            && self.hovered_item.as_deref() == Some(hover_key.as_str());
+        let shimmering = matches!(
+            item.rarity.as_str(),
+            domain::RARITY_EPIC | domain::RARITY_LEGENDARY
+        ) && self.hovered_item.as_deref() == Some(hover_key.as_str());
         let hover_this = cx.entity();
         let hover_key_hover = hover_key.clone();
         let tile = tile.on_hover(move |hovered, _, cx| {
