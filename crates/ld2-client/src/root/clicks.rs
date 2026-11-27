@@ -389,12 +389,49 @@ impl Root {
                 }
             }
             Click::Gather(id) => {
-                let cmd = ld2_protocol::cmd::ResourceGather { entity_id: id };
+                // M39: одно действие за раз — пока идёт разделка или
+                // сбор, повторный клик не шлём (иначе ack-отказ погасил
+                // бы бар активного действия).
+                if self.store.harvest.is_some() {
+                    return true;
+                }
+                let name = self
+                    .store
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.location.entities.iter().find(|e| e.id == id))
+                    .map(|e| e.name.clone())
+                    .unwrap_or_default();
+                let cmd = ld2_protocol::cmd::ResourceGather {
+                    entity_id: id.clone(),
+                };
                 if self.send_or_notice(&cmd, SendSlot::World) {
-                    self.store.on_world_sent(Act::Gather)
+                    self.store.on_world_sent(Act::Gather);
+                    // M39: сбор — сервер-джоб 5 с, прогресс-бар как у шкуры.
+                    self.store.harvest = Some(ld2_core::store::HarvestProgress {
+                        started_ms: self.now_ms(),
+                        action: "gather".into(),
+                        name: name.clone(),
+                        entity_id: id,
+                    });
+                    self.start_progress(
+                        ProgressSource::Harvest,
+                        format!("{} · {name}", t(self.lang, Key::GatherBtn)),
+                        5_000,
+                    );
                 }
             }
             Click::Harvest(id, action) => {
+                // M39: во время сбора ресурса разделка не начинается
+                // (server E_BUSY); бар активного сбора не трогаем.
+                if self
+                    .store
+                    .harvest
+                    .as_ref()
+                    .is_some_and(|h| h.action == "gather")
+                {
+                    return true;
+                }
                 // Имя животного — из трупа снапшота (без «Труп:»).
                 let name = self
                     .store

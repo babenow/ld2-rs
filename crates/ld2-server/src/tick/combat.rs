@@ -29,7 +29,6 @@ const MS_PER_SECOND_F: f64 = 1000.0;
 const RANDOM_BUF_LEN: usize = 8;
 const PROFILE_WARRIOR: &str = "warrior";
 const GENDER_MALE: &str = "male";
-const ACTION_SKIN: &str = "skin";
 const SKILL_UNARMED: &str = "unarmed";
 const EFFECT_BLEED: &str = "bleed";
 
@@ -847,30 +846,9 @@ pub(super) async fn apply_mob_hit(state: &SharedState, hit: &MobHit) -> Vec<(Str
             return Vec::new();
         }
     }
-    // M24: урон прерывает активную разделку — семантика M23:
-    // skin → кожа испорчена (повтор невозможен, «Шкура испорчена»
-    // в журнале), gut → просто отмена (повтор разрешён); шкура в
-    // лут не попадает, опыта нет (finish_harvest не выполняется).
-    let harvest_evt = {
-        let mut world = state.world.lock().expect("мир");
-        world.cancel_harvest(&hit.char_id).map(|job| {
-            let ruined = job.action == ACTION_SKIN;
-            if ruined {
-                world.ruin_skin(&job.corpse_id);
-            }
-            event_text(
-                names::EVT_HARVEST_RESULT,
-                &serde_json::to_value(ld2_protocol::evt::HarvestResult {
-                    entity_id: job.corpse_id,
-                    name: job.name,
-                    action: job.action,
-                    ok: false,
-                    ruined,
-                })
-                .unwrap_or_default(),
-            )
-        })
-    };
+    // M24/M39: урон прерывает разделку или сбор ресурса — итог
+    // `evt/harvest/result` (skin → «шкура испорчена», gather — отмена).
+    let harvest_evt = super::jobs::interrupt_on_hit(state, &hit.char_id);
     let pool = &state.pool;
     let row = match crate::db::characters::get(pool, &hit.char_id).await {
         Ok(Some(row)) => row,

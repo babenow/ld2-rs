@@ -211,12 +211,19 @@ impl AppStore {
                     // M23: в лут трупа добавились шкуры/мясо — окно
                     // подятия должно увидеть их без переоткрытия.
                     self.pickup_dirty = true;
-                    let text = if result.action == "skin" {
-                        format!("Вы сняли шкуру с трупа {}", result.name)
-                    } else {
-                        format!("Вы освежевали труп {}", result.name)
-                    };
-                    self.push_log(LogKind::Loot, text);
+                    // M39: сбор ресурса уже отчитался строками предметов
+                    // («Вы получили…» / «Найден самоцвет…») — без дубля.
+                    if result.action == "skin" {
+                        self.push_log(
+                            LogKind::Loot,
+                            format!("Вы сняли шкуру с трупа {}", result.name),
+                        );
+                    } else if result.action != "gather" {
+                        self.push_log(LogKind::Loot, format!("Вы освежевали труп {}", result.name));
+                    }
+                } else if result.action == "gather" {
+                    // M39: сбор прерван (урон/жила исчезла/нет места).
+                    self.push_log(LogKind::Loot, format!("Сбор прерван: {}", result.name));
                 } else if result.ruined {
                     // M22: разделка прервана взаимодействием с предметом.
                     self.push_log(LogKind::Loot, "Шкура испорчена".to_string());

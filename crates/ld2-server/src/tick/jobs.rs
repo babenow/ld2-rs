@@ -9,11 +9,15 @@
 
 use ld2_protocol::names;
 
-use ld2_protocol::evt::CharStats;
+use ld2_protocol::evt::{
+    CharStats, CraftProfession, EntityDespawn, EntityMove, HarvestResult, ItemAdded, ItemState,
+};
+use ld2_protocol::types::EntityKind;
 use serde_json::json;
 use tracing::warn;
 
-use crate::consts::{ACTION_SKIN, PROFESSION_SKINNING};
+use crate::consts::{ACTION_SKIN, PROFESSION_MINING, PROFESSION_SKINNING};
+use crate::db;
 use crate::state::SharedState;
 
 /// M18/F58c (ADR-012 §4): восстановление зарядов рун — по аналогии с
@@ -185,6 +189,250 @@ pub(super) async fn regen_step(state: &SharedState) {
         );
         let world = state.world.lock().expect("мир");
         world.send_to_char(char_id, text);
+    }
+}
+
+/// M24/M39: урон прерывает активное действие персонажа — разделку
+/// (skin → шкура испорчена, повтор невозможен) или сбор ресурса
+/// (жила остаётся, можно повторить). Возвращает `evt/harvest/result`
+/// для клиента (погасить прогрессбар).
+pub(super) fn interrupt_on_hit(state: &SharedState, char_id: &str) -> Option<String> {
+    let mut world = state.world.lock().expect("мир");
+    let result = if let Some(job) = world.cancel_harvest(char_id) {
+        let ruined = job.action == ACTION_SKIN;
+        if ruined {
+            world.ruin_skin(&job.corpse_id);
+        }
+        HarvestResult {
+            entity_id: job.corpse_id,
+            name: job.name,
+            action: job.action,
+            ok: false,
+            ruined,
+        }
+    } else {
+        let job = world.cancel_gather(char_id)?;
+        HarvestResult {
+            entity_id: job.entity_id,
+            name: job.name,
+            action: "gather".into(),
+            ok: false,
+            ruined: false,
+        }
+    };
+    Some(job_event(names::EVT_HARVEST_RESULT, &result))
+}
+
+/// M39: завершение сбора ресурса (сервер-джоб 5 с). Выдаёт руду,
+/// бонусный камень, опыт; обновляет запас узла и шлёт итог.
+pub(super) async fn gather_step(state: &SharedState) {
+    let now = crate::time::now_epoch();
+    let due = {
+        let mut world = state.world.lock().expect("мир");
+        world.due_gathers(now)
+    };
+    for job in due {
+        let (location, node) = {
+            let world = state.world.lock().expect("мир");
+            (
+                world.char_location(&job.char_id),
+                world.resource(&job.entity_id).cloned(),
+            )
+        };
+        let (Some(location), Some(node)) = (location, node) else {
+            send_gather_result(state, &job, false);
+            continue;
+        };
+        if node.location_id != location || node.current <= 0 {
+            send_gather_result(state, &job, false);
+            continue;
+        }
+        let slots = state.config.gameplay.inventory.slots;
+        // Место в инвентаре — до уменьшения запаса (окно 5 с).
+        if !gather_fits(state, &job.char_id, &node.def_id, slots).await {
+            send_gather_result(state, &job, false);
+            continue;
+        }
+        let after = {
+            let mut world = state.world.lock().expect("мир");
+            world.try_gather(&job.entity_id, &location)
+        };
+        let Some(after) = after else {
+            send_gather_result(state, &job, false);
+            continue;
+        };
+        let mut texts = Vec::new();
+        if let Some(text) = grant_gather_item(state, &job.char_id, &node.def_id, slots).await {
+            texts.push(text);
+        } else {
+            // Инвентарь успел заполниться — руда не выдана, сбор сорван.
+            send_gather_result(state, &job, false);
+            continue;
+        }
+        let gem = {
+            let mut world = state.world.lock().expect("мир");
+            world.roll_resource_gem(&job.entity_id)
+        };
+        if let Some(gem_id) = gem {
+            if let Some(text) = grant_gather_item(state, &job.char_id, &gem_id, slots).await {
+                texts.push(text);
+            }
+        }
+        if let Some(text) =
+            grant_gather_xp(state, &job.char_id, &node.profession, &node.required_level).await
+        {
+            texts.push(text);
+        }
+        {
+            let world = state.world.lock().expect("мир");
+            for text in texts {
+                world.send_to_char(&job.char_id, text);
+            }
+            let node_text = if after.hidden {
+                job_event(
+                    names::EVT_ENTITY_DESPAWN,
+                    &EntityDespawn {
+                        entity_id: after.id.clone(),
+                        location_id: after.location_id.clone(),
+                        kind: Some(EntityKind::Resource),
+                        picked_by: None,
+                        picked_gender: None,
+                        text: None,
+                    },
+                )
+            } else {
+                job_event(
+                    names::EVT_ENTITY_MOVE,
+                    &EntityMove {
+                        entity_id: after.id.clone(),
+                        patch: serde_json::json!({"hp": {"cur": after.current, "max": after.max}})
+                            .as_object()
+                            .cloned()
+                            .unwrap_or_default(),
+                    },
+                )
+            };
+            for addr in world.chars_in_location(&after.location_id) {
+                if !node_text.is_empty() {
+                    world.send_to_char(&addr, node_text.clone());
+                }
+            }
+        }
+        send_gather_result(state, &job, true);
+    }
+}
+
+/// M39: хватит ли места под предмет (стак или свободный слот).
+async fn gather_fits(state: &SharedState, char_id: &str, def_id: &str, slots: u32) -> bool {
+    let pool = &state.pool;
+    if db::items::stackable_exists(pool, char_id, def_id)
+        .await
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    db::items::has_space(pool, char_id, i64::from(slots))
+        .await
+        .unwrap_or(false)
+}
+
+/// M39: выдача предмета на сбор (руда/камень) с проверкой места.
+async fn grant_gather_item(
+    state: &SharedState,
+    char_id: &str,
+    def_id: &str,
+    slots: u32,
+) -> Option<String> {
+    let pool = &state.pool;
+    let stacked_exists = db::items::stackable_exists(pool, char_id, def_id)
+        .await
+        .ok()?;
+    if !stacked_exists
+        && !db::items::has_space(pool, char_id, i64::from(slots))
+            .await
+            .ok()?
+    {
+        return None;
+    }
+    let def = db::items::def(pool, def_id).await.ok()??;
+    let (row, stacked) = db::items::grant_stacking(pool, char_id, def_id, 1)
+        .await
+        .ok()?;
+    let item = crate::session::item_snapshot(&row, &def);
+    Some(if stacked {
+        job_event(
+            names::EVT_ITEM_STATE,
+            &ItemState {
+                uid: row.uid.clone(),
+                patch: serde_json::json!({ "qty": row.qty })
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+            },
+        )
+    } else {
+        job_event(names::EVT_ITEM_ADDED, &ItemAdded { item })
+    })
+}
+
+/// M39: опыт профессии за завершённый сбор.
+async fn grant_gather_xp(
+    state: &SharedState,
+    char_id: &str,
+    profession: &Option<String>,
+    required_level: &u32,
+) -> Option<String> {
+    let prof = profession.as_deref()?;
+    let (_, xp_old, rank, level) = db::professions::learned(&state.pool, char_id)
+        .await
+        .ok()?
+        .into_iter()
+        .find(|(id, _, _, _)| id == prof)?;
+    let cfg = &state.config.gameplay.professions;
+    let gain = if prof == PROFESSION_MINING {
+        crate::systems::harvest_xp_gain(*required_level, level.max(0) as u32)
+    } else {
+        cfg.xp_per_craft_base + cfg.xp_per_craft_per_rank * i64::from(rank)
+    };
+    let gain = crate::progress::profession_xp(state, char_id, gain).await;
+    let (xp_new, level_new) =
+        crate::systems::profession_level_up(cfg, xp_old, level.max(0) as u32, gain);
+    db::professions::grant_progress(&state.pool, char_id, prof, xp_new, rank, level_new as i32)
+        .await
+        .ok()?;
+    let snapshot = crate::systems::profession_snapshot(cfg, prof, xp_new, rank, level_new);
+    let name = db::professions::profession_name(&state.pool, prof)
+        .await
+        .ok()
+        .flatten();
+    Some(job_event(
+        names::EVT_CRAFT_PROFESSION,
+        &CraftProfession {
+            profession: snapshot,
+            name,
+            gain: Some(gain),
+        },
+    ))
+}
+
+fn job_event<T: serde::Serialize>(ty: &str, payload: &T) -> String {
+    crate::session::event_text(ty, None, serde_json::to_value(payload).unwrap_or_default())
+}
+
+fn send_gather_result(state: &SharedState, job: &crate::world::GatherJob, ok: bool) {
+    let text = job_event(
+        names::EVT_HARVEST_RESULT,
+        &HarvestResult {
+            entity_id: job.entity_id.clone(),
+            name: job.name.clone(),
+            action: "gather".into(),
+            ok,
+            ruined: false,
+        },
+    );
+    let world = state.world.lock().expect("мир");
+    if !text.is_empty() {
+        world.send_to_char(&job.char_id, text);
     }
 }
 

@@ -920,6 +920,68 @@ mod tests {
         );
     }
 
+    /// M39: камень из жилы — отдельная строка журнала и при новом
+    /// стаке (`evt/item/added`), и при пополнении существующего
+    /// (`evt/item/state` с qty), а не «Вы получили…».
+    #[test]
+    fn gather_gem_logs_found_line() {
+        let mut store = in_game();
+        store.harvest = Some(HarvestProgress {
+            started_ms: 0,
+            action: "gather".into(),
+            name: "Медная жила".into(),
+            entity_id: "r_ore".into(),
+        });
+        let before = store.log.len();
+        store.apply_event(
+            "evt/item/added",
+            Some(serde_json::json!({
+                "item": {
+                    "uid": "g1",
+                    "type": "raw_stone_armor",
+                    "name": "Необработанный камень брони",
+                    "rarity": "common",
+                    "upgrade": 0,
+                    "stats": {},
+                    "def_id": "raw_stone_armor",
+                    "qty": 1,
+                    "extra": {}
+                }
+            })),
+        );
+        let lines: Vec<&str> = store
+            .log
+            .iter()
+            .skip(before)
+            .map(|l| l.text.as_str())
+            .collect();
+        assert_eq!(
+            lines,
+            ["Найден самоцвет: Необработанный камень брони"],
+            "новый камень: {lines:?}"
+        );
+
+        // Стак того же камня — qty-патч, строка тоже нужна.
+        store.apply_event(
+            "evt/item/state",
+            Some(serde_json::json!({ "uid": "g1", "patch": { "qty": 2 } })),
+        );
+        let lines: Vec<&str> = store
+            .log
+            .iter()
+            .skip(before)
+            .map(|l| l.text.as_str())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Найден самоцвет: Необработанный камень брони",
+                "Найден самоцвет: Необработанный камень брони"
+            ],
+            "стак камня: {lines:?}"
+        );
+    }
+
     /// M14/F4: глобальный кулдаун — 1 с; повтор не укорачивает окно.
     #[test]
     fn global_cooldown_blocks_one_second_and_never_shrinks() {

@@ -2,6 +2,11 @@
 
 use ld2_core::domain;
 
+use super::gather::{
+    self, HARVEST_DIFF_HIGH, HARVEST_DIFF_LOW, HARVEST_DIFF_MID, HARVEST_LEVEL_GAP,
+    HARVEST_MULT_HIGH, HARVEST_MULT_LOW, HARVEST_MULT_NORMAL, HARVEST_MULT_ZERO, HARVEST_XP_BASE,
+    HARVEST_XP_MAX, HARVEST_XP_PER_LEVEL,
+};
 use super::*;
 
 const MS_PER_SECOND: i64 = 1000;
@@ -9,17 +14,15 @@ const MS_PER_SECOND_F: f64 = 1000.0;
 const DEFAULT_RUNE_RECHARGE_MS: i64 = 30_000;
 const BUFF_BLINK_LEFT_S: i64 = 3;
 const BUFF_BLINK_PERIOD_MS: i64 = 500;
-const HARVEST_LEVEL_GAP: i64 = 25;
-const HARVEST_XP_BASE: f64 = 10.0;
-const HARVEST_XP_PER_LEVEL: f64 = 1.5;
-const HARVEST_DIFF_LOW: i64 = -10;
-const HARVEST_DIFF_MID: i64 = 9;
-const HARVEST_DIFF_HIGH: i64 = 24;
-const HARVEST_MULT_LOW: f64 = 1.5;
-const HARVEST_MULT_NORMAL: f64 = 1.0;
-const HARVEST_MULT_HIGH: f64 = 0.5;
-const HARVEST_MULT_ZERO: f64 = 0.0;
-const HARVEST_XP_MAX: i64 = 40;
+
+/// R-dnd: снапшот предмета на земле (`extra["item"]`) — строка как в
+/// рюкзаке (цвет редкости, +N, ×qty, иконки слотов).
+fn ground_snapshot(entity: &Entity) -> Option<ItemSnapshot> {
+    entity
+        .extra
+        .get("item")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
 
 impl Root {
     /// Строка сущности: левый клик — цель, ПКМ — действия (ФР-03/05).
@@ -36,13 +39,9 @@ impl Root {
         let id = entity.id.clone();
 
         // R-dnd (заказчик): предмет на земле — отображение как в
-        // рюкзаке (extra["item"] = ItemSnapshot; цвет редкости, +N,
-        // ×qty, иконки слотов). Старый сервер поля не шлёт → прежний
-        // вид (аддитивно §11).
-        let ground_snap: Option<ItemSnapshot> = entity
-            .extra
-            .get("item")
-            .and_then(|v| serde_json::from_value(v.clone()).ok());
+        // рюкзаке (extra["item"] = ItemSnapshot); старый сервер поля
+        // не шлёт → прежний вид (аддитивно §11).
+        let ground_snap = ground_snapshot(&entity);
 
         let mut row = div()
             .id(format!("ld2-ent-{}", entity.id))
@@ -180,6 +179,10 @@ impl Root {
                     .text_color(rgb(pal.warn))
                     .child(tag.clone()),
             );
+        }
+        if entity.kind == EntityKind::Resource {
+            let preview = gather::xp_preview(&self.store, &entity);
+            row = row.child(gather::button(cx, lang, pal, id.clone(), preview));
         }
 
         let menu = self.entity_menu(cx, lang, &entity, id.clone(), safe, player_corpse);
@@ -571,11 +574,14 @@ impl Root {
             ));
         }
         // M20/F20b: добыча ресурса (инструмент/ранг — на сервере).
+        // M39: иконка ожидаемого опыта; гейт уровня25 — пункт отключён.
         if entity.kind == EntityKind::Resource {
-            menu = menu.item(mk(
-                t(lang, Key::GatherBtn).to_string(),
-                Click::Gather(id.clone()),
-            ));
+            let (item, blocked) = gather::menu_item(lang, gather::xp_preview(&self.store, entity));
+            menu = menu.item(if blocked {
+                item.disabled(true)
+            } else {
+                mk_item(item, Click::Gather(id.clone()))
+            });
         }
         // M20/F20c: подбор предмета с земли (extra.ground).
         if entity.kind == EntityKind::Object
@@ -638,17 +644,7 @@ impl Root {
                             HARVEST_MULT_ZERO
                         };
                         let xp = ((base * mult).round() as i64).min(HARVEST_XP_MAX);
-                        let icon = if blocked {
-                            IconName::Lock
-                        } else if xp <= 0 {
-                            IconName::EyeOff // опыта нет
-                        } else if xp < 15 {
-                            IconName::Star // мало
-                        } else if xp < 30 {
-                            IconName::Sparkles // средне
-                        } else {
-                            IconName::Zap // много (у потолка40)
-                        };
+                        let icon = gather::xp_icon(xp, blocked);
                         let item = MenuItem::new(t(lang, Key::SkinBtn)).icon(icon);
                         menu = menu.item(if blocked {
                             item.disabled(true)

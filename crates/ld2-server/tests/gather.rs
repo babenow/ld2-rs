@@ -44,6 +44,17 @@ async fn learn(c: &mut ld2_test_kit::WsClient, profession_id: &str) {
     c.wait_event("evt/craft/profession").await;
 }
 
+/// M39: волк в лесу агрессивен — урон прерывает сбор (как разделку),
+/// поэтому перед добычей его убиваем.
+async fn kill_wolf(c: &mut ld2_test_kit::WsClient) {
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "атака волка");
+    c.wait_event("evt/corpse/created").await;
+    c.wait_event("evt/combat/end").await;
+}
+
 /// M33/M34: премиум ускоряет прокачку профессий (×1.5) — сбор руды
 /// даёт 65 XP → 98 XP (97.5 с округлением).
 #[tokio::test]
@@ -79,6 +90,7 @@ async fn premium_boosts_profession_xp_on_gather() {
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    kill_wolf(&mut c).await;
     give(&mut c, "pickaxe").await;
 
     let seq = c
@@ -128,6 +140,7 @@ async fn gather_tool_profession_yield_and_exhaustion() {
 
     give(&mut c, "pickaxe").await;
     give(&mut c, "sickle").await;
+    kill_wolf(&mut c).await;
 
     // Руда ×3: предмет + патч шкалы;4-й — исчерпана (E_TARGET_GONE).
     let seq = c
@@ -137,12 +150,35 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         )
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "первая руда");
+    // M39: пока идёт сбор, персонаж занят (как на разделке).
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_south" }))
+        .await;
+    assert_eq!(
+        c.ack(seq).await["error"]["code"],
+        "E_BUSY",
+        "движение во время сбора заблокировано"
+    );
+    // M39: сбор не мгновенный — предмет приходит по завершении джоба.
+    let early = tokio::time::timeout(
+        std::time::Duration::from_millis(1_500),
+        c.wait(|v| v["type"] == "evt/item/added"),
+    )
+    .await;
+    assert!(early.is_err(), "M39: руда не должна выдаваться мгновенно");
     let added = c.wait_event("evt/item/added").await;
     assert_eq!(added["payload"]["item"]["def_id"], "ore_copper");
     // Запас в локации: 3 → 2 (патч entity/move).
     let moved = c.wait_event("evt/entity/move").await;
     assert_eq!(moved["payload"]["entity_id"], "r_forest_ore");
     assert_eq!(moved["payload"]["patch"]["hp"]["cur"], 2);
+    // M39: завершение сбора — итог как у разделки (клиент гасит бар).
+    let result = c.wait_event("evt/harvest/result").await;
+    assert_eq!(
+        result["payload"]["action"], "gather",
+        "итог сбора: {result}"
+    );
+    assert_eq!(result["payload"]["ok"], true, "сбор завершён: {result}");
 
     for expect_cur in [1, 0] {
         let seq = c
