@@ -16,6 +16,7 @@ use tracing::warn;
 
 use super::rules::location_snapshot;
 use super::{out_ack, out_event, presence, Out, Session};
+use crate::consts::{GENDER_FEMALE, GENDER_MALE};
 use crate::db;
 
 impl Session {
@@ -194,12 +195,12 @@ impl Session {
                 .unwrap_or_else(|| {
                     (
                         presence::char_name(&self.state, &char_id).unwrap_or_default(),
-                        "male".to_string(),
+                        GENDER_MALE.to_string(),
                     )
                 });
             // M29 (заказчик): строка журнала — «{имя} {ушел|ушла} {выход}»;
             // выход — метка content (без неё — id), род — из персонажа.
-            let went = if gender == "female" {
+            let went = if gender == GENDER_FEMALE {
                 "ушла"
             } else {
                 "ушел"

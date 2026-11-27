@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="currentColor">
+  <g transform="translate(256 256) rotate(45) scale(1.0000) translate(-256.00 -256.00)">
+    <rect x="238" y="120" width="36" height="360" rx="14"/>
+      <path fill-rule="evenodd" d="M256 32 A56 56 0 1 0 256 144 A56 56 0 1 0 256 32 Z M256 62 A26 26 0 1 1 256 114 A26 26 0 1 1 256 62 Z"/>
+      <polygon points="176,72 204,96 176,120 148,96"/>
+      <polygon points="336,72 308,96 336,120 364,96"/>
+  </g>
+</svg>

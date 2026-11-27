@@ -1,6 +1,13 @@
 //! Трупы, узлы ресурсов и наземный лут мира (M20/F20a).
 
 use super::*;
+use crate::consts::{ACTION_GUT, ACTION_SKIN};
+
+const RANK_MIN: u32 = 1;
+const RANK_MAX: u32 = 5;
+const ITEM_MEAT: &str = "meat";
+const ITEM_OFFAL: &str = "offal";
+const GUT_MEAT_CHANCE: f64 = 0.25;
 
 /// Динамический труп (убитый моб): `loot[i] = Some(def)` — `None` уже взят.
 #[derive(Debug, Clone)]
@@ -358,9 +365,9 @@ impl World {
         rank: u32,
     ) -> Option<(LiveCorpse, Vec<String>, Vec<String>)> {
         let corpse = self.corpses.get_mut(corpse_id)?;
-        let rank = rank.clamp(1, 5);
+        let rank = rank.clamp(RANK_MIN, RANK_MAX);
         match action {
-            "skin" => {
+            ACTION_SKIN => {
                 if corpse.skin_done {
                     return None;
                 }
@@ -406,12 +413,16 @@ impl World {
                 }
                 Some((corpse.clone(), skin, Vec::new()))
             }
-            "gut" => {
+            ACTION_GUT => {
                 if corpse.gut_done {
                     return None;
                 }
                 corpse.gut_done = true;
-                let def = if roll_chance(0.25) { "meat" } else { "offal" };
+                let def = if roll_chance(GUT_MEAT_CHANCE) {
+                    ITEM_MEAT
+                } else {
+                    ITEM_OFFAL
+                };
                 corpse.inner_loot.push(Some(def.to_string()));
                 Some((corpse.clone(), Vec::new(), vec![def.to_string()]))
             }

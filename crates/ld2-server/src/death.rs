@@ -12,6 +12,7 @@ use ld2_protocol::evt::{CharDeath, CharStats, ItemRemoved, LocationChanged, Lost
 use serde_json::json;
 use tracing::warn;
 
+use crate::consts::GENDER_MALE;
 use crate::state::SharedState;
 
 /// Смерть персонажа → `(char_id, json-конверт)` для каждого события
@@ -74,7 +75,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
         .unwrap_or_default();
     let (char_name, char_gender) = current_row
         .map(|r| (r.name, r.gender))
-        .unwrap_or_else(|| (String::new(), "male".to_string()));
+        .unwrap_or_else(|| (String::new(), GENDER_MALE.to_string()));
     let target = if spawn.is_empty() {
         current.clone()
     } else {

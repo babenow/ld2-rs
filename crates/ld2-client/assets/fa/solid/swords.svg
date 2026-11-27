@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="currentColor">
+  <g transform="rotate(-45 256 256)">
+    <path d="M256 24 L286 108 L286 316 L226 316 L226 108 Z"/>
+    <rect x="176" y="316" width="160" height="32" rx="14"/>
+    <rect x="240" y="348" width="32" height="88" rx="12"/>
+    <circle cx="256" cy="452" r="28"/>
+  </g>
+  <g transform="rotate(45 256 256)">
+    <path d="M256 24 L286 108 L286 316 L226 316 L226 108 Z"/>
+    <rect x="176" y="316" width="160" height="32" rx="14"/>
+    <rect x="240" y="348" width="32" height="88" rx="12"/>
+    <circle cx="256" cy="452" r="28"/>
+  </g>
+</svg>

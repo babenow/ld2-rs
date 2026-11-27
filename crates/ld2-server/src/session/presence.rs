@@ -13,6 +13,7 @@ use ld2_protocol::types::{Entity, EntityKind, Hp};
 use crate::state::SharedState;
 
 use super::event_text;
+use crate::consts::GENDER_FEMALE;
 
 /// Сущность игрока для `location.entities` (§6: `kind = player`).
 /// `hp` не передаём: мир не хранит HP персонажей (истина — БД), а
@@ -50,7 +51,7 @@ fn broadcast(state: &SharedState, location_id: &str, except: &str, text: String)
 /// Глагол прихода (M29, заказчик): «пришел/пришла» по роду — формат
 /// `[действие] [имя]` (в отличие от ухода/гибели, где имя впереди).
 pub(crate) fn came_line(name: &str, gender: &str) -> String {
-    let verb = if gender == "female" {
+    let verb = if gender == GENDER_FEMALE {
         "пришла"
     } else {
         "пришел"
@@ -60,7 +61,7 @@ pub(crate) fn came_line(name: &str, gender: &str) -> String {
 
 /// Глагол гибели (M29, заказчик): «погиб»/«погибла» по роду.
 pub(crate) fn died_line(name: &str, gender: &str) -> String {
-    let verb = if gender == "female" {
+    let verb = if gender == GENDER_FEMALE {
         "погибла"
     } else {
         "погиб"

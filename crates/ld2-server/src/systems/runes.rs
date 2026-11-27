@@ -1,4 +1,7 @@
 //! Руны: срабатывание, заряды, подписи параметров сокетов (M18).
+use crate::consts::{EFFECT_BLEED, EFFECT_ROOT, EFFECT_STUN, ITEM_TYPE_GEM};
+
+const PERCENT_DIVISOR: f64 = 100.0;
 
 /// M18/F58d (ADR-012 §5): сработал ли авто-приём руны — `chance`
 /// (0..1 из контента `stats.chance`) против броска `roll` [0,1).
@@ -40,7 +43,7 @@ fn attr_title(id: &str) -> &str {
 /// `stats` — параметры определения.
 pub fn slot_detail_lines(item_type: &str, stats: &serde_json::Value) -> Vec<String> {
     let mut lines = Vec::new();
-    if item_type == "gem" {
+    if item_type == ITEM_TYPE_GEM {
         // Самоцвет: атрибут из контента (str/dex/vit/int + value).
         if let (Some(attr), Some(value)) = (
             stats.get("attr").and_then(|v| v.as_str()),
@@ -64,7 +67,10 @@ pub fn slot_detail_lines(item_type: &str, stats: &serde_json::Value) -> Vec<Stri
     }
     if let Some(chance) = stats.get("chance").and_then(|v| v.as_f64()) {
         if chance > 0.0 {
-            lines.push(format!("шанс приёма {}%", (chance * 100.0).round()));
+            lines.push(format!(
+                "шанс приёма {}%",
+                (chance * PERCENT_DIVISOR).round()
+            ));
         }
     }
     if let Some(buff) = stats.get("buff").and_then(|v| v.as_object()) {
@@ -88,12 +94,12 @@ pub fn slot_detail_lines(item_type: &str, stats: &serde_json::Value) -> Vec<Stri
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
         match kind {
-            "bleed" => {
+            EFFECT_BLEED => {
                 let dps = effect.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
                 lines.push(format!("кровотечение: {dps}/сек, {duration} с"));
             }
-            "stun" => lines.push(format!("оглушение на {duration} с")),
-            "root" => lines.push(format!("опутывание на {duration} с")),
+            EFFECT_STUN => lines.push(format!("оглушение на {duration} с")),
+            EFFECT_ROOT => lines.push(format!("опутывание на {duration} с")),
             _ => {}
         }
     }

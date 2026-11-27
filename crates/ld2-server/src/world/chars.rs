@@ -1,6 +1,9 @@
 //! Боевое состояние персонажа и руны (M17/M18/F58d).
 
 use super::*;
+use crate::consts::{EFFECT_BLEED, EFFECT_BURN, EFFECT_ROOT, EFFECT_STUN, MS_PER_SECOND};
+
+const MIN_BURN_PERIOD_MS: i64 = 500;
 
 /// Бой персонажа (сессионный: при дисконнекте/смене локации прерывается).
 #[derive(Debug, Clone)]
@@ -141,13 +144,13 @@ impl World {
             .or_insert(CharBleed {
                 dps,
                 until_ms,
-                next_at: now_ms + 1000,
+                next_at: now_ms + MS_PER_SECOND,
             });
         if entry.until_ms <= now_ms {
             *entry = CharBleed {
                 dps,
                 until_ms,
-                next_at: now_ms + 1000,
+                next_at: now_ms + MS_PER_SECOND,
             };
         } else {
             entry.dps = entry.dps.max(dps);
@@ -171,7 +174,7 @@ impl World {
         if expired {
             self.char_bleed.remove(char_id);
         } else if let Some(b) = self.char_bleed.get_mut(char_id) {
-            b.next_at = now_ms + 1000;
+            b.next_at = now_ms + MS_PER_SECOND;
         }
     }
     /// M37: снять кровотечение (смерть/выход).
@@ -246,26 +249,26 @@ impl World {
         let Some(mob) = self.mobs.get_mut(mob_id) else {
             return;
         };
-        let until = now_ms + duration_s.max(0) * 1000;
+        let until = now_ms + duration_s.max(0) * MS_PER_SECOND;
         match kind {
-            "stun" => mob.stun_until = until,
-            "root" => mob.root_until = until,
-            "bleed" => {
+            EFFECT_STUN => mob.stun_until = until,
+            EFFECT_ROOT => mob.root_until = until,
+            EFFECT_BLEED => {
                 // Продление активного кровотечения НЕ сбрасывает таймер
                 // тика (иначе частые удары не дают DoT дотикнуть).
                 if mob.bleed_dps == 0 || mob.bleed_until <= now_ms {
                     mob.bleed_dps = value.max(1);
-                    mob.bleed_next_at = now_ms + 1000; // первый тик через секунду
+                    mob.bleed_next_at = now_ms + MS_PER_SECOND; // первый тик через секунду
                     mob.bleed_src = Some(src_char_id.to_string());
                 }
                 mob.bleed_until = until;
             }
-            "burn" => {
+            EFFECT_BURN => {
                 // «Горение» — как кровотечение, но с периодом из контента
                 // (продление не сбрасывает таймер тика).
                 if mob.burn_dps == 0 || mob.burn_until <= now_ms {
                     mob.burn_dps = value.max(1);
-                    mob.burn_period = (period_s.max(1) * 1000).max(500);
+                    mob.burn_period = (period_s.max(1) * MS_PER_SECOND).max(MIN_BURN_PERIOD_MS);
                     mob.burn_next_at = now_ms + mob.burn_period;
                     mob.burn_src = Some(src_char_id.to_string());
                 }

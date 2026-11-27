@@ -17,7 +17,15 @@ use tracing::warn;
 use super::event_payload_text;
 use super::rules::{attr_genitive, entity_loot_defs, item_snapshot};
 use super::{out_event, Out, Session};
+use crate::consts::{
+    ACTION_SKIN, GENDER_MALE, ITEM_TYPE_POTION, ITEM_TYPE_SHIELD, ITEM_TYPE_STAFF,
+    ITEM_TYPE_WEAPON, PROFILE_ARCHER, PROFILE_MAGE, PROFILE_WARRIOR, SKILL_BOW, SLOT_ARTIFACT,
+    SLOT_ARTIFACT1, SLOT_ARTIFACT2, SLOT_MAIN_HAND, SLOT_OFF_HAND, SLOT_RING, SLOT_RING1,
+    SLOT_RING2,
+};
 use crate::db;
+
+const TWO_HANDS: i32 = 2;
 
 impl Session {
     /// `cmd/item.move` (M16/F29g): поменять местами два предмета
@@ -184,7 +192,7 @@ impl Session {
             return vec![err];
         }
         // Зелье: heal из stats (открытый объект §6).
-        if def.item_type == "potion" {
+        if def.item_type == ITEM_TYPE_POTION {
             if let Some(heal) = def.stats.get("heal").and_then(|v| v.as_i64()) {
                 // R14: сначала расходуем зелье (ошибка списания — лечения
                 // нет, повторное лечение исключено), затем атомарное
@@ -275,13 +283,13 @@ impl Session {
         let Some(job) = job else {
             return Vec::new(); // разделки не было
         };
-        if job.action == "skin" {
+        if job.action == ACTION_SKIN {
             let mut world = self.state.world.lock().expect("мир");
             world.ruin_skin(&job.corpse_id);
         }
         // «Шкура испорчена» — только для снятия шкур; освежевание
         // просто отменяется (повтор разрешён).
-        let ruined = job.action == "skin";
+        let ruined = job.action == ACTION_SKIN;
         let result = ld2_protocol::evt::HarvestResult {
             entity_id: job.corpse_id,
             name: job.name,
@@ -644,8 +652,9 @@ impl Session {
             }
             Some(req) => {
                 let ok = req == cmd.slot
-                    || (req == "ring" && (cmd.slot == "ring1" || cmd.slot == "ring2"))
-                    || (req == "artifact" && (cmd.slot == "artifact1" || cmd.slot == "artifact2"));
+                    || (req == SLOT_RING && (cmd.slot == SLOT_RING1 || cmd.slot == SLOT_RING2))
+                    || (req == SLOT_ARTIFACT
+                        && (cmd.slot == SLOT_ARTIFACT1 || cmd.slot == SLOT_ARTIFACT2));
                 if !ok {
                     return vec![Self::err(
                         seq,
@@ -656,14 +665,21 @@ impl Session {
             }
         }
         // M17/F30b: правила классов для оружия/щитов/посоха.
-        if matches!(def.item_type.as_str(), "weapon" | "staff" | "shield") {
+        if matches!(
+            def.item_type.as_str(),
+            ITEM_TYPE_WEAPON | ITEM_TYPE_STAFF | ITEM_TYPE_SHIELD
+        ) {
             let profile = self.char.as_ref().and_then(|c| c.profile.clone());
-            let is_bow = def.skill.as_deref() == Some("bow");
+            let is_bow = def.skill.as_deref() == Some(SKILL_BOW);
             let gate = match profile.as_deref() {
-                Some("mage") if def.item_type != "staff" => Some("маг носит только посох"),
-                Some("archer") if !is_bow => Some("лучник носит только луки"),
-                Some("warrior") if def.item_type == "staff" => Some("воин не носит посох"),
-                Some("warrior") if is_bow => Some("воин не носит луки"),
+                Some(PROFILE_MAGE) if def.item_type != ITEM_TYPE_STAFF => {
+                    Some("маг носит только посох")
+                }
+                Some(PROFILE_ARCHER) if !is_bow => Some("лучник носит только луки"),
+                Some(PROFILE_WARRIOR) if def.item_type == ITEM_TYPE_STAFF => {
+                    Some("воин не носит посох")
+                }
+                Some(PROFILE_WARRIOR) if is_bow => Some("воин не носит луки"),
                 _ => None,
             };
             if let Some(msg) = gate {
@@ -671,12 +687,12 @@ impl Session {
             }
         }
         // M17/F30b: левая рука закрыта, пока в правой двуручник.
-        if cmd.slot == "off_hand" {
+        if cmd.slot == SLOT_OFF_HAND {
             if let Ok(Some(main)) =
-                db::items::find_equipped_in_slot(&pool, &char_id, "main_hand").await
+                db::items::find_equipped_in_slot(&pool, &char_id, SLOT_MAIN_HAND).await
             {
                 if let Ok(Some(main_def)) = db::items::def(&pool, &main.def_id).await {
-                    if main_def.hands >= 2 {
+                    if main_def.hands >= TWO_HANDS {
                         return vec![Self::err(
                             seq,
                             ErrorCode::ItemGone,
@@ -707,8 +723,8 @@ impl Session {
         }
         // M17/F30b: двуручник в правой руке блокирует левую — щит
         // автоматически снимается (как в WoW при смене на двуручное).
-        if cmd.slot == "main_hand" && def.hands >= 2 {
-            match db::items::find_equipped_in_slot(&pool, &char_id, "off_hand").await {
+        if cmd.slot == SLOT_MAIN_HAND && def.hands >= TWO_HANDS {
+            match db::items::find_equipped_in_slot(&pool, &char_id, SLOT_OFF_HAND).await {
                 Ok(Some(prev)) => {
                     if let Err(e) = db::items::set_equipped(&pool, &prev.uid, None).await {
                         warn!("item.equip (снятие левой руки): {e}");
@@ -870,7 +886,7 @@ impl Session {
                 .char
                 .as_ref()
                 .map(|c| (c.name.clone(), c.gender.clone()))
-                .unwrap_or_else(|| ("Игрок".into(), "male".into()));
+                .unwrap_or_else(|| ("Игрок".into(), GENDER_MALE.into()));
             // R-dnd: снапшот предмета для отображения на земле «как
             // в рюкзаке» (цвет редкости/+N/×qty/слоты) + raw-состояние
             // для восстановления при подборе.

@@ -10,6 +10,7 @@ use ld2_protocol::types::{
 };
 use tracing::warn;
 
+use crate::consts::{ITEM_TYPE_GEM, ITEM_TYPE_RUNE};
 use crate::db;
 
 /// Превью улучшения (одно на соединение; уровень изменился → stale).
@@ -121,9 +122,9 @@ pub(super) fn socket_accepts(slot: &serde_json::Value, index: u32, rune_slots: i
         .map(str::to_string)
         .unwrap_or_else(|| {
             if i64::from(index) < rune_slots {
-                "rune".into()
+                ITEM_TYPE_RUNE.into()
             } else {
-                "gem".into()
+                ITEM_TYPE_GEM.into()
             }
         })
 }
@@ -168,9 +169,9 @@ pub(crate) fn item_snapshot(
                 for socket in &mut sockets {
                     if socket.accepts.is_none() {
                         socket.accepts = Some(if i64::from(socket.index) < slots {
-                            "rune".into()
+                            ITEM_TYPE_RUNE.into()
                         } else {
-                            "gem".into()
+                            ITEM_TYPE_GEM.into()
                         });
                     }
                 }
