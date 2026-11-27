@@ -2,6 +2,7 @@
 
 use super::world::default_cmd_rate_per_min;
 use super::*;
+use crate::consts::SKILL_HAGGLE;
 
 /// M36: бездействие по умолчанию — 5 минут.
 const fn default_afk_timeout_s() -> u64 {
@@ -121,7 +122,7 @@ pub struct ShopSection {
 impl Default for ShopSection {
     fn default() -> Self {
         let mut skill_discounts = HashMap::new();
-        skill_discounts.insert("haggle".into(), 0.02);
+        skill_discounts.insert(SKILL_HAGGLE.into(), 0.02);
         Self {
             server_markup: 1.0,
             max_discount_bp: 5000,

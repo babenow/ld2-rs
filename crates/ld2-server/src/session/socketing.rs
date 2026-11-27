@@ -15,6 +15,7 @@ use tracing::warn;
 
 use super::rules::{item_snapshot, rune_slots, socket_accepts};
 use super::{out_event, refresh_char_runes, Out, Session};
+use crate::consts::{ITEM_TYPE_GEM, ITEM_TYPE_RUNE};
 use crate::db;
 
 impl Session {
@@ -85,7 +86,7 @@ impl Session {
             return vec![Self::err(seq, ErrorCode::Internal, "нет определения руны")];
         };
         // M17/F30c: в сокет идут руны и самоцветы (броня).
-        if !matches!(rune_def.item_type.as_str(), "rune" | "gem") {
+        if !matches!(rune_def.item_type.as_str(), ITEM_TYPE_RUNE | ITEM_TYPE_GEM) {
             return vec![Self::err(
                 seq,
                 ErrorCode::NoRuneSlot,
@@ -117,7 +118,7 @@ impl Session {
         let accepts = socket_accepts(slot, cmd.socket_index, rune_slots(&staff_def));
         if accepts != rune_def.item_type {
             let takes = match accepts.as_str() {
-                "gem" => "самоцветы",
+                ITEM_TYPE_GEM => "самоцветы",
                 _ => "руны",
             };
             return vec![Self::err(
@@ -130,7 +131,7 @@ impl Session {
         // одна и та же руна не может стоять в двух слотах предмета;
         // гемы не ограничиваются. После accepts: «не тот слот» важнее
         // «дубликата».
-        if rune_def.item_type == "rune"
+        if rune_def.item_type == ITEM_TYPE_RUNE
             && sockets
                 .iter()
                 .any(|s| s.get("def_id").and_then(|v| v.as_str()) == Some(rune_def.id.as_str()))
@@ -434,7 +435,7 @@ impl Session {
         // M18 (указание заказчика): извлечённый **самоцвет** по
         // возможности складывается в существующий стак (простая
         // запись — состояние не теряется); руны — прежнее поведение.
-        let rune_row = if rune_def.item_type == "gem" {
+        let rune_row = if rune_def.item_type == ITEM_TYPE_GEM {
             match db::items::grant_stacking(pool, &char_id, &rune_def_id, 1).await {
                 Ok((row, _stacked)) => row,
                 Err(e) => {

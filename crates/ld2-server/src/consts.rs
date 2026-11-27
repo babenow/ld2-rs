@@ -87,6 +87,7 @@ pub const SKILL_AXE: &str = "axe";
 pub const SKILL_POLEARM: &str = "polearm";
 pub const SKILL_TWOHAND: &str = "twohand";
 pub const SKILL_BOW: &str = "bow";
+pub const SKILL_HAGGLE: &str = "haggle";
 
 /// Профессия «Снятие шкур» и её инструмент.
 pub const PROFESSION_SKINNING: &str = "skinning";

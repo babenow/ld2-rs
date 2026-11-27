@@ -19,6 +19,7 @@ use tracing::warn;
 
 use super::rules::item_snapshot;
 use super::{event_payload_text, out_event, refresh_char_runes, Out, Session};
+use crate::consts::{ITEM_TYPE_SCROLL, PROFILE_ARCHER, PROFILE_MAGE, PROFILE_WARRIOR};
 use crate::db;
 
 impl Session {
@@ -112,9 +113,9 @@ impl Session {
                 .map(|r| r.profile);
             if profile.as_deref() != Some(class) {
                 let need = match class {
-                    "mage" => "маг",
-                    "warrior" => "воин",
-                    "archer" => "лучник",
+                    PROFILE_MAGE => "маг",
+                    PROFILE_WARRIOR => "воин",
+                    PROFILE_ARCHER => "лучник",
                     other => other,
                 };
                 return vec![Self::err(
@@ -395,7 +396,7 @@ impl Session {
                 "нет определения свитка",
             )];
         };
-        if scroll_def.item_type != "scroll" {
+        if scroll_def.item_type != ITEM_TYPE_SCROLL {
             return vec![Self::err(seq, ErrorCode::ItemGone, "это не свиток")];
         }
         // M17/F30g: кулдаун каста свитка (cooldown_s, дефолт 1 с).

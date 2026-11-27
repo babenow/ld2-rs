@@ -2,6 +2,8 @@
 
 use super::*;
 
+const MAX_ADMIN_QTY: i64 = 999;
+
 impl Session {
     /// `cmd/admin.items` (§7): каталог всех определений — левая панель
     /// окна выдачи (вариант A: одним запросом, клиент кэширует и
@@ -163,7 +165,7 @@ impl Session {
             if !self.admin_target_valid(target).await {
                 return vec![Self::err(seq, ErrorCode::TargetGone, "цель исчезла")];
             }
-            if qty > 999 {
+            if qty > MAX_ADMIN_QTY {
                 // Валюта (type=money) — без потолка 999 (указание
                 // заказчика); предел — INTEGER-стак в БД.
                 let ty = db::items::def(&self.state.pool, def_id)
@@ -171,7 +173,8 @@ impl Session {
                     .ok()
                     .flatten()
                     .map(|d| d.item_type);
-                if ty.as_deref() != Some("money") || qty > i64::from(i32::MAX) {
+                if ty.as_deref() != Some(crate::db::items::MONEY_TYPE) || qty > i64::from(i32::MAX)
+                {
                     return vec![Self::err(
                         seq,
                         ErrorCode::BadQuantity,
@@ -203,14 +206,15 @@ impl Session {
             if !self.admin_target_valid(target).await {
                 return vec![Self::err(seq, ErrorCode::TargetGone, "цель исчезла")];
             }
-            if qty > 999 {
+            if qty > MAX_ADMIN_QTY {
                 // Валюта (type=money) — без потолка 999 (указание
                 // заказчика); удаление и так зажимается остатком.
                 let ty = self
                     .admin_item_def(target, item_ref)
                     .await
                     .map(|d| d.item_type);
-                if ty.as_deref() != Some("money") || qty > i64::from(i32::MAX) {
+                if ty.as_deref() != Some(crate::db::items::MONEY_TYPE) || qty > i64::from(i32::MAX)
+                {
                     return vec![Self::err(
                         seq,
                         ErrorCode::BadQuantity,

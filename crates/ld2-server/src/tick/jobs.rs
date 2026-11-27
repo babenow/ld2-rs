@@ -13,6 +13,7 @@ use ld2_protocol::evt::CharStats;
 use serde_json::json;
 use tracing::warn;
 
+use crate::consts::{ACTION_SKIN, PROFESSION_SKINNING};
 use crate::state::SharedState;
 
 /// M18/F58c (ADR-012 §4): восстановление зарядов рун — по аналогии с
@@ -204,7 +205,10 @@ pub(super) async fn harvest_step(state: &SharedState) {
         let learned = crate::db::professions::learned(&state.pool, &job.char_id)
             .await
             .ok()
-            .and_then(|rows| rows.into_iter().find(|(id, _, _, _)| id == "skinning"));
+            .and_then(|rows| {
+                rows.into_iter()
+                    .find(|(id, _, _, _)| id == PROFESSION_SKINNING)
+            });
         // LearnedRow = (id, xp, rank, level) — порядок важен: ранг
         // идёт первым, уровень вторым (фикс: качество шкуры бралось
         // с уровня → «Великолепная» вместо обычной).
@@ -250,7 +254,7 @@ pub(super) async fn harvest_step(state: &SharedState) {
             continue;
         };
         // XP — только за снятие шкуры (освежевание не даёт).
-        if job.action == "skin" {
+        if job.action == ACTION_SKIN {
             if let Some((_, xp_old, rank_row, _)) = learned {
                 let gain = crate::systems::harvest_xp_gain(required, level);
                 if gain > 0 {
@@ -262,7 +266,7 @@ pub(super) async fn harvest_step(state: &SharedState) {
                     match crate::db::professions::grant_progress(
                         &state.pool,
                         &job.char_id,
-                        "skinning",
+                        PROFESSION_SKINNING,
                         xp_new,
                         rank_row,
                         level_new as i32,
@@ -271,7 +275,11 @@ pub(super) async fn harvest_step(state: &SharedState) {
                     {
                         Ok(()) => {
                             let snapshot = crate::systems::profession_snapshot(
-                                cfg, "skinning", xp_new, rank_row, level_new,
+                                cfg,
+                                PROFESSION_SKINNING,
+                                xp_new,
+                                rank_row,
+                                level_new,
                             );
                             let text = crate::session::event_text(
                                 names::EVT_CRAFT_PROFESSION,
@@ -280,7 +288,7 @@ pub(super) async fn harvest_step(state: &SharedState) {
                                     profession: snapshot,
                                     name: crate::db::professions::profession_name(
                                         &state.pool,
-                                        "skinning",
+                                        PROFESSION_SKINNING,
                                     )
                                     .await
                                     .ok()
