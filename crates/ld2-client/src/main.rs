@@ -10,6 +10,7 @@ mod map;
 mod palette;
 mod root;
 mod rune_glyph;
+mod ui_tokens;
 
 use std::borrow::Cow;
 use std::sync::Arc;

@@ -18,14 +18,14 @@ impl Root {
         col = col.child(
             div()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_size(px(13.0))
+                .text_size(px(crate::ui_tokens::FONT_MD))
                 .child(t(lang, Key::MapLabel)),
         );
         if !self.map_pos_ready {
             // Чанки карты ещё грузятся (cmd/map.world).
             return col.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::Loading)),
             );
@@ -130,7 +130,7 @@ impl Root {
                 .justify_center()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(crate::ui_tokens::FONT_MD))
                         .text_color(rgb(pal.muted))
                         .child(t(lang, Key::Loading)),
                 );

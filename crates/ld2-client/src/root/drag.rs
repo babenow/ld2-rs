@@ -26,7 +26,7 @@ impl gpui::Render for ItemDragGhost {
             .bg(rgb(pal.panel))
             .border_1()
             .border_color(rgb(self.color))
-            .text_size(px(13.0))
+            .text_size(px(crate::ui_tokens::FONT_MD))
             .text_color(rgb(self.color))
             .child(self.name.clone())
             .opacity(0.9)

@@ -152,7 +152,7 @@ impl Root {
             .border_color(rgb(pal.border))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(tf(
                         lang,
@@ -164,7 +164,7 @@ impl Root {
                 div()
                     .flex_grow_1()
                     .min_w_0()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(sel_name),
             )
@@ -301,7 +301,7 @@ fn icon_act_btn(
 fn col_title(text: String, pal: &Palette) -> Div {
     div()
         .font_weight(gpui::FontWeight::BOLD)
-        .text_size(px(13.0))
+        .text_size(px(crate::ui_tokens::FONT_MD))
         .text_color(rgb(pal.accent))
         .child(text)
 }

@@ -105,7 +105,7 @@ impl Root {
             // повторяет слот оружия).
             row = row.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::EmptySlot)),
             );
@@ -231,13 +231,13 @@ impl Root {
                 .gap_1()
                 .mx(px(-8.0))
                 .my(px(-4.0))
-                .p(px(10.0))
+                .p(px(crate::ui_tokens::SPACE_10))
                 .rounded_md()
                 .bg(rgb(pal.panel))
                 .border_1()
                 .border_color(rgb(rarity_color(&tip_rarity, &pal)))
                 .text_color(rgb(pal.text))
-                .text_size(px(13.0))
+                .text_size(px(crate::ui_tokens::FONT_MD))
                 .child(
                     div()
                         .font_weight(gpui::FontWeight::BOLD)
@@ -471,7 +471,7 @@ impl Root {
         // отменён заказчиком — выделяется только рамка).
         row = row.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(slot_label(lang, slot)),
         );

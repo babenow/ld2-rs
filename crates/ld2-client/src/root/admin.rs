@@ -377,7 +377,7 @@ impl Root {
             .child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(13.0))
+                    .text_size(px(crate::ui_tokens::FONT_MD))
                     .text_color(rgb(pal.accent))
                     .child(target_label),
             )
@@ -539,7 +539,7 @@ fn catalog_row(this: Entity<Root>, pal: Palette, item: &serde_json::Value) -> St
         .child(div().flex_grow_1())
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(px(crate::ui_tokens::FONT_XS))
                 .text_color(rgb(pal.muted))
                 .child(format!("×{qty}")),
         )
@@ -607,7 +607,7 @@ fn target_row(this: Entity<Root>, pal: Palette, lang: Lang, item: &TargetItem) -
         .child(div().flex_grow_1())
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(px(crate::ui_tokens::FONT_XS))
                 .text_color(rgb(pal.muted))
                 .child(format!("×{qty}")),
         )
@@ -669,7 +669,7 @@ fn rarity_filter_row(
                 .bg(rgb(bg))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(selected_bg)))
-                .text_size(px(11.0))
+                .text_size(px(crate::ui_tokens::FONT_XS))
                 .text_color(rgb(color))
                 .child(t(lang, key))
                 .on_click(move |_, _window, acx| {
@@ -711,7 +711,7 @@ fn target_chip_row(
                 .bg(rgb(bg))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(selected_bg)))
-                .text_size(px(11.0))
+                .text_size(px(crate::ui_tokens::FONT_XS))
                 .child(label.clone())
                 .on_click(move |_, _window, acx| {
                     let value = value_owned.clone();

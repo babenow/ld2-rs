@@ -135,7 +135,7 @@ fn prof_card(
             )
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.accent))
                     .child(t(lang, rank_key(rank))),
             ),
@@ -178,7 +178,7 @@ fn prof_card(
         } else {
             btns = btns.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(tf(
                         lang,
@@ -223,7 +223,7 @@ fn prof_card(
 fn section_title(text: &str) -> Div {
     div()
         .font_weight(gpui::FontWeight::BOLD)
-        .text_size(px(13.0))
+        .text_size(px(crate::ui_tokens::FONT_MD))
         .child(text.to_string())
 }
 
@@ -344,7 +344,7 @@ impl Root {
             .border_color(rgb(pal.border))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.text))
                     .child(tf(
                         lang,

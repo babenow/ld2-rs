@@ -2,6 +2,9 @@
 
 use super::*;
 
+const MS_PER_SECOND: i64 = 1000;
+const SECONDS_PER_MINUTE: u64 = 60;
+
 impl Root {
     /// M11.2: игровые всплывающие диалоги (ФР-03/05/06): death/examine/loot.
     /// Приоритет — прежний диспетчер замены контента (смерть главнее).
@@ -48,9 +51,9 @@ impl Root {
                 )
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(px(crate::ui_tokens::FONT_SM))
                         .text_color(rgb(pal.muted))
-                        .child(format_duration(self.lang, left / 1000)),
+                        .child(format_duration(self.lang, left / MS_PER_SECOND)),
                 )
                 .into_any_element();
             return Some(
@@ -201,7 +204,7 @@ impl Root {
                         line.text.clone()
                     };
                     div()
-                        .text_size(px(15.0))
+                        .text_size(px(crate::ui_tokens::FONT_XL))
                         .font_weight(if line.me {
                             gpui::FontWeight::BOLD
                         } else {
@@ -267,7 +270,7 @@ impl Root {
             };
             history = history.child(
                 div()
-                    .text_size(px(15.0))
+                    .text_size(px(crate::ui_tokens::FONT_XL))
                     .font_weight(if line.me {
                         gpui::FontWeight::BOLD
                     } else {
@@ -300,7 +303,7 @@ impl Root {
         let mut col = div().flex().flex_col().gap_1().size_full();
         col = col.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(t(lang, Key::BtnTraining)),
         );
@@ -348,7 +351,7 @@ impl Root {
                     )
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(crate::ui_tokens::FONT_XS))
                             .text_color(rgb(pal.muted))
                             .child(cost),
                     )
@@ -384,7 +387,7 @@ impl Root {
         if !teachable.is_empty() {
             col = col.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::ProfessionsTab)),
             );
@@ -405,7 +408,7 @@ impl Root {
                         .child(div().flex_grow_1().min_w_0().child(name))
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(px(crate::ui_tokens::FONT_XS))
                                 .text_color(rgb(pal.muted))
                                 .child(cost),
                         )
@@ -499,7 +502,7 @@ impl Root {
                     0xffffff,
                     Click::ConfirmDeath,
                 )
-                .mt(px(10.0)),
+                .mt(px(crate::ui_tokens::SPACE_10)),
             )
     }
 
@@ -640,7 +643,7 @@ impl Root {
                     .flex()
                     .flex_row()
                     .gap_3()
-                    .mt(px(8.0))
+                    .mt(px(crate::ui_tokens::SPACE_8))
                     .child(btn(
                         cx,
                         t(lang, Key::Exit).to_string(),
@@ -719,7 +722,7 @@ impl Root {
                     .map(|wait_s| {
                         reply
                             .wait_until_ms
-                            .map(|until| ((until - now_ms).max(0) / 1000) as u64)
+                            .map(|until| ((until - now_ms).max(0) / MS_PER_SECOND) as u64)
                             .unwrap_or(wait_s)
                     })
                     .filter(|left| *left > 0);
@@ -730,13 +733,13 @@ impl Root {
                             .py_1()
                             .rounded_md()
                             .bg(rgb(pal.panel))
-                            .text_size(px(13.0))
+                            .text_size(px(crate::ui_tokens::FONT_MD))
                             .text_color(rgb(pal.muted))
                             .child(format!(
                                 "{} ({:02}:{:02})",
                                 reply.text,
-                                wait_left / 60,
-                                wait_left % 60
+                                wait_left / SECONDS_PER_MINUTE,
+                                wait_left % SECONDS_PER_MINUTE
                             )),
                     );
                     continue;
@@ -788,7 +791,7 @@ impl Root {
         if !dialog.quests.is_empty() {
             actions = actions.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::QuestsTab)),
             );
@@ -811,7 +814,7 @@ impl Root {
                 if !quest.goals.is_empty() {
                     card = card.child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(crate::ui_tokens::FONT_SM))
                             .text_color(rgb(pal.muted))
                             .child(format!("• {}", goals_summary(quest))),
                     );
@@ -820,7 +823,7 @@ impl Root {
                     if let Some(xp) = reward.xp {
                         card = card.child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(crate::ui_tokens::FONT_SM))
                                 .text_color(rgb(pal.muted))
                                 .child(format!("{}: {xp} XP", t(lang, Key::RewardLabel))),
                         );

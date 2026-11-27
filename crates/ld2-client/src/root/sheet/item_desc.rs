@@ -16,7 +16,11 @@ pub(crate) fn item_description_body(
     let item_type = detail["type"].as_str().unwrap_or("?");
     // M18/F57: справа запас под скроллбар (приём character_left_column)
     // — иначе индикатор прокрутки наезжал на жирные значения статов.
-    let mut col = div().flex().flex_col().gap_1().pr(px(16.0));
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .pr(px(crate::ui_tokens::SPACE_16));
     // M18/F58f: у рун — глиф предмета сразу под названием (шапка
     // окна), вверху тела (указание заказчика).
     if item_type == domain::ITEM_RUNE {
@@ -338,7 +342,7 @@ fn item_extra_block(
         if !bonuses.is_empty() {
             col = col.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(crate::ui_tokens::FONT_XS))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::ItemBonuses)),
             );
@@ -444,7 +448,7 @@ fn item_extra_block(
                     for line in details.iter().filter_map(|d| d.as_str()) {
                         cell = cell.child(
                             div()
-                                .pl(px(20.0))
+                                .pl(px(crate::ui_tokens::SPACE_20))
                                 .text_color(rgb(pal.muted))
                                 .child(line.to_string()),
                         );

@@ -55,7 +55,7 @@ pub(crate) fn badge(label: String, color: u32, pal: &Palette) -> Div {
         .border_1()
         .border_color(rgb(color))
         .bg(rgb(pal.bg))
-        .text_size(px(11.0))
+        .text_size(px(crate::ui_tokens::FONT_XS))
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(rgb(color))
         .child(label)
@@ -78,13 +78,13 @@ pub(crate) fn status_badge(
         .child(div().w(px(8.0)).h(px(8.0)).rounded_full().bg(rgb(color)))
         .child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.text))
                 .child(status_text(lang, status)),
         )
         .children(rtt.map(|ms| {
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(format!("{ms} мс"))
         }))

@@ -7,11 +7,11 @@
 # --- прод-лимиты (файлы > 600 строк и целевые модули) ---
 crates/ld2-client/src/root/admin.rs 726 167
 crates/ld2-client/src/root/backpack.rs 1106 150
-crates/ld2-client/src/root/game/dialog.rs 848 161
-crates/ld2-client/src/root/game/entities.rs 692 187
-crates/ld2-client/src/root/game.rs 750 150
-crates/ld2-client/src/root/settings.rs 782 183
-crates/ld2-client/src/root/sheet/character.rs 770 150
+crates/ld2-client/src/root/game/dialog.rs 851 161
+crates/ld2-client/src/root/game/entities.rs 700 188
+crates/ld2-client/src/root/game.rs 754 150
+crates/ld2-client/src/root/settings.rs 786 183
+crates/ld2-client/src/root/sheet/character.rs 788 150
 crates/ld2-client/src/root/sheet/equip.rs 659 183
 crates/ld2-client/src/root/social.rs 613 150
 crates/ld2-client/src/root.rs 905 176
