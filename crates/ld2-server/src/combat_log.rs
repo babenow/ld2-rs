@@ -5,20 +5,23 @@
 //! Падежи имён сущностей не склоняются (как и раньше: «Вы бьёте Волк») —
 //! открытый контент имён не даёт морфологии.
 
+use crate::consts::{
+    ITEM_TYPE_STAFF, SKILL_AXE, SKILL_BOW, SKILL_DAGGER, SKILL_POLEARM, SKILL_SWORD, SKILL_TWOHAND,
+};
 use ld2_protocol::spells;
 
 /// Чем бьёт обычным оружием — творительный по навыку/типу предмета.
 pub fn weapon_hits_as(skill: Option<&str>, item_type: &str) -> &'static str {
-    if item_type == "staff" {
+    if item_type == ITEM_TYPE_STAFF {
         return "посохом";
     }
     match skill {
-        Some("sword") => "мечем",
-        Some("dagger") => "кинжалом",
-        Some("axe") => "топором",
-        Some("polearm") => "алебардой",
-        Some("twohand") => "двуручным мечом",
-        Some("bow") => "из лука",
+        Some(SKILL_SWORD) => "мечем",
+        Some(SKILL_DAGGER) => "кинжалом",
+        Some(SKILL_AXE) => "топором",
+        Some(SKILL_POLEARM) => "алебардой",
+        Some(SKILL_TWOHAND) => "двуручным мечом",
+        Some(SKILL_BOW) => "из лука",
         _ => "руками",
     }
 }

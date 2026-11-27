@@ -21,7 +21,14 @@ use tracing::warn;
 
 use super::rules::{item_snapshot, summary_of};
 use super::{out_ack, out_event, refresh_char_runes, Out, Session, PROFILES};
+use crate::consts::{
+    EFFECT_BLIND, EFFECT_SILENCE, EFFECT_STUN, GENDER_FEMALE, GENDER_MALE, ITEM_TYPE_GEM,
+    MS_PER_SECOND_F, PROFILE_ARCHER, PROFILE_WARRIOR, SLOT_MAIN_HAND,
+};
 use crate::db;
+
+const MIN_NAME_CHARS: usize = 2;
+const MIN_COOLDOWN_S: f64 = 0.001;
 
 impl Session {
     pub(super) async fn char_list(&mut self, seq: u32) -> Vec<Out> {
@@ -72,7 +79,7 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         }
-        if cmd.name.trim().chars().count() < 2 {
+        if cmd.name.trim().chars().count() < MIN_NAME_CHARS {
             return vec![Self::err(
                 seq,
                 ErrorCode::NameTaken,
@@ -89,8 +96,8 @@ impl Session {
         // M18/F34: пол — `male`/`female`; старые клиенты не шлют пол →
         // `male` (обратная совместимость §11).
         let gender = match cmd.gender.as_deref() {
-            None | Some("male") => "male",
-            Some("female") => "female",
+            None | Some(GENDER_MALE) => GENDER_MALE,
+            Some(GENDER_FEMALE) => GENDER_FEMALE,
             Some(other) => {
                 return vec![Self::err(
                     seq,
@@ -116,8 +123,8 @@ impl Session {
                 // дефолт колонок.
                 let res = &self.state.config.gameplay.resource;
                 let resource = match cmd.profile.as_str() {
-                    "warrior" => Some((0, res.rage_max as i32)),
-                    "archer" => Some((res.energy_max as i32, res.energy_max as i32)),
+                    PROFILE_WARRIOR => Some((0, res.rage_max as i32)),
+                    PROFILE_ARCHER => Some((res.energy_max as i32, res.energy_max as i32)),
                     _ => None,
                 };
                 if let Some((cur, max)) = resource {
@@ -265,7 +272,7 @@ impl Session {
         {
             let now = crate::time::now_ms();
             let world = self.state.world.lock().expect("мир");
-            for kind in ["stun", "silence", "blind"] {
+            for kind in [EFFECT_STUN, EFFECT_SILENCE, EFFECT_BLIND] {
                 if let Some(until) = world.char_effect_until(&row.id, kind, now) {
                     outs.push(out_event(
                         names::EVT_CHAR_AFFLICT,
@@ -483,7 +490,7 @@ impl Session {
                 let Ok(Some(gem)) = db::items::def(pool, gem_id).await else {
                     continue;
                 };
-                if gem.item_type != "gem" {
+                if gem.item_type != ITEM_TYPE_GEM {
                     continue;
                 }
                 let (Some(attr), Some(value)) = (
@@ -680,7 +687,7 @@ impl Session {
     /// оружию (main_hand); без него — «руками». Вызывается при входе
     /// в мир и после экипировки/снятия.
     pub(super) async fn refresh_char_hits_as(&self, char_id: &str) {
-        let main = db::items::find_equipped_in_slot(&self.state.pool, char_id, "main_hand")
+        let main = db::items::find_equipped_in_slot(&self.state.pool, char_id, SLOT_MAIN_HAND)
             .await
             .ok()
             .flatten();
@@ -699,7 +706,7 @@ impl Session {
         // значение снимается, в plan берётся конфиг).
         let attack_ms = def
             .as_ref()
-            .map(|d| (d.cooldown_s.max(0.001) * 1000.0).round() as i64);
+            .map(|d| (d.cooldown_s.max(MIN_COOLDOWN_S) * MS_PER_SECOND_F).round() as i64);
         {
             let mut world = self.state.world.lock().expect("мир");
             world.set_char_hits_as(char_id, hits);

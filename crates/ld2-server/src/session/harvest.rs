@@ -15,7 +15,13 @@ use tracing::warn;
 use super::event_payload_text;
 use super::rules::item_snapshot;
 use super::{out_event, Out, Session};
+use crate::consts::{ACTION_GUT, ACTION_SKIN, ITEM_SKINNING_KNIFE, PROFESSION_SKINNING};
 use crate::db;
+
+const MIN_LEVEL: i64 = 1;
+const MAX_LEVEL: i64 = 100;
+const LEVEL_GAP_MAX: u32 = 25;
+const JOB_SECONDS: i64 = 5;
 
 impl Session {
     /// Снятие шкур: старт разделки — сервер-джоб на5 с (тиктаймер
@@ -32,7 +38,7 @@ impl Session {
         let Ok(cmd) = Self::payload_of::<ld2_protocol::cmd::CorpseHarvest>(env, seq) else {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректный payload")];
         };
-        if cmd.action != "skin" && cmd.action != "gut" {
+        if cmd.action != ACTION_SKIN && cmd.action != ACTION_GUT {
             return vec![Self::err(seq, ErrorCode::Internal, "некорректное действие")];
         };
         let char_id = match self.require_char_id(seq) {
@@ -78,7 +84,7 @@ impl Session {
                     "это животное разделывать нельзя",
                 )];
             }
-            let done = if cmd.action == "skin" {
+            let done = if cmd.action == ACTION_SKIN {
                 corpse.skin_done
             } else {
                 corpse.gut_done
@@ -90,7 +96,7 @@ impl Session {
                 .get("level")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(1)
-                .clamp(1, 100) as u32;
+                .clamp(MIN_LEVEL, MAX_LEVEL) as u32;
             let name = corpse
                 .name
                 .strip_prefix("Труп: ")
@@ -106,7 +112,9 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         };
-        let Some((_, _, _, level)) = learned.into_iter().find(|(id, _, _, _)| id == "skinning")
+        let Some((_, _, _, level)) = learned
+            .into_iter()
+            .find(|(id, _, _, _)| id == PROFESSION_SKINNING)
         else {
             return vec![Self::err(
                 seq,
@@ -115,7 +123,7 @@ impl Session {
             )];
         };
         let level = level.max(0) as u32;
-        if required.saturating_sub(level) >= 25 {
+        if required.saturating_sub(level) >= LEVEL_GAP_MAX {
             return vec![Self::err(
                 seq,
                 ErrorCode::LevelRequired,
@@ -127,7 +135,7 @@ impl Session {
         }
         // Нож для снятия шкур (паритет инструмента крафта).
         let has_knife =
-            match db::items::has_item_type(&self.state.pool, &char_id, "skinning_knife").await {
+            match db::items::has_item_type(&self.state.pool, &char_id, ITEM_SKINNING_KNIFE).await {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("harvest (нож): {e}");
@@ -170,7 +178,7 @@ impl Session {
             outs.extend(self.broadcast_corpse(&job.corpse_id));
         }
         // Старт джоба (5 с).
-        let at = crate::time::now_epoch() + 5;
+        let at = crate::time::now_epoch() + JOB_SECONDS;
         {
             let mut world = self.state.world.lock().expect("мир");
             world.start_harvest(crate::world::HarvestJob {

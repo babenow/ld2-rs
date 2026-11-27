@@ -15,7 +15,11 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::{out_ack, out_event, Out, Session};
+use crate::consts::{EFFECT_BLIND, EFFECT_SILENCE, EFFECT_STUN, MS_PER_SECOND_F};
 use crate::db;
+
+const RATE_WINDOW_S: i64 = 60;
+const MIN_COOLDOWN_S: f64 = 0.001;
 
 /// M24: команды, блокируемые активной разделкой (RF5a: один источник правды).
 pub(super) const HARVEST_BLOCKED: &[&str] = &[
@@ -91,9 +95,9 @@ impl Session {
         let (stunned, silenced, blinded) = {
             let world = self.state.world.lock().expect("мир");
             (
-                world.char_effect_active(char_id, "stun", now),
-                world.char_effect_active(char_id, "silence", now),
-                world.char_effect_active(char_id, "blind", now),
+                world.char_effect_active(char_id, EFFECT_STUN, now),
+                world.char_effect_active(char_id, EFFECT_SILENCE, now),
+                world.char_effect_active(char_id, EFFECT_BLIND, now),
             )
         };
         if stunned && stun_blocked(msg_type) {
@@ -149,12 +153,12 @@ impl Session {
             return None;
         }
         let now = crate::time::now_epoch();
-        if now.saturating_sub(self.cmd_rate_window.0) >= 60 {
+        if now.saturating_sub(self.cmd_rate_window.0) >= RATE_WINDOW_S {
             self.cmd_rate_window = (now, 0);
         }
         self.cmd_rate_window.1 += 1;
         if self.cmd_rate_window.1 > limit {
-            let retry = (60 - now.saturating_sub(self.cmd_rate_window.0)).max(1) as u64;
+            let retry = (RATE_WINDOW_S - now.saturating_sub(self.cmd_rate_window.0)).max(1) as u64;
             return Some(Self::ack_rate_limited(seq, retry));
         }
         None
@@ -234,7 +238,7 @@ impl Session {
     /// M17/F30g: зафиксировать кулдаун предмета → событие клиенту
     /// (таймер + прогресс-бар кнопки).
     pub(super) fn item_cd_started(&self, char_id: &str, def: &db::items::ItemDefRow) -> Out {
-        let cd = def.cooldown_s.max(0.001);
+        let cd = def.cooldown_s.max(MIN_COOLDOWN_S);
         let until = crate::time::now_epoch() + cd.ceil() as i64;
         {
             let mut world = self.state.world.lock().expect("мир");
@@ -246,7 +250,7 @@ impl Session {
             serde_json::to_value(CombatCooldown {
                 skill_id: Some(format!("item:{}", def.id)),
                 until_epoch: until,
-                duration_ms: Some((cd * 1000.0).round() as i64),
+                duration_ms: Some((cd * MS_PER_SECOND_F).round() as i64),
             })
             .unwrap_or_default(),
         )

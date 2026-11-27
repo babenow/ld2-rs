@@ -16,6 +16,7 @@ use tracing::warn;
 
 use super::rules::{entity_loot_defs, item_snapshot};
 use super::{event_payload_text, event_text, out_event, Out, Session};
+use crate::consts::GENDER_MALE;
 use crate::db;
 
 impl Session {
@@ -373,7 +374,7 @@ impl Session {
             .char
             .as_ref()
             .map(|c| (c.name.clone(), c.gender.clone()))
-            .unwrap_or_else(|| ("Игрок".into(), "male".into()));
+            .unwrap_or_else(|| ("Игрок".into(), GENDER_MALE.into()));
         let despawn_text = event_payload_text(
             names::EVT_ENTITY_DESPAWN,
             &EntityDespawn {
