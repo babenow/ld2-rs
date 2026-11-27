@@ -2,6 +2,10 @@ use ld2_core::domain;
 
 use super::*;
 
+mod widgets;
+
+use widgets::{px_row, slider_cell, value_readout, PxRow};
+
 /// M14/F9: вкладки экрана настроек (состояние сессии, конфиг не трогаем).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
@@ -295,23 +299,48 @@ impl Root {
         );
 
         // M14/F8: шрифт сообщений чата и строк лога — отдельные px.
-        body = body.child(font_px_row(
+        body = body.child(px_row(
             cx,
             pal,
             lang,
-            Key::SettingsChatFont,
-            "ld2-chat-font-px",
-            self.config.chat_font_px,
-            |root, v| root.config.chat_font_px = v,
+            PxRow {
+                label: Key::SettingsChatFont,
+                id: "ld2-chat-font-px",
+                value: self.config.chat_font_px,
+                min: 10.0,
+                max: 20.0,
+                step: 1.0,
+                set: |root, v| root.config.chat_font_px = v,
+            },
         ));
-        body = body.child(font_px_row(
+        body = body.child(px_row(
             cx,
             pal,
             lang,
-            Key::SettingsLogFont,
-            "ld2-log-font-px",
-            self.config.log_font_px,
-            |root, v| root.config.log_font_px = v,
+            PxRow {
+                label: Key::SettingsLogFont,
+                id: "ld2-log-font-px",
+                value: self.config.log_font_px,
+                min: 10.0,
+                max: 20.0,
+                step: 1.0,
+                set: |root, v| root.config.log_font_px = v,
+            },
+        ));
+        // M39: высота фрейма журнала мира (60…240 px).
+        body = body.child(px_row(
+            cx,
+            pal,
+            lang,
+            PxRow {
+                label: Key::SettingsLogHeight,
+                id: "ld2-log-height-px",
+                value: self.config.log_height_px,
+                min: 60.0,
+                max: 240.0,
+                step: 4.0,
+                set: |root, v| root.config.log_height_px = v,
+            },
         ));
         body
     }
@@ -611,45 +640,6 @@ fn hotkey_row(cx: &mut Context<'_, Root>, lang: Lang, row: &HotkeyRowSpec, spec:
         )
 }
 
-/// M14/F8: строка настройки «размер шрифта, px» — Slider 10…20 с шагом 1;
-/// пишет поле конфига и перерисовывает окно (значение — абсолютные px).
-fn font_px_row(
-    cx: &mut Context<'_, Root>,
-    pal: &Palette,
-    lang: Lang,
-    label: Key,
-    id: &'static str,
-    value: f32,
-    set: fn(&mut Root, f32),
-) -> Div {
-    let this = cx.entity();
-    div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .items_center()
-        .child(
-            div()
-                .w(px(130.0))
-                .text_color(rgb(pal.muted))
-                .child(t(lang, label)),
-        )
-        .child(slider_cell(
-            Slider::new(id, f64::from(value))
-                .range(10.0, 20.0)
-                .step(1.0)
-                .on_change(move |v, _window, acx| {
-                    this.update(acx, |root, cx| {
-                        set(root, v as f32);
-                        cx.refresh_windows();
-                        cx.notify();
-                        root.save_config();
-                    });
-                }),
-        ))
-        .child(value_readout(pal, format!("{} px", value.round() as i32)))
-}
-
 /// M14/F13: hex из настроек → RGB (парсер Ely — те же формы, что
 /// принимает `is_hex_color` в sanitize конфига); битый → `None`
 /// (вызывающий берёт дефолт). В F14 перенесено сюда из `game.rs` —
@@ -764,23 +754,4 @@ fn color_picker_row(
                     }),
             )
         })
-}
-
-/// M14/F8 (фикс смоука): слайдер Ely сам ширины не имеет — `Track`
-/// рендерится `flex_none` с одним padding, а все его дети абсолютно
-/// позиционированы (внешняя ширина ≈ thumb, ≈0 полезной площади: не
-/// виден и не кликается). Обёртка — flex-**колонка**: поперечная ось
-/// растягивает слайдер на всю ширину ячейки, а `size_full()` у Ely
-/// получает реально определённую область.
-fn slider_cell(slider: Slider) -> Div {
-    div().flex().flex_col().flex_grow_1().child(slider)
-}
-
-/// M14/F8: показ текущего значения настройки справа от ползунка.
-fn value_readout(pal: &Palette, text: String) -> Div {
-    div()
-        .w(px(56.0))
-        .text_size(px(crate::ui_tokens::FONT_MD))
-        .text_color(rgb(pal.text))
-        .child(text)
 }

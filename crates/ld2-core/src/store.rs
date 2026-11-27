@@ -982,6 +982,49 @@ mod tests {
         );
     }
 
+    /// M39: прирост стака — это получение предмета (руда из жилы,
+    /// покупка, лут): строка «Вы получили…»; уменьшение молчит.
+    #[test]
+    fn item_state_qty_growth_logs_gain() {
+        let mut store = in_game();
+        store.apply_event(
+            "evt/item/added",
+            Some(serde_json::json!({
+                "item": {
+                    "uid": "ore1",
+                    "type": "ore_copper",
+                    "name": "Медная руда",
+                    "rarity": "common",
+                    "upgrade": 0,
+                    "stats": {},
+                    "def_id": "ore_copper",
+                    "qty": 1,
+                    "extra": {}
+                }
+            })),
+        );
+        let before = store.log.len();
+        store.apply_event(
+            "evt/item/state",
+            Some(serde_json::json!({ "uid": "ore1", "patch": { "qty": 3 } })),
+        );
+        let lines: Vec<&str> = store
+            .log
+            .iter()
+            .skip(before)
+            .map(|l| l.text.as_str())
+            .collect();
+        assert_eq!(lines, ["Вы получили 2 Медная руда"], "стак руды: {lines:?}");
+
+        // Расход/продажа (qty вниз) — без строки журнала.
+        let before = store.log.len();
+        store.apply_event(
+            "evt/item/state",
+            Some(serde_json::json!({ "uid": "ore1", "patch": { "qty": 1 } })),
+        );
+        assert_eq!(store.log.len(), before, "уменьшение стака молчит");
+    }
+
     /// M14/F4: глобальный кулдаун — 1 с; повтор не укорачивает окно.
     #[test]
     fn global_cooldown_blocks_one_second_and_never_shrinks() {

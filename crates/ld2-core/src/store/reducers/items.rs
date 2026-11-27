@@ -219,7 +219,9 @@ impl AppStore {
                     return vec![];
                 };
                 let gathering = self.harvest.as_ref().is_some_and(|h| h.action == "gather");
-                let mut gem_stack: Option<String> = None;
+                // M39: прирост стака — это получение предмета (руда из
+                // жилы, покупка, лут); уменьшение (продажа/расход) молчит.
+                let mut gained: Option<(String, String, i64)> = None;
                 if let Some(snap) = self.snapshot.as_mut() {
                     if let Some(item) = snap.char.inventory.iter_mut().find(|i| i.uid == update.uid)
                     {
@@ -262,15 +264,21 @@ impl AppStore {
                                 }
                             }
                         } else if let Some(qty) = update.patch.get("qty").and_then(|v| v.as_i64()) {
+                            let old = item.qty.unwrap_or(0);
                             item.qty = Some(qty);
-                            if gathering && item.item_type.starts_with("raw_") {
-                                gem_stack = Some(item.name.clone());
+                            if qty > old {
+                                gained =
+                                    Some((item.name.clone(), item.item_type.clone(), qty - old));
                             }
                         }
                     }
                 }
-                if let Some(name) = gem_stack {
-                    self.push_log(LogKind::Loot, format!("Найден самоцвет: {name}"));
+                if let Some((name, item_type, delta)) = gained {
+                    if gathering && item_type.starts_with("raw_") {
+                        self.push_log(LogKind::Loot, format!("Найден самоцвет: {name}"));
+                    } else {
+                        self.push_log(LogKind::Loot, format!("Вы получили {delta} {name}"));
+                    }
                 }
                 vec![]
             }
