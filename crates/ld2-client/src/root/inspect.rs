@@ -189,7 +189,7 @@ impl Root {
             )))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(sub),
             )
@@ -197,7 +197,7 @@ impl Root {
             .child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(13.0))
+                    .text_size(px(crate::ui_tokens::FONT_MD))
                     .child(t(lang, Key::InspectEquipment)),
             )
             .children(equip_rows)
@@ -205,7 +205,7 @@ impl Root {
             .child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(13.0))
+                    .text_size(px(crate::ui_tokens::FONT_MD))
                     .child(t(lang, Key::InspectProfessions)),
             )
             .children(prof_rows);

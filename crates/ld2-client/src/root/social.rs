@@ -158,7 +158,7 @@ impl Root {
         let Some(party) = party else {
             block = block.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(t(lang, Key::PartyEmpty)),
             );
@@ -175,7 +175,7 @@ impl Root {
             if member.id == my_id {
                 name_row = name_row.child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(crate::ui_tokens::FONT_XS))
                         .text_color(rgb(pal.muted))
                         .child("(вы)"),
                 );
@@ -246,7 +246,7 @@ impl Root {
                     .flex()
                     .flex_row()
                     .gap_3()
-                    .mt(px(8.0))
+                    .mt(px(crate::ui_tokens::SPACE_8))
                     .child({
                         let id = invite.invite_id.clone();
                         act_btn(
@@ -310,7 +310,7 @@ impl Root {
                     .flex()
                     .flex_row()
                     .gap_3()
-                    .mt(px(8.0))
+                    .mt(px(crate::ui_tokens::SPACE_8))
                     .child({
                         let gid = invite.guild_id.clone();
                         act_btn(
@@ -373,7 +373,7 @@ impl Root {
         }
         col = col.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.warn))
                 .child(t(lang, Key::TradeWarn)),
         );

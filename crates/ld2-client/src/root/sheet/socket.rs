@@ -213,7 +213,7 @@ impl Root {
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(px(crate::ui_tokens::FONT_SM))
                                     .text_color(rgb(pal.muted))
                                     .child(hint),
                             );
@@ -320,7 +320,7 @@ impl Root {
                     .child(item_label_row(item, rarity_color(&item.rarity, pal)))
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(crate::ui_tokens::FONT_SM))
                             .text_color(rgb(pal.muted))
                             .child(t(lang, Key::InsertRune)),
                     )

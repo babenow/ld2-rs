@@ -608,7 +608,7 @@ impl Root {
             });
         // Горизонтальный простор внешней ауре свечения (кромка
         // скролл-области иначе срезает её слева/справа).
-        div().px(px(10.0)).child(list)
+        div().px(px(crate::ui_tokens::SPACE_10)).child(list)
     }
 
     /// Плитка предмета в сетке рюкзака: фон, подпись в две строки,
@@ -1075,7 +1075,7 @@ impl Root {
         let ghost_theme = self.config.theme.clone();
         div()
             .id(format!("{id_prefix}-drag-{uid}"))
-            .pb(px(8.0))
+            .pb(px(crate::ui_tokens::SPACE_8))
             .child(ctx)
             .on_drag(drag_payload, move |drag, offset, _, cx| {
                 tracing::info!("dnd: старт drag {} из рюкзака", drag.uid);

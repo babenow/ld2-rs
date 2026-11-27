@@ -3,10 +3,12 @@
 
 use super::*;
 
+const SECONDS_PER_DAY: i64 = 86_400;
+
 /// M33: остаток премиума в днях (округление вверх; истёк → `None`).
 pub(crate) fn premium_days_left(until: i64, now: i64) -> Option<i64> {
     let left = until - now;
-    (left > 0).then(|| (left + 86_399) / 86_400)
+    (left > 0).then(|| (left + SECONDS_PER_DAY - 1) / SECONDS_PER_DAY)
 }
 
 /// M33: «12 дней» с русскими формами (1 день / 2–4 дня / 5+ дней);
@@ -218,7 +220,7 @@ impl Root {
                         // 2) тип локации (бейджи Safe/PvP…).
                         let name_row = div().flex().flex_row().items_center().gap_1().child(
                             div()
-                                .text_size(px(12.0))
+                                .text_size(px(crate::ui_tokens::FONT_SM))
                                 .text_color(rgb(name_color))
                                 .child(format!("· {name}")),
                         );
@@ -327,7 +329,7 @@ impl Root {
             .child(div().flex_grow_1())
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(pal.muted))
                     .child(tf(
                         lang,

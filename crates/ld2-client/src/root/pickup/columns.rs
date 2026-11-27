@@ -51,7 +51,7 @@ impl Root {
             .child(div().flex_grow_1())
             .children(qty.map(|q| {
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(crate::ui_tokens::FONT_XS))
                     .text_color(rgb(pal.muted))
                     .child(format!("×{q}"))
             }))

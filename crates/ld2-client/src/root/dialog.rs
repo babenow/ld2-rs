@@ -162,7 +162,11 @@ impl Root {
             let idx = self.dialog_page.min(dialog.pages.len().saturating_sub(1));
             self.dialog_page = idx;
             if let Some(page) = dialog.pages.get(idx) {
-                col = col.child(div().text_size(px(14.0)).child(page.text.clone()));
+                col = col.child(
+                    div()
+                        .text_size(px(crate::ui_tokens::FONT_LG))
+                        .child(page.text.clone()),
+                );
                 let mut actions = div().flex().flex_row().gap_2().items_center().flex_wrap();
                 for action in &page.actions {
                     actions = actions.child(Self::dialog_action_btn(cx, pal, dialog, page, action));

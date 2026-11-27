@@ -5,6 +5,10 @@ use ld2_core::domain;
 
 use super::*;
 
+const MS_PER_SECOND: i64 = 1000;
+const ROUND_UP_MS: i64 = 999;
+const CHAT_DEFAULT_PCT: f32 = 0.5;
+
 impl Root {
     /// Статус-бар игрового экрана: слева — кнопка «Чат» (когда чат
     /// свёрнут), справа — бейдж статуса сервера (+ RTT).
@@ -12,14 +16,14 @@ impl Root {
     /// обратным отсчётом и красный прогрессбар.
     fn afk_warning(&self, pal: &Palette) -> Option<Div> {
         let until = self.store.afk_until_ms?;
-        let now = local_epoch_ms() + self.store.time_offset * 1000;
+        let now = local_epoch_ms() + self.store.time_offset * MS_PER_SECOND;
         let left = until - now;
         if left <= 0 {
             return None;
         }
         let lang = self.lang;
-        let secs = ((left + 999) / 1000).max(1);
-        let window = (self.store.afk_window_s.max(1) * 1000) as f32;
+        let secs = ((left + ROUND_UP_MS) / MS_PER_SECOND).max(1);
+        let window = (self.store.afk_window_s.max(1) * MS_PER_SECOND) as f32;
         let frac = (left as f32 / window).clamp(0.0, 1.0);
         Some(
             div()
@@ -29,7 +33,7 @@ impl Root {
                 .mt_1()
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(crate::ui_tokens::FONT_XS))
                         .text_color(rgb(pal.danger))
                         .child(tf(lang, Key::AfkWarning, &[("{s}", &secs.to_string())])),
                 )
@@ -61,7 +65,7 @@ impl Root {
                     .on_click(cx.listener(|this, _, _, cx| {
                         // Разворачивание из статус-бара — высота 50 %.
                         this.config.chat_collapsed = false;
-                        this.config.chat_height_pct = 0.5;
+                        this.config.chat_height_pct = CHAT_DEFAULT_PCT;
                         this.save_config();
                         cx.notify();
                     })),
@@ -71,7 +75,7 @@ impl Root {
         // Автор и версия клиента — в центре бара (заказчик).
         bar = bar.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(tf(
                     lang,
@@ -91,7 +95,7 @@ impl Root {
             let full = used as u32 >= total;
             bar = bar.child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(crate::ui_tokens::FONT_SM))
                     .text_color(rgb(if full { pal.danger } else { pal.muted }))
                     .child(tf(
                         lang,
@@ -125,7 +129,7 @@ impl Root {
         let mut name_row = div().flex().flex_row().items_center().gap_2().child(
             div()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_size(px(16.0))
+                .text_size(px(crate::ui_tokens::FONT_TITLE))
                 .child(snap.char.name.clone()),
         );
         let now = local_epoch() + self.store.time_offset;
@@ -134,7 +138,7 @@ impl Root {
             let left = status.expires_at - now;
             name_row = name_row.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(crate::ui_tokens::FONT_XS))
                     .text_color(rgb(severity_rgb(status.severity)))
                     .child(format!("{title} · {}", format_duration(lang, left))),
             );
@@ -186,7 +190,7 @@ impl Root {
         }
         col = col.child(
             div()
-                .text_size(px(12.0))
+                .text_size(px(crate::ui_tokens::FONT_SM))
                 .text_color(rgb(pal.muted))
                 .child(format!(
                     "{}: {}",
@@ -296,7 +300,7 @@ impl Root {
                 .overflow_y_scroll()
                 .child(
                     div()
-                        .text_size(px(13.0))
+                        .text_size(px(crate::ui_tokens::FONT_MD))
                         .text_color(rgb(pal.text))
                         .child(loc.text.clone()),
                 ),
@@ -389,7 +393,7 @@ impl Root {
             block = block.child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(13.0))
+                    .text_size(px(crate::ui_tokens::FONT_MD))
                     .child(t(self.lang, title)),
             );
             for entity in group {

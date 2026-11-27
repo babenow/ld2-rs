@@ -4,6 +4,23 @@ use ld2_core::domain;
 
 use super::*;
 
+const MS_PER_SECOND: i64 = 1000;
+const MS_PER_SECOND_F: f64 = 1000.0;
+const DEFAULT_RUNE_RECHARGE_MS: i64 = 30_000;
+const BUFF_BLINK_LEFT_S: i64 = 3;
+const BUFF_BLINK_PERIOD_MS: i64 = 500;
+const HARVEST_LEVEL_GAP: i64 = 25;
+const HARVEST_XP_BASE: f64 = 10.0;
+const HARVEST_XP_PER_LEVEL: f64 = 1.5;
+const HARVEST_DIFF_LOW: i64 = -10;
+const HARVEST_DIFF_MID: i64 = 9;
+const HARVEST_DIFF_HIGH: i64 = 24;
+const HARVEST_MULT_LOW: f64 = 1.5;
+const HARVEST_MULT_NORMAL: f64 = 1.0;
+const HARVEST_MULT_HIGH: f64 = 0.5;
+const HARVEST_MULT_ZERO: f64 = 0.0;
+const HARVEST_XP_MAX: i64 = 40;
+
 impl Root {
     /// Строка сущности: левый клик — цель, ПКМ — действия (ФР-03/05).
     pub(crate) fn entity_row(
@@ -133,7 +150,7 @@ impl Root {
                     ))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(crate::ui_tokens::FONT_XS))
                             .text_color(rgb(pal.muted))
                             .child(boss.name.clone()),
                     ),
@@ -141,7 +158,7 @@ impl Root {
             if let Some(casting) = &boss.casting {
                 row = row.child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(crate::ui_tokens::FONT_XS))
                         .text_color(rgb(pal.warn))
                         .child(tf(lang, Key::MobCasting, &[("{name}", casting.as_str())])),
                 );
@@ -159,7 +176,7 @@ impl Root {
         for tag in entity.tags.iter().flatten() {
             row = row.child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(crate::ui_tokens::FONT_XS))
                     .text_color(rgb(pal.warn))
                     .child(tag.clone()),
             );
@@ -231,10 +248,10 @@ impl Root {
             .map(|s| {
                 (
                     s.magic.rune_recharge.clone(),
-                    (s.magic.rune_recharge_s * 1000.0).round() as i64,
+                    (s.magic.rune_recharge_s * MS_PER_SECOND_F).round() as i64,
                 )
             })
-            .unwrap_or_else(|| ("time".to_string(), 30_000));
+            .unwrap_or_else(|| ("time".to_string(), DEFAULT_RUNE_RECHARGE_MS));
         // Доля прошедшего такта (время до следующего заряда).
         let tick_fill = ((now - phase) as f32 / (interval_ms.max(1) as f32)).clamp(0.0, 1.0);
         let mut rows = Vec::new();
@@ -285,14 +302,9 @@ impl Root {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .child(crate::rune_glyph::glyph_div_for(
-                                rune.glyph.as_deref(),
-                                &rune.name,
-                            )),
-                    )
+                    .child(div().text_size(px(crate::ui_tokens::FONT_LG)).child(
+                        crate::rune_glyph::glyph_div_for(rune.glyph.as_deref(), &rune.name),
+                    ))
                     .child(
                         div()
                             .w(px(88.0))
@@ -309,7 +321,7 @@ impl Root {
                     )
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(crate::ui_tokens::FONT_SM))
                             .text_color(rgb(pal.muted))
                             .child(format!("{}/{}", rune.charges, rune.max)),
                     )
@@ -337,7 +349,7 @@ impl Root {
     pub(crate) fn rune_buff_rows(&self, snap: &StateSnapshot, pal: &Palette) -> Vec<Stateful<Div>> {
         let lang = self.lang;
         let now_ms = self.now_ms();
-        let now = now_ms / 1000; // epoch-секунды (expires_at)
+        let now = now_ms / MS_PER_SECOND; // epoch-секунды (expires_at)
         let active = filter_active_buffs(&snap.char.buffs, now);
         if active.is_empty() {
             return Vec::new();
@@ -371,7 +383,7 @@ impl Root {
             }
             let left = (buff.expires_at - now).max(0);
             // Моргание раз в секунду на последних3 секундах.
-            let dim = left <= 3 && (now_ms / 500) % 2 == 1;
+            let dim = left <= BUFF_BLINK_LEFT_S && (now_ms / BUFF_BLINK_PERIOD_MS) % 2 == 1;
             let glyph = glyphs.get(buff.kind.as_str()).cloned().flatten();
             let title = if buff.stacks > 1 {
                 format!("{} ×{}", buff.title, buff.stacks)
@@ -386,18 +398,13 @@ impl Root {
                     .items_center()
                     .gap_2()
                     .opacity(if dim { 0.0 } else { 1.0 })
+                    .child(div().text_size(px(crate::ui_tokens::FONT_LG)).child(
+                        crate::rune_glyph::glyph_div_for(glyph.as_deref(), &buff.kind),
+                    ))
+                    .child(div().text_size(px(crate::ui_tokens::FONT_SM)).child(title))
                     .child(
                         div()
-                            .text_size(px(14.0))
-                            .child(crate::rune_glyph::glyph_div_for(
-                                glyph.as_deref(),
-                                &buff.kind,
-                            )),
-                    )
-                    .child(div().text_size(px(12.0)).child(title))
-                    .child(
-                        div()
-                            .text_size(px(11.0))
+                            .text_size(px(crate::ui_tokens::FONT_XS))
                             .text_color(rgb(pal.muted))
                             .child(format_duration(lang, left)),
                     ),
@@ -437,7 +444,7 @@ impl Root {
                 // Описание — под прогресс-баром (указание заказчика).
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(crate::ui_tokens::FONT_XS))
                         .text_color(rgb(pal.muted))
                         .child(p.label.clone()),
                 ),
@@ -460,7 +467,7 @@ impl Root {
                 if Some(target_id.as_str()) == my_id.as_deref() {
                     row = row.child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(crate::ui_tokens::FONT_XS))
                             .text_color(rgb(pal.danger))
                             .child(t(lang, Key::MobAttacksYou)),
                     );
@@ -475,7 +482,7 @@ impl Root {
                     if let Some(name) = name {
                         row = row.child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(px(crate::ui_tokens::FONT_XS))
                                 .text_color(rgb(pal.warn))
                                 .child(tf(lang, Key::MobAttacks, &[("{name}", name.as_str())])),
                         );
@@ -612,24 +619,25 @@ impl Root {
                         .unwrap_or(0);
                     let required = harv.get("level").and_then(|v| v.as_i64()).unwrap_or(1);
                     let diff = level - required;
-                    let blocked = required - level >= 25;
+                    let blocked = required - level >= HARVEST_LEVEL_GAP;
                     if harv.get(domain::ACTION_SKIN).and_then(|v| v.as_bool()) == Some(true)
                         && harv.get("skin_done").and_then(|v| v.as_bool()) != Some(true)
                     {
                         // Ожидаемый опыт — формула сервера (дубль на
                         // клиенте): min(40, round((10 + треб×1.5) ×
                         // множитель по разнице уровней)).
-                        let base = 10.0 + f64::from(required as u32) * 1.5;
-                        let mult = if diff <= -10 {
-                            1.5
-                        } else if diff <= 9 {
-                            1.0
-                        } else if diff <= 24 {
-                            0.5
+                        let base =
+                            HARVEST_XP_BASE + f64::from(required as u32) * HARVEST_XP_PER_LEVEL;
+                        let mult = if diff <= HARVEST_DIFF_LOW {
+                            HARVEST_MULT_LOW
+                        } else if diff <= HARVEST_DIFF_MID {
+                            HARVEST_MULT_NORMAL
+                        } else if diff <= HARVEST_DIFF_HIGH {
+                            HARVEST_MULT_HIGH
                         } else {
-                            0.0
+                            HARVEST_MULT_ZERO
                         };
-                        let xp = ((base * mult).round() as i64).min(40);
+                        let xp = ((base * mult).round() as i64).min(HARVEST_XP_MAX);
                         let icon = if blocked {
                             IconName::Lock
                         } else if xp <= 0 {
