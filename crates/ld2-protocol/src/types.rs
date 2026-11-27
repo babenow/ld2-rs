@@ -39,6 +39,10 @@ pub enum EntityKind {
     /// M20/F20c: контейнер (сундук) — лут `loot:<entity>:<idx>`
     /// однократно на персонажа (паритет трупа).
     Container,
+    /// R12 (§6): незнакомое значение kind — не роняем разбор Entity
+    /// (иначе терялся весь снапшот); рендер — как нейтральное.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Строка в `location.entities` (§6). `was_player` — ключевой маркер трупа
@@ -231,6 +235,23 @@ pub struct ItemSnapshot {
     /// M18/F47/ADR-010: бонусы предмета (контент + инстанс) — аддитивно §11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bonuses: Option<Vec<ItemBonus>>,
+    /// M28: контейнер инвентаря — `backpack`, `bags` (слоты под сумки)
+    /// или uid надетой сумки; аддитивно §11 (старый сервер не шлёт).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    /// M28: позиция внутри контейнера (`0..ёмкость-1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot_index: Option<i32>,
+    /// M28: ёмкость сумки (контент `bag_slots`) — только для `type=bag`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bag_slots: Option<u32>,
+    /// M28: какие типы принимает сумка (пусто — любые).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bag_types: Option<Vec<String>>,
+    /// M28/B8: тип слота под сумку (`reagent`, `quiver`, `keyring`);
+    /// `None` — обычная сумка.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bag_kind: Option<String>,
     #[serde(flatten, default)]
     pub extra: JsonMap,
 }
@@ -252,6 +273,11 @@ pub struct SkillSnapshot {
     pub rank: u32,
     pub xp: i64,
     pub xp_to_next: i64,
+    /// M31: потолок ранга по уровню персонажа (боевые/защитные/
+    /// магические — не более 2 рангов за уровень); `None` — навык без
+    /// такого ограничения. Аддитивно §6/§11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank_cap: Option<u32>,
 }
 
 /// Уровень опасности статуса преступления (§5 `crime.kinds`).
@@ -281,6 +307,9 @@ pub enum QuestPhase {
     Active,
     TurnIn,
     Done,
+    /// R12 (§6): незнакомая фаза — не роняем разбор списка квестов.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -344,6 +373,28 @@ pub struct ProfessionSnapshot {
     pub xp_to_next: i64,
     #[serde(flatten, default)]
     pub extra: JsonMap,
+}
+
+/// M35: публичный осмотр персонажа (ПКМ) — только разрешённое:
+/// уровень, класс, экипировка и изученные профессии.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CharInspectView {
+    pub id: String,
+    pub name: String,
+    pub level: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub equip: Vec<InspectItem>,
+    #[serde(default)]
+    pub professions: Vec<ProfessionSnapshot>,
+}
+
+/// M35: надетый предмет в карточке осмотра (слот + снимок вещи).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectItem {
+    pub slot: String,
+    pub item: ItemSnapshot,
 }
 
 /// M18/F58d (ADR-012 §6): активный бафф персонажа — руна-приём

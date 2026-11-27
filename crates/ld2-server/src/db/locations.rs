@@ -54,6 +54,24 @@ pub async fn get(pool: &PgPool, id: &str) -> Result<Option<LocationRow>, sqlx::E
     .await
 }
 
+/// M26: строка карты мира (`cmd/map.world`) — только нужные поля
+/// (без entities/flags: в карту они не входят).
+#[derive(Debug, sqlx::FromRow)]
+pub struct MapRow {
+    pub id: String,
+    pub name: String,
+    pub text: String,
+    pub exits: Value,
+}
+
+/// M26: все локации для карты-графа; стабильный порядок по id —
+/// основа чанкизации `cmd/map.world`.
+pub async fn map_rows(pool: &PgPool) -> Result<Vec<MapRow>, sqlx::Error> {
+    sqlx::query_as::<_, MapRow>("SELECT id, name, text, exits FROM locations ORDER BY id")
+        .fetch_all(pool)
+        .await
+}
+
 /// Имя локации для сводок §5; `None` — неизвестна.
 pub async fn location_name(pool: &PgPool, id: &str) -> Result<Option<String>, sqlx::Error> {
     if id.is_empty() {

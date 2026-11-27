@@ -42,14 +42,25 @@ async fn discovery_doc(
 }
 
 /// `200 ok` при живой БД, `503` иначе (для мониторинга/оркестраторов).
-async fn healthz(
-    State(state): State<SharedState>,
-) -> Result<(StatusCode, &'static str), StatusCode> {
+/// M27: заголовок `x-ld2-content-version` — действующая версия контента
+/// (проверка hot reload/деплоя без чтения логов).
+type Healthz = (
+    [(axum::http::HeaderName, String); 1],
+    (StatusCode, &'static str),
+);
+
+async fn healthz(State(state): State<SharedState>) -> Result<Healthz, StatusCode> {
     crate::db::ping(&state.pool).await.map_err(|e| {
         tracing::warn!("healthz: ошибка БД: {e}");
         StatusCode::SERVICE_UNAVAILABLE
     })?;
-    Ok((StatusCode::OK, "ok\n"))
+    Ok((
+        [(
+            axum::http::HeaderName::from_static("x-ld2-content-version"),
+            state.content().version.clone(),
+        )],
+        (StatusCode::OK, "ok\n"),
+    ))
 }
 
 /// Accept-loop с graceful shutdown: SIGINT/SIGTERM → дожидаемся завершения

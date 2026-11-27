@@ -1,6 +1,8 @@
 //! Основной цикл транспорта: подключение → (resume → resync) → селект-loop
 //! → backoff/reconnect (`docs/protocol.md` §2.4, §3, §4.5; PLAN-M1 T2).
 
+use ld2_protocol::names;
+
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -73,7 +75,17 @@ pub(super) async fn run(
                     msg = outbound.recv() => match msg {
                         None | Some(Outbound::Close) => break 'outer,
                         Some(Outbound::UpdateToken(t)) => cfg.refresh_token = t,
-                        Some(env @ Outbound::Envelope { .. }) => deferred.push(env),
+                        Some(env @ Outbound::Envelope { .. }) => {
+                            // R15: офлайн-буфер ограничен — долгий офлайн
+                            // не копит память бесконечно; самая старая
+                            // команда сбрасывается (idempotent-ретраи §2.4.2
+                            // позволят повторить).
+                            if deferred.len() >= 128 {
+                                deferred.remove(0);
+                                warn!("офлайн-буфер полон (128) — самая старая команда сброшена");
+                            }
+                            deferred.push(env);
+                        }
                     }
                 }
             }
@@ -116,6 +128,7 @@ pub(super) async fn run(
         }
 
         attempt += 1;
+        let started = Instant::now();
         match connect_once(
             &mut cfg,
             &ingress,
@@ -133,6 +146,12 @@ pub(super) async fn run(
             }
             Ok(Flow::Reconnect) => debug!("соединение потеряно (попытка {attempt})"),
             Err(e) => warn!("ошибка соединения (попытка {attempt}): {e:#}"),
+        }
+        // R13: сессия прожила дольше backoff_max — счётчик попыток
+        // сбрасывается (иначе после давнего сбоя каждый реконнект ждёт
+        // потолочные 30 с).
+        if started.elapsed() >= cfg.backoff_max {
+            attempt = 0;
         }
     }
 
@@ -370,10 +389,19 @@ where
 /// Классификация входящего текста (§2.2, §2.3).
 fn classify(text: &str) -> Result<ServerMsg, serde_json::Error> {
     let env: Envelope = serde_json::from_str(text)?;
+    // §2.3/§11.4 (R3): конверт чужой версии нельзя разбирать типами v1 —
+    // смещение полей молча исказит данные. Отбрасываем с предупреждением.
+    if env.v != 1 {
+        warn!(
+            "конверт v={} не поддерживается (ожидалась v1) — отброшено: {}",
+            env.v, env.msg_type
+        );
+        return Ok(ServerMsg::Unknown(format!("v={} {}", env.v, env.msg_type)));
+    }
     if env.msg_type == ACK_TYPE {
         let ack: Ack = serde_json::from_str(text)?;
         Ok(ServerMsg::Ack(ack))
-    } else if env.msg_type.starts_with("evt/") {
+    } else if env.msg_type.starts_with(names::EVT_PREFIX) {
         Ok(ServerMsg::Event(env))
     } else {
         Ok(ServerMsg::Unknown(env.msg_type))

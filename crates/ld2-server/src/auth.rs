@@ -147,6 +147,8 @@ pub fn session_config(
     characters: Vec<CharacterSummary>,
     // M14/F19: роль аккаунта из БД (модерация чата).
     role: String,
+    // M33: срок премиум-аккаунта (epoch-секунды).
+    premium_until: Option<i64>,
 ) -> SessionConfig {
     let auth = &cfg.auth;
     let g = &cfg.gameplay;
@@ -167,6 +169,7 @@ pub fn session_config(
         char_slot_limit: g.char_slot_limit,
         profession_limit: g.profession_limit,
         role,
+        premium_until,
         features: g
             .features
             .iter()
@@ -202,6 +205,7 @@ pub fn session_config(
         inventory: InventoryConfig {
             slots: g.inventory.slots,
             equip_slots: g.inventory.equip_slots.clone(),
+            bag_slots: g.inventory.bag_slots,
         },
         upgrade: UpgradeConfig {
             max_level: g.upgrade.max_level,

@@ -1,7 +1,7 @@
 # Протокол ld2 — контракт «клиент ↔ сервер»
 
 **Версия контракта (wire):** `v = 1` · **Статус:** нормативный (экспорт и развёртывание §4 [`tz.md`](./tz.md))
-**Контракт обязателен для трёх сторон:** `ld2-client`, `ld2-mock-server`, будущего реального сервера.
+**Контракт обязателен для двух сторон:** `ld2-client` и реального сервера `ld2-server` (с M12); тестовая поддержка — `ld2-test-kit`. Историческая редакция предусматривала мок-сервер — он заменён реальным сервером, но типы и правила контракта не менялись.
 **Единственный источник типов:** crate `ld2-protocol` (serde-типы без зависимостей от UI/сети).
 
 Соглашения этого документа: ключи JSON — `snake_case`; UTF-8; «MUST/SHOULD» = «ОБЯЗАТЕЛЬНО/РЕКОМЕНДУЕТСЯ».
@@ -160,6 +160,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
   "char_slot_limit": 8,
   "profession_limit": 2,
   "role": "player",                       // player|admin|moderator (M14/F19)
+  "premium_until": 1798761600,            // M33: премиум до (epoch-с); нет поля — без премиума
   "features": {
     "loot.roll": false, "respawn.inn": true, "guild.bank": false,
     "upgrade.rules": "break_on_fail", "trade.value_hint": true, "chat.slash": true
@@ -177,7 +178,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
             "channels": ["system","location","global","party","guild","whisper"],
             "max_len": 500, "cooldown_s": 1.5 },
   "journal_ttl_s": 30,        // M25: жизнь строки журнала (Лог), с; 0 — не удаляются
-  "inventory": { "slots": 100, "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
+  "inventory": { "slots": 20, "bag_slots": 4,   // M28: базовые ячейки и слоты под сумки (0 — выключить)
+                 "equip_slots": ["head","shoulders","bracers","gloves","body","legs","feet","cloak","ring1","ring2","amulet","main_hand","off_hand","artifact1","artifact2"] },
   "upgrade": { "max_level": 9, "preview": true, "shows_chance": true, "duration_s": 3.0 },
   "magic": { "rune_recharge": "time", "rune_recharge_s": 30, "scroll_requires_target": true,  // time|item (M18/F58c); с на один заряд (M24, без поля — 30)
              "mana": { "regen_out_s": 45, "regen_in_pct_s": 1.0, "rune_cost": 10 } },
@@ -230,9 +232,14 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 // LocationSnapshot (в снапшоте или в ack payload)
 { "id": "l_forest", "name": "Черный лес", "flags": ["pvp"], "text": "Сосны давят тьмою…",
   "exits": [ Exit ], "entities": [ Entity ] }
+// M29: entities содержит онлайн-игроков этой локации строками kind: player
+// (hp не передаётся; свой персонаж в список не входит). Вход/переход/выход
+// соседа приходят адресными evt/entity/spawn и evt/entity/despawn; у перехода
+// и респавна в событиях есть text с готовой строкой журнала —
+// «пришла Сара» / «Марк ушел — тропа на север», гибель моба — «Волк погиб».
 
 // ItemSnapshot
-{ "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest
+{ "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest|bag
   "name": "Ясеневый посох", "rarity": "rare",
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },
@@ -247,6 +254,10 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
                                             // псевдослоты пар) и руки (2 — двуручник)
   "def_id": "dagger_knife",              // M17/F30g: ключ кулдауна использования
   "qty": 1, "gold_value": 120,
+  "container": "backpack", "slot_index": 3,  // M28: backpack | bags (слот под сумку: 0..bag_slots−1 общие, +3 спец.) | uid сумки
+  "bag_slots": 20,                           // M28: ёмкость сумки (только для type=bag)
+  "bag_types": ["herb"],                     // M28/B7: какие типы принимает сумка (пусто/нет — любые)
+  "bag_kind": "reagent",                     // M28/B8: general|reagent|quiver|keyring — слот панели
   "bonuses": [ { "kind": "attr",  "id": "str",      "value": 3 },   // M18/F47 (ADR-010):
                { "kind": "param", "id": "accuracy", "value": 4, "pct": true } ] }
                                             // бонусы: kind ∈ attr|param|skill; pct — только у
@@ -254,7 +265,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 
 // SkillSnapshot
 { "id": "sword", "name": "Владение мечом", "description": "+2% физ. урона мечом",
-  "rank": 3, "level": 120, "xp": 300, "xp_to_next": 436 }  // M21: level — вторая шкала (границы рангов кратно 50)
+  "rank": 3, "level": 120, "xp": 300, "xp_to_next": 436,
+  "rank_cap": 6 }  // M31: потолок по уровню (2 ранга/уровень; нет поля — без ограничения)
 
 // BuffState (M18/F58d, ADR-012 §6): активный бафф руны в char.buffs
 { "kind": "rune_marksman", "title": "Меткость",     // kind — ключ, title — для UI
@@ -279,6 +291,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | Команда | Payload | Ack payload | Идемп. | Назначение |
 |---|---|---|---|---|
 | `auth.login` | `{login, password}` | `{access_token, expires_in_s}` | + | вход |
+| `char.inspect` | `{char_id}` | `{char: CharInspectView}` | + | M35: ПКМ-осмотр игрока в той же локации — уровень, экипировка, профессии |
 | `auth.register` | `{login, password, email}` | `{access_token, expires_in_s}` | + | регистрация и немедленный вход (→ `evt/session.start`); лимиты — настройки сервера; `email` обязателен и уникален (`E_BAD_EMAIL`/`E_EMAIL_TAKEN`) |
 | `auth.resume` | `{refresh_token}` | `{access_token, expires_in_s}` | + | reconnect |
 | `auth.logout` | `{}` | `{}` | + | выход |
@@ -290,6 +303,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `skill.train` | `{entity_id, skill_id}` | `{rank, xp, xp_to_next, pool_left}` | − | повышение ранга навыка **у тренера в диалоге** (M18/F44, ADR-009): гейты — тренер в локации (`E_NO_TRAINER`), **шкала 100 %** (`E_SKILL_NOT_READY`), очки опыта (`E_XP_POOL`), плата из контента диалога (`E_INGREDIENTS`), потолок/атрибут (`E_RANK_CAP`/`E_REQUIREMENT_ATTR`); списывает очки пула, шкала обнуляется; заменяет `char.xp_invest` |
 | `location.look` | `{}` | `{location}` | + | перерисовать локацию |
 | `location.move` | `{exit_id}` | `{location}` | − | переход |
+| `map.world` | `{offset?}` | `{locations[], offset, total, root}` | + | M26: чанк графа мира (статический контент, ~0.5 МБ — не влезает в лимит WS 64 КБ); повторять с `offset` до `offset >= total`; кэш на процесс сбрасывается hot reload (M27) |
 | `entity.info` | `{entity_id}` | `{entity_detail}` | + | осмотр сущности/трупа; M22: у динамического трупа поле `inner[]` — лут освежевания (отдельный блок «Внутри», uid `inner:<corpse>:<idx>`) |
 | `npc.talk` | `{entity_id}` | `{dialog: {id, name}, node, quests[], actions[], training[]}` | + | диалог NPC: **корень ветки** (`node`: `{id, text, quest?, replies: [{id, text, wait_s?, action?}]}`; `wait_s` — секунды до конца кулдауна целевой строки: ответ показывается **неактивным** с таймером, без поля — активен; `action` — действие вместо перехода (`"shop"` → панель магазина, `"train"` → панель обучения; клиент шлёт `shop.list`/`skill.train`); ответы с не выполненными условиями скрыты; `node: null` — нет записи), доступные квесты, `actions`, `training: [{skill, points, gold, items?}]` — чему NPC учит и по какой цене; `professions: [{id, gold}]` — профессии NPC с ценой (M21, изучение — `craft.learn`) (M18/F35, ветки F37/F42/F43/F44; `greeting` убран — ADR-008, обучение — ADR-009) |
 | `npc.reply` | `{entity_id, node_id, reply_id}` | `{node: {...}\|null, quests[]}` | − | ответ персонажа — переход по ветке (`node` — форма из `npc.talk`, включая `wait_s`); `node: null` — конец диалога (M18/F37, ADR-008) |
@@ -304,7 +318,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
 | `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
-| `item.move` | `{item_uid, target_uid}` | `{}` | − | поменять местами в рюкзаке |
+| `item.move` | `{item_uid, target_uid?}` или `{item_uid, to_container, to_index}` | `{}` / `{item_uid, container, slot_index}` | − | перемещение (M28): legacy `target_uid` — поменять местами в рюкзаке; `to_container` (`backpack`/`bags`/uid сумки) + `to_index` — положить в ячейку контейнера (ack несёт итоговое место); снятие/надевание сумки — перенос в `bags`/из `bags`; непустую сумку снять/выбросить нельзя (`E_INVENTORY_FULL`); сумка с `bag_types` принимает только эти типы (`E_BAG_TYPE`); спец-слоты панели (`bag_slots+0/1/2` — реагенты, колчан, ключница) принимают только сумку своего `bag_kind` (`E_BAG_SLOT`) |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны предмета с сокетами (M25 — не только посох); **M24**: `stats.class` руны (warrior\|archer\|mage) — каст только своему классу, иначе `E_REQUIREMENT_ATTR` (нет поля — любому классу) |
 | `socket.insert` | `{staff_uid, socket_index, rune_uid}` | `{staff, char?}` | − | инкрустация (`staff_uid` — uid цели; M17/F30a; M18/F32: руны → оружие `weapon`/`staff`, самоцветы → броня `armor`; цель надета — ack несёт `char`) — **M18/F58** сверяется `accepts` слота, а не тип предмета (гемы в оружие); **M24**: инкрустация в **один** предмет — стак (qty>1) не заполняется целиком: целевая штука становится отдельной строкой (`evt/item/added`), старый стак −1 (`evt/item/state`), ack несёт `staff` уже новой строки |
@@ -349,6 +363,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `admin.remove.ask` | `{ target, ref }` | `{}` + `evt/dialog/open` | − | M24: execute-диалог количества удаления; id `admin.remove:<target>#<ref>`; F24a — `self` (ref = uid) |
 | `admin.clear` | `{ target }` | `{}` | − | M24: удалить ВСЕ предметы цели (кнопка «Удалить все»): инвентарь — все записи (события `evt/item/removed` себе/онлайн-цели), труп — все слоты + `evt/corpse/created`, сундук/магазин — база/контент tombstone-ами + надстройка, монстр — весь лут (респавн восстановит); `E_TARGET_GONE` |
 | `admin.god_mode` | `{ enabled }` | `{ enabled }` | − | M24: toggle «режим бога» (неуязвимость: урон не применяется вовсе); только `role=admin`, состояние сессионное (в мире) |
+| `admin.content.reload` | `{}` | `{ version, applied, locations, items }` | + | M27: hot reload контента — перечитать каталог `content/` на работающем сервере (сид в БД при смене версии, замена диалогов/магазинов/версии в памяти, сброс кэша карты); только `role=admin` → `E_PERMISSION`; при ошибке контент не применяется, старое состояние сохранено (`E_INTERNAL`, причина — в логах) |
 | `admin.target.info` | `{ target }` | `{ items: [{ref, id, name, type, rarity, qty}] }` | + | M24: содержимое цели правой колонки — инвентарь (`self`/`char:<имя>`, оффлайн тоже), слоты трупа (`corpse:<id>`, ref `loot:`/`inner:`), админ-лут монстра (`monster:<id>`, ref `bonus:<idx>`), сундук (`container:<id>`, ref `cont:`/`contx:` — база/надстройка), магазин (`shop:<npc>`, ref `shop:<tab>:<idx>`/`xshop:<idx>`); `E_TARGET_GONE` |
 
 **Ограничения текста чата:** `chat.max_len`, `chat.cooldown_s` из §5; превышение → `E_RATE_LIMITED` c `retry_after_s`.
@@ -361,6 +376,9 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | Событие | Payload | Назначение |
 |---|---|---|
 | `evt/session.start` | §5 | конфиг + токены + список персонажей |
+| `evt/account/premium` | `{ premium_until: i64 \| null }` | M33: срок премиума изменился (покупка/админ) — title bar клиента |
+| `evt/session/replaced` | `{}` | M34: в аккаунт вошли из другого окна — старый клиент разлогинивается и показывает ошибку-тост |
+| `evt/session/afk` | `{ remaining_s, timeout_s }` \| `{ reset: true }` \| `{ offline: true }` | M36: бездействие — предупреждение на последних 5 % (каждую секунду), сброс активности, перевод в офлайн (экран выбора персонажа) |
 | `evt/state/snapshot` | `{ state_version, char, location, party, guild, server_ts }` | полное состояние |
 | `evt/state/delta` | §3 | патч состояния |
 | `evt/pong` | `{ ts, rtt_ms }` | эхо пинга |
@@ -374,10 +392,10 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `evt/char/stats` | `{ patch }` | изменение атрибутов/HP/MP |
 | `evt/char/death` | `{ victim_char: true, lost_items[], corpse, respawn { location_id, delay_s } }` | смерть ПЕРСОНАЖА, полная потеря лута |
 | `evt/location/changed` | `{ location: LocationSnapshot }` | новая локация (broadcast в ней же) |
-| `evt/entity/spawn` | `{ entity: Entity, location_id }` | появление сущности |
+| `evt/entity/spawn` | `{ entity: Entity, location_id, text? }` | появление сущности; M29: `text` — готовая строка журнала («пришла Сара»), без неё клиент пишет «{name} появляется» |
 | `evt/entity/move` | `{ entity_id, patch }` | перемещение/изменение внутри локации |
 | `evt/entity/hp` | `{ entity_id, hp }` | смена HP |
-| `evt/entity/despawn` | `{ entity_id, location_id, kind? }` | исчезновение (смерть/уход/TTL); `kind` M20 — «{name} исчез» для предмета |
+| `evt/entity/despawn` | `{ entity_id, location_id, kind?, text? }` | исчезновение (смерть/уход/TTL); `kind` M20 — «{name} исчез» для предмета; M29: `text` — готовая строка журнала («Марк ушел — тропа на север», «Волк погиб») |
 | `evt/mob/attack` | `{ entity_id, next_attack_at, interval_ms }` | M25: моб атаковал — бар атаки у монстра в списке (заполнение → атака); `interval_ms` = (конфиг-интервал + `attack_speed` моба) × множитель фазы босса, но не ниже настройки `min_attack_interval_s` (0.5 с) |
 | `evt/mob/phase` | `{ entity_id, phase, name, glyph? }` | M25: босс перешёл в фазу по времени боя — глиф/имя в списке монстров + журнал |
 | `evt/mob/skill` | `{ entity_id, source_name, name, glyph? }` | M25: босс использовал навык — журнал |
@@ -466,6 +484,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_PROFESSION` | нет требуемой профессии |
 | `E_INVENTORY_FULL` | инвентарь заполнен |
 | `E_STUNNED` | M25: дебафф контроля (стан/немота/ослепление от приёмов босса) — команды заблокированы до `until_ms` |
+| `E_BAG_TYPE` | M28: сумка с ограничением `bag_types` не принимает этот тип предмета (`item.move`) |
+| `E_BAG_SLOT` | M28/B8: сумка не подходит к спец-слоту панели (реагенты/колчан/ключница) — нужен `bag_kind` слота |
 | `E_BUSY` | M24: персонаж занят разделкой — действия мира/развития отклоняются, пока идёт таймер (`item.*` — исключение, прерывает по M23) |
 | `E_BAD_QTY` | M24: количество в админ-диалоге вне допустимого диапазона (1..=999; для валюты `type=money` верхней границы нет — до INTEGER-стака) |
 | `E_ITEM_GONE` | предмета уже нет (двойное действие/обмен) |
@@ -494,7 +514,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 ## 10. Преступность: модель частичного сложения (серверная)
 
 Клиент **не пересчитывает** сроки — только рендерит `statuses[]` (§8) и строки журнала (`log_hint`,
-`evt/crime/added.log_entry`). Формула ниже — рекомендуемая модель для мока/сервера, заменяемая
+`evt/crime/added.log_entry`). Формула ниже — рекомендуемая модель для сервера, заменяемая
 конфигом (`crime.*` из §5), **контракт это допускает** — клиент обязан съедать любые значения.
 
 Обозначения: `T` — текущий общий срок (сек), `t` — срок нового преступления, `T_MAX` — потолок, `k = blend_k`.
@@ -600,7 +620,7 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 
 ---
 
-## 13. Чек-лист автора сервера (мок или реальный)
+## 13. Чек-лист автора сервера
 
 - [ ] Протокол `v=1`, `Sec-WebSocket-Protocol: ld2.v1`, лимит фрейма 64 KiB, текстовые JSON.
 - [ ] `seq`-окно 128 с кэшированными ack; ровно один ack на команду; события после своих ack.
@@ -614,7 +634,7 @@ T_new = min( T_MAX ,  T + k · t · (1 − T / T_MAX) )
 - [ ] `craft.learn`/`skill.train`: тренер в локации (`E_NO_TRAINER`), оплата золотом/предметами
       (`E_INGREDIENTS`, M14/M18); у `skill.train` — гейт шкалы 100 % (`E_SKILL_NOT_READY`) и очки
       опыта (`E_XP_POOL`); кулдаун/гейт `skill.use` (`E_COOLDOWN`/`E_REQUIREMENT_ATTR`).
-- [ ] Модель преступности §10 через конфиг `crime.*`; статусы включаются присутствием `kind` в `crime.kinds` (в моке: murderer, marauder, **thief**).
+- [ ] Модель преступности §10 через конфиг `crime.*`; статусы включаются присутствием `kind` в `crime.kinds` (по умолчанию: murderer, marauder, **thief**).
 - [ ] Мана (D4): сервер проверяет `mp` перед кастом руны (`E_NOT_ENOUGH_MP`), свитки — без маны; реген по `magic.mana` из §5.
 - [ ] Неизвестные `cmd` от клиента (старее/новее по версии) — `E_INTERNAL`/игнор по §11, без падений.
 

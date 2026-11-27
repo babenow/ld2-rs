@@ -6,13 +6,14 @@ use ely::forms::{Choice, Input, Select};
 use ely::layout::{Card, ScrollArea};
 use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div};
-use ld2_core::l10n::{t, tf, Key};
+use ld2_core::l10n::{t, tf, Key, Lang};
 use ld2_core::store::{local_epoch, Act, Gender, Profile};
 use ld2_protocol::cmd::{CharCreate, CharSelect};
+use ld2_protocol::types::CharacterSummary;
 
 use crate::palette::{palette, Palette};
 
-use super::{act_btn, Root};
+use super::{act_btn, Root, SendSlot};
 
 impl Root {
     /// M11.2: диалоги экрана персонажей (ФР-02): создание/удаление.
@@ -106,102 +107,7 @@ impl Root {
 
         let dark = pal.bg == palette("dark").bg;
         for character in &session.characters {
-            let id = character.id.clone();
-            let name = character.name.clone();
-            let scheduled = self
-                .store
-                .pending_delete
-                .as_ref()
-                .filter(|p| p.char_id == character.id);
-
-            // M11.7 (D19): ник цветом по классу; без profile — нейтрально.
-            let mut head = div().flex().flex_row().gap_2().items_center().child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_size(px(16.0))
-                    .text_color(rgb(class_color(character.profile.as_deref(), dark)))
-                    .child(name.clone()),
-            );
-            for kind in &character.crime {
-                // kind — игровые данные сервера (marauder/…) — как есть.
-                head = head.child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(pal.warn))
-                        .child(kind.clone()),
-                );
-            }
-            let meta = div()
-                .text_size(px(12.0))
-                .text_color(rgb(pal.muted))
-                .child(format!(
-                    "{} · {}",
-                    character.summary.clone().unwrap_or_default(),
-                    character.location
-                ));
-
-            // Подвал: отсчёт таймера (D20) или кнопки входа/удаления.
-            let mut footer = div().flex().flex_row().gap_2().items_center();
-            if let Some(p) = scheduled {
-                let left = (p.deadline - local_epoch()).max(0);
-                footer = footer.child(
-                    div()
-                        .text_size(px(13.0))
-                        .text_color(rgb(pal.danger))
-                        .child(tf(lang, Key::DeleteIn, &[("s", &left.to_string())])),
-                );
-                footer = footer.child(act_btn(
-                    cx,
-                    t(lang, Key::DeleteCancelBtn),
-                    pal.panel,
-                    pal.text,
-                    |this, _cx| this.store.cancel_delete(),
-                ));
-            } else {
-                let cid = id.clone();
-                let cname = name.clone();
-                footer = footer.child(act_btn(
-                    cx,
-                    t(lang, Key::BtnDelete),
-                    pal.panel,
-                    pal.danger,
-                    move |this, cx| {
-                        // Одновременно — не больше одного отложенного (D20).
-                        if this.store.pending.is_none() && this.store.pending_delete.is_none() {
-                            this.delete_target = Some((cid.clone(), cname.clone()));
-                            if let Some(input) = this.delete_name.clone() {
-                                input.update(cx, |i, cx| i.set_text(String::new(), cx));
-                            }
-                        }
-                    },
-                ));
-                let cid2 = id.clone();
-                footer = footer.child(act_btn(
-                    cx,
-                    t(lang, Key::BtnEnter),
-                    pal.accent,
-                    pal.accent_text,
-                    move |this, cx| {
-                        if this.store.pending.is_none() {
-                            let cmd = CharSelect {
-                                char_id: cid2.clone(),
-                            };
-                            match this.transport.send(&cmd) {
-                                Ok(_) => this.store.on_select_sent(),
-                                Err(e) => this.store.select_error = Some(format!("нет связи: {e}")),
-                            }
-                        }
-                        let _ = cx;
-                    },
-                ));
-            }
-
-            let card = Card::new()
-                .w(px(420.0))
-                .child(head)
-                .child(meta)
-                .footer(footer);
-            list = list.child(card);
+            list = list.child(self.chars_card(cx, pal, character, dark));
         }
         col = col.child(
             ScrollArea::new("ld2-chars-list")
@@ -213,7 +119,138 @@ impl Root {
         );
 
         // Кнопки действий — внизу окна (запрос): создание + выход.
-        let full = used as u32 >= limit;
+        col = col.child(self.chars_toolbar(cx, pal, lang, used as u32 >= limit, pending));
+
+        col
+    }
+
+    /// Карточка персонажа: ник цветом класса, метки преступлений,
+    /// сводка `summary · location` и подвал (таймер удаления, вход,
+    /// удаление). Вынесено из `characters_screen` (RF3t), тело как есть.
+    fn chars_card(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        character: &CharacterSummary,
+        dark: bool,
+    ) -> Card {
+        let lang = self.lang;
+        let id = character.id.clone();
+        let name = character.name.clone();
+        let scheduled = self
+            .store
+            .pending_delete
+            .as_ref()
+            .filter(|p| p.char_id == character.id);
+
+        // M11.7 (D19): ник цветом по классу; без profile — нейтрально.
+        let mut head = div().flex().flex_row().gap_2().items_center().child(
+            div()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_size(px(16.0))
+                .text_color(rgb(class_color(character.profile.as_deref(), dark)))
+                .child(name.clone()),
+        );
+        for kind in &character.crime {
+            // kind — игровые данные сервера (marauder/…) — как есть.
+            head = head.child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(pal.warn))
+                    .child(kind.clone()),
+            );
+        }
+        let meta = div()
+            .text_size(px(12.0))
+            .text_color(rgb(pal.muted))
+            .child(format!(
+                "{} · {}",
+                character.summary.clone().unwrap_or_default(),
+                character.location
+            ));
+
+        // Подвал: отсчёт таймера (D20) или кнопки входа/удаления.
+        let mut footer = div().flex().flex_row().gap_2().items_center();
+        if let Some(p) = scheduled {
+            let left = (p.deadline - local_epoch()).max(0);
+            footer = footer.child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(rgb(pal.danger))
+                    .child(tf(lang, Key::DeleteIn, &[("s", &left.to_string())])),
+            );
+            footer = footer.child(act_btn(
+                cx,
+                t(lang, Key::DeleteCancelBtn),
+                pal.panel,
+                pal.text,
+                |this, _cx| this.store.cancel_delete(),
+            ));
+        } else {
+            let cid = id.clone();
+            let cname = name.clone();
+            footer = footer.child(act_btn(
+                cx,
+                t(lang, Key::BtnDelete),
+                pal.panel,
+                pal.danger,
+                move |this, cx| {
+                    // Одновременно — не больше одного отложенного (D20).
+                    if this.store.pending.is_none() && this.store.pending_delete.is_none() {
+                        this.delete_target = Some((cid.clone(), cname.clone()));
+                        if let Some(input) = this.delete_name.clone() {
+                            input.update(cx, |i, cx| i.set_text(String::new(), cx));
+                        }
+                    }
+                },
+            ));
+            let cid2 = id.clone();
+            footer = footer.child(act_btn(
+                cx,
+                t(lang, Key::BtnEnter),
+                pal.accent,
+                pal.accent_text,
+                move |this, cx| {
+                    if this.store.pending.is_none() {
+                        // R3: min_client новее клиента — вход в мир
+                        // заблокирован, команда не отправляется.
+                        if this.store.forced_update {
+                            this.store.select_error = Some(format!(
+                                "⚠ Сервер требует клиент v{} (у вас v{}) — обновитесь",
+                                this.store.min_client_required.clone().unwrap_or_default(),
+                                env!("CARGO_PKG_VERSION")
+                            ));
+                            return;
+                        }
+                        let cmd = CharSelect {
+                            char_id: cid2.clone(),
+                        };
+                        if this.send_or_notice(&cmd, SendSlot::Select) {
+                            this.store.on_select_sent()
+                        }
+                    }
+                    let _ = cx;
+                },
+            ));
+        }
+        Card::new()
+            .w(px(420.0))
+            .child(head)
+            .child(meta)
+            .footer(footer)
+    }
+
+    /// Подвал экрана персонажей: «Создать» (или «Слоты заняты» при
+    /// лимите/занятости) и «Выйти». Вынесено из `characters_screen`
+    /// (RF3t), тело перенесено как есть.
+    fn chars_toolbar(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        pal: &Palette,
+        lang: Lang,
+        full: bool,
+        pending: bool,
+    ) -> Div {
         let create_label = if full {
             t(lang, Key::SlotsFull)
         } else {
@@ -255,9 +292,7 @@ impl Root {
                 let _ = cx;
             },
         ));
-        col = col.child(toolbar);
-
-        col
+        toolbar
     }
 
     // ── создание персонажа (ФР-02) ────────────────────────────────────────
@@ -374,12 +409,9 @@ impl Root {
                         // M18/F34: пол из селектора формы.
                         gender: Some(this.create_gender.value().to_string()),
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => {
-                            this.store.on_create_sent();
-                            this.create_submitted = true;
-                        }
-                        Err(e) => this.store.create_error = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Create) {
+                        this.store.on_create_sent();
+                        this.create_submitted = true;
                     }
                 },
             ));

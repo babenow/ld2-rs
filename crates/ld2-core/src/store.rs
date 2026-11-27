@@ -5,13 +5,16 @@
 //! Побочные эффекты (keyring, токен в транспорт) возвращаются из [`AppStore::apply`]
 //! и исполняются слоем приложения — редьюсер остаётся детерминированным.
 
+use ld2_protocol::names;
+
 use std::collections::{BTreeMap, VecDeque};
 
 use ld2_protocol::evt::{
     CharDeath, CharStats, CharXp, ChatMessage, CombatCooldown, CombatHit, CorpseCreated,
     CorpseLooted, CrimeAdded, CrimeRemoved, CrimeStatusUpdate, EntityDespawn, EntityHp, EntityMove,
-    EntitySpawn, GuildLogEntry, ItemAdded, ItemDropped, ItemExpired, ItemRemovalReason,
-    ItemRemoved, LocationChanged, MagicCast, StateSnapshot, TimeSync as TimeSyncEvent,
+    EntitySpawn, ErrorNotice, GuildLogEntry, ItemAdded, ItemDropped, ItemExpired,
+    ItemRemovalReason, ItemRemoved, LocationChanged, MagicCast, StateDelta, StateSnapshot,
+    TimeSync as TimeSyncEvent,
 };
 use ld2_protocol::types::{
     CharacterSummary, CrimeLogEntry, CrimeStatus, GuildState, Hp, LocationSnapshot, PartyState,
@@ -19,159 +22,16 @@ use ld2_protocol::types::{
 };
 use ld2_protocol::{ErrorCode, SessionConfig};
 
+use crate::l10n::{t, Key, Lang};
 use crate::transport::{IngressEvent, TransportStatus};
 
-/// Экран приложения (ФР-01, ФР-02).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Screen {
-    Login,
-    Characters,
-    Game,
-}
-
-/// Команда, ожидающая ack (корреляция ошибок формы).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Act {
-    Login,
-    /// `cmd/auth.register` — ошибки формы регистрации (M13, D35): поле +
-    /// текст сервера, маппинг кодов — [`crate::register::register_field_for`].
-    Register,
-    Create,
-    Select,
-    Delete,
-    /// `location.move` — ошибки (закрытый выход) → `world_error`.
-    Move,
-    /// `combat.attack` → `world_error`.
-    Attack,
-    /// `entity.info` → `entity_detail`.
-    Examine,
-    /// M23: `entity.info` → `pickup` (окно подятия предмета — лут
-    /// трупа отдельно от модалки осмотра).
-    PickupInfo,
-    /// `npc.talk` → `npc_dialog` (M18/F35).
-    NpcTalk,
-    /// `npc.reply` → новый узел в `npc_dialog` (M18/F37).
-    NpcReply,
-    /// `shop.list` → `npc_dialog.shop` (M18/F39).
-    ShopList,
-    /// `shop.buy` — изменения приходят событиями (M18/F39).
-    ShopBuy,
-    /// `char.xp_invest` → `pool_left` в снапшоте.
-    Invest,
-    /// `item.equip`/`item.unequip` — ack несёт обновлённый `char` (§7).
-    Equip,
-    Unequip,
-    /// `item.use`/`item.drop` — результат приходит событиями (§8).
-    Drop,
-    /// `upgrade.preview` → payload превью в `upgrade.preview`.
-    Preview,
-    /// `upgrade.start` → результат событием (ФР-10).
-    Upgrade,
-    /// M18/F54: `item.use` камня усиления → ack `{stone_uid, quality}`.
-    Sharpen,
-    /// `socket.insert`/`socket.extract` → ack несёт посох/руну (§7).
-    Socket,
-    /// Каст из hotbar (ФР-09) — ошибки в мир (`E_NOT_ENOUGH_MP`…).
-    Cast,
-    /// `cmd/crime.log` → журнал нарушений в правую панель (ФР-11).
-    CrimeLog,
-    /// `craft.learn` → ack {profession} обновляет снапшот (ФР-08).
-    Learn,
-    /// `chat.send` — ack несёт только ошибки (лимиты §5), события — отдельно.
-    Chat,
-    /// `chat.delete` (M14/F19) — ошибки прав/лимиты → notice.
-    ChatDelete,
-    /// `craft.start`/`craft.recipes` — результат крафта событиями (ФР-08).
-    Craft,
-    /// `quest.accept|turn_in|abandon` — результат событиями (ФР-12).
-    Quest,
-    /// `party.*` — ack несёт `{party}` на create/accept, остальное — события.
-    Party,
-    /// `trade.*` — состояние только событиями `evt/trade/*` (ФР-15).
-    Trade,
-    /// `guild.browse` → ack {guilds[]} — список для вкладки (ФР-16).
-    GuildBrowse,
-    /// `guild.*` — ack несёт `{guild}` на create/join, остальное — события.
-    Guild,
-    /// `cmd/dialog.choice`/`cmd/dialog.submit` — игровые диалоги
-    /// (M20, заготовка): ack — только ошибки.
-    DialogChoice,
-    DialogSubmit,
-    /// `cmd/resource.gather` (M20/F20b) — ошибки (нет ресурса/ранг/
-    /// инструмент) → world_error.
-    Gather,
-    /// `cmd/craft.rank_up` (M21) — ack {profession}; ошибки тостом.
-    CraftRankUp,
-    /// `cmd/craft.reset` (M21) — сброс профессии: убрать из снапшота.
-    ProfessionReset,
-    /// `cmd/corpse.harvest` (M22) — старт разделки; ошибки тостом.
-    Harvest,
-    /// M24: `cmd/admin.items` → `admin_catalog` (каталог админ-окна).
-    AdminCatalog,
-    /// M24: `cmd/admin.give.ask`/`admin.remove.ask` — ack только
-    /// ошибки (откроется execute-диалог количества).
-    AdminAsk,
-    /// M24: `cmd/admin.god_mode` → ack `{enabled}` → `admin_god`.
-    AdminGod,
-    /// M24: `cmd/admin.target.info` → `admin_target_items`.
-    AdminTarget,
-    /// M24: `cmd/admin.clear` — очистка цели (ack только ошибки).
-    AdminClear,
-}
-
-/// Открытая модалка улучшения (ФР-10): предмет + превью от сервера.
-#[derive(Debug, Clone, PartialEq)]
-pub struct UpgradeView {
-    pub item_uid: String,
-    pub item_name: String,
-    /// payload `upgrade.preview`: `{preview_id, delta, cost, chance}`.
-    pub preview: Option<serde_json::Value>,
-    /// M18/F53: последний результат `evt/upgrade/result` (модалка не
-    /// закрывается — показываем итог и позволяем улучшать дальше).
-    pub result: Option<serde_json::Value>,
-}
-
-/// M18/F54: выбранный камень усиления — активен, пока сервер его не
-/// снимет (последняя штука потрачена) или игрок не закроет окно.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SharpenStone {
-    pub uid: String,
-    pub name: String,
-    /// Качество в процентных пунктах (`stats.quality`; −5/0/+5).
-    pub quality: i64,
-}
-
-/// Цветовой тип строки журнала мира (ФР-17; палитра §7.4 — в UI).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LogKind {
-    System,
-    Location,
-    /// Нападение персонажа (исходящий урон).
-    CombatOut,
-    /// Урон по персонажу (входящий).
-    CombatIn,
-    Magic,
-    Loot,
-    Crime,
-    Quest,
-    Xp,
-    Chat,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LogEntry {
-    pub kind: LogKind,
-    pub text: String,
-    /// M25: момент добавления (epoch, мс) — истечение журнала.
-    pub at: i64,
-}
-
-/// Посещённая локация (ФР-03: кэш для истории; граф — v1.1, D9).
-#[derive(Debug, Clone, PartialEq)]
-pub struct VisitedLocation {
-    pub id: String,
-    pub name: String,
-}
+mod npc;
+mod patch;
+mod reducers;
+mod types;
+pub use npc::*;
+pub(crate) use patch::*;
+pub use types::*;
 
 /// Ёмкость журнала мира (НФР §8: лог локации ≤ 10 000; M3 — 1000).
 const LOG_LIMIT: usize = 1000;
@@ -180,432 +40,10 @@ pub const CHAT_CHANNELS: [&str; 6] = ["system", "location", "global", "party", "
 /// Ёмкость истории посещённых.
 const VISITED_LIMIT: usize = 50;
 
-/// Побочные эффекты — исполняет слой приложения (не редьюсер).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Effect {
-    /// Сохранить refresh-токен в keyring и запомнить логин (ФР-01, А4).
-    PersistSession {
-        login: String,
-        refresh_token: String,
-    },
-    /// Токен отозван/истёк — убрать из keyring под указанным логином.
-    ForgetSession { login: String },
-    /// Прокинуть refresh-токен в транспорт (реконнекты без логина, §4.5).
-    TransportToken(String),
-    /// OS-уведомление (D7, feature-flag `desktop.notify` в настройках).
-    Notify(NotifyKind),
-}
-
-/// События для системных уведомлений (D7: смерть, приглашения, whisper,
-/// результат улучшения). Локализуется в `App` — стор не знает языка.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NotifyKind {
-    Death,
-    PartyInvite,
-    GuildInvite,
-    TradeOpen,
-    Whisper,
-    Upgrade,
-}
-
-/// M25: активный стан — всплывающее окно с прогрессбаром времени.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StunView {
-    pub title: String,
-    /// Срок стана (epoch, мс).
-    pub until_ms: i64,
-    /// Момент наложения (для прогрессбара).
-    pub started_ms: i64,
-}
-
-#[derive(Debug)]
-pub struct AppStore {
-    pub screen: Screen,
-    pub session: Option<SessionConfig>,
-    pub snapshot: Option<StateSnapshot>,
-    pub transport: TransportStatus,
-    pub pending: Option<Act>,
-    /// Ошибки форм (текст сервера — русский, §9).
-    pub login_error: Option<String>,
-    /// Ошибка формы регистрации (M13): поле для inline-подсветки + текст
-    /// (сервера §9 или клиентской проверки D34 — локализует UI).
-    pub register_error: Option<crate::register::RegisterError>,
-    pub create_error: Option<String>,
-    pub select_error: Option<String>,
-    /// Ошибки действий мира (move/attack/examine), ФР-03.
-    pub world_error: Option<String>,
-    /// Модалка смерти (ФР-06): закрывается только подтверждением.
-    pub death: Option<ld2_protocol::evt::CharDeath>,
-    /// Описание предмета (ФР-07 «показать описание»).
-    pub item_detail: Option<serde_json::Value>,
-    /// Модалка улучшения (ФР-10).
-    pub upgrade: Option<UpgradeView>,
-    /// M18/F54: активный камень усиления.
-    pub sharpen_stone: Option<SharpenStone>,
-    /// M18/F55: окно заточки открыто (экран списка показан) — гейт
-    /// рендера. Переживает расход последнего камня, чтобы «назад»
-    /// возвращал к списку, а не закрывал окно; снимается только при
-    /// закрытии окна (Esc/крестик/скрим).
-    pub sharpen_list: bool,
-    /// Открытая инкрустация (ФР-09): uid посоха.
-    pub socketing: Option<String>,
-    /// M20: открытый игровой диалог (заготовка: страницы/ввод из
-    /// `evt/dialog/open`; окно — `PopupKind::Dialog`).
-    pub dialog: Option<ld2_protocol::evt::DialogOpen>,
-    /// Снятие шкур (M22): прогресс активной разделки (5 с) для
-    /// прогресс-бара; ставится клиентом при отправке, чистится по
-    /// `evt/harvest/result` или ошибке.
-    pub harvest: Option<HarvestProgress>,
-    /// M17/F30a: открытый выбор оружия под инкрустацию руны (uid руны).
-    pub inscribe: Option<String>,
-    /// Смещение часов сервера (evt/time.sync): server = local + offset.
-    pub time_offset: i64,
-    /// M24: фаза тикера зарядов рун (шкала `now_ms`) — прогрессбар
-    /// заполнения рун; ставится по снапшоту и по приросту зарядов
-    /// в `evt/item/state` (тикер шлёт патч сокетов — такт виден).
-    pub rune_recharge_phase_ms: Option<i64>,
-    /// Выбранная цель (ФР-05): клик по строке / Tab.
-    pub target: Option<String>,
-    /// Кулдауны активных навыков: skill_id → until epoch (ФР-05).
-    pub combat_cooldowns: BTreeMap<String, i64>,
-    /// M17/F30g: кулдауны предметов `item:<def_id>` → (until мс,
-    /// полная длительность мс) — таймер и прогресс-бар кнопок hotbar.
-    pub item_cooldowns: BTreeMap<String, (i64, i64)>,
-    /// Глобальный кулдаун боевых действий (M14/F4): epoch **мс**, до
-    /// которого заблокированы кнопки панели — клиентская блокировка
-    /// 1 с (сервер не меняется; приоритет — max(основной, глобальный)).
-    pub global_cooldown_until: i64,
-    /// Журнал нарушений из `cmd/crime.log` (ФР-11).
-    pub crime_log: Vec<CrimeLogEntry>,
-    /// Журнал уже загружен (вкладка «Статусы» запрашивает один раз).
-    pub crime_log_loaded: bool,
-    /// Подтверждение «забрать лут трупа ИГРОКА» (ФР-11): (uid, name).
-    pub loot_confirm: Option<(String, String)>,
-    /// Трекер квестов (ФР-12): id, максимум 3, рендер с фильтром по наличию.
-    pub quest_tracker: Vec<String>,
-    /// История чата по каналам (ФР-13): `channel → сообщения` (ring).
-    pub chat: std::collections::HashMap<String, std::collections::VecDeque<ChatMessage>>,
-    /// Активный канал чата (вкладка в UI, ФР-13).
-    pub chat_channel: String,
-    /// Адресат последнего whisper (ФР-13: «ответить»).
-    pub last_whisper_from: Option<String>,
-    /// Группа (ФР-14): полное состояние из `evt/party/updated`/снапшота.
-    pub party: Option<PartyState>,
-    /// Входящее приглашение в группу (поле `invite`, §11) — модалка ответа.
-    pub party_invite: Option<PartyInviteView>,
-    /// Сделка — моя перспектива `you/them` (ФР-15, версия — истина сервера).
-    pub trade: Option<ld2_protocol::evt::TradeState>,
-    /// Гильдия (ФР-16): состояние из `evt/guild/updated`/снапшота.
-    pub guild: Option<GuildState>,
-    /// Входящее приглашение в гильдию (поле `invite`, §11).
-    pub guild_invite: Option<GuildInviteView>,
-    /// Список гильдий из `cmd/guild.browse` (поиск/вступление).
-    pub guild_browse: Vec<serde_json::Value>,
-    /// Журнал гильдии (§8 `evt/guild/log`).
-    pub guild_log: Vec<GuildLogEntry>,
-    /// Список гильдий уже запрошен (вкладка грузит один раз).
-    pub guild_browse_loaded: bool,
-    /// Лимит истории чата на канал (НФР §8; из `config.toml`, ФР-19).
-    pub chat_limit: usize,
-    /// Последний измеренный RTT, мс (НФР: RTT-индикатор).
-    pub rtt_ms: Option<u64>,
-    /// Рецепты крафта из `cmd/craft.recipes` (ФР-08).
-    pub recipes: Vec<serde_json::Value>,
-    /// Рецепты уже запрошены (вкладка грузит один раз).
-    pub recipes_loaded: bool,
-    /// Нейтральное сообщение (создан/удалён/транспорт).
-    pub notice: Option<String>,
-    /// Логин последней попытки входа — предзаполнение формы.
-    pub last_login: Option<String>,
-    /// Журнал мира (ФР-17): ring-буфер [`LOG_LIMIT`].
-    pub log: VecDeque<LogEntry>,
-    /// История посещённых локаций (ФР-03), свежие в конце.
-    pub visited: Vec<VisitedLocation>,
-    /// Результат `entity.info` — модалка осмотра (включая лут трупа).
-    pub entity_detail: Option<serde_json::Value>,
-    /// M23: данные окна подятия предмета (payload `entity.info`:
-    /// лут трупа + блок «Внутри»); гейт рендера — `Root::pickup_popup`.
-    pub pickup: Option<serde_json::Value>,
-    /// M23: лут трупа обновился на сервере (разделка/новый труп) —
-    /// клиент перечитает `pickup`, пока открыто окно подятия.
-    pub pickup_dirty: bool,
-    /// M24: каталог предметов админ-окна (вариант A — один запрос,
-    /// кэш на сессию, фильтрация на клиенте).
-    pub admin_catalog: Option<Vec<serde_json::Value>>,
-    /// M24: состояние «режим бога» (эхо `cmd/admin.god_mode`).
-    pub admin_god: bool,
-    /// M25: активный стан (окно с прогрессбаром; истекает в tick).
-    pub stun: Option<StunView>,
-    /// M24: содержимое выбранной цели правой колонки (кроме self —
-    /// тот приходит снапшотом).
-    pub admin_target_items: Option<Vec<serde_json::Value>>,
-    /// M18/F35: открытое окно диалога NPC (реплики + квесты).
-    pub npc_dialog: Option<NpcDialogView>,
-    /// M11.7: отложенное удаление персонажа (D20) — не больше одного.
-    pub pending_delete: Option<PendingDelete>,
-    /// M11.7: цель текущего `char.delete` — снять карточку по ack.
-    pub deleting_char: Option<String>,
-    /// Логин текущей сессии — для ключа keyring (`<host>:<login>`).
-    session_login: Option<String>,
-}
-
 impl Default for AppStore {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Отложенное удаление персонажа (M11.7, D20/ADR-005): клиент шлёт
-/// `char.delete` по таймеру; смена экрана (вход в игру/логаут) — отмена.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingDelete {
-    pub char_id: String,
-    pub name: String,
-    /// Эпоха в секундах ([`local_epoch`]): когда уходит `char.delete`.
-    pub deadline: i64,
-}
-
-/// M18/F37/F42: узел диалога — строка NPC + её видимые ответы (тексты уже
-/// отрендерены сервером, `{name}` подставлен).
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcNode {
-    pub id: String,
-    pub text: String,
-    /// Квест, который предлагает узел (секция «Квесты» окна).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quest: Option<String>,
-    #[serde(default)]
-    pub replies: Vec<NpcReplyOption>,
-}
-
-impl NpcNode {
-    /// M18/F42: абсолютные дедлайны кулдауна реплик — по ним UI ведёт
-    /// живой отсчёт `(мм:сс)` (ADR-008). Вызывается при разборе payload.
-    pub fn stamp_wait_deadlines(&mut self) {
-        let now = local_epoch_ms();
-        for reply in &mut self.replies {
-            if let Some(wait_s) = reply.wait_s {
-                reply.wait_until_ms = Some(now + (wait_s as i64) * 1000);
-            }
-        }
-    }
-}
-
-/// M18/F37/F42: ответ персонажа, видимый в текущем узле (`id` — ключ
-/// `cmd/npc.reply`).
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcReplyOption {
-    pub id: String,
-    pub text: String,
-    /// M18/F42: секунды до конца кулдауна целевой строки — ответ
-    /// показывается неактивным с таймером (ADR-008); `None` — активен.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wait_s: Option<u64>,
-    /// M18/F42: абсолютный дедлайн кулдауна (epoch-мс) — ставится при
-    /// разборе payload, живой отсчёт таймера в UI (wire не несёт).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wait_until_ms: Option<i64>,
-    /// M18/F43: действие ответа (`"shop"`) — клиент открывает магазин
-    /// вместо перехода по ветке; `None` — обычный ответ.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action: Option<String>,
-}
-
-/// M18/F37: строка транскрипта окна диалога — лента NPC ↔ персонаж.
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcTranscriptLine {
-    /// `true` — реплика персонажа (ответ).
-    pub me: bool,
-    pub text: String,
-}
-
-/// M18/F39: товар магазина в цене активной валютной вкладки.
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcShopItem {
-    pub def_id: String,
-    pub name: String,
-    #[serde(default)]
-    pub rarity: String,
-    /// Цена за партию в единицах валюты вкладки.
-    pub price: i64,
-    /// Размер партии (qty из контента, ≥1).
-    #[serde(default = "shop_item_qty")]
-    pub qty: i64,
-    /// M18/F40: полный снапшот — карточка информации по клику строки.
-    #[serde(default)]
-    pub item: Option<ld2_protocol::types::ItemSnapshot>,
-}
-
-fn shop_item_qty() -> i64 {
-    1
-}
-
-/// M18/F39: валютная вкладка магазина.
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcShopTab {
-    /// `def_id` валюты (для баланса и `cmd/shop.buy`).
-    pub currency: String,
-    pub currency_name: String,
-    #[serde(default)]
-    pub items: Vec<NpcShopItem>,
-}
-
-/// M18/F39: открытый магазин NPC (внутри окна диалога — очищается
-/// вместе с `npc_dialog` на всех путях закрытия).
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcShopView {
-    #[serde(default)]
-    pub tabs: Vec<NpcShopTab>,
-}
-
-/// Снятие шкур (M22): прогресс-бар разделки на клиенте — старт
-/// (epoch-мс отправки команды), действие и имя животного.
-#[derive(Debug, Clone, PartialEq)]
-pub struct HarvestProgress {
-    pub started_ms: i64,
-    /// `skin` | `gut`.
-    pub action: String,
-    pub name: String,
-    /// Труп-источник (M24): `evt/harvest/result` гасит бар только при
-    /// совпадении — итог прерванного переключением действия чужого
-    /// трупа новый бар не трогает.
-    pub entity_id: String,
-}
-
-/// M18/F35/F37/F42: открытое окно диалога NPC — payload ack
-/// `cmd/npc.talk` `{dialog: {id, name}, node, quests, actions}`
-/// (`greeting` убран — ADR-008); транскрипт накапливает ленту
-/// (узлы ↔ ответы персонажа).
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcDialogView {
-    pub id: String,
-    pub name: String,
-    /// Текущий узел; `None` — диалог не начат/закончен.
-    #[serde(default)]
-    pub node: Option<NpcNode>,
-    #[serde(default)]
-    pub transcript: Vec<NpcTranscriptLine>,
-    #[serde(default)]
-    pub quests: Vec<ld2_protocol::types::QuestState>,
-    /// M18/F38: контекстные кнопки статус-бара от сервера — только
-    /// реально существующие системы (`quests`/`train`/`shop`).
-    #[serde(default)]
-    pub actions: Vec<String>,
-    /// M18/F39: открытый магазин (по кнопке — `cmd/shop.list`).
-    #[serde(default)]
-    pub shop: Option<NpcShopView>,
-    /// M18/F39: активная валютная вкладка магазина.
-    #[serde(default)]
-    pub shop_currency: Option<String>,
-    /// M18/F44: обучение у этого NPC (ADR-009) — навыки с ценой.
-    #[serde(default)]
-    pub training: Vec<NpcTraining>,
-    /// M21: профессии этого NPC с ценой (изучение — craft.learn).
-    #[serde(default)]
-    pub professions: Vec<NpcProfession>,
-    /// M18/F44: открыта ли панель обучения (реплика `action=train`,
-    /// паритет магазина); чистится вместе с окном диалога.
-    #[serde(default)]
-    pub training_open: bool,
-    /// M22: открыта ли ИСТОРИЯ диалога (полная лента по кнопке в
-    /// статусбаре окна); в самом диалоге — только текущая реплика.
-    #[serde(default)]
-    pub history_open: bool,
-}
-
-/// M18/F44: обучение навыку у NPC в диалоге (ADR-009) — повышение ранга
-/// стоит очков опыта (пул) + платы из контента.
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcTraining {
-    pub skill: String,
-    /// Плата очками опыта (пул квестов).
-    pub points: i64,
-    /// Плата золотом (монеты); 0 — без золота.
-    #[serde(default)]
-    pub gold: i64,
-    /// Плата предметами.
-    #[serde(default)]
-    pub items: Vec<NpcTrainingItem>,
-}
-
-/// M21: профессия, которой обучает NPC в диалоге — цена золотом
-/// (`price_profession`); изучение — `cmd/craft.learn`.
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcProfession {
-    pub id: String,
-    /// Цена обучения золотом; старый сервер без поля →0.
-    #[serde(default)]
-    pub gold: i64,
-}
-
-/// M18/F44: предмет платы за обучение.
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NpcTrainingItem {
-    pub def_id: String,
-    #[serde(default = "shop_item_qty")]
-    pub qty: i64,
-}
-
-impl NpcDialogView {
-    /// Разбор payload ack (`None` — нет `dialog`; лента — корневой узел,
-    /// `quests`/`actions` без поля → пусто; `greeting` больше нет —
-    /// ADR-008).
-    pub fn from_payload(payload: &serde_json::Value) -> Option<Self> {
-        let dialog = payload.get("dialog")?;
-        let mut node = match payload.get("node") {
-            Some(value) if !value.is_null() => {
-                serde_json::from_value::<NpcNode>(value.clone()).ok()
-            }
-            _ => None,
-        };
-        // M18/F42: дедлайны для живого отсчёта таймеров реплик.
-        node.as_mut().map(NpcNode::stamp_wait_deadlines);
-        let mut transcript = Vec::new();
-        if let Some(node) = &node {
-            transcript.push(NpcTranscriptLine {
-                me: false,
-                text: node.text.clone(),
-            });
-        }
-        Some(Self {
-            id: dialog["id"].as_str()?.into(),
-            name: dialog["name"].as_str()?.into(),
-            node,
-            transcript,
-            quests: serde_json::from_value(payload.get("quests")?.clone()).unwrap_or_default(),
-            actions: serde_json::from_value(payload.get("actions").cloned().unwrap_or_default())
-                .unwrap_or_default(),
-            shop: None,
-            shop_currency: None,
-            training: serde_json::from_value(payload.get("training").cloned().unwrap_or_default())
-                .unwrap_or_default(),
-            professions: serde_json::from_value(
-                payload.get("professions").cloned().unwrap_or_default(),
-            )
-            .unwrap_or_default(),
-            // M18/F44: панель обучения закрыта — открывает реплика.
-            training_open: false,
-            // M22: история закрыта — открывает кнопка в статусбаре.
-            history_open: false,
-        })
-    }
-}
-
-/// M11: какой всплывающий диалог активен. Приоритет и гейт экрана — здесь
-/// же их читает UI-диспетчер gpui-клиента (E2E-тест вехи M11.6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dialog {
-    /// ФР-06: смерть — закрывается только серверным подтверждением.
-    Death,
-    Examine,
-    Loot,
-    PartyInvite,
-    GuildInvite,
-    Trade,
-    /// M17/F30a: выбор оружия под инкрустацию руны/самоцвета.
-    Inscribe,
-    Create,
-    Delete,
 }
 
 impl AppStore {
@@ -707,6 +145,8 @@ impl AppStore {
             inscribe: None,
             item_cooldowns: BTreeMap::new(),
             time_offset: 0,
+            time_samples: VecDeque::new(),
+            lang: Lang::Ru,
             rune_recharge_phase_ms: None,
             target: None,
             combat_cooldowns: BTreeMap::new(),
@@ -731,13 +171,23 @@ impl AppStore {
             recipes: Vec::new(),
             recipes_loaded: false,
             notice: None,
+            min_client_required: None,
+            forced_update: false,
             last_login: None,
             log: VecDeque::new(),
             visited: Vec::new(),
             entity_detail: None,
+            inspect: None,
+            afk_until_ms: None,
+            afk_window_s: 0,
             pickup: None,
             pickup_dirty: false,
             admin_catalog: None,
+            map_locations: Vec::new(),
+            map_offset: 0,
+            map_total: 0,
+            map_request: false,
+            map_root: String::new(),
             admin_god: false,
             stun: None,
             admin_target_items: None,
@@ -804,1510 +254,63 @@ impl AppStore {
         vec![]
     }
 
-    fn apply_ack(&mut self, ack: ld2_protocol::Ack) -> Vec<Effect> {
-        // E_AUTH_EXPIRED важнее локальной корреляции (§4.5).
-        if ack.error_code() == Some(ErrorCode::AuthExpired) {
-            let msg = ack
-                .error
-                .as_ref()
-                .map(|e| e.message.clone())
-                .unwrap_or_else(|| "Сессия истекла".into());
-            return self.reset_to_login(Some(msg));
-        }
-
-        let Some(act) = self.pending.take() else {
-            // M18/F41: ack без корреляции (гонка команд) молча теряется —
-            // в debug-логе видно, чей ack пришёл не вовремя.
-            tracing::debug!(
-                "ack {} (seq={}) без pending — пропущен",
-                ack.msg_type,
-                ack.seq
-            );
-            return vec![];
-        };
-
-        if !ack.is_ok() {
-            let msg = ack
-                .error
-                .as_ref()
-                .map(|e| e.message.clone())
-                .unwrap_or_else(|| format!("{:?}", ack.error_code()));
-            match act {
-                Act::Login => self.login_error = Some(msg),
-                Act::Register => {
-                    // D35: код §9 → поле формы; текст — серверный (fallback §9).
-                    let code = ack
-                        .error_code()
-                        .unwrap_or(ld2_protocol::ErrorCode::Internal);
-                    self.register_error = Some(crate::register::RegisterError {
-                        field: crate::register::register_field_for(&code),
-                        message: msg,
-                        retry_after_s: ack.error.as_ref().and_then(|e| e.retry_after_s),
-                    });
-                }
-                Act::Create => self.create_error = Some(msg),
-                Act::Select => self.select_error = Some(msg),
-                Act::Delete => {
-                    self.deleting_char = None;
-                    self.notice = Some(msg);
-                }
-                Act::Move
-                | Act::Attack
-                | Act::Examine
-                | Act::PickupInfo
-                | Act::NpcTalk
-                | Act::NpcReply
-                | Act::ShopList
-                | Act::ShopBuy => self.world_error = Some(msg),
-                // M16/F29h: ошибки листа — системные уведомления
-                // (тосты), как и весь прочий фидбек.
-                Act::Invest
-                | Act::Equip
-                | Act::Unequip
-                | Act::Drop
-                | Act::Sharpen
-                | Act::Preview
-                | Act::Upgrade
-                | Act::Socket
-                | Act::CrimeLog
-                | Act::Learn
-                | Act::Craft
-                | Act::Quest => self.notice = Some(msg),
-                Act::Cast => self.world_error = Some(msg),
-                // Лимиты чата (E_RATE_LIMITED §9) и права (E_PERMISSION,
-                // M14/F19) — тостом.
-                Act::Chat | Act::ChatDelete => self.notice = Some(msg),
-                // Соцдомен: ошибки (E_TRADE_STALE, E_PARTY_FULL §9) — тостом.
-                Act::Party | Act::Trade | Act::GuildBrowse | Act::Guild => self.notice = Some(msg),
-                // Игровые диалоги (M20, заготовка) — ошибки тостом.
-                Act::DialogChoice | Act::DialogSubmit => self.notice = Some(msg),
-                // Добыча (M20/F20b): отказы — в мир (как Examine/Move).
-                Act::Gather => self.world_error = Some(msg),
-                // Профессии (M21): ранг/сброс — тосты (у тренера/граница).
-                Act::CraftRankUp | Act::ProfessionReset => self.notice = Some(msg),
-                // Админ-панель (M24): отказы — тост (каталог/ask/god/цель).
-                Act::AdminCatalog
-                | Act::AdminAsk
-                | Act::AdminGod
-                | Act::AdminTarget
-                | Act::AdminClear => {
-                    self.notice = Some(msg);
-                }
-                // Снятие шкур (M22): отказ до старта — чистим бар.
-                Act::Harvest => {
-                    self.harvest = None;
-                    self.world_error = Some(msg);
-                }
-            }
-            return vec![];
-        }
-
-        match act {
-            // Успех логина подтверждён ack'ом; дальше ждём evt/session.start.
-            Act::Login => {}
-            // Регистрация = немедленный вход (ADR-006): ack ok → тоже
-            // ждём evt/session.start; ошибки — в register_error (M13).
-            Act::Register => {
-                self.register_error = None;
-            }
-            Act::Select => {}
-            Act::Delete => {
-                // M11.7: ack — карточка уходит из списка (ФР-02).
-                if let Some(id) = self.deleting_char.take() {
-                    if let Some(session) = self.session.as_mut() {
-                        session.characters.retain(|c| c.id != id);
-                    }
-                }
-                self.notice = Some("Персонаж удалён".into());
-            }
-            Act::Invest => {
-                // §7: ack несёт остаток пула.
-                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
-                {
-                    if let Some(pool) = payload["pool_left"].as_i64() {
-                        snap.char.xp_pool = pool;
-                    }
-                }
-            }
-            Act::Equip | Act::Unequip => {
-                // §7: ack несёт обновлённый `char` — события на смену экипировки нет.
-                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
-                {
-                    if let Ok(ch) = serde_json::from_value::<ld2_protocol::types::CharacterState>(
-                        payload["char"].clone(),
-                    ) {
-                        snap.char = ch;
-                    }
-                }
-            }
-            Act::Move => {
-                // ack несёт локацию (§7): применяем сразу, событие дойдёт позже.
-                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
-                {
-                    if let Ok(location) =
-                        serde_json::from_value::<LocationSnapshot>(payload["location"].clone())
-                    {
-                        snap.location = location;
-                    }
-                }
-            }
-            Act::Attack
-            | Act::Examine
-            | Act::PickupInfo
-            | Act::NpcTalk
-            | Act::NpcReply
-            | Act::ShopList
-            | Act::ShopBuy
-            | Act::Drop
-            | Act::Upgrade
-            | Act::Cast
-            | Act::Quest
-            | Act::Chat
-            | Act::ChatDelete
-            | Act::Trade
-            | Act::DialogChoice
-            | Act::DialogSubmit
-            | Act::Gather
-            | Act::Harvest
-            | Act::AdminAsk
-            | Act::AdminGod
-            | Act::AdminCatalog
-            | Act::AdminTarget
-            | Act::AdminClear => {
-                // результат событиями (§8); npc.talk/npc.reply
-                // обрабатываются ниже отдельными блоками (M18/F35/F37);
-                // диалоги (M20) — ack только подтверждает выбор/ввод.
-            }
-            Act::Party => {
-                // §7: party.create/accept несут {party}.
-                if let Some(payload) = ack.payload.as_ref() {
-                    if let Ok(party) =
-                        serde_json::from_value::<PartyState>(payload["party"].clone())
-                    {
-                        self.party = Some(party);
-                    }
-                }
-            }
-            Act::GuildBrowse => {
-                // §7: guild.browse → {guilds[]} (идемпотентна, §7).
-                if let Some(payload) = ack.payload.as_ref() {
-                    if let Some(list) = payload["guilds"].as_array() {
-                        self.guild_browse = list.clone();
-                    }
-                }
-            }
-            Act::Guild => {
-                // §7: guild.create/join несут {guild}.
-                if let Some(payload) = ack.payload.as_ref() {
-                    if let Ok(guild) =
-                        serde_json::from_value::<GuildState>(payload["guild"].clone())
-                    {
-                        self.guild = Some(guild);
-                    }
-                }
-            }
-            Act::ProfessionReset => {
-                // M21: после сброса — убрать профессию из снапшота
-                // (слот основной освобождается).
-                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
-                {
-                    if let Some(id) = payload["profession_id"].as_str() {
-                        snap.char.professions.retain(|p| p.id != id);
-                    }
-                }
-            }
-            Act::Craft => {
-                // §7: ack несёт список рецептов.
-                if let Some(payload) = ack.payload.as_ref() {
-                    if let Some(recipes) = payload["recipes"].as_array() {
-                        self.recipes = recipes.clone();
-                    }
-                }
-                self.recipes_loaded = true;
-            }
-            Act::CrimeLog => {
-                // §7: ack несёт журнал нарушений целиком.
-                if let Some(payload) = ack.payload.as_ref() {
-                    if let Ok(entries) =
-                        serde_json::from_value::<Vec<CrimeLogEntry>>(payload["entries"].clone())
-                    {
-                        self.crime_log = entries;
-                        self.crime_log_loaded = true;
-                    }
-                }
-            }
-            Act::Learn | Act::CraftRankUp => {
-                // §7: ack {profession} — добавляем/обновляем в снапшоте.
-                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
-                {
-                    if let Ok(prof) = serde_json::from_value::<
-                        ld2_protocol::types::ProfessionSnapshot,
-                    >(payload["profession"].clone())
-                    {
-                        if let Some(existing) =
-                            snap.char.professions.iter_mut().find(|p| p.id == prof.id)
-                        {
-                            *existing = prof;
-                        } else {
-                            snap.char.professions.push(prof);
-                        }
-                    }
-                }
-            }
-            Act::Sharpen => {
-                // M18/F54: сервер выбрал камень — запоминаем для окна
-                // заточки (имя берём из снапшота, качество — из ack).
-                if let Some(payload) = ack.payload.as_ref() {
-                    // Типизированный ack (ld2-protocol, golden §7) —
-                    // старая/чужая форма молча игнорируется.
-                    let Ok(sel) =
-                        serde_json::from_value::<ld2_protocol::StoneSelected>(payload.clone())
-                    else {
-                        return vec![];
-                    };
-                    let name = self
-                        .snapshot
-                        .as_ref()
-                        .and_then(|s| {
-                            s.char
-                                .inventory
-                                .iter()
-                                .find(|i| i.uid == sel.stone_uid)
-                                .map(|i| i.name.clone())
-                        })
-                        .unwrap_or_else(|| sel.stone_uid.clone());
-                    self.sharpen_stone = Some(SharpenStone {
-                        uid: sel.stone_uid,
-                        name,
-                        quality: sel.quality,
-                    });
-                    // M18/F55: окно открыто — гейт рендера (список).
-                    self.sharpen_list = true;
-                    // Свежий выбор камня — прошлый результат неактуален.
-                    if let Some(upgrade) = self.upgrade.as_mut() {
-                        upgrade.result = None;
-                        upgrade.preview = None;
-                    }
-                }
-            }
-            Act::Preview => {
-                if let (Some(upgrade), Some(payload)) =
-                    (self.upgrade.as_mut(), ack.payload.as_ref())
-                {
-                    upgrade.preview = Some(payload.clone());
-                    // M18/F55: итог прошлого броска НЕ затираем — он
-                    // должен остаться на экране заточки (зелёным/красным)
-                    // даже после автопревью. Сбрасывается при открытии
-                    // предмета (`open_upgrade`), при смене камня и при
-                    // старте следующего улучшения.
-                }
-            }
-            Act::Socket => {
-                // §7: ack извлекаемого несёт {staff, rune}, вставки — {staff};
-                // M18/F32: цель надета — ack дополнен `char` (бонусы
-                // самоцвета/урон руны вступили в силу сразу).
-                if let (Some(snap), Some(payload)) = (self.snapshot.as_mut(), ack.payload.as_ref())
-                {
-                    if let Ok(ch) = serde_json::from_value::<ld2_protocol::types::CharacterState>(
-                        payload["char"].clone(),
-                    ) {
-                        snap.char = ch;
-                    } else {
-                        apply_item_patch(&mut snap.char, payload);
-                    }
-                }
-                // M24 фикс: инкрустация стака — сервер разбил стак и
-                // прислал НОВЫЙ uid целевой штуки; окно следует за
-                // целью (иначе следующая вставка снова шла бы в стак
-                // и каждый сокет попадал бы на свою штуку).
-                if self.socketing.is_some() {
-                    if let Some(staff_uid) = ack
-                        .payload
-                        .as_ref()
-                        .and_then(|p| p["staff"]["uid"].as_str())
-                    {
-                        self.socketing = Some(staff_uid.to_string());
-                    }
-                }
-            }
-            Act::Create => {
-                // Аддитивное подтверждение: дополняем список персонажей (§7).
-                if let (Some(session), Some(payload)) =
-                    (self.session.as_mut(), ack.payload.as_ref())
-                {
-                    if let Ok(character) =
-                        serde_json::from_value::<CharacterSummary>(payload["character"].clone())
-                    {
-                        if !session.characters.iter().any(|c| c.id == character.id) {
-                            session.characters.push(character);
-                        }
-                    }
-                }
-                self.notice = Some("Персонаж создан".into());
-            }
-        }
-
-        // M18/F39: магазин — ack `{shop}` → панель внутри окна диалога.
-        if act == Act::ShopList {
-            if let (Some(dialog), Some(payload)) = (self.npc_dialog.as_mut(), ack.payload.as_ref())
-            {
-                if let Ok(shop) = serde_json::from_value::<NpcShopView>(payload["shop"].clone()) {
-                    dialog.shop_currency = shop.tabs.first().map(|tab| tab.currency.clone());
-                    dialog.shop = Some(shop);
-                }
-            }
-        }
-        // M18/F35: диалог NPC — ack `{dialog, node, quests}` → окно (до
-        // Examine: там payload перемещается).
-        if act == Act::NpcTalk {
-            if let Some(payload) = ack.payload.as_ref() {
-                self.npc_dialog = NpcDialogView::from_payload(payload);
-                // M18/F41: диагностика повторного открытия диалога.
-                tracing::debug!(
-                    "ack npc.talk (seq={}) → открыт={}, узел={:?}, строк ленты={}",
-                    ack.seq,
-                    self.npc_dialog.is_some(),
-                    self.npc_dialog
-                        .as_ref()
-                        .and_then(|d| d.node.as_ref().map(|n| n.id.clone())),
-                    self.npc_dialog.as_ref().map_or(0, |d| d.transcript.len()),
-                );
-            } else {
-                tracing::debug!("ack npc.talk (seq={}) без payload", ack.seq);
-            }
-        }
-        // M18/F37: ответ персонажа — новый узел (`node: null` — конец);
-        // список квестов освежается (приняли/сдали между открытиями).
-        if act == Act::NpcReply {
-            if let Some(payload) = ack.payload.as_ref() {
-                let terminal = payload.get("node").is_none_or(|v| v.is_null());
-                if terminal {
-                    // M18/F38: конец диалога («Пока») — окно закрывается.
-                    self.npc_dialog = None;
-                } else if let Some(dialog) = self.npc_dialog.as_mut() {
-                    if let Ok(mut node) = serde_json::from_value::<NpcNode>(payload["node"].clone())
-                    {
-                        // M18/F42: дедлайны для живого отсчёта таймеров.
-                        node.stamp_wait_deadlines();
-                        dialog.transcript.push(NpcTranscriptLine {
-                            me: false,
-                            text: node.text.clone(),
-                        });
-                        dialog.node = Some(node);
-                        if let Ok(quests) = serde_json::from_value::<
-                            Vec<ld2_protocol::types::QuestState>,
-                        >(payload["quests"].clone())
-                        {
-                            dialog.quests = quests;
-                        }
-                    }
-                }
-            }
-        }
-        // Осмотр: payload ack'а — детали сущности (включая лут трупа, ФР-03/ФР-11).
-        if act == Act::Examine {
-            self.entity_detail = ack.payload;
-        } else if act == Act::PickupInfo {
-            // M23: окно подятия — тот же `entity.info`, но в отдельное
-            // поле (окно не перетирает модалку осмотра и наоборот).
-            self.pickup = ack.payload;
-        } else if act == Act::AdminCatalog {
-            // M24: каталог админ-окна — `{items:[…]}` → массив.
-            self.admin_catalog = ack
-                .payload
-                .and_then(|p| p.get("items").cloned())
-                .and_then(|v| v.as_array().cloned());
-        } else if act == Act::AdminGod {
-            // M24: эхо состояния тумблера (админ мог переключить
-            // в другом окне — сервер истина).
-            if let Some(enabled) = ack.payload.as_ref().and_then(|p| p["enabled"].as_bool()) {
-                self.admin_god = enabled;
-            }
-        } else if act == Act::AdminTarget {
-            // M24: содержимое цели правой колонки — `{items:[…]}`.
-            self.admin_target_items = ack
-                .payload
-                .and_then(|p| p.get("items").cloned())
-                .and_then(|v| v.as_array().cloned());
-        }
-        vec![]
-    }
-
     fn apply_event(&mut self, msg_type: &str, payload: Option<serde_json::Value>) -> Vec<Effect> {
         let Some(payload) = payload else {
             return vec![];
         };
         match msg_type {
-            "evt/time.sync" => {
-                // §1.1: server = local + offset — база всех обратных отсчётов.
-                let Ok(sync) = serde_json::from_value::<TimeSyncEvent>(payload) else {
-                    return vec![];
-                };
-                let local = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
-                self.time_offset = sync.server_ts - local;
-                vec![]
+            m if m == names::EVT_LOCATION_CHANGED
+                || m.starts_with(names::EVT_ENTITY_PREFIX)
+                || (m.starts_with(names::EVT_CHAR_PREFIX) && m != names::EVT_CHAR_AFFLICT) =>
+            {
+                self.reduce_world(m, payload)
             }
-            "evt/combat/cooldown" => {
-                // ФР-05: блокировка действия до until_epoch.
-                let Ok(cd) = serde_json::from_value::<CombatCooldown>(payload) else {
-                    return vec![];
-                };
-                if let Some(skill) = cd.skill_id {
-                    // M17/F30g: предметные кулдауны — с полной
-                    // длительностью для прогресс-бара кнопки.
-                    if skill.starts_with("item:") {
-                        if let Some(total) = cd.duration_ms {
-                            self.item_cooldowns
-                                .insert(skill, (cd.until_epoch * 1000, total));
-                            return vec![];
-                        }
-                    }
-                    self.combat_cooldowns.insert(skill, cd.until_epoch);
-                }
-                vec![]
+            m if m.starts_with(names::EVT_COMBAT_PREFIX)
+                || m.starts_with(names::EVT_MOB_PREFIX)
+                || m == names::EVT_MAGIC_CAST
+                || m == names::EVT_HARVEST_RESULT
+                || m == names::EVT_CHAR_AFFLICT =>
+            {
+                self.reduce_combat(m, payload)
             }
-            "evt/session.start" => {
-                let Ok(cfg) = serde_json::from_value::<SessionConfig>(payload) else {
-                    tracing::warn!("некорректный evt/session.start — игнор");
-                    return vec![];
-                };
-                let refresh = cfg.session.refresh.token.clone();
-                // НФР «Обновления»: force-min-version capability сервера (§12).
-                let required = cfg.server.min_client.clone();
-                let login = self
-                    .session_login
-                    .clone()
-                    .unwrap_or_else(|| self.last_login.clone().unwrap_or_default());
-                let was_login_screen = self.screen == Screen::Login;
-                self.session = Some(cfg);
-                self.login_error = None;
-                if was_login_screen {
-                    // Новый вход — на выбор персонажей; при реконнекте из
-                    // игры экран НЕ меняем (§4.5: session.start повторяется).
-                    self.screen = Screen::Characters;
-                    self.notice = None;
-                }
-                // После сброса notice: предупреждение о версии не должно
-                // затираться переходом экрана (НФР force-min-version).
-                if let Some(required) = required {
-                    if crate::update_check::is_newer(&required, env!("CARGO_PKG_VERSION")) {
-                        self.notice = Some(format!(
-                            "⚠ Сервер требует клиент v{required} (у вас v{}) — обновитесь",
-                            env!("CARGO_PKG_VERSION")
-                        ));
-                    }
-                }
-                vec![
-                    Effect::PersistSession {
-                        login,
-                        refresh_token: refresh.clone(),
-                    },
-                    Effect::TransportToken(refresh),
-                ]
+            m if m.starts_with(names::EVT_ITEM_PREFIX)
+                || m.starts_with(names::EVT_CORPSE_PREFIX)
+                || m == names::EVT_UPGRADE_RESULT =>
+            {
+                self.reduce_items(m, payload)
             }
-            "evt/state/snapshot" => {
-                // M24: снапшот — новая фаза такта зарядов (серверную
-                // фазу клиент не знает; по патчу тикера самокоррекция).
-                self.rune_recharge_phase_ms = Some(local_epoch_ms() + self.time_offset * 1000);
-                let Ok(snap) = serde_json::from_value::<StateSnapshot>(payload) else {
-                    tracing::warn!("некорректный evt/state/snapshot — игнор");
-                    return vec![];
-                };
-                self.push_visited(&snap.location);
-                // M14/F18: лог мира персональный — очистка при входе в игру
-                // (старые строки сессии не переживают вход; строка «Вход в мир»
-                // остаётся первой).
-                self.log.clear();
-                self.push_log(
-                    LogKind::Location,
-                    format!("Вход в мир: {}", snap.location.name),
-                );
-                // §7: снапшот несёт межигровое состояние (пати/гильдия).
-                self.party = snap.party.clone();
-                self.guild = snap.guild.clone();
-                self.snapshot = Some(snap);
-                self.screen = Screen::Game;
-                self.select_error = None;
-                self.world_error = None;
-                self.entity_detail = None;
-                self.pickup = None;
-                self.notice = None;
-                vec![]
+            m if m.starts_with(names::EVT_CHAT_PREFIX)
+                || m == names::EVT_PARTY_UPDATED
+                || m.starts_with(names::EVT_TRADE_PREFIX)
+                || m.starts_with(names::EVT_GUILD_PREFIX) =>
+            {
+                self.reduce_social(m, payload)
             }
-            // ── события мира (M3: ФР-03, ФР-17) ─────────────────────────────
-            "evt/location/changed" => {
-                let Ok(changed) = serde_json::from_value::<LocationChanged>(payload) else {
-                    return vec![];
-                };
-                let name = changed.location.name.clone();
-                let pvp = changed.location.flags.iter().any(|f| f == "pvp");
-                let active: Vec<String> = {
-                    let now = local_epoch() + self.time_offset;
-                    self.snapshot
-                        .as_ref()
-                        .map(|s| {
-                            filter_active_statuses(&s.char.crime.statuses, now)
-                                .iter()
-                                .map(|s| s.kind.clone())
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                };
-                // Смена локации — новый контекст: старые тосты устарели.
-                self.notice = None;
-                if pvp && !active.is_empty() {
-                    // ФР-11: предупреждение при входе в PvP-зону со статусом.
-                    self.notice =
-                        Some(format!("⚠ PvP-зона: активны статусы {}", active.join(", ")));
-                }
-                self.push_visited(&changed.location);
-                if let Some(snap) = self.snapshot.as_mut() {
-                    snap.location = changed.location;
-                }
-                self.entity_detail = None;
-                self.pickup = None;
-                self.world_error = None;
-                self.push_log(LogKind::Location, format!("Вы вошли в {name}"));
-                vec![]
+            m if m.starts_with(names::EVT_CRAFT_PREFIX)
+                || m.starts_with(names::EVT_QUEST_PREFIX)
+                || m.starts_with(names::EVT_CRIME_PREFIX) =>
+            {
+                self.reduce_craft(m, payload)
             }
-            "evt/entity/spawn" => {
-                let Ok(spawn) = serde_json::from_value::<EntitySpawn>(payload) else {
-                    return vec![];
-                };
-                let mut added = None;
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if snap.location.id == spawn.location_id
-                        && !snap
-                            .location
-                            .entities
-                            .iter()
-                            .any(|e| e.id == spawn.entity.id)
-                    {
-                        added = Some(spawn.entity.name.clone());
-                        snap.location.entities.push(spawn.entity);
-                    }
-                }
-                if let Some(name) = added {
-                    self.push_log(LogKind::System, format!("{name} появляется"));
-                }
-                vec![]
-            }
-            "evt/entity/move" => {
-                let Ok(moved) = serde_json::from_value::<EntityMove>(payload) else {
-                    return vec![];
-                };
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(entity) = snap
-                        .location
-                        .entities
-                        .iter_mut()
-                        .find(|e| e.id == moved.entity_id)
-                    {
-                        if let Some(hp) = moved.patch.get("hp") {
-                            if let Ok(hp) = serde_json::from_value::<Hp>(hp.clone()) {
-                                entity.hp = Some(hp);
-                            }
-                        }
-                    }
-                }
-                vec![]
-            }
-            "evt/entity/hp" => {
-                let Ok(update) = serde_json::from_value::<EntityHp>(payload) else {
-                    return vec![];
-                };
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(entity) = snap
-                        .location
-                        .entities
-                        .iter_mut()
-                        .find(|e| e.id == update.entity_id)
-                    {
-                        entity.hp = Some(update.hp);
-                    }
-                }
-                vec![]
-            }
-            "evt/entity/despawn" => {
-                let Ok(gone) = serde_json::from_value::<EntityDespawn>(payload) else {
-                    return vec![];
-                };
-                let mut name = None;
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(idx) = snap
-                        .location
-                        .entities
-                        .iter()
-                        .position(|e| e.id == gone.entity_id)
-                    {
-                        name = Some(snap.location.entities.remove(idx).name);
-                    }
-                }
-                if let Some(name) = name {
-                    self.push_log(LogKind::System, format!("{name} исчезает"));
-                }
-                // ФР-05: авто-сброс цели при исчезновении.
-                if self.target.as_deref() == Some(gone.entity_id.as_str()) {
-                    self.target = None;
-                }
-                vec![]
-            }
-            "evt/combat/hit" => {
-                let Ok(hit) = serde_json::from_value::<CombatHit>(payload) else {
-                    return vec![];
-                };
-                let mine = self
-                    .snapshot
-                    .as_ref()
-                    .is_some_and(|s| s.char.id == hit.source);
-                self.push_log(
-                    if mine {
-                        LogKind::CombatOut
-                    } else {
-                        LogKind::CombatIn
-                    },
-                    hit.text,
-                );
-                vec![]
-            }
-            // M25: моб атаковал — бар атаки (следующая атака/интервал).
-            "evt/mob/attack" => {
-                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobAttack>(payload) else {
-                    return vec![];
-                };
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(entity) = snap
-                        .location
-                        .entities
-                        .iter_mut()
-                        .find(|e| e.id == ev.entity_id)
-                    {
-                        entity.next_attack_at = Some(ev.next_attack_at);
-                        entity.attack_interval = Some(ev.interval_ms);
-                    }
-                }
-                vec![]
-            }
-            // M25: босс сменил фазу — глиф/имя в списке + журнал.
-            "evt/mob/phase" => {
-                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobPhase>(payload) else {
-                    return vec![];
-                };
-                let mut mob_name = ev.entity_id.clone();
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(entity) = snap
-                        .location
-                        .entities
-                        .iter_mut()
-                        .find(|e| e.id == ev.entity_id)
-                    {
-                        mob_name = entity.name.clone();
-                        let casting = entity.boss.as_ref().and_then(|b| b.casting.clone());
-                        entity.boss = Some(ld2_protocol::types::BossState {
-                            phase: ev.phase,
-                            name: ev.name.clone(),
-                            glyph: ev.glyph.clone(),
-                            casting,
-                        });
-                    }
-                }
-                self.push_log(
-                    LogKind::System,
-                    format!("{mob_name} входит в фазу: {}", ev.name),
-                );
-                vec![]
-            }
-            // M25: босс использовал навык — журнал.
-            // M25: босс начал каст — журнал и «готовит …» в списке.
-            "evt/mob/cast" => {
-                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobCast>(payload) else {
-                    return vec![];
-                };
-                let mut boss_name = ev.entity_id.clone();
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(entity) = snap
-                        .location
-                        .entities
-                        .iter_mut()
-                        .find(|e| e.id == ev.entity_id)
-                    {
-                        boss_name = entity.name.clone();
-                        if let Some(boss) = entity.boss.as_mut() {
-                            boss.casting = Some(ev.name.clone());
-                        }
-                    }
-                }
-                self.push_log(
-                    LogKind::CombatIn,
-                    format!("{boss_name} готовит: {}", ev.name),
-                );
-                vec![]
-            }
-            // M25: босс использовал навык — журнал, каст завершён.
-            "evt/mob/skill" => {
-                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::MobSkill>(payload) else {
-                    return vec![];
-                };
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(entity) = snap
-                        .location
-                        .entities
-                        .iter_mut()
-                        .find(|e| e.id == ev.entity_id)
-                    {
-                        if let Some(boss) = entity.boss.as_mut() {
-                            boss.casting = None;
-                        }
-                    }
-                }
-                self.push_log(
-                    LogKind::CombatIn,
-                    format!("{} использует {}", ev.source_name, ev.name),
-                );
-                vec![]
-            }
-            "evt/corpse/created" => {
-                let Ok(corpse) = serde_json::from_value::<CorpseCreated>(payload) else {
-                    return vec![];
-                };
-                // M23: лут/флаги трупа обновились — освежить окно
-                // подятия, если оно открыто.
-                self.pickup_dirty = true;
-                let mut added = false;
-                if let Some(snap) = self.snapshot.as_mut() {
-                    match snap
-                        .location
-                        .entities
-                        .iter()
-                        .position(|e| e.id == corpse.entity.id)
-                    {
-                        // Обновление (M22: лут/флаги разделки) — замена.
-                        Some(pos) => snap.location.entities[pos] = corpse.entity,
-                        None => {
-                            added = true;
-                            snap.location.entities.push(corpse.entity);
-                        }
-                    }
-                }
-                if added {
-                    self.push_log(LogKind::Loot, format!("Труп — лута: {}", corpse.loot_count));
-                }
-                vec![]
-            }
-            "evt/corpse/looted" => {
-                let Ok(looted) = serde_json::from_value::<CorpseLooted>(payload) else {
-                    return vec![];
-                };
-                if looted.was_player {
-                    // ФР-11: лут с трупа игрока — статус «Мародёр».
-                    self.push_log(
-                        LogKind::Crime,
-                        format!(
-                            "{} собирает лут с трупа ИГРОКА — статус «Мародёр»",
-                            looted.by_name
-                        ),
-                    );
-                } else {
-                    self.push_log(LogKind::Loot, format!("{} собирает лут", looted.by_name));
-                }
-                vec![]
-            }
-            "evt/char/level_up" => {
-                // M22: новый уровень — журнал: себе «Вы получили…»,
-                // остальным в локации «{имя} получил(а)…».
-                let Ok(up) = serde_json::from_value::<ld2_protocol::evt::CharLevelUp>(payload)
-                else {
-                    return vec![];
-                };
-                let mine = self
-                    .snapshot
-                    .as_ref()
-                    .is_some_and(|s| s.char.id == up.char_id);
-                if mine {
-                    self.push_log(
-                        LogKind::Xp,
-                        format!("Вы получили новый уровень! Уровень персонажа: {}", up.level),
-                    );
-                } else {
-                    let verb = if up.gender == "female" {
-                        "получила"
-                    } else {
-                        "получил"
-                    };
-                    self.push_log(LogKind::Xp, format!("{} {} новый уровень!", up.name, verb));
-                }
-                vec![]
-            }
-            "evt/char/xp" => {
-                let Ok(xp) = serde_json::from_value::<CharXp>(payload) else {
-                    return vec![];
-                };
-                // M22: опыт персонажа — отдельная строка в журнале.
-                if xp.amount > 0 {
-                    self.push_log(LogKind::Xp, format!("Опыт +{}", xp.amount));
-                }
-                // Обновляем лист: навык и остаток пула (ФР-04).
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(pool) = xp.pool_left {
-                        snap.char.xp_pool = pool;
-                    }
-                    if let Some(skill) = snap.char.skills.iter_mut().find(|s| s.id == xp.skill_id) {
-                        skill.xp = xp.skill_xp;
-                        if let Some(rank) = xp.rank {
-                            skill.rank = rank;
-                        }
-                        if let Some(next) = xp.xp_to_next {
-                            skill.xp_to_next = next;
-                        }
-                    }
-                }
-                let text = if xp.amount < 0 {
-                    // M18/F44: повышение ранга у тренера — очки пула
-                    // списаны (amount отрицательный), шкала обнулена.
-                    match xp.rank {
-                        Some(rank) => {
-                            format!("{} — ранг {rank}! (−{} очков)", xp.skill_id, -xp.amount)
-                        }
-                        None => format!("{} (−{} очков)", xp.skill_id, -xp.amount),
-                    }
-                } else {
-                    match xp.rank {
-                        Some(rank) => format!("+{} XP → {} — ранг {rank}!", xp.amount, xp.skill_id),
-                        None => format!("+{} XP → {}", xp.amount, xp.skill_id),
-                    }
-                };
-                self.push_log(LogKind::Xp, text);
-                vec![]
-            }
-            "evt/char/stats" => {
-                // Патч ресурсов/атрибутов (respawn, зелья) — ФР-06/ФР-07.
-                let Ok(stats) = serde_json::from_value::<CharStats>(payload) else {
-                    return vec![];
-                };
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(hp) = stats.patch.get("hp") {
-                        if let Ok(hp) = serde_json::from_value::<Hp>(hp.clone()) {
-                            snap.char.hp = hp;
-                        }
-                    }
-                    if let Some(mp) = stats.patch.get("mp") {
-                        if let Ok(mp) = serde_json::from_value::<Hp>(mp.clone()) {
-                            snap.char.mp = mp;
-                        }
-                    }
-                    if let Some(attrs) = stats.patch.get("attrs").and_then(|v| v.as_object()) {
-                        for (key, value) in attrs {
-                            if let Some(n) = value.as_i64() {
-                                snap.char.attrs.insert(key.clone(), n);
-                            }
-                        }
-                    }
-                }
-                vec![]
-            }
-            // M25: дебафф контроля — стан открывает окно с
-            // прогрессбаром, остальные эффекты — строка журнала.
-            "evt/char/afflict" => {
-                let Ok(ev) = serde_json::from_value::<ld2_protocol::evt::CharAfflict>(payload)
-                else {
-                    return vec![];
-                };
-                if ev.kind == "stun" {
-                    self.stun = Some(StunView {
-                        title: ev.title,
-                        until_ms: ev.until_ms,
-                        started_ms: local_epoch_ms(),
-                    });
-                } else {
-                    let secs = ((ev.until_ms - local_epoch_ms()).max(0) + 999) / 1000;
-                    self.push_log(LogKind::CombatIn, format!("{} — {} с", ev.title, secs));
-                }
-                vec![]
-            }
-            "evt/char/death" => {
-                // ФР-06: сводка утраченного — модалка, закрывается подтверждением.
-                // M18: в журнал НЕ выводим — утраченное видно в самой
-                // модалке (полный список, со скроллом).
-                let Ok(death) = serde_json::from_value::<CharDeath>(payload) else {
-                    return vec![];
-                };
-                self.death = Some(death);
-                self.target = None;
-                vec![Effect::Notify(NotifyKind::Death)]
-            }
-            "evt/magic/cast" => {
-                let Ok(cast) = serde_json::from_value::<MagicCast>(payload) else {
-                    return vec![];
-                };
-                // D4: свой каст тратит ману — бар обновляем по mp_left (§8);
-                // заряды приходят патчем evt/item/state.
-                if cast.ok {
-                    if let Some(mp_left) = cast.mp_left {
-                        if let Some(snap) = self.snapshot.as_mut() {
-                            if snap.char.id == cast.by {
-                                snap.char.mp.cur = mp_left as i64;
-                            }
-                        }
-                    }
-                }
-                let text = if cast.ok {
-                    format!("{}: {} ({:?})", cast.by_name, cast.spell, cast.what)
-                } else {
-                    format!("{}: {} — сбой", cast.by_name, cast.spell)
-                };
-                self.push_log(LogKind::Magic, text);
-                vec![]
-            }
-            "evt/item/added" => {
-                let Ok(added) = serde_json::from_value::<ItemAdded>(payload) else {
-                    return vec![];
-                };
-                // Лут приходит сервером уже добавленным — синхронизируем снапшот.
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if !snap.char.inventory.iter().any(|i| i.uid == added.item.uid) {
-                        snap.char.inventory.push(added.item.clone());
-                    }
-                }
-                self.push_log(LogKind::Loot, format!("Получено: {}", added.item.name));
-                vec![]
-            }
-            "evt/item/removed" => {
-                let Ok(removed) = serde_json::from_value::<ItemRemoved>(payload) else {
-                    return vec![];
-                };
-                // ФР-06/ФР-07: убыль из инвентаря и из слотов экипировки.
-                if let Some(snap) = self.snapshot.as_mut() {
-                    snap.char.inventory.retain(|i| i.uid != removed.uid);
-                    snap.char
-                        .equip
-                        .retain(|_, slot| slot.as_deref() != Some(removed.uid.as_str()));
-                }
-                // M18/F54: активный камень выбыл — снимаем выбор и
-                // гасим превью: оно было посчитано с этим камнем, повторный
-                // старт без нового камня (`E_UPGRADE_PREVIEW_STALE`/`E_…`)
-                // был бы неверным шагом.
-                if self
-                    .sharpen_stone
-                    .as_ref()
-                    .is_some_and(|st| st.uid == removed.uid)
-                {
-                    self.sharpen_stone = None;
-                    if let Some(view) = self.upgrade.as_mut() {
-                        view.preview = None;
-                    }
-                }
-                // M20: при выбросе строку даёт `evt/item/dropped`
-                // («Вы выбросили…»), а не «Потеряно».
-                if !matches!(removed.reason, ItemRemovalReason::Dropped) {
-                    self.push_log(LogKind::Loot, format!("Потеряно: {}", removed.uid));
-                }
-                vec![]
-            }
-            "evt/item/dropped" => {
-                // M20: выброс предмета — журнал всем в локации; свой
-                // char_id → «Вы выбросили…», иначе по полу «выбросил(а)».
-                let Ok(dropped) = serde_json::from_value::<ItemDropped>(payload) else {
-                    return vec![];
-                };
-                // Строки журнала — по конвенции store (русские
-                // литералы, как «Потеряно:»); свой char_id → «Вы…».
-                let mine = self
-                    .snapshot
-                    .as_ref()
-                    .is_some_and(|s| s.char.id == dropped.char_id);
-                let qty = dropped.qty;
-                let text = if mine {
-                    format!("Вы выбросили {qty} {}", dropped.item_name)
-                } else if dropped.gender == "female" {
-                    format!("{} выбросила {qty} {}", dropped.by_name, dropped.item_name)
-                } else {
-                    format!("{} выбросил {qty} {}", dropped.by_name, dropped.item_name)
-                };
-                self.push_log(LogKind::Loot, text);
-                vec![]
-            }
-            "evt/item/expired" => {
-                // M20: предмет в локации исчез по TTL.
-                let Ok(expired) = serde_json::from_value::<ItemExpired>(payload) else {
-                    return vec![];
-                };
-                self.push_log(LogKind::Loot, format!("{} исчез", expired.name));
-                vec![]
-            }
-            "evt/harvest/result" => {
-                // Снятие шкур (M22): чистим бар, пишем в журнал.
-                let Ok(result) =
-                    serde_json::from_value::<ld2_protocol::evt::HarvestResult>(payload)
-                else {
-                    return vec![];
-                };
-                // M24: бар гаснет только по итогу СВОЕГО трупа —
-                // при переключении итог прерванного действия чужого
-                // трупа новый бар не гасит.
-                if self
-                    .harvest
-                    .as_ref()
-                    .is_some_and(|h| h.entity_id == result.entity_id)
-                {
-                    self.harvest = None;
-                }
-                if result.ok {
-                    // M23: в лут трупа добавились шкуры/мясо — окно
-                    // подятия должно увидеть их без переоткрытия.
-                    self.pickup_dirty = true;
-                    let text = if result.action == "skin" {
-                        format!("Вы сняли шкуру с трупа {}", result.name)
-                    } else {
-                        format!("Вы освежевали труп {}", result.name)
-                    };
-                    self.push_log(LogKind::Loot, text);
-                } else if result.ruined {
-                    // M22: разделка прервана взаимодействием с предметом.
-                    self.push_log(LogKind::Loot, "Шкура испорчена".to_string());
-                }
-                vec![]
-            }
-            "evt/dialog/open" => {
-                // M20: игровой диалог (заготовка) — гейт рендера окна
-                // (`PopupKind::Dialog`) — наличие состояния, как у NPC.
-                let Ok(open) = serde_json::from_value::<ld2_protocol::evt::DialogOpen>(payload)
-                else {
-                    return vec![];
-                };
-                self.dialog = Some(open);
-                vec![]
-            }
-            "evt/item/state" => {
-                // Патч предмета (upgrade/sockets/qty) — ФР-09/ФР-10.
-                #[derive(serde::Deserialize)]
-                struct ItemPatch {
-                    uid: String,
-                    patch: serde_json::Map<String, serde_json::Value>,
-                }
-                let Ok(update) = serde_json::from_value::<ItemPatch>(payload) else {
-                    return vec![];
-                };
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(item) = snap.char.inventory.iter_mut().find(|i| i.uid == update.uid)
-                    {
-                        if let Some(full) = update.patch.get("item") {
-                            if let Ok(replaced) = serde_json::from_value::<
-                                ld2_protocol::types::ItemSnapshot,
-                            >(full.clone())
-                            {
-                                *item = replaced;
-                            }
-                        } else if let Some(up) =
-                            update.patch.get("upgrade").and_then(|v| v.as_i64())
-                        {
-                            item.upgrade = up as i32;
-                        } else if let Some(sockets) = update.patch.get("sockets") {
-                            if let Ok(sockets) = serde_json::from_value::<
-                                Vec<ld2_protocol::types::Socket>,
-                            >(sockets.clone())
-                            {
-                                // M24: прирост зарядов — такт тикера
-                                // (или новая вставка) — фаза
-                                // прогрессбара рун обновляется.
-                                let old_charges: i32 = item
-                                    .sockets
-                                    .as_ref()
-                                    .map(|old| {
-                                        old.iter()
-                                            .filter_map(|s| s.rune.as_ref().map(|r| r.charges))
-                                            .sum()
-                                    })
-                                    .unwrap_or(0);
-                                let new_charges: i32 = sockets
-                                    .iter()
-                                    .filter_map(|s| s.rune.as_ref().map(|r| r.charges))
-                                    .sum();
-                                item.sockets = Some(sockets);
-                                if new_charges > old_charges {
-                                    self.rune_recharge_phase_ms =
-                                        Some(local_epoch_ms() + self.time_offset * 1000);
-                                }
-                            }
-                        } else if let Some(qty) = update.patch.get("qty").and_then(|v| v.as_i64()) {
-                            item.qty = Some(qty);
-                        }
-                    }
-                }
-                vec![]
-            }
-            "evt/upgrade/result" => {
-                // ФР-10: результат — событием; модалка закрывается.
-                let Ok(result) =
-                    serde_json::from_value::<ld2_protocol::evt::UpgradeResult>(payload.clone())
-                else {
-                    return vec![];
-                };
-                let name = self
-                    .snapshot
-                    .as_ref()
-                    .and_then(|s| {
-                        s.char
-                            .inventory
-                            .iter()
-                            .find(|i| i.uid == result.uid)
-                            .map(|i| i.name.clone())
-                    })
-                    .unwrap_or_else(|| result.uid.clone());
-                if result.ok {
-                    let n = result.new_upgrade.unwrap_or_default();
-                    self.push_log(LogKind::Loot, format!("Улучшение: «{name}» → +{n}"));
-                } else if result.item_destroyed == Some(true) {
-                    self.push_log(
-                        LogKind::Crime,
-                        format!("ПРОВАЛ улучшения — «{name}» РАЗРУШЕН"),
-                    );
-                } else {
-                    self.push_log(
-                        LogKind::Loot,
-                        format!("Провал улучшения: «{name}» (без изменений)"),
-                    );
-                }
-                // M18/F53: модалка не закрывается — сохраняем результат,
-                // сбрасываем превью (следующее улучшение запросит новое).
-                if let Some(view) = self.upgrade.as_mut() {
-                    if view.item_uid == result.uid {
-                        view.result = Some(payload.clone());
-                        view.preview = None;
-                    }
-                }
-                vec![Effect::Notify(NotifyKind::Upgrade)]
-            }
-            "evt/quest/progress" | "evt/quest/updated" => {
-                #[derive(serde::Deserialize)]
-                struct WithQuest {
-                    quest: QuestState,
-                    #[serde(default)]
-                    pool_left: Option<i64>,
-                }
-                let Ok(w) = serde_json::from_value::<WithQuest>(payload) else {
-                    return vec![];
-                };
-                // ФР-12: замена квеста в снапшоте + пул от сдачи (§7).
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(pool) = w.pool_left {
-                        snap.char.xp_pool = pool;
-                    }
-                    if let Some(q) = snap.char.quests.iter_mut().find(|q| q.id == w.quest.id) {
-                        *q = w.quest.clone();
-                    } else {
-                        snap.char.quests.push(w.quest.clone());
-                    }
-                }
-                // M18/F35: квест взят/сдан — убирается из открытого диалога
-                // NPC (реплики и кнопки не врут).
-                if let Some(dialog) = self.npc_dialog.as_mut() {
-                    if !matches!(w.quest.state, ld2_protocol::types::QuestPhase::Available) {
-                        dialog.quests.retain(|q| q.id != w.quest.id);
-                    }
-                }
-                let title = w.quest.title.unwrap_or(w.quest.id);
-                self.push_log(
-                    LogKind::Quest,
-                    format!("Квест «{title}»: {:?}", w.quest.state),
-                );
-                vec![]
-            }
-            "evt/craft/result" => {
-                let Ok(result) = serde_json::from_value::<ld2_protocol::evt::CraftResult>(payload)
-                else {
-                    return vec![];
-                };
-                if result.ok {
-                    let made: Vec<String> = result
-                        .made
-                        .iter()
-                        .map(|m| format!("{}×{}", m.uid, m.qty))
-                        .collect();
-                    self.push_log(
-                        LogKind::Loot,
-                        format!("Крафт готов: {} → {}", result.recipe_id, made.join(", ")),
-                    );
-                } else {
-                    self.push_log(
-                        LogKind::Loot,
-                        format!("Крафт провален: {}", result.recipe_id),
-                    );
-                }
-                vec![]
-            }
-            "evt/craft/profession" => {
-                #[derive(serde::Deserialize)]
-                struct WithProfession {
-                    profession: ld2_protocol::types::ProfessionSnapshot,
-                    #[serde(default)]
-                    name: Option<String>,
-                    #[serde(default)]
-                    gain: Option<i64>,
-                }
-                let Ok(w) = serde_json::from_value::<WithProfession>(payload) else {
-                    return vec![];
-                };
-                let old = self.snapshot.as_ref().and_then(|s| {
-                    s.char
-                        .professions
-                        .iter()
-                        .find(|p| p.id == w.profession.id)
-                        .map(|p| (p.level, p.rank))
-                });
-                if let Some(snap) = self.snapshot.as_mut() {
-                    if let Some(p) = snap
-                        .char
-                        .professions
-                        .iter_mut()
-                        .find(|p| p.id == w.profession.id)
-                    {
-                        *p = w.profession.clone();
-                    } else {
-                        snap.char.professions.push(w.profession.clone());
-                    }
-                }
-                // M22: журнал на русском (имя из контента) — ранг
-                // только при смене, опыт и уровень профессии отдельно.
-                let name = w.name.clone().unwrap_or_else(|| w.profession.id.clone());
-                if old.is_none_or(|(_, rank)| rank != w.profession.rank) {
-                    self.push_log(
-                        LogKind::Loot,
-                        format!("Профессия «{name}»: ранг {}", w.profession.rank),
-                    );
-                }
-                if let Some(gain) = w.gain.filter(|g| *g > 0) {
-                    self.push_log(LogKind::Xp, format!("{name}: опыт +{gain}"));
-                }
-                // Условие устойчиво: если записи в снапшоте ещё не
-                // было (old=None) — сравниваем с0, иначе повышение
-                // терялось (фикс: строка «+N» приходила, а об уровне —
-                // нет).
-                if w.profession.level > old.map(|(level, _)| level).unwrap_or(0) {
-                    self.push_log(
-                        LogKind::Xp,
-                        format!("Уровень профессии {name}: {}", w.profession.level),
-                    );
-                }
-                vec![]
-            }
-            "evt/party/updated" => {
-                #[derive(serde::Deserialize)]
-                struct WithParty {
-                    #[serde(default)]
-                    party: Option<PartyState>,
-                    #[serde(default)]
-                    invite: Option<PartyInviteView>,
-                }
-                let Ok(w) = serde_json::from_value::<WithParty>(payload) else {
-                    return vec![];
-                };
-                // ФР-14: полное состояние группы + входящее приглашение (§11).
-                self.party = w.party;
-                if let Some(inv) = w.invite {
-                    self.push_log(
-                        LogKind::System,
-                        format!("Приглашение в группу от {}", inv.from_name),
-                    );
-                    self.party_invite = Some(inv);
-                    return vec![Effect::Notify(NotifyKind::PartyInvite)];
-                }
-                if self.party.is_some() {
-                    self.party_invite = None; // состав обновился — ответ дан
-                }
-                vec![]
-            }
-            "evt/trade/state" => {
-                let Ok(trade) = serde_json::from_value::<ld2_protocol::evt::TradeState>(payload)
-                else {
-                    return vec![];
-                };
-                // ФР-15: версия/зеркало — истина сервера, клиент не пересчитывает.
-                // Открытие сделки партнёром — уведомление (D7).
-                let opened = self.trade.is_none();
-                self.trade = Some(trade);
-                if opened {
-                    return vec![Effect::Notify(NotifyKind::TradeOpen)];
-                }
-                vec![]
-            }
-            "evt/trade/closed" => {
-                #[derive(serde::Deserialize)]
-                struct Closed {
-                    offer_id: String,
-                    reason: ld2_protocol::evt::TradeCloseReason,
-                }
-                let Ok(c) = serde_json::from_value::<Closed>(payload) else {
-                    return vec![];
-                };
-                self.trade = None;
-                let text = match c.reason {
-                    ld2_protocol::evt::TradeCloseReason::Done => {
-                        format!("Сделка {} состоялась", c.offer_id)
-                    }
-                    ld2_protocol::evt::TradeCloseReason::Cancelled => {
-                        format!("Сделка {} отменена", c.offer_id)
-                    }
-                    _ => format!("Сделка {} не состоялась", c.offer_id),
-                };
-                self.push_log(LogKind::Loot, text);
-                vec![]
-            }
-            "evt/guild/updated" => {
-                #[derive(serde::Deserialize)]
-                struct WithGuild {
-                    #[serde(default)]
-                    guild: Option<GuildState>,
-                    #[serde(default)]
-                    invite: Option<GuildInviteView>,
-                }
-                let Ok(w) = serde_json::from_value::<WithGuild>(payload) else {
-                    return vec![];
-                };
-                self.guild = w.guild;
-                if let Some(inv) = w.invite {
-                    self.push_log(
-                        LogKind::System,
-                        format!("Приглашение в гильдию «{}»", inv.guild_name),
-                    );
-                    self.guild_invite = Some(inv);
-                    return vec![Effect::Notify(NotifyKind::GuildInvite)];
-                }
-                vec![]
-            }
-            "evt/guild/log" => {
-                #[derive(serde::Deserialize)]
-                struct WithEntry {
-                    entry: GuildLogEntry,
-                }
-                let Ok(w) = serde_json::from_value::<WithEntry>(payload) else {
-                    return vec![];
-                };
-                // §8: журнал гильдии попадает и в системный лог (ФР-16).
-                self.push_log(LogKind::System, format!("Гильдия: {}", w.entry.text));
-                self.guild_log.push(w.entry);
-                vec![]
-            }
-            "evt/char/buffs" => {
-                // M18/F58d (ADR-012 §6): полная замена списка баффов рун.
-                let Ok(update) = serde_json::from_value::<ld2_protocol::evt::CharBuffs>(payload)
-                else {
-                    return vec![];
-                };
-                if let Some(snap) = self.snapshot.as_mut() {
-                    snap.char.buffs = update.buffs.clone();
-                }
-                if !update.buffs.is_empty() {
-                    let titles: Vec<&str> = update.buffs.iter().map(|b| b.title.as_str()).collect();
-                    self.push_log(
-                        LogKind::System,
-                        format!("Бафф: {} ×{}", titles.join(", "), {
-                            update.buffs.iter().map(|b| b.stacks).max().unwrap_or(1)
-                        }),
-                    );
-                }
-                vec![]
-            }
-            "evt/crime/status" => {
-                let Ok(update) = serde_json::from_value::<CrimeStatusUpdate>(payload) else {
-                    return vec![];
-                };
-                // ФР-11: полная замена списка — клиент НЕ пересчитывает blend (§4.10).
-                if let Some(snap) = self.snapshot.as_mut() {
-                    snap.char.crime.statuses = update.statuses.clone();
-                }
-                let text = update.log_hint.unwrap_or_else(|| {
-                    let kinds: Vec<&str> =
-                        update.statuses.iter().map(|s| s.kind.as_str()).collect();
-                    if kinds.is_empty() {
-                        "Статусы преступления сняты".to_string()
-                    } else {
-                        format!("Статусы: {}", kinds.join(", "))
-                    }
-                });
-                self.push_log(LogKind::Crime, text);
-                vec![]
-            }
-            "evt/crime/added" => {
-                let Ok(added) = serde_json::from_value::<CrimeAdded>(payload) else {
-                    return vec![];
-                };
-                // Журнал + обновление бейджей (досерверный срок — как есть).
-                self.crime_log.push(added.log_entry.clone());
-                if let Some(snap) = self.snapshot.as_mut() {
-                    snap.char
-                        .crime
-                        .statuses
-                        .retain(|s| s.kind != added.status.kind);
-                    snap.char.crime.statuses.push(added.status);
-                }
-                self.push_log(
-                    LogKind::Crime,
-                    format!(
-                        "{}: +{}с (итого {}с)",
-                        added.log_entry.kind, added.log_entry.delta_s, added.log_entry.total_s
-                    ),
-                );
-                vec![]
-            }
-            "evt/crime/removed" => {
-                let Ok(removed) = serde_json::from_value::<CrimeRemoved>(payload) else {
-                    return vec![];
-                };
-                if let Some(snap) = self.snapshot.as_mut() {
-                    snap.char.crime.statuses.retain(|s| s.kind != removed.kind);
-                }
-                self.push_log(LogKind::Crime, format!("Статус «{}» снят", removed.kind));
-                vec![]
-            }
-            "evt/chat/message" => {
-                let Ok(msg) = serde_json::from_value::<ChatMessage>(payload) else {
-                    return vec![];
-                };
-                // M14/F22: реплей истории (маркер replay) не показываем —
-                // журнал и чат входят в игру пустыми; кольцо D25 живёт
-                // на сервере, совместимость — через extra (§11).
-                if msg.extra.get("replay").and_then(|v| v.as_bool()) == Some(true) {
-                    return vec![];
-                }
-                // ФР-13: история per-channel (ring) + адресат для «ответить».
-                let my_id = self
-                    .snapshot
-                    .as_ref()
-                    .map(|sn| sn.char.id.clone())
-                    .unwrap_or_default();
-                let mut effects = vec![];
-                if msg.channel == "whisper" && msg.from != my_id {
-                    self.last_whisper_from = Some(msg.name.clone());
-                    effects.push(Effect::Notify(NotifyKind::Whisper));
-                }
-                let entry = self.chat.entry(msg.channel.clone()).or_default();
-                if entry.len() >= self.chat_limit {
-                    entry.pop_front();
-                }
-                entry.push_back(msg.clone());
-                self.push_log(
-                    LogKind::Chat,
-                    format!("[{}] {}: {}", msg.channel, msg.name, msg.text),
-                );
-                effects
-            }
-            "evt/chat/deleted" => {
-                // M14/F19: модератор удалил сообщение — убираем из всех
-                // каналов (id один на историю сервера).
-                let Ok(del) = serde_json::from_value::<ld2_protocol::evt::ChatDeleted>(payload)
-                else {
-                    return vec![];
-                };
-                for ring in self.chat.values_mut() {
-                    ring.retain(|m| m.id != Some(del.id));
-                }
-                vec![]
+            m if m == names::EVT_TIME_SYNC
+                || m == names::EVT_SESSION_START
+                || m == names::EVT_SESSION_REPLACED
+                || m == names::EVT_SESSION_AFK
+                || m == names::EVT_ACCOUNT_PREMIUM
+                || m == names::EVT_STATE_SNAPSHOT
+                || m == names::EVT_STATE_DELTA
+                || m == names::EVT_DIALOG_OPEN
+                || m == names::EVT_ERROR =>
+            {
+                self.reduce_misc(m, payload)
             }
             _ => vec![], // неизвестные/ненужные события транспорт уже залогировал
         }
+    }
+
+    /// R11: дельта неприменима — полный снапшот (§12.4).
+    fn request_resync(&self) -> Vec<Effect> {
+        vec![Effect::ResyncState]
     }
 
     // ── журнал и история (ФР-17, ФР-03) ────────────────────────────────────
@@ -2521,6 +524,8 @@ impl AppStore {
         self.death = None;
         self.item_detail = None;
         self.entity_detail = None;
+        self.inspect = None;
+        self.afk_until_ms = None;
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
@@ -2549,6 +554,46 @@ impl AppStore {
         login
             .map(|login| vec![Effect::ForgetSession { login }])
             .unwrap_or_default()
+    }
+
+    /// M36: бездействие — персонаж в офлайне, аккаунт остаётся в сети:
+    /// экран выбора персонажа, игровое состояние очищено.
+    fn reset_to_characters(&mut self) {
+        self.screen = Screen::Characters;
+        self.snapshot = None;
+        self.pending = None;
+        self.login_error = None;
+        self.create_error = None;
+        self.select_error = None;
+        self.world_error = None;
+        self.death = None;
+        self.item_detail = None;
+        self.entity_detail = None;
+        self.inspect = None;
+        self.afk_until_ms = None;
+        self.pickup = None;
+        self.admin_catalog = None;
+        self.admin_god = false;
+        self.stun = None;
+        self.admin_target_items = None;
+        self.upgrade = None;
+        self.socketing = None;
+        self.dialog = None;
+        self.target = None;
+        self.loot_confirm = None;
+        self.quest_tracker.clear();
+        self.npc_dialog = None;
+        self.chat.clear();
+        self.log.clear();
+        self.last_whisper_from = None;
+        self.party = None;
+        self.party_invite = None;
+        self.trade = None;
+        self.guild = None;
+        self.guild_invite = None;
+        self.guild_log.clear();
+        self.guild_browse_loaded = false;
+        self.guild_browse.clear();
     }
 
     // ── действия UI (отправка команд фиксируют pending) ─────────────────────
@@ -2597,6 +642,8 @@ impl AppStore {
         self.select_error = None;
         self.world_error = None;
         self.entity_detail = None;
+        self.inspect = None;
+        self.afk_until_ms = None;
         self.pickup = None;
         self.admin_catalog = None;
         self.admin_god = false;
@@ -2695,66 +742,6 @@ pub fn filter_active_buffs(
     buffs.iter().filter(|b| b.expires_at > now).collect()
 }
 
-/// Применение `payload` ack'а `socket.*`: `{staff, rune?}` → инвентарь.
-fn apply_item_patch(ch: &mut ld2_protocol::types::CharacterState, payload: &serde_json::Value) {
-    if let Some(staff) = payload.get("staff").filter(|v| !v.is_null()) {
-        if let Ok(staff) =
-            serde_json::from_value::<ld2_protocol::types::ItemSnapshot>(staff.clone())
-        {
-            if let Some(slot) = ch.inventory.iter_mut().find(|i| i.uid == staff.uid) {
-                *slot = staff;
-            }
-        }
-    }
-    if let Some(rune) = payload.get("rune").filter(|v| !v.is_null()) {
-        if let Ok(rune) = serde_json::from_value::<ld2_protocol::types::ItemSnapshot>(rune.clone())
-        {
-            // M18 (указание заказчика): извлечённый самоцвет может
-            // попасть в существующий стак — запись уже в инвентаре:
-            // обновляем (qty выросло), иначе — добавляем.
-            if let Some(slot) = ch.inventory.iter_mut().find(|i| i.uid == rune.uid) {
-                *slot = rune;
-            } else {
-                ch.inventory.push(rune);
-            }
-        }
-    }
-}
-
-/// Входящее приглашение в группу (§8 `evt/party/updated` c `invite`,
-/// §11 — новое опциональное поле).
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
-pub struct PartyInviteView {
-    pub invite_id: String,
-    #[serde(default)]
-    pub from: String,
-    #[serde(default)]
-    pub from_name: String,
-}
-
-/// Входящее приглашение в гильдию (§11 — новое опциональное поле).
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
-pub struct GuildInviteView {
-    pub guild_id: String,
-    #[serde(default)]
-    pub guild_name: String,
-    #[serde(default)]
-    pub from_name: String,
-}
-
-/// Результат разбора ввода чата (ФР-13: слэш-команды).
-#[derive(Debug, Clone, PartialEq)]
-pub enum ChatDraft {
-    /// Отправить `cmd/chat.send`.
-    Send {
-        channel: String,
-        to: Option<String>,
-        text: String,
-    },
-    /// Неизвестная команда — ошибка тостом, в чат НЕ отправляется (ФР-13).
-    Unknown(String),
-}
-
 /// Разбор ввода чата: `/w Имя текст`, `/p`, `/g`, `/r` (ответ последнему
 /// whisper), `/scenario …` (passthrough-сценарии мока); обычный текст —
 /// в активный канал. `whisper_to` — адресат для `/r` («ответить»).
@@ -2818,17 +805,6 @@ pub fn parse_chat_input(input: &str, active_channel: &str, whisper_to: Option<&s
     }
 }
 
-/// Профиль персонажа (D3: Воин/Лучник/Маг — wire-значения для
-/// `char.create`; M17/F30b: «Вор» → «Лучник»). Общий для обоих
-/// клиентов (D12).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Profile {
-    #[default]
-    Warrior,
-    Archer,
-    Mage,
-}
-
 impl Profile {
     pub fn all() -> [Profile; 3] {
         [Profile::Warrior, Profile::Archer, Profile::Mage]
@@ -2852,15 +828,6 @@ impl Profile {
             Profile::Mage => Key::ProfileMage,
         }
     }
-}
-
-/// M18/F34: пол персонажа — wire-значения `cmd/char.create.gender`
-/// (`male`/`female`); общий для клиентов (D12), задаётся при создании.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Gender {
-    #[default]
-    Male,
-    Female,
 }
 
 impl Gender {
@@ -3671,6 +1638,39 @@ mod tests {
         assert_eq!(store.screen, Screen::Characters);
         assert_eq!(store.slot_usage(), (1, 8));
         assert!(store.login_error.is_none());
+        assert!(!store.forced_update, "без min_client — вход разрешён");
+    }
+
+    #[test]
+    fn session_start_min_client_forces_update() {
+        let mut store = store_with_session();
+        // Сервер требует более новый клиент → вход в мир блокируется.
+        let mut cfg = serde_json::to_value(fixtures::session_config(8)).unwrap();
+        cfg["server"]["min_client"] = serde_json::json!("99999.0.0");
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(cfg),
+        }));
+        assert!(store.forced_update);
+        assert_eq!(store.min_client_required.as_deref(), Some("99999.0.0"));
+        assert!(store.notice.is_some(), "предупреждение видно");
+
+        // Требование равно версии клиента — вход разрешён.
+        let mut cfg = serde_json::to_value(fixtures::session_config(8)).unwrap();
+        cfg["server"]["min_client"] = serde_json::json!(env!("CARGO_PKG_VERSION"));
+        store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session.start".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(cfg),
+        }));
+        assert!(!store.forced_update);
     }
 
     #[test]
@@ -3734,6 +1734,117 @@ mod tests {
         );
         assert_eq!(store.screen, Screen::Login);
         assert!(store.pending.is_none());
+    }
+
+    /// M36: AFK-предупреждение → дедлайн; офлайн → экран выбора
+    /// персонажа (аккаунт остаётся), тост и очистка мира.
+    #[test]
+    fn afk_warning_and_offline() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        assert_eq!(store.screen, Screen::Game);
+        let ev = |payload: serde_json::Value| {
+            IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/session/afk".into(),
+                seq: None,
+                payload: Some(payload),
+                state_version: None,
+                ts: None,
+            })
+        };
+        store.apply(ev(serde_json::json!({
+            "remaining_s": 1, "timeout_s": 3
+        })));
+        assert!(store.afk_until_ms.is_some(), "предупреждение активно");
+        assert_eq!(store.afk_window_s, 1, "окно 5 % (минимум 1 с)");
+
+        store.apply(ev(serde_json::json!({ "reset": true })));
+        assert!(store.afk_until_ms.is_none(), "активность сбросила");
+
+        store.apply(ev(serde_json::json!({ "offline": true })));
+        assert_eq!(store.screen, Screen::Characters, "экран выбора персонажа");
+        assert!(store.session.is_some(), "аккаунт остаётся в сети");
+        assert!(store.snapshot.is_none(), "мир очищен");
+        assert!(store.afk_until_ms.is_none());
+        assert!(
+            store
+                .notice
+                .as_deref()
+                .unwrap_or_default()
+                .contains("бездействия"),
+            "тост: {:?}",
+            store.notice
+        );
+    }
+
+    /// M35: ack `char.inspect` заполняет карточку осмотра.
+    #[test]
+    fn inspect_ack_fills_card() {
+        let mut store = store_with_session();
+        store.pending = Some(Act::Inspect);
+        let ack = ld2_protocol::Ack {
+            v: 1,
+            msg_type: "ack".into(),
+            seq: 1,
+            state_version: None,
+            result: ld2_protocol::AckResult::Ok,
+            payload: Some(serde_json::json!({
+                "char": {
+                    "id": "c1",
+                    "name": "Аня",
+                    "level": 7,
+                    "profile": "mage",
+                    "equip": [{
+                        "slot": "main_hand",
+                        "item": { "uid": "i1", "type": "weapon", "name": "Посох", "rarity": "rare", "upgrade": 0 }
+                    }],
+                    "professions": [{
+                        "id": "mining", "rank": 2, "level": 55, "xp": 0, "xp_to_next": 40
+                    }]
+                }
+            })),
+            error: None,
+        };
+        store.apply(IngressEvent::Ack(ack));
+        let card = store.inspect.expect("карточка осмотра");
+        assert_eq!((card.id.as_str(), card.level), ("c1", 7));
+        assert_eq!(card.profile.as_deref(), Some("mage"));
+        assert_eq!(card.equip.len(), 1);
+        assert_eq!(card.equip[0].slot, "main_hand");
+        assert_eq!(card.professions[0].id, "mining");
+    }
+
+    /// M34: повторный вход в аккаунт — старая сессия на экране входа,
+    /// тост-ошибка, токен забыт.
+    #[test]
+    fn session_replaced_logs_out_with_toast() {
+        let mut store = store_with_session();
+        let effects = store.apply(IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/session/replaced".into(),
+            seq: None,
+            payload: Some(serde_json::json!({})),
+            state_version: None,
+            ts: None,
+        }));
+        assert_eq!(store.screen, Screen::Login, "разлогинен");
+        assert!(store.session.is_none(), "сессия очищена");
+        assert!(
+            store
+                .notice
+                .as_deref()
+                .unwrap_or_default()
+                .contains("другого окна"),
+            "тост: {:?}",
+            store.notice
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ForgetSession { .. })),
+            "токен из keyring забыт"
+        );
     }
 
     #[test]
@@ -3867,9 +1978,11 @@ mod tests {
         assert_eq!(snap.location.id, "l_forest");
         assert_eq!(store.visited.len(), 2, "история: деревня + лес");
         assert_eq!(store.visited[1].name, "Черный лес");
-        let last = store.log.back().expect("запись лога");
-        assert_eq!(last.kind, LogKind::Location);
-        assert!(last.text.contains("Черный лес"), "{}", last.text);
+        // M29 (заказчик): переход не пишет «Вы вошли в …» в журнал.
+        assert!(
+            !store.log.iter().any(|l| l.text.contains("Вы вошли")),
+            "строка «Вы вошли» не должна появляться"
+        );
         assert!(store.entity_detail.is_none());
 
         // Возврат в деревню: дедуп истории (свежая в конце, без дублей).
@@ -4353,6 +2466,211 @@ mod tests {
             snap.char.equip.get("main_hand").is_none_or(|v| v.is_none()),
             "слот экипировки освобождён"
         );
+        // Заказчик: в журнале — ИМЯ предмета, не id.
+        let last = store.log.back().expect("строка журнала");
+        assert!(
+            last.text.contains("Вы потеряли 1 Ясеневый посох +2"),
+            "имя предмета в журнале: {}",
+            last.text
+        );
+        assert!(
+            !last.text.contains("i_17"),
+            "id не должен попадать в журнал: {}",
+            last.text
+        );
+    }
+
+    fn ground_entity(id: &str) -> ld2_protocol::types::Entity {
+        let mut extra = serde_json::Map::new();
+        extra.insert("ground".into(), serde_json::json!(true));
+        extra.insert("def_id".into(), serde_json::json!("potion_heal"));
+        extra.insert("qty".into(), serde_json::json!(5));
+        ld2_protocol::types::Entity {
+            id: id.into(),
+            kind: ld2_protocol::types::EntityKind::Object,
+            name: "Зелье лечения".into(),
+            hp: None,
+            tags: None,
+            was_player: None,
+            aggro: None,
+            boss: None,
+            next_attack_at: None,
+            attack_interval: None,
+            attacking: None,
+            extra,
+        }
+    }
+
+    fn spawn_ground(id: &str) -> IngressEvent {
+        evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": ground_entity(id),
+                "location_id": "l_village"
+            }),
+        )
+    }
+
+    #[test]
+    fn pickup_logs_pickup_lines() {
+        let mut store = in_game(); // персонаж «Ким»
+        store.apply(spawn_ground("g_test"));
+
+        // Свой подбор → «Вы подняли N имя» (заказчик).
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "g_test", "location_id": "l_village",
+                "kind": "object", "picked_by": "Ким", "picked_gender": "male"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Вы подняли 5 Зелье лечения", "{}", last.text);
+
+        // Чужой подбор, female → «{имя} подобрала N имя».
+        store.apply(spawn_ground("g_test2"));
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "g_test2", "location_id": "l_village",
+                "kind": "object", "picked_by": "Аня", "picked_gender": "female"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Аня подобрала 5 Зелье лечения", "{}", last.text);
+
+        // Без picked_by (TTL) → «{name} исчезает».
+        store.apply(spawn_ground("g_test3"));
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "g_test3", "location_id": "l_village",
+                "kind": "object"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Зелье лечения исчезает", "{}", last.text);
+    }
+
+    #[test]
+    fn despawn_server_text_goes_to_journal() {
+        let mut store = in_game(); // персонаж «Ким» в l_village
+                                   // Сосед-игрок уходит: сервер прислал готовую строку — она в журнале.
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "p_friend", "location_id": "l_village",
+                "kind": "player", "text": "Марк ушел — тропа на север"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Марк ушел — тропа на север", "{}", last.text);
+        assert_eq!(store.log.back().expect("строка").kind, LogKind::Location);
+
+        // Пустая строка — не пишем ничего нового (последняя — от прошлого
+        // шага): сервер не должен портить журнал заглушками.
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "p_other", "location_id": "l_village",
+                "kind": "player", "text": ""
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Марк ушел — тропа на север", "{}", last.text);
+
+        // Без text — прежний шаблон «{name} исчезает».
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "p_friend2", "kind": "player", "name": "Сара" },
+                "location_id": "l_village"
+            }),
+        ));
+        store.apply(evt(
+            "evt/entity/despawn",
+            serde_json::json!({
+                "entity_id": "p_friend2", "location_id": "l_village",
+                "kind": "player"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Сара исчезает", "{}", last.text);
+    }
+
+    #[test]
+    fn spawn_server_text_goes_to_journal() {
+        let mut store = in_game(); // «Ким» в l_village
+                                   // Приход соседа с готовой строкой сервера — строка журнала как есть.
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "p_guest", "kind": "player", "name": "Сара" },
+                "location_id": "l_village",
+                "text": "пришла Сара"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "пришла Сара", "{}", last.text);
+        assert_eq!(last.kind, LogKind::Location);
+
+        // Пустая строка — прежний шаблон «{name} появляется» (не портим заглушкой).
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "p_guest2", "kind": "player", "name": "Марк" },
+                "location_id": "l_village",
+                "text": ""
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Марк появляется", "{}", last.text);
+        assert_eq!(last.kind, LogKind::System);
+
+        // Без text — прежнее поведение (популяция спавна не задета).
+        store.apply(evt(
+            "evt/entity/spawn",
+            serde_json::json!({
+                "entity": { "id": "m_wolf", "kind": "monster", "name": "Волк" },
+                "location_id": "l_village"
+            }),
+        ));
+        let last = store.log.back().expect("строка");
+        assert_eq!(last.text, "Волк появляется", "{}", last.text);
+    }
+
+    #[test]
+    fn dropped_log_is_uniform_for_everyone() {
+        let mut store = in_game();
+        // ЧУЖОЙ выброс — «{имя} выбросил …» (не «Вы выбросили»).
+        store.apply(evt(
+            "evt/item/dropped",
+            serde_json::json!({
+                "char_id": "other-char",
+                "by_name": "Ким",
+                "gender": "male",
+                "item_name": "Зелье лечения",
+                "qty": 2,
+                "sent_at": "2026-11-21T00:00:00Z"
+            }),
+        ));
+        let last = store.log.back().expect("строка журнала");
+        assert_eq!(last.text, "Ким выбросил 2 Зелье лечения", "{}", last.text);
+
+        // Свой выброс — «Вы выбросили…» (заказчик).
+        store.apply(evt(
+            "evt/item/dropped",
+            serde_json::json!({
+                "char_id": "c1",
+                "by_name": "Ким",
+                "gender": "male",
+                "item_name": "Зелье лечения",
+                "qty": 1,
+                "sent_at": "2026-11-21T00:00:00Z"
+            }),
+        ));
+        let last = store.log.back().expect("строка журнала");
+        assert_eq!(last.text, "Вы выбросили 1 Зелье лечения", "{}", last.text);
     }
 
     #[test]
@@ -4781,6 +3099,160 @@ mod tests {
     }
 
     // ─── M6: время, цель, кулдауны, статусы ─────────────────────────────────
+
+    fn delta_event(from_version: u64, name: &str) -> IngressEvent {
+        IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/state/delta".into(),
+            seq: None,
+            ts: None,
+            state_version: Some(from_version + 1),
+            payload: Some(serde_json::json!({
+                "from_version": from_version,
+                "to_version": from_version + 1,
+                "patch": [
+                    { "op": "replace", "path": "/location/name", "value": name }
+                ]
+            })),
+        })
+    }
+
+    #[test]
+    fn state_delta_applies_patch() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+        assert!(store.snapshot.is_some());
+
+        let effects = store.apply(delta_event(1002, "Тестовое имя"));
+        assert!(effects.is_empty(), "патч применён без resync: {effects:?}");
+        let snap = store.snapshot.as_ref().expect("снапшот");
+        assert_eq!(snap.location.name, "Тестовое имя");
+    }
+
+    #[test]
+    fn state_delta_mismatch_requests_resync() {
+        let mut store = store_with_session();
+        store.apply(snapshot_event());
+
+        // Чужая база (версия снапшота 1002) → авто-resync.
+        let effects = store.apply(delta_event(999, "Чужая"));
+        assert!(effects.iter().any(|e| matches!(e, Effect::ResyncState)));
+
+        // Неприменимый путь (replace на отсутствующий ключ) → авто-resync.
+        let bad = IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/state/delta".into(),
+            seq: None,
+            ts: None,
+            state_version: Some(1003),
+            payload: Some(serde_json::json!({
+                "from_version": 1002,
+                "to_version": 1003,
+                "patch": [
+                    { "op": "replace", "path": "/location/no_such_key", "value": "x" }
+                ]
+            })),
+        });
+        let effects = store.apply(bad);
+        assert!(effects.iter().any(|e| matches!(e, Effect::ResyncState)));
+    }
+
+    #[test]
+    fn evt_error_sets_notice_and_fatal_requests_resync() {
+        let mut store = store_with_session();
+        let err = |fatal: bool| {
+            IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/error".into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({
+                    "code": "E_MAINTENANCE",
+                    "message": "перезагрузка",
+                    "fatal": fatal
+                })),
+            })
+        };
+        let effects = store.apply(err(false));
+        assert!(store.notice.is_some(), "notice показан");
+        assert!(effects.is_empty(), "не-фатальная — без resync");
+
+        let effects = store.apply(err(true));
+        assert!(store.notice.is_some());
+        assert!(effects.iter().any(|e| matches!(e, Effect::ResyncState)));
+    }
+
+    #[test]
+    fn time_sync_takes_median_of_ring() {
+        let mut store = store_with_session();
+        let local = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        // Медиана пяти замеров {1080, 1090, 1100, 1110, 1300} = 1100.
+        for delta in [1100, 1090, 1110, 1080, 1300] {
+            let sync = IngressEvent::Event(ld2_protocol::Envelope {
+                v: 1,
+                msg_type: "evt/time.sync".into(),
+                seq: None,
+                ts: None,
+                state_version: None,
+                payload: Some(serde_json::json!({ "server_ts": local + delta })),
+            });
+            store.apply(sync);
+        }
+        assert!(
+            (1095..=1105).contains(&store.time_offset),
+            "медиана кольца: {}",
+            store.time_offset
+        );
+    }
+
+    fn chat_event(channel: &str) -> IngressEvent {
+        IngressEvent::Event(ld2_protocol::Envelope {
+            v: 1,
+            msg_type: "evt/chat/message".into(),
+            seq: None,
+            ts: None,
+            state_version: None,
+            payload: Some(serde_json::json!({
+                "channel": channel,
+                "from": "Ким",
+                "name": "Ким",
+                "text": "привет",
+                "sent_at": "2026-11-20T00:00:00Z"
+            })),
+        })
+    }
+
+    #[test]
+    fn chat_log_localizes_channel_and_colors_by_kind() {
+        let mut store = store_with_session();
+        // en: [Location], не [location].
+        store.lang = Lang::En;
+        store.apply(chat_event("location"));
+        let last = store.log.back().expect("строка журнала");
+        assert!(
+            last.text.contains("[Location] Ким: привет"),
+            "{}",
+            last.text
+        );
+        assert!(matches!(last.kind, LogKind::Chat), "{:?}", last.kind);
+
+        // Партнёрский канал — своя метка и свой цвет.
+        store.apply(chat_event("party"));
+        let last = store.log.back().expect("строка журнала");
+        assert!(last.text.contains("[Party]"), "{}", last.text);
+        assert!(matches!(last.kind, LogKind::ChatParty), "{:?}", last.kind);
+
+        // ru: [Гильдия].
+        store.lang = Lang::Ru;
+        store.apply(chat_event("guild"));
+        let last = store.log.back().expect("строка журнала");
+        assert!(last.text.contains("[Гильдия]"), "{}", last.text);
+        assert!(matches!(last.kind, LogKind::ChatGuild), "{:?}", last.kind);
+    }
 
     #[test]
     fn time_sync_calibrates_offset() {

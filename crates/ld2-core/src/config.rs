@@ -73,6 +73,25 @@ pub struct Config {
     /// Состояние UI: свёрнут ли пати-виджет (ФР-19).
     #[serde(default)]
     pub party_collapsed: bool,
+    /// Состояние UI: свёрнутые группы навыков в окне персонажа
+    /// (заказчик 2026-11-20): иды `skills.skill_group`.
+    #[serde(default)]
+    pub sheet_collapsed: Vec<String>,
+    /// Состояние UI: свёрнут ли чат (заказчик 2026-11-20) — открывается
+    /// кнопкой в статус-баре; после разворачивания высота 50 %.
+    #[serde(default)]
+    pub chat_collapsed: bool,
+    /// Доля высоты колонки под чат: 0.30 исходно, 0.50 после
+    /// разворачивания из статус-бара (заказчик).
+    #[serde(default = "default_chat_height_pct")]
+    pub chat_height_pct: f32,
+    /// Мат-фильтр исходящих сообщений (заказчик; вкл/выкл в настройках).
+    #[serde(default)]
+    pub chat_mute_filter: bool,
+    /// M28: рюкзак показывает содержимое **всех** надетых сумок
+    /// (по умолчанию), а не только выбранной; переключается в настройках.
+    #[serde(default = "default_true")]
+    pub backpack_show_all_bags: bool,
     /// Горячие клавиши — ремаппинг (ФР-19): см. [`Hotkeys`].
     #[serde(default)]
     pub hotkeys: Hotkeys,
@@ -174,6 +193,10 @@ pub struct Hotkeys {
     /// Открыть/закрыть окно профессий (дефолт «p» — profession).
     #[serde(default = "hk_professions")]
     pub open_professions: String,
+    // ── M26: окно карты мира ──
+    /// Открыть/закрыть окно карты (дефолт «m» — map).
+    #[serde(default = "hk_map")]
+    pub open_map: String,
 }
 
 fn hk_alt_up() -> String {
@@ -222,6 +245,10 @@ fn hk_professions() -> String {
     "p".into()
 }
 
+fn hk_map() -> String {
+    "m".into()
+}
+
 impl Default for Hotkeys {
     fn default() -> Self {
         Self {
@@ -240,6 +267,7 @@ impl Default for Hotkeys {
             open_backpack: hk_backpack(),
             open_quests: hk_quests(),
             open_professions: hk_professions(),
+            open_map: hk_map(),
         }
     }
 }
@@ -263,6 +291,7 @@ impl Hotkeys {
             ("open_backpack", &mut self.open_backpack),
             ("open_quests", &mut self.open_quests),
             ("open_professions", &mut self.open_professions),
+            ("open_map", &mut self.open_map),
         ]
     }
 }
@@ -277,13 +306,51 @@ pub fn host_allowed(host: &str, release: bool) -> bool {
     if !host.starts_with("ws://") {
         return true; // wss:// и прочее
     }
-    host.contains("127.0.0.1") || host.contains("localhost") || host.contains("[::1]")
+    // R2: сравнение по hostname целиком (substring пропускал
+    // `localhost.evil.com`); схема → authority (без пути/query) →
+    // userinfo → IPv6-скобки/порт разбираются явно.
+    let rest = &host["ws://".len()..];
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let authority = match authority.rsplit_once('@') {
+        Some((_, a)) => a, // user:pass@host
+        None => authority,
+    };
+    let hostname = if let Some(stripped) = authority.strip_prefix('[') {
+        match stripped.split_once(']') {
+            Some((h, _)) => h,
+            None => return false,
+        }
+    } else if let Some((h, _)) = authority.split_once(':') {
+        h
+    } else {
+        authority
+    };
+    matches!(
+        hostname.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
 }
 
 impl Config {
     /// Защита: пустой логин — не логин (иначе keyring ищет мусорную запись,
     /// а macOS может зависнуть на диалоге доступа — M4-инцидент).
-    pub fn sanitize(mut self) -> Self {
+    pub fn sanitize(self) -> Self {
+        // Release-бинарник — guard действует; dev/тесты — без ограничений
+        // (семантика host_allowed; обе ветки гоняются через sanitize_for).
+        self.sanitize_for(!cfg!(debug_assertions))
+    }
+
+    /// sanitize с явным release-флагом. R2b: host из config.toml идёт в
+    /// транспорт мимо UI-guard (ApplyHost) — валидируем здесь же:
+    /// невалидный `ws://` (release) → сброс на дефолт с предупреждением.
+    pub fn sanitize_for(mut self, release: bool) -> Self {
+        if !host_allowed(&self.host, release) {
+            tracing::warn!(
+                "host '{}' не проходит guard ws:// (release) — сброшен на дефолт",
+                self.host
+            );
+            self.host = DEFAULT_HOST.to_string();
+        }
         if self.last_login.as_deref() == Some("") {
             self.last_login = None;
         }
@@ -304,11 +371,18 @@ impl Config {
         if !(100..=10_000).contains(&self.chat_limit) {
             self.chat_limit = default_chat_limit();
         }
+        // Высота чата — доля колонки (заказчик): разумные границы.
+        self.chat_height_pct = self.chat_height_pct.clamp(0.15, 0.9);
         if self.theme != "light" {
             self.theme = default_theme();
         }
         self
     }
+}
+
+/// Дефолт высоты чата (30 % колонки — заказчик 2026-11-20).
+fn default_chat_height_pct() -> f32 {
+    0.30
 }
 
 impl Default for Config {
@@ -331,6 +405,11 @@ impl Default for Config {
             backpack_tab: default_backpack_tab(),
             remember_password: false,
             party_collapsed: false,
+            sheet_collapsed: Vec::new(),
+            chat_collapsed: false,
+            chat_height_pct: default_chat_height_pct(),
+            chat_mute_filter: false,
+            backpack_show_all_bags: true,
             hotkeys: Hotkeys::default(),
         }
     }
@@ -358,9 +437,22 @@ impl ConfigStore {
         }
         let text = std::fs::read_to_string(&self.path)
             .with_context(|| format!("чтение конфига {}", self.path.display()))?;
-        let cfg: Config = toml::from_str(&text)
-            .with_context(|| format!("разбор конфига {}", self.path.display()))?;
-        Ok(cfg.sanitize())
+        // R17: сбой разбора не должен делать запуск невозможным
+        // (обрыв питания при записи) — битый файл уходит в .bak,
+        // стартуем с дефолтом.
+        let Ok(parsed) = toml::from_str::<Config>(&text) else {
+            let backup = self.path.with_extension("bak.toml");
+            let _ = std::fs::rename(&self.path, &backup);
+            tracing::warn!(
+                "конфиг {} не разобран — сохранён как {}, старт с дефолтом",
+                self.path.display(),
+                backup.display()
+            );
+            let cfg = Config::default();
+            self.save(&cfg)?;
+            return Ok(cfg);
+        };
+        Ok(parsed.sanitize())
     }
 
     pub fn save(&self, cfg: &Config) -> Result<()> {
@@ -368,8 +460,12 @@ impl ConfigStore {
             std::fs::create_dir_all(parent)?;
         }
         let text = toml::to_string_pretty(cfg).context("сериализация конфига")?;
-        std::fs::write(&self.path, text)
-            .with_context(|| format!("запись конфига {}", self.path.display()))?;
+        // R17: атомарная запись — temp+rename (обрыв питания не оставит
+        // битый config.toml, R17-load подстрахует, если всё же).
+        let tmp = self.path.with_extension("tmp.toml");
+        std::fs::write(&tmp, text).with_context(|| format!("запись конфига {}", tmp.display()))?;
+        std::fs::rename(&tmp, &self.path)
+            .with_context(|| format!("замена конфига {}", self.path.display()))?;
         Ok(())
     }
 }
@@ -436,7 +532,11 @@ mod tests {
         // M18/F36: окно квестов — дефолт старого файла.
         assert_eq!(cfg.hotkeys.open_quests, "j");
         assert_eq!(cfg.hotkeys.open_professions, "p", "окно профессий (M21)");
+        // M26: окно карты мира.
+        assert_eq!(cfg.hotkeys.open_map, "m", "окно карты (M26)");
         assert_eq!(cfg.backpack_tab, "all");
+        // M28: в старом конфиге сумки показываются все (поведение по умолчанию).
+        assert!(cfg.backpack_show_all_bags);
         // M16/F29j: «запомнить пароль» в старом конфиге выключено.
         assert!(!cfg.remember_password);
         // M14/F8: шрифты чата/лога в старом конфиге — дефолт 12 px.
@@ -539,6 +639,43 @@ mod tests {
         );
         // Dev-сборка — без ограничений (ФР-19).
         assert!(host_allowed("ws://evil.example/ws", false));
+    }
+
+    #[test]
+    fn host_allowed_parses_authority_not_substring() {
+        // R2: substring-проверка пропускала такие адреса.
+        assert!(!host_allowed("ws://localhost.evil.com/ws", true));
+        assert!(!host_allowed("ws://127.0.0.1.evil.com", true));
+        assert!(!host_allowed("ws://fake-localhost:8080", true));
+        // Регистр, порт, путь, userinfo, IPv6.
+        assert!(host_allowed("ws://LOCALHOST:8080/ws", true));
+        assert!(host_allowed("ws://user@127.0.0.1:24817/ws", true));
+        assert!(host_allowed("ws://[::1]:8080/ws", true));
+        assert!(!host_allowed("ws://[fe80::1]:8080/ws", true));
+        // wss:// не ограничивается.
+        assert!(host_allowed(
+            "wsS://evil.example/ws".to_lowercase().as_str(),
+            true
+        ));
+    }
+
+    #[test]
+    fn sanitize_for_resets_blocked_host() {
+        let evil = Config {
+            host: "ws://evil.example/ws".into(),
+            ..Config::default()
+        };
+        assert_eq!(evil.clone().sanitize_for(true).host, DEFAULT_HOST);
+        assert_eq!(
+            evil.sanitize_for(false).host,
+            "ws://evil.example/ws",
+            "dev-сборка не ограничивает (ФР-19)"
+        );
+        let ok = Config {
+            host: "ws://localhost:24817/ws".into(),
+            ..Config::default()
+        };
+        assert_eq!(ok.sanitize_for(true).host, "ws://localhost:24817/ws");
     }
 
     #[test]

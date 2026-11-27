@@ -5,6 +5,8 @@
 //! когда персонажа убивает моб (M12.5). Возвращает события, адресованные
 //! соединению погибшего (адресат — char_id).
 
+use ld2_protocol::names;
+
 use ld2_protocol::evt::ItemRemovalReason;
 use ld2_protocol::evt::{CharDeath, CharStats, ItemRemoved, LocationChanged, LostItem, Respawn};
 use serde_json::json;
@@ -17,7 +19,8 @@ use crate::state::SharedState;
 pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, String)> {
     let pool = &state.pool;
 
-    // Весь инвентарь теряется (ФР-06) — имена для lost_items.
+    // Весь лут теряется (ФР-06); надетые сумки (M28) остаются —
+    // теряется только их содержимое. Имена — для lost_items.
     let lost_rows = match crate::db::items::delete_all(pool, char_id).await {
         Ok(rows) => rows,
         Err(e) => {
@@ -61,13 +64,22 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
             .flatten()
             .unwrap_or_default(),
     };
-    let current = crate::db::characters::get(pool, char_id)
+    let current_row = crate::db::characters::get(pool, char_id)
         .await
         .ok()
-        .flatten()
-        .map(|r| r.location_id)
+        .flatten();
+    let current = current_row
+        .as_ref()
+        .map(|r| r.location_id.clone())
         .unwrap_or_default();
-    let target = if spawn.is_empty() { current } else { spawn };
+    let (char_name, char_gender) = current_row
+        .map(|r| (r.name, r.gender))
+        .unwrap_or_else(|| (String::new(), "male".to_string()));
+    let target = if spawn.is_empty() {
+        current.clone()
+    } else {
+        spawn
+    };
     let Some((hp_cur, hp_max, sv)) =
         (match crate::db::characters::respawn(pool, char_id, &target).await {
             Ok(row) => row,
@@ -84,7 +96,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     let addr = char_id.to_string();
 
     // Локация спавна (снимок §6).
-    let location = match crate::db::locations::get(pool, &target).await {
+    let mut location = match crate::db::locations::get(pool, &target).await {
         Ok(Some(row)) => {
             // Оверлей живого мира (M20): ресурсы/трупы/наземные — из
             // памяти, контент-строка только как сид.
@@ -93,6 +105,25 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
         }
         _ => crate::session::stub_location(&target),
     };
+    // Присутствие: погибший не должен видеть себя в «Игроках» своей же
+    // локации (соседи увидят его по событиям ниже).
+    location
+        .entities
+        .retain(|e| !(e.kind == ld2_protocol::types::EntityKind::Player && e.id == char_id));
+    // Присутствие (M29, заказчик): гибель видят ВСЕ соседи — строка
+    // «{имя} погиб/погибла» в despawn. Пара despawn+spawn идёт всегда:
+    // при респауне в другой локации — расход/приход, в той же — уход и
+    // мгновенное возвращение (клиент корректно обновляет «Игроков»).
+    if !current.is_empty() {
+        let died = crate::session::presence::died_line(&char_name, &char_gender);
+        crate::session::presence::announce_despawn(state, &current, char_id, Some(died));
+        crate::session::presence::announce_spawn(
+            state,
+            &target,
+            crate::session::presence::player_entity(char_id, &char_name),
+            None,
+        );
+    }
 
     let death = CharDeath {
         victim_char: true,
@@ -109,7 +140,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     let mut events = vec![(
         addr.clone(),
         crate::session::event_text(
-            "evt/char/death",
+            names::EVT_CHAR_DEATH,
             Some(state_version),
             serde_json::to_value(&death).unwrap_or_default(),
         ),
@@ -118,7 +149,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
         events.push((
             addr.clone(),
             crate::session::event_text(
-                "evt/item/removed",
+                names::EVT_ITEM_REMOVED,
                 Some(state_version),
                 serde_json::to_value(ItemRemoved {
                     uid: item.uid.clone(),
@@ -133,7 +164,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     events.push((
         addr.clone(),
         crate::session::event_text(
-            "evt/char/stats",
+            names::EVT_CHAR_STATS,
             Some(state_version),
             serde_json::to_value(CharStats { patch }).unwrap_or_default(),
         ),
@@ -141,7 +172,7 @@ pub async fn kill_character(state: &SharedState, char_id: &str) -> Vec<(String, 
     events.push((
         addr,
         crate::session::event_text(
-            "evt/location/changed",
+            names::EVT_LOCATION_CHANGED,
             Some(state_version),
             serde_json::to_value(LocationChanged { location }).unwrap_or_default(),
         ),

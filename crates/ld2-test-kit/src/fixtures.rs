@@ -113,6 +113,7 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
         char_slot_limit,
         profession_limit: PROFESSION_LIMIT,
         role: "player".into(),
+        premium_until: None,
         features,
         crime: CrimeConfig {
             t_max_s: 604_800,
@@ -171,6 +172,7 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
                 "artifact1".into(),
                 "artifact2".into(),
             ],
+            bag_slots: 4,
         },
         upgrade: UpgradeConfig {
             max_level: UPGRADE_MAX,
@@ -368,6 +370,11 @@ pub fn staff_item() -> ItemSnapshot {
         gold_value: Some(120),
         extra: Default::default(),
         bonuses: None,
+        container: None,
+        slot_index: None,
+        bag_slots: None,
+        bag_types: None,
+        bag_kind: None,
     }
 }
 
@@ -390,6 +397,11 @@ pub fn scroll_item() -> ItemSnapshot {
         gold_value: Some(30),
         extra: Default::default(),
         bonuses: None,
+        container: None,
+        slot_index: None,
+        bag_slots: None,
+        bag_types: None,
+        bag_kind: None,
     }
 }
 
@@ -415,6 +427,11 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
         gold_value: Some(20),
         extra: Default::default(),
         bonuses: None,
+        container: None,
+        slot_index: None,
+        bag_slots: None,
+        bag_types: None,
+        bag_kind: None,
     }
 }
 
@@ -443,6 +460,11 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
             qty: Some(3),
             gold_value: Some(5),
             bonuses: None,
+            container: None,
+            slot_index: None,
+            bag_slots: None,
+            bag_types: None,
+            bag_kind: None,
             extra: Default::default(),
         })
         .collect()
@@ -468,6 +490,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
                 group: Some("weapon".into()),
                 xp: 612,
                 xp_to_next: 1471,
+                rank_cap: None,
             },
             SkillSnapshot {
                 id: "arcana".into(),
@@ -477,6 +500,7 @@ pub fn character(id: &str, name: &str) -> CharacterState {
                 group: Some("magic".into()),
                 xp: 40,
                 xp_to_next: 480,
+                rank_cap: None,
             },
         ],
         professions: vec![ProfessionSnapshot {

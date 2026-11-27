@@ -31,6 +31,16 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["result"], "ok", "атака: {ack}");
 
+    // Гибель моба — строка «{имя} погиб» всем в локации (M29).
+    let gone = c.wait_event("evt/entity/despawn").await;
+    assert_eq!(gone["payload"]["entity_id"], "m_3");
+    assert_eq!(gone["payload"]["kind"], "monster");
+    let died = gone["payload"]["text"].as_str().unwrap_or_default();
+    assert!(
+        died.ends_with(" погиб") || died.ends_with(" погибла"),
+        "строка гибели моба: {died:?}"
+    );
+
     // Тик-луп наносит удары: ждём смерть моба (деспан + труп).
     let corpse = c.wait_event("evt/corpse/created").await;
     let corpse_id = corpse["payload"]["entity"]["id"]
@@ -47,11 +57,11 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     let end = c.wait_event("evt/combat/end").await;
     assert_eq!(end["payload"]["reason"], "цель уничтожена");
 
-    // XP убийства: base 8 + difficulty 3 × per 6 = 26, навык оружия не
-    // экипирован → unarmed (skills.md §2.3).
+    // XP убийства: base 4 + difficulty 3 × per 3 = 13, навык оружия не
+    // экипирован → unarmed (skills.md §2.3; M31 — опыт снижен вдвое).
     let xp = c.wait_event("evt/char/xp").await;
     assert_eq!(xp["payload"]["skill_id"], "unarmed");
-    assert_eq!(xp["payload"]["amount"], 26, "8 + difficulty(3) × 6");
+    assert_eq!(xp["payload"]["amount"], 13, "4 + difficulty(3) × 3");
     assert!(xp["payload"]["xp_to_next"].is_i64());
 
     // Труп с лутом: осмотр → взятие → в инвентаре (M12.4-механика).
@@ -85,7 +95,7 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
     assert_eq!(added["payload"]["item"]["name"], "Золотая монета");
     assert_eq!(added["payload"]["item"]["qty"], 10, "стак монет из def");
 
-    // M15/F24: общий опыт и шкала уровня в свежем снапшоте (26 XP).
+    // M15/F24: общий опыт и шкала уровня в свежем снапшоте (13 XP, M31).
     let seq = c
         .send("cmd/char.select", json!({ "char_id": char_id }))
         .await;
@@ -101,9 +111,9 @@ async fn combat_kill_mob_yields_corpse_and_xp() {
         "F29a: монеты в инвентаре: {}",
         ch["inventory"]
     );
-    assert_eq!(ch["total_xp"], 26, "total_xp = XP убийства: {ch}");
-    assert_eq!(ch["level"], 1, "26 < 200 → уровень 1");
-    assert_eq!(ch["xp_in_level"], 26, "прогресс в уровне");
+    assert_eq!(ch["total_xp"], 13, "total_xp = XP убийства: {ch}");
+    assert_eq!(ch["level"], 1, "13 < 100 → уровень 1");
+    assert_eq!(ch["xp_in_level"], 13, "прогресс в уровне");
     assert_eq!(ch["xp_to_next"], 100, "порог 1-го уровня: 50+50+0");
 
     // M15/F26: производные параметры в том же снапшоте.
@@ -292,13 +302,17 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
         "until_epoch: {cd}"
     );
     let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
-    assert_eq!(hit["payload"]["amount"], 11, "6 × 1.8 = 11: {hit}");
     assert_eq!(hit["payload"]["kind"], "skill");
     assert_eq!(hit["payload"]["target"], "m_3");
+    // M32: урон — бросок листа (11) ×1.8 = 20, минус броня волка 6;
+    // парирование моба может вдвое срезать удар.
+    let amount = hit["payload"]["amount"].as_i64().expect("amount");
+    assert!((1..=20).contains(&amount), "урон способности: {hit}");
+    assert_eq!(hit["payload"]["miss"], false, "попали: {hit}");
     let hp = c
         .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
         .await;
-    assert_eq!(hp["payload"]["hp"]["cur"], 7, "18 − 11: {hp}");
+    assert_eq!(hp["payload"]["hp"]["cur"], 18 - amount, "18 − урон: {hp}");
 
     // 3) Повтор в кулдауне → E_COOLDOWN + retry_after_s (§7).
     let seq = c
@@ -359,43 +373,101 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
 
-    // Первый удар: 18 − 11 = 7.
-    let seq = c
-        .send(
-            "cmd/skill.use",
-            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
-        )
-        .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "первый удар");
-    c.wait_event("evt/combat/cooldown").await;
-    let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
-    assert_eq!(hit["payload"]["amount"], 11, "урон: {hit}");
+    // Первый удар способностью (M32: урон листа ×1.8 − броня моба).
+    // Бросок попадания случаен, а точная последовательность ГПСЧ зависит
+    // от тиков мобов — при промахе повторяем после кулдауна (до 3 раз).
+    let mut hit = None;
+    for attempt in 0..3 {
+        let seq = c
+            .send(
+                "cmd/skill.use",
+                json!({ "skill_id": "power_strike", "target_id": "m_3" }),
+            )
+            .await;
+        assert_eq!(c.ack(seq).await["result"], "ok", "удар #{attempt}");
+        c.wait_event("evt/combat/cooldown").await;
+        let ev = c
+            .wait(|v| {
+                v["type"] == "evt/combat/hit"
+                    && v["payload"]["kind"] == "skill"
+                    && v["payload"]["target"] == "m_3"
+            })
+            .await;
+        if ev["payload"]["miss"] == false {
+            hit = Some(ev);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    }
+    let hit = hit.expect("способность попала (3 попытки)");
+    let amount = hit["payload"]["amount"].as_i64().expect("amount");
+    assert!(amount > 0, "удар нанёс урон: {hit}");
     // M17/F30f: в логе имя способности (не id) и жирный урон.
     let text = hit["payload"]["text"].as_str().unwrap_or_default();
     assert!(text.contains("«Удар мощью»"), "имя скилла: {text}");
-    assert!(text.contains("**−11**"), "жирный урон: {text}");
+    assert!(
+        text.contains(&format!("**−{amount}**")),
+        "жирный урон: {text}"
+    );
 
-    // Кулдаун 0.5 с → до 1 с в гранулярности epoch-секунд; ждём с запасом.
-    tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
-
-    // Второй удар добивает (11 ≥ 7) → труп + XP убийства (26 = 8 + 3×6).
+    // Добиваем авто-атаками (M32: промахи/парирование — случайны, поэтому
+    // не полагаемся на фиксированное число ударов; тик бьёт раз в секунду).
     let seq = c
-        .send(
-            "cmd/skill.use",
-            json!({ "skill_id": "power_strike", "target_id": "m_3" }),
-        )
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
         .await;
-    assert_eq!(c.ack(seq).await["result"], "ok", "второй удар");
-    c.wait_event("evt/combat/cooldown").await;
-    let hit = c.wait(|v| v["type"] == "evt/combat/hit").await;
-    assert_eq!(hit["payload"]["amount"], 11, "урон добивающего: {hit}");
+    assert_eq!(c.ack(seq).await["result"], "ok", "авто-атака");
     let corpse = c.wait_event("evt/corpse/created").await;
     assert_eq!(corpse["payload"]["entity"]["kind"], "corpse");
     let xp = c.wait_event("evt/char/xp").await;
-    assert_eq!(xp["payload"]["amount"], 26, "XP убийства: {xp}");
+    assert_eq!(xp["payload"]["amount"], 13, "XP убийства: {xp}");
     assert_eq!(
         xp["payload"]["skill_id"], "unarmed",
         "оружие не экипировано"
+    );
+}
+
+/// M33: премиум-аккаунт — +50 % опыта за убийство (13 → 20).
+#[tokio::test]
+async fn premium_account_boosts_kill_xp() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+
+    // Премиум на 30 дней аккаунту персонажа.
+    let cfg = common::test_config(&db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("время")
+        .as_secs() as i64;
+    sqlx::query(
+        "UPDATE accounts SET premium_until = $2 \
+          WHERE id = (SELECT account_id FROM characters WHERE id = $1)",
+    )
+    .bind(&char_id)
+    .bind(now + 30 * 86_400)
+    .execute(&pool)
+    .await
+    .expect("премиум");
+    pool.close().await;
+
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    let seq = c
+        .send("cmd/combat.attack", json!({ "target_id": "m_3" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "атака");
+
+    let xp = c.wait_event("evt/char/xp").await;
+    assert_eq!(xp["payload"]["skill_id"], "unarmed");
+    assert_eq!(
+        xp["payload"]["amount"], 20,
+        "13 × 1.5 = 19.5 → 20 (премиум): {xp}"
     );
 }
 

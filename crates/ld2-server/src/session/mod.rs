@@ -1,0 +1,681 @@
+//! Сессия WS-соединения: seq-окно с кэшем ack (§2.4.2), диспетчер `cmd/*`
+//! → `ack` + `evt/*` (§2.2: события — строго после своего ack) и
+//! авторизация соединения (ADR-006, D29/D30).
+
+use ld2_protocol::names;
+
+use std::collections::{HashMap, VecDeque};
+use std::net::SocketAddr;
+
+use ld2_protocol::envelope::{Ack, Envelope, PROTOCOL_VERSION};
+use ld2_protocol::evt::{Pong, TimeSync};
+use ld2_protocol::types::CharacterState;
+use ld2_protocol::ErrorCode;
+use serde_json::Value;
+use tracing::warn;
+
+use crate::db;
+use crate::state::SharedState;
+
+mod admin;
+mod auth;
+mod chars;
+mod chat;
+mod combat;
+mod craft;
+mod crime;
+mod dev;
+mod economy;
+mod entity;
+mod gates;
+mod guild;
+mod harvest;
+mod inspect;
+mod items;
+mod location;
+mod magic;
+mod npc;
+mod party;
+pub(crate) mod presence;
+mod quests;
+mod rules;
+mod socketing;
+mod trade;
+mod upgrade;
+
+use rules::UpgradePreviewState;
+pub(crate) use rules::{item_snapshot, stub_location};
+
+/// Исходящее сообщение соединения (как в моке: ack → события → опц. закрытие).
+#[derive(Debug)]
+pub enum Out {
+    Text(String),
+    Close,
+}
+
+pub struct Session {
+    state: SharedState,
+    peer: SocketAddr,
+    /// §2.4.2: последние 128 обработанных `seq` → точный кэшированный ack.
+    ack_cache: HashMap<u32, String>,
+    seq_order: VecDeque<u32>,
+    /// Аккаунт соединения (ADR-006): `Some` после login/register/resume.
+    account_id: Option<i64>,
+    /// M14/F19: роль аккаунта — права на system-чат/удаление (§9 E_PERMISSION).
+    role: String,
+    #[allow(dead_code)] // журнал/логика персонажей — M12.2 (фаза «персонажи»)
+    login: Option<String>,
+    authenticated: bool,
+    /// Выбранный персонаж (`char.select`, §3): снапшот и ack-версии — его.
+    selected_char_id: Option<String>,
+    char: Option<CharacterState>,
+    /// Текущая локация персонажа (M12.3): разрешается при входе/переходе.
+    location_id: Option<String>,
+    /// Канал исходящих конвертов соединения (рассылка тика боя, M12.5).
+    /// R15: bounded (256) — см. transport.rs.
+    out_tx: tokio::sync::mpsc::Sender<String>,
+    /// R15: окно rate-limit мутирующих команд `(start_epoch, счётчик)`.
+    cmd_rate_window: (i64, u32),
+    /// M36: последняя активность персонажа (epoch, мс) — AFK-таймер.
+    last_activity_ms: i64,
+    /// M36: предупреждение AFK уже отправлено (сброс — по активности).
+    afk_warned: bool,
+    /// Активное превью улучшения (ФР-10, M12.5c): stale → `E_UPGRADE_PREVIEW_STALE`.
+    preview_state: Option<UpgradePreviewState>,
+    /// M18/F54: выбранный камень усиления (uid) — активен, пока игрок
+    /// не потратит его на улучшение. Ставится `cmd/item.use` камня,
+    /// проверяется на превью/старте, тратится при старте (1 шт./улучшение).
+    sharpen_stone: Option<String>,
+    /// Кулдаун чата (`chat.cooldown_s`, ФР-13): момент последнего сообщения.
+    last_chat_at: Option<std::time::Instant>,
+    /// M21: переход «повышение ранга» наградой квеста — данные
+    /// применяются после `set_state(done)` (граница проверена до).
+    pending_rank_up: Option<(String, i64, i32, i32)>,
+}
+
+impl Session {
+    pub fn new(
+        state: SharedState,
+        peer: SocketAddr,
+        out_tx: tokio::sync::mpsc::Sender<String>,
+    ) -> Self {
+        Self {
+            state,
+            peer,
+            out_tx,
+            ack_cache: HashMap::new(),
+            seq_order: VecDeque::new(),
+            account_id: None,
+            role: "player".to_string(),
+            login: None,
+            authenticated: false,
+            selected_char_id: None,
+            char: None,
+            location_id: None,
+            preview_state: None,
+            sharpen_stone: None,
+            pending_rank_up: None,
+            last_chat_at: None,
+            cmd_rate_window: (crate::time::now_epoch(), 0),
+            last_activity_ms: crate::time::now_ms(),
+            afk_warned: false,
+        }
+    }
+
+    /// Входящий текст → исходящие (ровно один ack на команду, §2.2).
+    pub async fn on_text(&mut self, text: &str) -> Vec<Out> {
+        let env: Envelope = match serde_json::from_str(text) {
+            Ok(env) => env,
+            Err(e) => {
+                warn!("неразборчивое сообщение: {e}");
+                return vec![];
+            }
+        };
+        // §11: сервер говорит только v=1; более новое не разбираем — игнор.
+        if env.v != PROTOCOL_VERSION {
+            warn!("конверт v={} (ожидается {PROTOCOL_VERSION}) — игнор", env.v);
+            return vec![];
+        }
+        if !env.msg_type.starts_with(names::CMD_PREFIX) {
+            warn!("не-команда от клиента: {}", env.msg_type);
+            return vec![];
+        }
+        // §2.4.2: повтор seq → точный кэшированный ack, без повторных событий.
+        if let Some(seq) = env.seq {
+            if let Some(cached) = self.ack_cache.get(&seq) {
+                return vec![Out::Text(cached.clone())];
+            }
+        }
+        // M36: активность сбрасывает AFK-таймер; служебные команды
+        // (ping/time.sync/resync) — не активность.
+        let service = matches!(
+            env.msg_type.as_str(),
+            names::CMD_PING | names::CMD_TIME_SYNC | names::CMD_STATE_RESYNC
+        );
+        let mut afk_reset = None;
+        if !service {
+            self.last_activity_ms = crate::time::now_ms();
+            if self.afk_warned {
+                self.afk_warned = false;
+                afk_reset = Some(Out::Text(event_text(
+                    names::EVT_SESSION_AFK,
+                    None,
+                    serde_json::json!({ "reset": true }),
+                )));
+            }
+        }
+        let outs = self.dispatch(&env).await;
+        // Первый ответ диспетчера — всегда ack (§2.2); кэшируем его текст.
+        if let (Some(seq), Some(Out::Text(ack_text))) = (env.seq, outs.first()) {
+            self.ack_cache.insert(seq, ack_text.clone());
+            self.seq_order.push_back(seq);
+            while self.seq_order.len() > 128 {
+                if let Some(old) = self.seq_order.pop_front() {
+                    self.ack_cache.remove(&old);
+                }
+            }
+        }
+        let mut outs = outs;
+        if let Some(out) = afk_reset {
+            outs.push(out);
+        }
+        outs
+    }
+
+    /// M36: шаг AFK-таймера (тик раз в секунду). Предупреждение — на
+    /// последних 5 % времени (каждую секунду), затем офлайн: персонаж
+    /// исчезает из мира, аккаунт остаётся — клиент уходит на выбор
+    /// персонажа.
+    pub async fn afk_tick(&mut self) -> Vec<Out> {
+        let Some(char_id) = self.selected_char_id.clone() else {
+            self.afk_warned = false;
+            return vec![];
+        };
+        let timeout_s = self.state.config.gameplay.afk_timeout_s;
+        if timeout_s == 0 {
+            return vec![];
+        }
+        let timeout_ms = timeout_s as i64 * 1000;
+        let elapsed = (crate::time::now_ms() - self.last_activity_ms).max(0);
+        if elapsed >= timeout_ms {
+            let owner = self.peer.to_string();
+            close_char_session(&self.state, &char_id, &owner).await;
+            self.selected_char_id = None;
+            self.char = None;
+            self.location_id = None;
+            self.afk_warned = false;
+            return vec![Out::Text(event_text(
+                names::EVT_SESSION_AFK,
+                None,
+                serde_json::json!({ "offline": true }),
+            ))];
+        }
+        // Окно предупреждения — 5 % таймаута, но не меньше секунды
+        // (иначе тик 1 с на коротких тестовых таймаутах его пропускает).
+        let warn_ms = (timeout_ms / 20).max(1_000).min(timeout_ms);
+        if elapsed >= timeout_ms - warn_ms {
+            self.afk_warned = true;
+            let remaining_ms = timeout_ms - elapsed;
+            let remaining_s = ((remaining_ms + 999) / 1000).max(1);
+            return vec![Out::Text(event_text(
+                names::EVT_SESSION_AFK,
+                None,
+                serde_json::json!({ "remaining_s": remaining_s, "timeout_s": timeout_s }),
+            ))];
+        }
+        if self.afk_warned {
+            self.afk_warned = false;
+            return vec![Out::Text(event_text(
+                names::EVT_SESSION_AFK,
+                None,
+                serde_json::json!({ "reset": true }),
+            ))];
+        }
+        vec![]
+    }
+
+    async fn dispatch(&mut self, env: &Envelope) -> Vec<Out> {
+        let seq = env.seq.unwrap_or(0);
+        // M24: разделка занята — блок действий персонажа (§9 E_BUSY).
+        // Исключения: item-* (прерывают — M23), информационные
+        // (осмотр/снапшот/чат/диалоги), admin-панель, corpse.harvest
+        // (переключение на другой труп разрешено; E_COOLDOWN — только
+        // повторный старт на том же трупе).
+        if gates::HARVEST_BLOCKED.contains(&env.msg_type.as_str()) && self.char_is_harvesting() {
+            return vec![Self::err(seq, ErrorCode::Busy, "персонаж занят разделкой")];
+        }
+        // M25: дебаффы контроля (эффекты приёмов босса): стан — ничего,
+        // немота — магия, ослепление — атаки/навыки.
+        if let Some((code, msg)) = self.char_effect_gate(env.msg_type.as_str()) {
+            return vec![Self::err(seq, code, msg)];
+        }
+        // R15: per-session rate-limit на мутирующие команды (D25: лимит
+        // `[gameplay] cmd_rate_per_min`, 0 — выключен). auth/chat — свои
+        // лимиты; каждая итерация берёт mutex мира и ходит в БД.
+        if gates::HARVEST_BLOCKED.contains(&env.msg_type.as_str())
+            || env.msg_type == names::CMD_ITEM_USE
+        {
+            if let Some(out) = self.cmd_rate_gate(seq) {
+                return vec![out];
+            }
+        }
+
+        match env.msg_type.as_str() {
+            // auth / session (ADR-006, §4.5)
+            names::CMD_AUTH_REGISTER => self.auth_register(env, seq).await,
+            names::CMD_AUTH_LOGIN => self.auth_login(env, seq).await,
+            names::CMD_AUTH_RESUME => self.auth_resume(env, seq).await,
+            names::CMD_AUTH_LOGOUT => self.auth_logout(seq).await,
+            names::CMD_SESSION_REFRESH => self.auth_refresh(seq).await,
+            // персонажи (ФР-02, §5/§3)
+            names::CMD_CHAR_LIST => self.char_list(seq).await,
+            names::CMD_CHAR_CREATE => self.char_create(env, seq).await,
+            names::CMD_CHAR_SELECT => self.char_select(env, seq).await,
+            // M35: ПКМ-осмотр чужого персонажа (экипировка/уровень/профессии)
+            names::CMD_CHAR_INSPECT => self.char_inspect(env, seq).await,
+            names::CMD_CHAR_DELETE => self.char_delete(env, seq).await,
+            // мир (ФР-03, M12.3)
+            names::CMD_LOCATION_LOOK => self.location_look(seq).await,
+            names::CMD_LOCATION_MOVE => self.location_move(env, seq).await,
+            names::CMD_MAP_WORLD => self.map_world(env, seq).await,
+            names::CMD_ENTITY_INFO => self.entity_info(env, seq).await,
+            // M18/F35: диалог NPC (поговорить/квесты)
+            names::CMD_NPC_TALK => self.npc_talk(env, seq).await,
+            // M18/F37: ответ персонажа — переход по ветке
+            names::CMD_NPC_REPLY => self.npc_reply(env, seq).await,
+            // M18/F39: магазин NPC
+            names::CMD_SHOP_LIST => self.shop_list(env, seq).await,
+            names::CMD_SHOP_BUY => self.shop_buy(env, seq).await,
+            names::CMD_STATE_RESYNC => self.state_resync(env, seq).await,
+            // бой (ФР-05, M12.5)
+            names::CMD_COMBAT_ATTACK => self.combat_attack(env, seq).await,
+            names::CMD_COMBAT_STOP => self.combat_stop(seq).await,
+            names::CMD_COMBAT_FLEE => self.combat_flee(seq).await,
+            // гильдия (ФР-16, M12.7d)
+            names::CMD_GUILD_BROWSE => self.guild_browse(env, seq).await,
+            names::CMD_GUILD_CREATE => self.guild_create(env, seq).await,
+            names::CMD_GUILD_JOIN => self.guild_join(env, seq).await,
+            names::CMD_GUILD_LEAVE => self.guild_leave(seq).await,
+            names::CMD_GUILD_INVITE => self.guild_invite(env, seq).await,
+            names::CMD_GUILD_KICK => self.guild_kick(env, seq).await,
+            names::CMD_GUILD_RANK_SET => self.guild_rank_set(env, seq).await,
+            // сделка (ФР-15, M12.7c)
+            names::CMD_TRADE_OPEN => self.trade_open(env, seq).await,
+            names::CMD_TRADE_ADD_ITEM => self.trade_add_item(env, seq).await,
+            names::CMD_TRADE_SET_GOLD => self.trade_set_gold(env, seq).await,
+            names::CMD_TRADE_PROPOSE => self.trade_lock_cmd(env, seq).await,
+            names::CMD_TRADE_ACCEPT => self.trade_lock_cmd(env, seq).await,
+            names::CMD_TRADE_CANCEL => self.trade_cancel(env, seq).await,
+            // группа (ФР-14, M12.7b)
+            names::CMD_PARTY_CREATE => self.party_create(seq).await,
+            names::CMD_PARTY_INVITE => self.party_invite(env, seq).await,
+            names::CMD_PARTY_ACCEPT => self.party_accept(env, seq).await,
+            names::CMD_PARTY_DECLINE => self.party_decline(env, seq).await,
+            names::CMD_PARTY_LEAVE => self.party_leave(seq).await,
+            names::CMD_PARTY_KICK => self.party_kick(env, seq).await,
+            // профессии/крафт (ФР-08, M12.6)
+            names::CMD_CRAFT_LIST => self.craft_list(seq).await,
+            names::CMD_CRAFT_RECIPES => self.craft_recipes(env, seq).await,
+            names::CMD_CRAFT_LEARN => self.craft_learn(env, seq).await,
+            names::CMD_CRAFT_RESET => self.craft_reset(env, seq).await,
+            names::CMD_CRAFT_RANK_UP => self.craft_rank_up(env, seq).await,
+            names::CMD_CRAFT_START => self.craft_start(env, seq).await,
+            // квесты (ФР-12, M12.6)
+            names::CMD_QUEST_LIST => self.quest_list(seq).await,
+            names::CMD_QUEST_ACCEPT => self.quest_accept(env, seq).await,
+            names::CMD_QUEST_TURN_IN => self.quest_turn_in(env, seq).await,
+            names::CMD_QUEST_ABANDON => self.quest_abandon(env, seq).await,
+            // преступность (ФР-11, §10, M12.5d)
+            names::CMD_CRIME_LOG => self.crime_log(env, seq).await,
+            // улучшение предметов (ФР-10, M12.5c)
+            names::CMD_UPGRADE_PREVIEW => self.upgrade_preview(env, seq).await,
+            names::CMD_UPGRADE_START => self.upgrade_start(env, seq).await,
+            // активные способности (§4, M14)
+            names::CMD_SKILL_USE => self.skill_use(env, seq).await,
+            // магия и сокеты (ФР-09, M12.5b)
+            names::CMD_MAGIC_RUNE_CAST => self.magic_rune_cast(env, seq).await,
+            names::CMD_MAGIC_SCROLL_CAST => self.magic_scroll_cast(env, seq).await,
+            names::CMD_SOCKET_INSERT => self.socket_insert(env, seq).await,
+            names::CMD_SOCKET_EXTRACT => self.socket_extract(env, seq).await,
+            // добыча ресурсов (M20/F20b)
+            names::CMD_RESOURCE_GATHER => self.resource_gather(env, seq).await,
+            // снятие шкур (сервер-джоб5 с)
+            names::CMD_CORPSE_HARVEST => self.corpse_harvest(env, seq).await,
+            // игровые диалоги (M20 — заготовка)
+            names::CMD_DIALOG_CHOICE => self.dialog_choice(env, seq).await,
+            names::CMD_DIALOG_SUBMIT => self.dialog_submit(env, seq).await,
+            // M24: админ-панель предметов (гейт role=admin)
+            names::CMD_ADMIN_ITEMS => self.admin_items(env, seq).await,
+            names::CMD_ADMIN_GIVE_ASK => self.admin_give_ask(env, seq).await,
+            names::CMD_ADMIN_REMOVE_ASK => self.admin_remove_ask(env, seq).await,
+            names::CMD_ADMIN_GOD_MODE => self.admin_god_mode(env, seq).await,
+            names::CMD_ADMIN_TARGET_INFO => self.admin_target_info(env, seq).await,
+            names::CMD_ADMIN_CLEAR => self.admin_clear(env, seq).await,
+            names::CMD_ADMIN_CONTENT_RELOAD => self.admin_content_reload(env, seq).await,
+            // лист/инвентарь/опыт (ФР-04/07, M12.4)
+            names::CMD_SKILL_TRAIN => self.skill_train(env, seq).await,
+            names::CMD_ITEM_USE => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_use(env, seq).await);
+                outs
+            }
+            names::CMD_ITEM_EQUIP => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_equip(env, seq).await);
+                outs
+            }
+            names::CMD_ITEM_UNEQUIP => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_unequip(env, seq).await);
+                outs
+            }
+            names::CMD_ITEM_DROP => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_drop(env, seq).await);
+                outs
+            }
+            names::CMD_ITEM_MOVE => {
+                let mut outs = self.maybe_interrupt_harvest(seq).await;
+                outs.extend(self.item_move(env, seq).await);
+                outs
+            }
+            // dev-сценарии (`/scenario …`); чат — ФР-13 в фазе M12.7
+            names::CMD_CHAT_SEND => self.chat_send(env, seq).await,
+            names::CMD_CHAT_DELETE => self.chat_delete(env, seq).await,
+            // Сервисный ping (§7): ack + echo; RTT клиент считает по своему
+            // `ts` — сервер отвечает 0, как и мок.
+            names::CMD_PING => {
+                let pong = Pong {
+                    ts: crate::time::now_rfc3339(),
+                    rtt_ms: 0,
+                };
+                vec![
+                    out_ack(Ack::ok(seq, None)),
+                    out_event(
+                        names::EVT_PONG,
+                        None,
+                        serde_json::to_value(&pong).unwrap_or_default(),
+                    ),
+                ]
+            }
+            names::CMD_TIME_SYNC => {
+                let sync = TimeSync {
+                    server_ts: crate::time::now_epoch(),
+                    rtt_hint_ms: Some(0),
+                };
+                vec![
+                    out_ack(Ack::ok(seq, None)),
+                    out_event(
+                        names::EVT_TIME_SYNC,
+                        None,
+                        serde_json::to_value(&sync).unwrap_or_default(),
+                    ),
+                ]
+            }
+            other => {
+                warn!("неизвестная команда {other}");
+                vec![out_ack(Ack::error(
+                    seq,
+                    None,
+                    &ErrorCode::Internal,
+                    format!("неизвестная команда: {other}"),
+                ))]
+            }
+        }
+    }
+
+    /// Выбранный персонаж (для отвязки от мира при дисконнекте, M12.5).
+    pub fn selected_char(&self) -> Option<String> {
+        self.selected_char_id.clone()
+    }
+
+    /// Передать лидерство первому участнику при выходе лидера.
+    async fn promote_first_member(&self, leaving: &str) -> Result<(), sqlx::Error> {
+        let Some(guild) = db::guilds::guild_of(&self.state.pool, leaving).await? else {
+            return Ok(());
+        };
+        let members = db::guilds::members(&self.state.pool, &guild.0).await?;
+        let Some(first) = members
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .find(|id| id != leaving)
+        else {
+            return Ok(());
+        };
+        db::guilds::set_rank(&self.state.pool, &guild.0, &first, "leader").await?;
+        Ok(())
+    }
+
+    /// Текущее имя персонажа (для участников группы §8).
+    fn current_name(&self) -> String {
+        self.char
+            .as_ref()
+            .map(|c| c.name.clone())
+            .or_else(|| {
+                let char_id = self.selected_char_id.clone()?;
+                let world = self.state.world.lock().expect("мир");
+                world.char_name(&char_id)
+            })
+            .unwrap_or_default()
+    }
+
+    // ── профессии и крафт (ФР-08, M12.6) ───────────────────────────────────
+
+    // ── диалоги NPC (M18/F35; ветки/реплики F37) ──────────────────────────
+
+    // ── магазины NPC (M18/F39) ─────────────────────────────────────────────
+
+    // ── квесты (ФР-12, M12.6) ───────────────────────────────────────────────
+}
+
+/// M18/F58d (ADR-012 §5): пересобрать кэш рун экипированного оружия
+/// в `world` — из raw-сокетов `main_hand` + параметров рун (`stats`:
+/// `chance`/`damage`/`cost`/`buff`). Руны без `chance` в авто-приём
+/// не участвуют. Вызывается на входе, экипировке, инкрустации/извлечении,
+/// касте и из тикера зарядов (charges в кэше должен совпадать с БД).
+pub(crate) async fn refresh_char_runes(state: &crate::state::SharedState, char_id: &str) {
+    use crate::world::{RuneBuff, SocketedRune};
+
+    // M24: класс руны (stats.class) — авто-приём только своего класса
+    // (нет поля — любой, §11); профиль запрашиваем один раз.
+    let profile = db::characters::get(&state.pool, char_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|r| r.profile);
+    let Some(main) = db::items::find_equipped_in_slot(&state.pool, char_id, "main_hand")
+        .await
+        .ok()
+        .flatten()
+    else {
+        let mut world = state.world.lock().expect("мир");
+        world.set_char_runes(char_id, Vec::new());
+        return;
+    };
+    let slots: Vec<Value> = serde_json::from_value(main.sockets.clone()).unwrap_or_default();
+    let mut runes: Vec<SocketedRune> = Vec::new();
+    for slot in &slots {
+        let Some(rune) = slot.get("rune").filter(|r| !r.is_null()) else {
+            continue;
+        };
+        let Some(rune_def_id) = slot.get("def_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(Some(rune_def)) = db::items::def(&state.pool, rune_def_id).await else {
+            continue;
+        };
+        // M24: класс руны — авто-приём только своего класса.
+        if let Some(class) = rune_def.stats.get("class").and_then(|v| v.as_str()) {
+            if profile.as_deref() != Some(class) {
+                continue;
+            }
+        }
+        // Шанс — контент-параметр: без него руна не участвует в
+        // авто-приёме (прежние руны продолжают работать кастом).
+        let Some(chance) = rune_def.stats.get("chance").and_then(|v| v.as_f64()) else {
+            continue;
+        };
+        if !chance.is_finite() || chance <= 0.0 {
+            continue;
+        }
+        let buff = rune_def
+            .stats
+            .get("buff")
+            .and_then(|b| b.as_object())
+            .map(|b| RuneBuff {
+                kind: rune_def.id.clone(),
+                title: rune_def.name.clone(),
+                param: b
+                    .get("param")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                value: b.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                pct: b.get("pct").and_then(|v| v.as_bool()).unwrap_or(false),
+                duration_s: b.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(10),
+                max_stacks: b.get("max_stacks").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
+            });
+        // M18/F58d: эффект на моба (stats.effect): stun/root/bleed.
+        let effect = rune_def
+            .stats
+            .get("effect")
+            .and_then(|e| e.as_object())
+            .and_then(|e| {
+                let kind = e.get("kind")?.as_str()?.to_string();
+                Some(crate::world::RuneEffect {
+                    kind,
+                    value: e.get("value").and_then(|v| v.as_i64()).unwrap_or(0),
+                    duration_s: e.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(5),
+                    period_s: e
+                        .get("period_s")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(1)
+                        .max(1),
+                })
+            });
+        runes.push(SocketedRune {
+            staff_uid: main.uid.clone(),
+            socket_index: slot.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            def_id: rune_def.id.clone(),
+            spell: rune
+                .get("spell")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            chance,
+            damage: rune_def
+                .stats
+                .get("damage")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
+            cost: crate::systems::rune_charge_cost(&rune_def.stats),
+            charges: rune.get("charges").and_then(|v| v.as_i64()).unwrap_or(0),
+            buff,
+            effect,
+        });
+    }
+    let mut world = state.world.lock().expect("мир");
+    world.set_char_runes(char_id, runes);
+}
+
+/// Стартовые профили `char.create` (ADR-003: Воин/Лучник/Маг — M17/F30b
+/// «Вор» переименован в «Лучник»); расширение списка — capability (§7).
+const PROFILES: &[&str] = &["warrior", "archer", "mage"];
+
+/// Ack → текст конверта (§2.2).
+fn out_ack(ack: Ack) -> Out {
+    Out::Text(serde_json::to_string(&ack).expect("ack сериализуется"))
+}
+
+/// Событие → текст конверта (§2.3) с `ts`; сверх лимита §1 — закрытие
+/// (нарезка крупных событий — M12.8, §1).
+pub(crate) fn out_event(ty: &str, state_version: Option<u64>, payload: Value) -> Out {
+    let text = event_text(ty, state_version, payload);
+    if text.is_empty() {
+        Out::Close
+    } else {
+        Out::Text(text)
+    }
+}
+
+/// Событие в список адресованной рассылки (адресат, текст) — планы боя/каста.
+fn push_evt<T: serde::Serialize>(
+    plan: &mut Vec<(String, String)>,
+    addr: &str,
+    ty: &str,
+    payload: &T,
+) {
+    if let Some(text) = event_payload_text(ty, payload) {
+        plan.push((addr.to_string(), text));
+    }
+}
+
+/// JSON-текст конверта события из payload'а (`None` — сверх лимита §1).
+fn event_payload_text<T: serde::Serialize>(ty: &str, payload: &T) -> Option<String> {
+    let text = event_text(ty, None, serde_json::to_value(payload).unwrap_or_default());
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Текст конверта события (§2.3); пустая строка — сверх лимита §1
+/// (death.rs адресует события строками).
+pub(crate) fn event_text(ty: &str, state_version: Option<u64>, payload: Value) -> String {
+    let mut env = Envelope::new(ty, Some(payload));
+    env.state_version = state_version;
+    env.ts = Some(crate::time::now_rfc3339());
+    env.to_json_limited().unwrap_or_else(|e| {
+        warn!("событие {ty} не влезает в лимит 64 KiB: {e}");
+        String::new()
+    })
+}
+
+/// M34: завершить игровую сессию персонажа — отвязка мира, присутствие,
+/// соц-очистка и события партнёрам. Вызывается при закрытии WS и при
+/// вытеснении аккаунта вторым входом.
+pub(crate) async fn close_char_session(state: &SharedState, char_id: &str, owner: &str) {
+    let gone = {
+        let world = state.world.lock().expect("мир");
+        world.char_location(char_id)
+    };
+    let mine = {
+        let mut world = state.world.lock().expect("мир");
+        world.unbind_char(char_id, owner)
+    };
+    // Присутствие: соседи видят уход из мира (только наша сессия).
+    if mine {
+        if let Some(location_id) = gone {
+            presence::announce_despawn(state, &location_id, char_id, None);
+        }
+    }
+    let closed = if mine {
+        let mut social = state.social.lock().expect("соц");
+        social.drop_invites_for(char_id);
+        social.drop_guild_invites_for(char_id);
+        social.drop_trades_for(char_id)
+    } else {
+        None
+    };
+    if let Some((participants, offer_id)) = closed {
+        let text = event_text(
+            names::EVT_TRADE_CLOSED,
+            None,
+            serde_json::json!({ "offer_id": offer_id, "reason": "cancelled" }),
+        );
+        if !text.is_empty() {
+            let world = state.world.lock().expect("мир");
+            for addr in participants {
+                if addr != char_id {
+                    world.send_to_char(&addr, text.clone());
+                }
+            }
+        }
+    }
+}
+
+/// Первые 12 символов sha256-версии контента — для компактного лога.
+fn short_version(version: &str) -> &str {
+    version.get(..12).unwrap_or(version)
+}

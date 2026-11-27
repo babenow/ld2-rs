@@ -6,6 +6,7 @@
 .idea/
 .vscode/*
 !.vscode/settings.json
+.zed/
 
 # macOS
 .DS_Store
@@ -20,7 +21,10 @@ client-data/
 # Логи
 *.log
 opencode.json
-*.py
+# R20: скрипты эксплуатации коммитятся (импортёр ад-карты, иконки);
+# игнор — только мусор интерпретатора.
+__pycache__/
+*.pyc
 
 # Планы вех — локальные рабочие документы (не в репозитории)
 /plans/
@@ -29,3 +33,8 @@ opencode.json
 PLAN-CONTEXT.md
 
 .pgdata/
+.gigaide
+.agents/
+
+# Артефакты локальных инструментов/скиллов (архитектурные диаграммы)
+.archify/

@@ -1,14 +1,32 @@
 //! Общее состояние сервера, разделяемое всеми WS-соединениями (D31: один
 //! процесс, один шард).
 
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
 
 use sqlx::PgPool;
 
 use crate::auth::AuthRateLimiter;
 use crate::config::Config;
+use crate::dialogs::DialogNpc;
+use crate::shops::ShopNpc;
 use crate::social::SocialState;
 use crate::world::World;
+
+/// Контент, читаемый из файлов в память (не из БД): диалоги/магазины NPC +
+/// sha256-версия контента.
+///
+/// M27 (hot reload, фаза 1): заменяется целиком при перезагрузке контента;
+/// читатели берут `Arc`-снимок через [`AppState::content`], поэтому замена
+/// не рвёт выполняющиеся команды.
+pub struct ContentState {
+    /// sha256-версия контента (`meta.content_version`).
+    pub version: String,
+    /// Диалоги NPC (M18/F35, `content/dialogs.json`).
+    pub dialogs: HashMap<String, DialogNpc>,
+    /// Магазины NPC (M18/F39, `content/shops.json`).
+    pub shops: HashMap<String, ShopNpc>,
+}
 
 /// Разделяемое состояние: конфиг (D25), пул PostgreSQL (D24) и
 /// rate-limit auth-команд по IP (D30).
@@ -23,37 +41,65 @@ pub struct AppState {
     shutdown: tokio::sync::watch::Sender<bool>,
     /// Социальное состояние в памяти: группы (ФР-14, M12.7b) — эфемерно.
     pub social: Mutex<SocialState>,
-    /// M18/F35: диалоги NPC в памяти (`content/dialogs.json`, при старте;
-    /// без БД — в отличие от кулдаунов `every_s`).
-    pub dialogs: std::collections::HashMap<String, crate::dialogs::DialogNpc>,
-    /// M18/F39: магазины NPC в памяти (`content/shops.json`, при старте).
-    pub shops: std::collections::HashMap<String, crate::shops::ShopNpc>,
+    /// Контент из файлов (диалоги/магазины/версия): снимок в `Arc`,
+    /// подменяется hot reload'ом (M27).
+    content: RwLock<Arc<ContentState>>,
+    /// M26: кэш карты мира (`cmd/map.world`) — строится лениво; hot reload
+    /// сбрасывает в `None`, следующий запрос построит заново.
+    pub map_cache: tokio::sync::RwLock<Option<Arc<crate::map::MapCache>>>,
+    /// M34: активные сессии аккаунтов (account_id → (owner, канал)) —
+    /// повторный вход вытесняет старую сессию (заказчик).
+    pub account_sessions: Mutex<HashMap<i64, (String, tokio::sync::mpsc::Sender<String>)>>,
 }
 
 pub type SharedState = Arc<AppState>;
 
 impl AppState {
-    pub fn new(config: Config, pool: PgPool) -> Self {
+    /// `content_version` — версия, применённая сидом при старте (M27:
+    /// показывается в `/healthz` и в логе hot reload).
+    pub fn new(config: Config, pool: PgPool, content_version: String) -> Self {
         let (shutdown, _) = tokio::sync::watch::channel(false);
-        // M18/F35: сломанный dialogs.json не валит сервер — warn + пусто
-        // (валидность контента ловят контент-тесты в CI).
-        let dialogs = crate::dialogs::load(&config.world.content_dir)
-            .map_err(|e| tracing::warn!("диалоги NPC не загружены: {e}"))
-            .unwrap_or_default();
-        // M18/F39: сломанный shops.json — warn + пусто (контент-тесты в CI).
-        let shops = crate::shops::load(&config.world.content_dir)
-            .map_err(|e| tracing::warn!("магазины NPC не загружены: {e}"))
-            .unwrap_or_default();
+        // M18/F35/F39: сломанные файлы не валят сервер — warn + пусто
+        // (валидность ловят контент-тесты и `content::validate`).
+        let content = ContentState {
+            version: content_version,
+            dialogs: crate::dialogs::load(&config.world.content_dir)
+                .map_err(|e| tracing::warn!("диалоги NPC не загружены: {e}"))
+                .unwrap_or_default(),
+            shops: crate::shops::load(&config.world.content_dir)
+                .map_err(|e| tracing::warn!("магазины NPC не загружены: {e}"))
+                .unwrap_or_default(),
+        };
+        // M32: ГПСЧ боевых бросков — фиксированное зерно у тестов.
+        let mut world = World::default();
+        world.seed_rng(config.gameplay.combat.rng_seed);
         Self {
             config: Arc::new(config),
             pool,
             rate: AuthRateLimiter::new(),
-            world: Mutex::new(World::default()),
+            world: Mutex::new(world),
             shutdown,
             social: Mutex::new(SocialState::default()),
-            dialogs,
-            shops,
+            content: RwLock::new(Arc::new(content)),
+            map_cache: tokio::sync::RwLock::new(None),
+            account_sessions: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Снимок контента (M27): `Arc` переживает подмену при hot reload.
+    pub fn content(&self) -> Arc<ContentState> {
+        self.content.read().expect("контент").clone()
+    }
+
+    /// Подменить контент (hot reload; вызывать после успешного сида).
+    pub fn set_content(&self, content: ContentState) {
+        *self.content.write().expect("контент") = Arc::new(content);
+    }
+
+    /// Сбросить кэш карты мира: следующий `cmd/map.world` построит её
+    /// заново по обновлённому контенту (M27).
+    pub async fn invalidate_map_cache(&self) {
+        *self.map_cache.write().await = None;
     }
 
     /// Подписка на остановку (тик-луп, graceful shutdown).

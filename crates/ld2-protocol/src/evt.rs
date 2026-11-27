@@ -160,6 +160,10 @@ pub struct LocationChanged {
 pub struct EntitySpawn {
     pub entity: Entity,
     pub location_id: String,
+    /// M29 (заказчик): готовая строка журнала прихода («пришла Сара»);
+    /// без неё — клиентский шаблон «{name} появляется». Аддитивно §11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -183,6 +187,19 @@ pub struct EntityDespawn {
     /// §11: старый сервер не шлёт → прежняя строка.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<crate::types::EntityKind>,
+    /// R-dnd (заказчик 2026-11-21): кто поднял предмет с земли —
+    /// строка журнала «{имя} подобрал(а) …»; `None` — не подбор
+    /// (TTL/другие причины). Аддитивно §11: старый сервер не шлёт.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picked_by: Option<String>,
+    /// Пол подобрал(а) — «подобрала» для female.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picked_gender: Option<String>,
+    /// M29: готовая строка журнала для соседей («{имя} ушел — {выход}»)
+    /// при переходе игрока в другую локацию; `None` — прежняя строка
+    /// «{name} исчезает»/подбор. Аддитивно §11: старый сервер не шлёт.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 /// M20: предмет в локации исчез (TTL выброса) — журнал «{name} исчез».
@@ -739,6 +756,7 @@ mod tests {
             rank: 3,
             xp: 612,
             xp_to_next: 480,
+            rank_cap: None,
         };
         assert_eq!(serde_json::to_value(s).expect("ok")["rank"], 3);
     }

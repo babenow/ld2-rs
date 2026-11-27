@@ -16,6 +16,10 @@ pub fn spell_words(id: &str) -> Option<&'static str> {
         "hemorrhage" => Some("Sang Vorl"),
         "concussion" => Some("Brak Duren"),
         "entangle" => Some("Rys Thalor"),
+        // R-контент: руны-семейства (Искра/Око/Ярость).
+        "flame_word" => Some("Firga Serath"),
+        "hawks_eye" => Some("Aeris Kael"),
+        "wolves_rage" => Some("Volk Raghn"),
         _ => None,
     }
 }
@@ -33,6 +37,10 @@ pub fn spell_hits_as(id: &str) -> Option<&'static str> {
         "hemorrhage" => Some("рваной раной"),
         "concussion" => Some("оглушающим ударом"),
         "entangle" => Some("путями корней"),
+        // R-контент: руны-семейства.
+        "flame_word" => Some("пламенным словом"),
+        "hawks_eye" => Some("зорким оком сокола"),
+        "wolves_rage" => Some("волчьей яростью"),
         _ => None,
     }
 }
@@ -54,6 +62,9 @@ mod tests {
             "hemorrhage",
             "concussion",
             "entangle",
+            "flame_word",
+            "hawks_eye",
+            "wolves_rage",
         ] {
             assert!(
                 !spell_words(id).unwrap_or_default().is_empty(),

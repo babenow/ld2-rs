@@ -20,6 +20,10 @@ pub struct SessionConfig {
     /// (модерация чата); старый сервер без поля → `player`.
     #[serde(default = "default_account_role")]
     pub role: String,
+    /// M33: срок премиум-аккаунта (epoch-секунды); `None` — нет.
+    /// Клиент показывает «Премиум (N дней)» в title bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub premium_until: Option<i64>,
     /// Capability-фичи с точечными ключами (`loot.roll`, `upgrade.rules`, …).
     #[serde(default)]
     pub features: JsonMap,
@@ -106,6 +110,10 @@ pub struct InventoryConfig {
     pub slots: u32,
     #[serde(default)]
     pub equip_slots: Vec<String>,
+    /// M28: слотов под сумки (`0` — система сумок выключена; старый
+    /// сервер поле не шлёт → 0, клиент рисует один рюкзак).
+    #[serde(default)]
+    pub bag_slots: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -2,6 +2,7 @@
 name = "ld2-server"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 description = "Реальный игровой сервер ld2: docs/protocol.md + PostgreSQL (PLAN-M12)"
 publish = false
 
@@ -12,13 +13,14 @@ axum.workspace = true
 futures-util.workspace = true
 getrandom = "0.3"
 ld2-protocol = { path = "../ld2-protocol" }
+ld2-content = { path = "../ld2-content" }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 sqlx.workspace = true
 thiserror.workspace = true
-time = { version = "0.3", features = ["formatting"] }
-tokio.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

@@ -418,6 +418,7 @@ async fn scroll_cast_needs_target_and_kills() {
 
     let scroll1 = give(&mut c, "scroll_frost").await;
     let scroll2 = give(&mut c, "scroll_frost").await;
+    let scroll3 = give(&mut c, "scroll_frost").await;
 
     // В лес — к волку (hp 18, свиток бьёт на 9 → два каста).
     let seq = c
@@ -432,7 +433,7 @@ async fn scroll_cast_needs_target_and_kills() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_TARGET_GONE", "без цели: {ack}");
 
-    // Первый каст: урон 9, волк жив (18 → 9).
+    // Первый каст: урон 9 − 6 % магреза волка = 8 (18 → 10, M32).
     let seq = c
         .send(
             "cmd/magic.scroll_cast",
@@ -449,13 +450,13 @@ async fn scroll_cast_needs_target_and_kills() {
     let removed = c.wait_event("evt/item/removed").await;
     assert_eq!(removed["payload"]["uid"], scroll1);
     let hit = c
-        .wait(|v| {
-            v["type"] == "evt/combat/hit"
-                && v["payload"]["source"] == char
-                && v["payload"]["amount"] == 9
-        })
+        .wait(|v| v["type"] == "evt/combat/hit" && v["payload"]["source"] == char)
         .await;
     assert_eq!(hit["payload"]["target"], "m_3", "урон волку: {hit}");
+    assert_eq!(
+        hit["payload"]["amount"], 8,
+        "9 − 6 % сопротивления = 8: {hit}"
+    );
     // M17/F30f: слова заклинания и «чем бьёт» — в строке кастера,
     // магические слова жирные.
     let text = hit["payload"]["text"].as_str().unwrap_or_default();
@@ -465,15 +466,28 @@ async fn scroll_cast_needs_target_and_kills() {
     let hp = c
         .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
         .await;
-    assert_eq!(hp["payload"]["hp"]["cur"], 9, "18 − 9: {hp}");
+    assert_eq!(hp["payload"]["hp"]["cur"], 10, "18 − 8: {hp}");
 
-    // Второй каст добивает: труп + XP в школу `frost`; M17/F30g:
-    // кулдаун свитка (1 с) между кастами одного определения.
+    // Второй каст: 10 → 2 (M17/F30g: кулдаун свитка 1 с).
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let seq = c
         .send(
             "cmd/magic.scroll_cast",
             json!({ "item_uid": scroll2, "target_id": "m_3" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "второй каст");
+    let hp = c
+        .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
+        .await;
+    assert_eq!(hp["payload"]["hp"]["cur"], 2, "10 − 8: {hp}");
+
+    // Третий каст добивает: труп + XP в школу `frost`.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let seq = c
+        .send(
+            "cmd/magic.scroll_cast",
+            json!({ "item_uid": scroll3, "target_id": "m_3" }),
         )
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "каст-добивание");
@@ -483,13 +497,13 @@ async fn scroll_cast_needs_target_and_kills() {
     assert_eq!(end["payload"]["reason"], "цель уничтожена");
     let xp = c.wait_event("evt/char/xp").await;
     assert_eq!(xp["payload"]["skill_id"], "frost", "школа заклинания");
-    assert_eq!(xp["payload"]["amount"], 26, "8 + difficulty(3) × 6");
+    assert_eq!(xp["payload"]["amount"], 13, "4 + difficulty(3) × 3 (M31)");
 
     // Дальше свиток кончился → E_ITEM_GONE.
     let seq = c
         .send(
             "cmd/magic.scroll_cast",
-            json!({ "item_uid": scroll2, "target_id": "m_3" }),
+            json!({ "item_uid": scroll3, "target_id": "m_3" }),
         )
         .await;
     let ack = c.ack(seq).await;
@@ -502,9 +516,12 @@ async fn mana_regen_out_of_combat() {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
     };
-    // Полный бар за 6 с → реген ~10 маны/с (без боя). rune_cost = 30:
-    // два каста обнуляют бар, а для набора 30 маны регену нужно 3 с —
-    // «пустой бар» детерминирован даже на медленном CI (гонка мс vs 3 с).
+    // M30: максимум бара мага — 110 (формула character-params.md §1.1),
+    // стартовое mp_cur = 60. Полный бар за 6 с → шаг регена
+    // ceil(110/6)=19 × духовность 1.1 ≈ 21/с (без боя). rune_cost = 30:
+    // два каста списывают 60, а реген поднимает бар уже через ~1 тик —
+    // поэтому фиксируем бар пином и проверяем только факт списания
+    // (гейт пустого бара покрыт в rune_cast_requires_mana).
     let ws = format!(
         "ws://{}/ws",
         common::start_server_with(&db_url, |cfg| {
@@ -513,7 +530,7 @@ async fn mana_regen_out_of_combat() {
         })
         .await
     );
-    let (mut c, _login, _char) = in_world_profile(&ws, "mage").await;
+    let (mut c, _login, char_id) = in_world_profile(&ws, "mage").await;
 
     let staff_uid = give(&mut c, "staff_apprentice").await;
     let rune_uid = give(&mut c, "rune_fire").await;
@@ -525,9 +542,19 @@ async fn mana_regen_out_of_combat() {
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok");
 
+    // Пин бара перед кастами: реген-тик (~21/с) во время setup иначе
+    // сдвигает mp_left первого каста с 30.
+    let pool = sqlx::PgPool::connect(&db_url).await.expect("пул");
+    sqlx::query("UPDATE characters SET mp_cur = 60 WHERE id = $1")
+        .bind(&char_id)
+        .execute(&pool)
+        .await
+        .expect("пин бара");
+    pool.close().await;
+
     // 2 каста × 30 маны; M17/F30g: между кастами кулдаун руны (1 с),
-    // пауза — окно регена (вне боя +10/с при regen_out_s=6), поэтому
-    // точное mp_left второго каста зависит от фазы реген-тика.
+    // пауза — окно регена (M30: вне боя ≈21/с при regen_out_s=6),
+    // поэтому точное mp_left второго каста зависит от числа тиков.
     for i in 0..2 {
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
@@ -544,16 +571,17 @@ async fn mana_regen_out_of_combat() {
         if i == 0 {
             assert_eq!(cast["payload"]["mp_left"], 30, "расход маны D4: {cast}");
         } else {
-            // Списано 30 — бар ниже цены каста (гейт пустого бара
-            // покрыт в rune_cast_requires_mana).
+            // Списано 30 от бара ≤60+реген — mp_left ниже стартового
+            // 60 (гейт пустого бара покрыт в rune_cast_requires_mana).
             assert!(
-                cast["payload"]["mp_left"].as_i64().unwrap_or(60) < 30,
-                "бар ниже цены каста: {cast}"
+                cast["payload"]["mp_left"].as_i64().unwrap_or(60) < 60,
+                "бар упал после второго каста: {cast}"
             );
         }
     }
 
-    // Реген по тику (§2.4): бар поднимается до цены каста (~3 с при 10/с).
+    // Реген по тику (§2.4): бар поднимается до цены каста (~1 тик
+    // при ≈21/с — M30 перекрыл старые «3 с при 10/с»).
     let stats = c
         .wait(|v| {
             v["type"] == "evt/char/stats"
@@ -563,7 +591,9 @@ async fn mana_regen_out_of_combat() {
     let mp = stats["payload"]["patch"]["mp"]["cur"].as_i64().expect("mp");
     assert!(mp >= 30, "реген поднял бар хотя бы до цены каста: {mp}");
 
-    // Кулдаун руны (M17/F30g) давно истёк — каст после регена проходит.
+    // Кулдаун руны (M17/F30g, 1 с) — M30-реген успевает поднять бар
+    // раньше, чем истечёт кулдаун, поэтому ждём его явно.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let seq = c
         .send(
             "cmd/magic.rune_cast",
@@ -713,6 +743,135 @@ async fn snapshot_carries_socket_accepts() {
         "посох: все слоты рунные (дефолт не-брони)"
     );
     assert_eq!(accepts_of(&helm_uid), ["gem"], "броня: слот под самоцвет");
+}
+
+/// Заказчик: сет «1000 истин» — «Клеймор» (двуручный) и «Клинок»
+/// (одноручный); щит даёт блок щитом 12..18 и 2 рунных слота +
+/// 3 самоцветных; клинок и щит надеваются вместе.
+#[tokio::test]
+async fn thousand_truths_set_sockets_and_equip() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+
+    let twohand = give(&mut c, "sword_1000_true").await;
+    let onehand = give(&mut c, "sword_1000_true_1h").await;
+    let shield = give(&mut c, "shield_1000_true").await;
+
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "resync");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let inv = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь");
+
+    let item_of = |uid: &str| -> &serde_json::Value {
+        inv.iter()
+            .find(|i| i["uid"] == uid)
+            .unwrap_or_else(|| panic!("предмет {uid} должен быть в инвентаре"))
+    };
+    let accepts_of = |uid: &str| -> Vec<String> {
+        item_of(uid)["sockets"]
+            .as_array()
+            .expect("сокеты")
+            .iter()
+            .map(|s| s["accepts"].as_str().unwrap_or("<нет поля>").to_string())
+            .collect()
+    };
+
+    assert_eq!(item_of(&twohand)["name"], "Клеймор тысячи истин");
+    assert_eq!(item_of(&onehand)["name"], "Клинок тысячи истин");
+    assert_eq!(item_of(&shield)["name"], "Щит тысячи истин");
+    assert_eq!(
+        accepts_of(&onehand),
+        ["rune", "rune", "gem", "gem"],
+        "клинок: 2 руны + 2 камня"
+    );
+    assert_eq!(
+        accepts_of(&shield),
+        ["rune", "rune", "gem", "gem", "gem"],
+        "щит: 2 руны + 3 камня"
+    );
+    let param = |id: &str| -> i64 {
+        item_of(&shield)["bonuses"]
+            .as_array()
+            .expect("бонусы")
+            .iter()
+            .find(|b| b["id"] == id)
+            .and_then(|b| b["value"].as_i64())
+            .unwrap_or_else(|| panic!("нет бонуса {id} у щита"))
+    };
+    assert_eq!(
+        (param("block_min"), param("block_max")),
+        (12, 18),
+        "блок щитом: 12..18 урона"
+    );
+    assert_eq!(param("block_chance"), 12, "базовый шанс блока щита");
+
+    // Клинок и щит — вместе (main_hand + off_hand).
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": onehand, "slot": "main_hand" }),
+        )
+        .await;
+    let before = c.ack(seq).await;
+    assert_eq!(before["result"], "ok", "клинок");
+    let base_chance = before["payload"]["char"]["derived"]["block_chance"]
+        .as_i64()
+        .expect("шанс блока без щита");
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": shield, "slot": "off_hand" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "щит в off_hand: {ack}");
+    let der = &ack["payload"]["char"]["derived"];
+    assert_eq!(
+        der["block_chance"].as_i64(),
+        Some(base_chance + 12),
+        "щит добавил базовый шанс блока"
+    );
+    assert_eq!(
+        (der["block_min"].as_i64(), der["block_max"].as_i64()),
+        (Some(12), Some(18)),
+        "блок щитом 12..18 в derived"
+    );
+    // Заказчик 2026-11-27: клинок (одноручный) не парирует.
+    assert_eq!(der["parry_chance"], 0, "клинок: нет парирования");
+    assert_eq!(der["parry_min"], 0);
+
+    // Меняем клинок на клеймор (двуручный) — парирование появляется;
+    // урон контрудара от силы: 10 + str-бонус клеймора 5 → 15 → 3..7.
+    for slot in ["off_hand", "main_hand"] {
+        let seq = c.send("cmd/item.unequip", json!({ "slot": slot })).await;
+        assert_eq!(c.ack(seq).await["result"], "ok", "снять {slot}");
+    }
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": twohand, "slot": "main_hand" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "клеймор: {ack}");
+    let der = &ack["payload"]["char"]["derived"];
+    assert!(
+        der["parry_chance"].as_i64().unwrap_or(0) > 0,
+        "двуручный клеймор парирует: {der}"
+    );
+    assert_eq!(
+        (der["parry_min"].as_i64(), der["parry_max"].as_i64()),
+        (Some(3), Some(7)),
+        "контрудар от силы 15 → 3..7"
+    );
 }
 
 /// M18/F58 (ADR-012): слот принимает по `accepts` — гемы в оружие

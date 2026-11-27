@@ -12,6 +12,7 @@ use crate::root::{act_btn, Palette, PopupKind, Root};
 /// Что делать после подтверждения (заготовка: расширять вариантами —
 /// Buy и т.п.).
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // окно количества больше не открывается (dnd-подтверждение)
 pub enum QuantityAction {
     Drop { uid: String },
 }

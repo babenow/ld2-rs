@@ -145,9 +145,16 @@ async fn drop_pickup_between_players_and_ttl() {
     assert_eq!(b.ack(seq).await["result"], "ok", "подбор");
     let added = b.wait_event("evt/item/added").await;
     assert_eq!(added["payload"]["item"]["def_id"], "potion_heal");
-    // A видит исчезновение объекта из локации.
+    // A видит исчезновение объекта из локации; подобрал B — в
+    // despawn имя/пол для строк журнала (R-dnd, заказчик).
     let despawn = a.wait_event("evt/entity/despawn").await;
     assert_eq!(despawn["payload"]["entity_id"], ground_id);
+    assert!(
+        despawn["payload"]["picked_by"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "picked_by в despawn: {despawn}"
+    );
 
     // A больше не владеет выброшенным (uid удалён из инвентаря).
     let seq = a
@@ -174,4 +181,179 @@ async fn drop_pickup_between_players_and_ttl() {
     let expired_b = b.wait_event("evt/item/expired").await;
     assert_eq!(expired_a["payload"]["name"], "Зелье лечения");
     assert_eq!(expired_b["payload"]["name"], "Зелье лечения");
+}
+
+#[tokio::test]
+async fn drop_epic_item_works() {
+    // R-dnd (заказчик): эпики/легендарки должны выбрасываться —
+    // серверного ограничения по редкости нет; проверяем полный путь.
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, _, _) = in_world(&ws).await;
+
+    // Руна пламени (epic) из контента.
+    let uid = give(&mut a, "rune_flame_ash").await;
+
+    let seq = a.send("cmd/item.drop", json!({ "item_uid": uid })).await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "выброс эпика");
+    // Порядок прихода недетерминирован (прямой ответ vs out_tx) —
+    // собираем оба события в любом порядке.
+    let mut spawn_evt = None;
+    let mut dropped_evt = None;
+    for _ in 0..10 {
+        let env = a
+            .wait(|v| v["type"] == "evt/entity/spawn" || v["type"] == "evt/item/dropped")
+            .await;
+        if env["type"] == "evt/entity/spawn" && spawn_evt.is_none() {
+            spawn_evt = Some(env.clone());
+        }
+        if env["type"] == "evt/item/dropped" && dropped_evt.is_none() {
+            dropped_evt = Some(env);
+        }
+        if spawn_evt.is_some() && dropped_evt.is_some() {
+            break;
+        }
+    }
+    let spawn = spawn_evt.expect("evt/entity/spawn пришёл");
+    let dropped = dropped_evt.expect("evt/item/dropped пришёл");
+    assert_eq!(
+        dropped["payload"]["item_name"],
+        "Руна пламени: Искра-Порыв-Пепел"
+    );
+    assert_eq!(spawn["payload"]["location_id"], "l_village");
+
+    let seq = a
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok");
+    let snap = a.wait_event("evt/state/snapshot").await;
+    let ground = snap["payload"]["location"]["entities"]
+        .as_array()
+        .expect("entities")
+        .iter()
+        .any(|e| e["ground"] == true);
+    assert!(ground, "эпик лежит на земле: {snap}");
+}
+
+#[tokio::test]
+async fn drop_pickup_keeps_item_state() {
+    // R-dnd (заказчик): камни не теряются при выбросе → подборе
+    // (раньше подбор создавал «простой» стак); предмет на земле
+    // несёт снапшот для отображения «как в рюкзаке».
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, _, _) = in_world(&ws).await;
+
+    // Посох с сокетами + руна → вставить руну в первый сокет.
+    let staff = give(&mut a, "staff_apprentice").await;
+    let rune = give(&mut a, "rune_flame_ash").await;
+    let seq = a
+        .send(
+            "cmd/socket.insert",
+            json!({ "staff_uid": staff, "socket_index": 0, "rune_uid": rune }),
+        )
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "вставка руны");
+
+    // Полный выброс посоха → на земле снапшот с сокетами (extra.item).
+    let seq = a.send("cmd/item.drop", json!({ "item_uid": staff })).await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "выброс посоха");
+    let spawn = a.wait_event("evt/entity/spawn").await;
+    let ground_id = spawn["payload"]["entity"]["id"]
+        .as_str()
+        .expect("id наземного предмета")
+        .to_string();
+    // Entity.extra сериализуется flatten — поля прямо в объекте.
+    let item = &spawn["payload"]["entity"];
+    assert!(
+        item["item"]["sockets"]
+            .as_array()
+            .is_some_and(|s| !s.is_empty()),
+        "сокеты в снапшоте на земле: {item}"
+    );
+
+    // Подбор тем же персонажем → руна на месте (состояние
+    // восстанавливается отдельной строкой).
+    let seq = a
+        .send("cmd/item.use", json!({ "item_uid": ground_id }))
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "подбор");
+    let added = a.wait_event("evt/item/added").await;
+    let sockets = added["payload"]["item"]["sockets"]
+        .as_array()
+        .expect("сокеты после подбора");
+    assert!(
+        !sockets.is_empty() && sockets[0]["rune"].is_object(),
+        "руна пережила выброс → подбор: {added}"
+    );
+}
+
+#[tokio::test]
+async fn drop_money_partial_100_of_100000() {
+    // R-dnd (заказчик): выброс100 монет из 100000 — на землю ровно
+    // 100, стак уменьшается до 99900 (частичный выброс стака).
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, _, _) = in_world(&ws).await;
+
+    let seq = a
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "system", "text": "/scenario gold 100000" }),
+        )
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "gold");
+    // /scenario gold не шлёт evt/item/added — uid монет из снапшота.
+    let seq = a
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok");
+    let snap = a.wait_event("evt/state/snapshot").await;
+    let uid = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь")
+        .iter()
+        .find(|i| i["type"] == "money")
+        .and_then(|i| i["uid"].as_str())
+        .expect("стак монет")
+        .to_string();
+
+    let seq = a
+        .send("cmd/item.drop", json!({ "item_uid": uid, "qty": 100 }))
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "выброс100");
+
+    // События приходят в недетерминированном порядке — собираем все.
+    let mut dropped_evt = None;
+    let mut state_evt = None;
+    for _ in 0..10 {
+        let env = a
+            .wait(|v| v["type"] == "evt/item/dropped" || v["type"] == "evt/item/state")
+            .await;
+        if env["type"] == "evt/item/dropped" && dropped_evt.is_none() {
+            dropped_evt = Some(env.clone());
+        }
+        if env["type"] == "evt/item/state" && state_evt.is_none() {
+            state_evt = Some(env);
+        }
+        if dropped_evt.is_some() && state_evt.is_some() {
+            break;
+        }
+    }
+    let dropped = dropped_evt.expect("evt/item/dropped");
+    assert_eq!(dropped["payload"]["qty"], 100, "на землю ровно 100");
+    let state = state_evt.expect("evt/item/state");
+    assert_eq!(
+        state["payload"]["patch"]["qty"], 99900,
+        "стак уменьшился до 99900"
+    );
 }

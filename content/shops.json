@@ -37,7 +37,16 @@
             "potion_heal",
             "armor_bronze",
             "sword_knight",
-            "dagger_knife"
+            "dagger_knife",
+            "linen_bag",
+            "wool_bag",
+            "silk_bag",
+            "arrow",
+            "quiver",
+            "herbalist_bag",
+            "reagent_bag",
+            "keyring",
+            "old_key"
           ]
         }
       ]
@@ -50,8 +59,8 @@
           "currency": "gold_coin",
           "rate": 1.0,
           "items": [
-          "axe",
-          "pickaxe",
+            "axe",
+            "pickaxe",
             "dagger_knife",
             "sword_knight",
             "bow_hunter",
@@ -88,7 +97,7 @@
           "currency": "gold_coin",
           "rate": 1.0,
           "items": [
-          "sickle",
+            "sickle",
             "potion_heal",
             "herb",
             "scroll_frost"

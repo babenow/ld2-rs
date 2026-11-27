@@ -82,8 +82,9 @@ pub async fn forget(
 
 /// M21: записать прогресс профессии (уровень/ранг/XP, апсерт) —
 /// рост уровня (крафт/добыча) и повышение ранга (тренер/награда).
-pub async fn grant_progress(
-    pool: &PgPool,
+/// R6: исполнитель — параметр (pool или внешняя транзакция).
+pub async fn grant_progress<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    exec: E,
     char_id: &str,
     profession_id: &str,
     xp: i64,
@@ -101,7 +102,7 @@ pub async fn grant_progress(
     .bind(xp)
     .bind(rank)
     .bind(level)
-    .execute(pool)
+    .execute(exec)
     .await?;
     Ok(())
 }

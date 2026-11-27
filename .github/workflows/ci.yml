@@ -18,8 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # rust-toolchain.toml фиксирует stable + rustfmt/clippy (CONTRIBUTING §1)
-      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml фиксирует 1.100.0 + rustfmt/clippy (CONTRIBUTING §1)
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
 
@@ -42,10 +42,22 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
-      - name: build
-        run: cargo build --workspace
+      # M27/E6: артефакт редактора контента для контент-мейкера (только push).
+      - name: release build (ld2-editor)
+        if: github.event_name == 'push'
+        run: cargo build --release --locked -p ld2-editor
+
+      - name: upload ld2-editor artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ld2-editor-${{ matrix.os }}
+          path: |
+            target/release/ld2-editor
+            target/release/ld2-editor.exe
+          if-no-files-found: ignore
 
   # Реальный сервер (PLAN-M12.1, D24): тесты с БД — только здесь; в матрице
   # 3 ОС LD2_TEST_DATABASE_URL не задан и эти тесты пропускаются.
@@ -54,7 +66,7 @@ jobs:
     runs-on: ubuntu-22.04
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: ld2
           POSTGRES_PASSWORD: ld2
@@ -71,7 +83,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
 
@@ -81,4 +93,15 @@ jobs:
         run: cargo clippy -p ld2-server --all-targets -- -D warnings
 
       - name: test (с PostgreSQL)
-        run: cargo test -p ld2-server
+        run: cargo test -p ld2-server --locked
+
+  # RF0e: ратчет бюджета рефакторинга (PLAN-REFACTOR §12) — файлы/функции не
+  # растут, тесты не убывают. Без Rust и БД, пара секунд; блокирующий gate.
+  budget:
+    name: refactor budget (RF0)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: budget check
+        run: scripts/refactor-audit.sh --verify

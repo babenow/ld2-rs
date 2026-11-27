@@ -187,6 +187,16 @@ async fn trainer_fee_is_flat_from_dialog() {
     let ws = common::start_ws_server(&db_url).await;
     let (mut c, _login, char_id) = in_world(&ws).await;
 
+    // M31: ранг ограничен уровнем (2 за уровень) — поднимаем уровень,
+    // чтобы проверять именно фиксированную цену, а не потолок.
+    let cfg = common::test_config(&db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    sqlx::query("UPDATE characters SET total_xp = 100000 WHERE id = $1")
+        .bind(&char_id)
+        .execute(&pool)
+        .await
+        .expect("уровень персонажа");
+    pool.close().await;
     fill_bar(&db_url, &char_id, "sword", 3).await;
     set_pool(&db_url, &char_id, 1000).await;
     give_gold(&mut c, 1000).await;

@@ -75,6 +75,21 @@ pub async fn invest_tx(
     pool_left: i64,
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
+    invest_core(&mut tx, char_id, skill_id, xp, rank, pool_left).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// R6: ядро вклада на внешней транзакции (skill.train: плата и вклад
+/// одной транзакцией); пара к `invest_tx`.
+pub async fn invest_core(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    char_id: &str,
+    skill_id: &str,
+    xp: i64,
+    rank: i32,
+    pool_left: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO character_skills (character_id, skill_id, xp, rank) \
          VALUES ($1, $2, $3, $4) \
@@ -85,14 +100,13 @@ pub async fn invest_tx(
     .bind(skill_id)
     .bind(xp)
     .bind(rank)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query("UPDATE characters SET xp_pool = $2 WHERE id = $1")
         .bind(char_id)
         .bind(pool_left)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-    tx.commit().await?;
     Ok(())
 }
 

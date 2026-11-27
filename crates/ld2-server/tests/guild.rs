@@ -265,3 +265,55 @@ async fn guild_survives_restart_and_leave() {
     let snap = c2.wait_event("evt/state/snapshot").await;
     assert!(snap["payload"]["guild"].is_null(), "не состоит");
 }
+
+#[tokio::test]
+async fn guild_kick_cannot_reach_other_guild() {
+    // R1: офицер/лидер гильдии A не может исключить участника гильдии B
+    // (раньше db::guilds::kick не фильтровал по guild_id).
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, _, char_a) = in_world(&ws).await;
+    let (mut b, _, char_b) = in_world(&ws).await;
+
+    // Две независимые гильдии: a — лидер A, b — лидер B.
+    let unique = format!(
+        "Кросс_{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let seq = a
+        .send("cmd/guild.create", json!({ "name": format!("{unique}_А") }))
+        .await;
+    assert_eq!(a.ack(seq).await["result"], "ok", "создание A");
+    let seq = b
+        .send("cmd/guild.create", json!({ "name": format!("{unique}_Б") }))
+        .await;
+    assert_eq!(b.ack(seq).await["result"], "ok", "создание Б");
+
+    // Лидер A исключает лидера B — ошибка прав («не в вашей гильдии»),
+    // причём раньше, чем проверка «нельзя исключить лидера».
+    let seq = a
+        .send("cmd/guild.kick", json!({ "player_id": char_b }))
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_GUILD_PERMISSION", "A→B: {ack}");
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("не в вашей гильдии"),
+        "сообщение о чужой гильдии: {ack}"
+    );
+
+    // И наоборот: лидер B не выкидывает участника A.
+    let seq = b
+        .send("cmd/guild.kick", json!({ "player_id": char_a }))
+        .await;
+    let ack = b.ack(seq).await;
+    assert_eq!(ack["error"]["code"], "E_GUILD_PERMISSION", "B→A: {ack}");
+}

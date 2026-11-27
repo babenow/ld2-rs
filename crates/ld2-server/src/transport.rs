@@ -1,6 +1,8 @@
 //! WS-транспорт §1: апгрейд с subprotocol `ld2.v1`, лимит фрейма 64 KiB,
 //! бинарные кадры = ошибка протокола; цикл соединения → [`Session`].
 
+use ld2_protocol::names;
+
 use std::net::SocketAddr;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -30,8 +32,13 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
     info!("ws: подключился {peer}");
     let (mut sink, mut reader) = socket.split();
     // Канал исходящих: тик боя шлёт события в соединение (M12.5, §2.4).
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // R15: bounded — медленный клиент при тик-флуде больше не копит
+    // память без границ (переполнение: world::send_to_char снимает
+    // рассылку, команды через sink работают; resync восстановит).
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(256);
     let mut session = Session::new(state.clone(), peer, out_tx);
+    // M36: AFK-таймер — раз в секунду (предупреждение/офлайн).
+    let mut afk_tick = tokio::time::interval(std::time::Duration::from_secs(1));
 
     'conn: loop {
         tokio::select! {
@@ -50,7 +57,7 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
                             // §1: >64 KiB → видимая ошибка и закрытие (паритет с моком).
                             warn!("ws {peer}: фрейм {} KiB > 64 KiB", text.len() / 1024);
                             let notice = Envelope::new(
-                                "evt/error",
+                                names::EVT_ERROR,
                                 Some(json!({
                                     "code": "E_TOO_LARGE",
                                     "message": "фрейм больше 64 KiB",
@@ -99,6 +106,24 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
                     }
                 }
             }
+            // M36: AFK — предупреждение на последних 5 % и офлайн.
+            _ = afk_tick.tick() => {
+                for out in session.afk_tick().await {
+                    match out {
+                        Out::Text(t) => {
+                            if !t.is_empty()
+                                && sink.send(Message::Text(t.into())).await.is_err()
+                            {
+                                break 'conn;
+                            }
+                        }
+                        Out::Close => {
+                            let _ = sink.close().await;
+                            break 'conn;
+                        }
+                    }
+                }
+            }
             // События от тика боя/мира (адресованы персонажу этой сессии).
             outgoing = out_rx.recv() => {
                 match outgoing {
@@ -115,35 +140,16 @@ async fn run_connection(socket: WebSocket, peer: SocketAddr, state: SharedState)
         }
     }
 
-    // Отвязка персонажа: бой и рассылка (M12.5) + соц-чистка (M12.7):
-    // приглашения снимаются, активная сделка отменяется с событием
-    // `evt/trade/closed` партнёру.
+    // M34: отвязка персонажа — общий helper (бой, рассылка, соц-очистка,
+    // события партнёрам); используется и при вытеснении аккаунта.
     if let Some(char_id) = session.selected_char() {
-        {
-            let mut world = state.world.lock().expect("мир");
-            world.unbind_char(&char_id);
-        }
-        let closed = {
-            let mut social = state.social.lock().expect("соц");
-            social.drop_invites_for(&char_id);
-            social.drop_guild_invites_for(&char_id);
-            social.drop_trades_for(&char_id)
-        };
-        if let Some((participants, offer_id)) = closed {
-            let text = crate::session::event_text(
-                "evt/trade/closed",
-                None,
-                serde_json::json!({ "offer_id": offer_id, "reason": "cancelled" }),
-            );
-            if !text.is_empty() {
-                let world = state.world.lock().expect("мир");
-                for addr in participants {
-                    if addr != char_id {
-                        world.send_to_char(&addr, text.clone());
-                    }
-                }
-            }
-        }
+        crate::session::close_char_session(&state, &char_id, &peer.to_string()).await;
+    }
+    // M34: снять регистрацию аккаунт-сессии (только свою).
+    {
+        let owner = peer.to_string();
+        let mut sessions = state.account_sessions.lock().expect("сессии аккаунтов");
+        sessions.retain(|_, (o, _)| o != &owner);
     }
     info!("ws: соединение {peer} закрыто");
 }

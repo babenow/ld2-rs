@@ -19,6 +19,9 @@ ld2-server — реальный игровой сервер ld2 (docs/protocol.m
   ld2-server [--config PATH] revert    откатить ПОСЛЕДНЮЮ миграцию (одна
                                        версия вниз; данные откатываемой
                                        миграции теряются — up/down-пары)
+  ld2-server [--config PATH] seed      применить сид контента в БД и выйти
+                                       (работающий сервер не рестартует —
+                                       см. hot reload `world.content_poll_s`)
   ld2-server --help                    эта справка
 
   --config PATH   путь к server.toml (по умолчанию ./server.toml;
@@ -34,6 +37,8 @@ enum Command {
     Check,
     Migrate,
     Revert,
+    /// M27: применить сид контента в БД и выйти (без запуска сервера).
+    Seed,
 }
 
 enum Args {
@@ -42,10 +47,17 @@ enum Args {
 }
 
 fn parse_args() -> Result<Args, String> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+/// Разбор аргументов из произвольного итератора (юнит-тесты без env).
+fn parse_args_from<I>(mut args: I) -> Result<Args, String>
+where
+    I: Iterator<Item = String>,
+{
     let mut command_name: Option<String> = None;
     let mut config: Option<PathBuf> = None;
 
-    let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => return Ok(Args::Help),
@@ -53,7 +65,7 @@ fn parse_args() -> Result<Args, String> {
                 let value = args.next().ok_or("--config: ожидается путь к файлу")?;
                 config = Some(PathBuf::from(value));
             }
-            "run" | "check" | "migrate" | "revert" => {
+            "run" | "check" | "migrate" | "revert" | "seed" => {
                 if command_name.is_some() {
                     return Err(format!("подкоманда указана дважды: {arg}"));
                 }
@@ -68,6 +80,7 @@ fn parse_args() -> Result<Args, String> {
         Some("check") => Command::Check,
         Some("migrate") => Command::Migrate,
         Some("revert") => Command::Revert,
+        Some("seed") => Command::Seed,
         Some(other) => unreachable!("подкоманда проверена в цикле: {other}"),
     };
     let config = config
@@ -149,6 +162,24 @@ async fn run() -> Result<(), AppError> {
         return Ok(());
     }
 
+    // M27: подкоманда `seed` — применить контент в БД и выйти. Работающий
+    // сервер не рестартует: изменения из БД читаются на каждый запрос,
+    // in-memory части подхватит hot reload (poll/SIGHUP/admin).
+    if matches!(command, Command::Seed) {
+        let seed = ld2_server::content::seed(&pool, &cfg.world.content_dir).await?;
+        tracing::info!(
+            "контент: {} (версия {}…)",
+            if seed.applied {
+                "сид применён"
+            } else {
+                "без изменений"
+            },
+            &seed.version[..12]
+        );
+        pool.close().await;
+        return Ok(());
+    }
+
     // Сид контента (D26): версия не изменилась → БД не трогается вообще
     // (ручные правки переживают перезапуск — критерий M12.3).
     let seed = ld2_server::content::seed(&pool, &cfg.world.content_dir).await?;
@@ -162,18 +193,33 @@ async fn run() -> Result<(), AppError> {
         &seed.version[..12]
     );
 
+    // M28/B2: стартовые сумки существующим персонажам (идемпотентно).
+    match ld2_server::db::items::ensure_bags(
+        &pool,
+        i32::try_from(cfg.gameplay.inventory.bag_slots).unwrap_or(0),
+        ld2_server::db::items::STARTER_BAG_DEF,
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("сумки: выдан стартовый набор {n} персонажам"),
+        Err(e) => tracing::warn!("сумки: не удалось выдать стартовый набор: {e}"),
+    }
+
     let listener = tokio::net::TcpListener::bind(&cfg.server.bind).await?;
     let addr = listener.local_addr()?;
     tracing::info!(
         "сервер «{}» ({}) запускается: {addr}, ws → ws://{addr}/ws, \
-         healthz → http://{addr}/healthz, контент {:?}, тик {} Гц, автосейв {} с",
+         healthz → http://{addr}/healthz, контент {:?}, тик {} Гц, автосейв {} с, \
+         hot reload {} с",
         cfg.server.name,
         cfg.server.region,
         cfg.world.content_dir,
         cfg.world.tick_hz,
-        cfg.world.autosave_interval_s
+        cfg.world.autosave_interval_s,
+        cfg.world.content_poll_s
     );
-    let state = std::sync::Arc::new(ld2_server::state::AppState::new(cfg, pool));
+    let state = std::sync::Arc::new(ld2_server::state::AppState::new(cfg, pool, seed.version));
 
     // Живой мир: мобы из сида (эфемерны — D26/отклонение M12.5) + тик-луп
     // боя (D31): атаки, смерти, XP убийств (M12.5).
@@ -184,6 +230,10 @@ async fn run() -> Result<(), AppError> {
         let world = state.world.lock().expect("мир");
         world.mob_count()
     });
+
+    // M27 (hot reload, фаза 1): poll каталога + SIGHUP перечитывают
+    // контент без рестарта (файлы, диалоги/магазины, кэш карты).
+    ld2_server::reload::spawn_watcher(state.clone());
 
     ld2_server::app::serve(listener, state).await?;
     Ok(())
@@ -244,5 +294,42 @@ async fn main() -> ExitCode {
             eprintln!("{err:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(items: &[&str]) -> std::vec::IntoIter<String> {
+        items
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    #[test]
+    fn seed_subcommand_parses() {
+        match parse_args_from(argv(&["seed"])) {
+            Ok(Args::Parsed { command, .. }) => assert!(matches!(command, Command::Seed)),
+            _ => panic!("seed должна разбираться"),
+        }
+    }
+
+    #[test]
+    fn config_flag_combines_with_seed() {
+        match parse_args_from(argv(&["--config", "custom.toml", "seed"])) {
+            Ok(Args::Parsed { command, config }) => {
+                assert!(matches!(command, Command::Seed));
+                assert_eq!(config, PathBuf::from("custom.toml"));
+            }
+            _ => panic!("--config + seed должны разбираться"),
+        }
+    }
+
+    #[test]
+    fn unknown_argument_is_error() {
+        assert!(parse_args_from(argv(&["seed", "--nope"])).is_err());
     }
 }

@@ -33,6 +33,8 @@ min_password_len = 8
 [gameplay]
 char_slot_limit = 8        # → §5 char_slot_limit (DoD M2: конфиг, не код)
 profession_limit = 2       # → §5 profession_limit
+cmd_rate_per_min = 240   # R15: per-session лимит мутирующих команд/мин (0 — выкл)
+afk_timeout_s = 300      # M36: бездействие персонажа, с (0 — выключено)
 
 party_max_members = 4   # ФР-14: лимит состава группы
 
@@ -52,7 +54,12 @@ haggle = 0.02
 attack_interval_s = 1.0     # период атак в бою, с
 min_attack_interval_s = 0.5 # M25: минимальная скорость атаки моба, с (пол интервала)
 base_damage = 6             # базовый урон персонажа (v1)
+rng_seed = 0                # M32: ГПСЧ боевых бросков (0 — случайный)
 flee_chance = 0.5           # шанс cmd/combat.flee, 0..=1
+
+[gameplay.premium]          # M33: премиум-аккаунт
+xp_mult = 1.5               # +50 % опыта персонажа
+profession_mult = 1.5       # ускоренная прокачка профессий
 
 [gameplay.level]            # M15/F24: уровень персонажа (окно персонажа)
 # XP = round(A×level² + B×level + C) — опыт перехода level → level+1
@@ -99,8 +106,10 @@ cooldown_s = 1.5
 channels = ["system", "location", "global", "party", "guild", "whisper"]
 
 [gameplay.inventory]
-slots = 100
+slots = 20
 equip_slots = ["head", "shoulders", "bracers", "gloves", "body", "legs", "feet", "cloak", "ring1", "ring2", "amulet", "main_hand", "off_hand", "artifact1", "artifact2"]
+# M28: слоты под сумки (сумки дают ёмкость; 0 — выключить).
+bag_slots = 4
 
 [gameplay.upgrade]
 max_level = 9
@@ -139,12 +148,29 @@ scroll_requires_target = true
 regen_out_s = 45
 regen_in_pct_s = 1.0
 rune_cost = 10
+# M30: формула максимума (character-params.md §1.1) и духовность:
+# mp_max = base + int×mp_per_int + arcana×mp_per_arcana + spir×mp_per_spir
+mp_max_base = 20
+mp_per_int = 4.0
+mp_per_arcana = 5.0
+mp_per_spir = 5.0
+spirit_regen_pct = 1.0       # +1 % скорости регена маны за очко духовности
+
+# M30: здоровье и его регенерация (character-params.md §2.1/§3.1):
+# hp_max = hp_max_base + vit×hp_per_vit + level×hp_per_level
+[gameplay.health]
+hp_max_base = 40
+hp_per_vit = 5.0
+hp_per_level = 10.0
+regen_out_s = 60             # вне боя — секунд на полный бар
+regen_in_pct_s = 0.5         # в бою — % макс. HP в секунду
 
 [world]
 content_dir = "content"    # статический контент (JSON) → сид в PostgreSQL (D26)
 tick_hz = 10               # тик-луп мира (D31), 1..=100
 autosave_interval_s = 30   # периодический флаш онлайн-состояния (D27)
 journal_ttl_s = 30          # M25: время жизни строки журнала (Лог), с; 0 — не удаляются
+content_poll_s = 30         # M27: hot reload контента — период проверки каталога, с; 0 — только SIGHUP/admin
 # M20: TTL (с; 0 — не удалять) и дефолтный респавн мобов без
 # `respawn` в контенте (нет поля и дефолта — не возрождаются)
 #corpse_ttl_s = 60         # трупы — вместе с неразобранным лутом
@@ -155,8 +181,9 @@ journal_ttl_s = 30          # M25: время жизни строки журна
 base_xp = 120
 growth = 1.32
 rank_max = 30
-kill_xp_base = 8
-kill_xp_per_difficulty = 6
+ranks_per_level = 2       # M31: боевые/защитные/магические — не более 2 рангов за уровень
+kill_xp_base = 4          # M31: снижено с 8 (заказчик)
+kill_xp_per_difficulty = 3  # M31: снижено с 6
 
 # M14: активные способности cmd/skill.use (skills.md §4; D25)
 [gameplay.resource]

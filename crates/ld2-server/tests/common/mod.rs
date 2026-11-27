@@ -27,6 +27,8 @@ pub fn test_config(db_url: &str, tweak: impl FnOnce(&mut Config)) -> Config {
     cfg.database.url = db_url.to_string();
     // Контент — из репозитория (CWD тестов — корень crate, M12.3/D26).
     cfg.world.content_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    // M32: детерминированные боевые броски в e2e (иначе тесты флакают).
+    cfg.gameplay.combat.rng_seed = Some(0x5EED_1234);
     tweak(&mut cfg);
     cfg
 }
@@ -39,6 +41,11 @@ pub struct TestServer {
 }
 
 impl TestServer {
+    /// Состояние сервера (M27: тесты hot reload контента).
+    pub fn state(&self) -> &std::sync::Arc<AppState> {
+        &self.state
+    }
+
     /// Остановить сервер (graceful): тик-луп и WS-приём завершаются.
     pub async fn stop(self) {
         self.state.request_shutdown();
@@ -77,10 +84,10 @@ pub async fn start_server_with(db_url: &str, tweak: impl FnOnce(&mut Config)) ->
     });
     let cfg = test_config(db_url, tweak);
     let pool = db::connect(&cfg.database).await.expect("БД + миграции");
-    ld2_server::content::seed(&pool, &cfg.world.content_dir)
+    let seed = ld2_server::content::seed(&pool, &cfg.world.content_dir)
         .await
         .expect("сид контента");
-    let state = Arc::new(AppState::new(cfg, pool));
+    let state = Arc::new(AppState::new(cfg, pool, seed.version));
     ld2_server::tick::init(&state).await.expect("мир + тик-луп");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

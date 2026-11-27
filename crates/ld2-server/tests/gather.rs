@@ -44,6 +44,58 @@ async fn learn(c: &mut ld2_test_kit::WsClient, profession_id: &str) {
     c.wait_event("evt/craft/profession").await;
 }
 
+/// M33/M34: премиум ускоряет прокачку профессий (×1.5) — сбор руды
+/// даёт 65 XP → 98 XP (97.5 с округлением).
+#[tokio::test]
+async fn premium_boosts_profession_xp_on_gather() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
+    give_gold(&mut c, 1000).await;
+    learn(&mut c, "mining").await;
+
+    // Премиум на 30 дней аккаунту персонажа.
+    let cfg = common::test_config(&db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("время")
+        .as_secs() as i64;
+    sqlx::query(
+        "UPDATE accounts SET premium_until = $2 \
+          WHERE id = (SELECT account_id FROM characters WHERE id = $1)",
+    )
+    .bind(&char_id)
+    .bind(now + 30 * 86_400)
+    .execute(&pool)
+    .await
+    .expect("премиум");
+    pool.close().await;
+
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    give(&mut c, "pickaxe").await;
+
+    let seq = c
+        .send(
+            "cmd/resource.gather",
+            json!({ "entity_id": "r_forest_ore" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "руда");
+    let prof = c.wait_event("evt/craft/profession").await;
+    assert_eq!(prof["payload"]["profession"]["id"], "mining");
+    assert_eq!(
+        prof["payload"]["gain"], 98,
+        "65 × 1.5 = 97.5 → 98 (премиум): {prof}"
+    );
+}
+
 #[tokio::test]
 async fn gather_tool_profession_yield_and_exhaustion() {
     let Some(db_url) = common::test_url() else {

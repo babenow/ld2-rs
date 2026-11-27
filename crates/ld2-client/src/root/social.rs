@@ -6,7 +6,7 @@
 
 use ely::overlays::Dialog;
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div};
-use ld2_core::l10n::{t, tf, Key};
+use ld2_core::l10n::{t, tf, Key, Lang};
 use ld2_core::store::Act;
 use ld2_protocol::cmd::{
     PartyAccept, PartyCreate, PartyDecline, PartyKick, PartyLeave, TradeAccept, TradeAddItem,
@@ -16,9 +16,9 @@ use ld2_protocol::cmd::{
 use crate::palette::Palette;
 use ely::forms::{Choice, NumberInput, Select};
 
-use ld2_protocol::types::PartyMember;
+use ld2_protocol::types::{ItemSnapshot, PartyMember};
 
-use super::{act_btn, Root};
+use super::{act_btn, Root, SendSlot};
 
 /// M14/F2: окно группы показывается только когда участников ≥2 —
 /// инвайт сам создаёт группу (сервер, F5), но до принятия приглашения
@@ -43,7 +43,7 @@ impl Root {
                 let cmd = PartyDecline {
                     invite_id: id.clone(),
                 };
-                let _ = r.transport.send(&cmd);
+                let _ = r.try_send(&cmd);
                 r.store.party_invite = None;
             });
             return Some(
@@ -71,7 +71,7 @@ impl Root {
                 let cmd = TradeCancel {
                     offer_id: oid.clone(),
                 };
-                let _ = r.transport.send(&cmd);
+                let _ = r.try_send(&cmd);
             });
             return Some(
                 Dialog::new("ld2-trade", title, close)
@@ -129,9 +129,8 @@ impl Root {
                     pal.accent_text,
                     |this, cx| {
                         let cmd = PartyCreate {};
-                        match this.transport.send(&cmd) {
-                            Ok(_) => this.store.on_sheet_sent(Act::Party),
-                            Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                        if this.send_or_notice(&cmd, SendSlot::Notice) {
+                            this.store.on_sheet_sent(Act::Party)
                         }
                         let _ = cx;
                     },
@@ -143,9 +142,8 @@ impl Root {
                     pal.danger,
                     |this, cx| {
                         let cmd = PartyLeave {};
-                        match this.transport.send(&cmd) {
-                            Ok(_) => this.store.on_sheet_sent(Act::Party),
-                            Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                        if this.send_or_notice(&cmd, SendSlot::Notice) {
+                            this.store.on_sheet_sent(Act::Party)
                         }
                         let _ = cx;
                     },
@@ -212,9 +210,8 @@ impl Root {
                         let cmd = PartyKick {
                             player_id: pid.clone(),
                         };
-                        match this.transport.send(&cmd) {
-                            Ok(_) => this.store.on_sheet_sent(Act::Party),
-                            Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                        if this.send_or_notice(&cmd, SendSlot::Notice) {
+                            this.store.on_sheet_sent(Act::Party)
                         }
                         let _ = cx;
                     },
@@ -261,9 +258,8 @@ impl Root {
                                 let cmd = PartyAccept {
                                     invite_id: id.clone(),
                                 };
-                                match this.transport.send(&cmd) {
-                                    Ok(_) => this.store.on_sheet_sent(Act::Party),
-                                    Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                                if this.send_or_notice(&cmd, SendSlot::Notice) {
+                                    this.store.on_sheet_sent(Act::Party)
                                 }
                                 this.store.party_invite = None;
                                 let _ = cx;
@@ -281,9 +277,8 @@ impl Root {
                                 let cmd = PartyDecline {
                                     invite_id: id.clone(),
                                 };
-                                match this.transport.send(&cmd) {
-                                    Ok(_) => this.store.on_sheet_sent(Act::Party),
-                                    Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                                if this.send_or_notice(&cmd, SendSlot::Notice) {
+                                    this.store.on_sheet_sent(Act::Party)
                                 }
                                 this.store.party_invite = None;
                                 let _ = cx;
@@ -327,9 +322,8 @@ impl Root {
                                 let cmd = ld2_protocol::cmd::GuildJoin {
                                     guild_id: Some(gid.clone()),
                                 };
-                                match this.transport.send(&cmd) {
-                                    Ok(_) => this.store.on_sheet_sent(Act::Guild),
-                                    Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                                if this.send_or_notice(&cmd, SendSlot::Notice) {
+                                    this.store.on_sheet_sent(Act::Guild)
                                 }
                                 this.store.guild_invite = None;
                                 let _ = cx;
@@ -390,68 +384,22 @@ impl Root {
                 .flex()
                 .flex_row()
                 .gap_3()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .w(px(240.0))
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgb(pal.panel))
-                        .border_1()
-                        .border_color(rgb(pal.accent))
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(t(lang, Key::TradeYou)),
-                        )
-                        .children(trade.you.iter().map(|item| {
-                            div().child(format!("• {} ×{}", item.name, item.qty.unwrap_or(1)))
-                        }))
-                        .child(div().text_color(rgb(pal.muted)).child(format!(
-                            "{}: {}",
-                            t(lang, Key::TradeGold),
-                            trade.you_gold
-                        )))
-                        .children((trade.you_locked).then(|| {
-                            div()
-                                .text_color(rgb(pal.success))
-                                .child(format!("✓ {}", t(lang, Key::TradeAccept)))
-                        })),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .w(px(240.0))
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgb(pal.panel))
-                        .border_1()
-                        .border_color(rgb(pal.border))
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .child(t(lang, Key::TradeThem)),
-                        )
-                        .children(trade.them.iter().map(|item| {
-                            div().child(format!("• {} ×{}", item.name, item.qty.unwrap_or(1)))
-                        }))
-                        .child(div().text_color(rgb(pal.muted)).child(format!(
-                            "{}: {}",
-                            t(lang, Key::TradeGold),
-                            trade.them_gold
-                        )))
-                        .children((trade.them_locked).then(|| {
-                            div()
-                                .text_color(rgb(pal.success))
-                                .child(format!("✓ {}", t(lang, Key::TradeAccept)))
-                        })),
-                ),
+                .child(self.trade_party(
+                    pal,
+                    Key::TradeYou,
+                    &trade.you,
+                    trade.you_gold,
+                    trade.you_locked,
+                    pal.accent,
+                ))
+                .child(self.trade_party(
+                    pal,
+                    Key::TradeThem,
+                    &trade.them,
+                    trade.them_gold,
+                    trade.them_locked,
+                    pal.border,
+                )),
         );
 
         // M11.3: добавление предмета — Select Ely + «+ предмет»
@@ -494,9 +442,8 @@ impl Root {
                             item_uid: uid.clone(),
                             qty: None,
                         };
-                        match this.transport.send(&cmd) {
-                            Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                            Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                        if this.send_or_notice(&cmd, SendSlot::Notice) {
+                            this.store.on_sheet_sent(Act::Trade)
                         }
                         let _ = cx;
                     },
@@ -535,9 +482,8 @@ impl Root {
                         offer_id: oid.clone(),
                         gold,
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Notice) {
+                        this.store.on_sheet_sent(Act::Trade)
                     }
                 },
             ));
@@ -545,9 +491,68 @@ impl Root {
         col = col.child(gold_row);
 
         // Операции: фиксация/принятие/отмена (сверка версии — сервер, §9).
+        col = col.child(self.trade_ops(cx, lang, pal, &offer_id, version));
+        col
+    }
+
+    /// Колонка сделки (я/партнёр): заголовок, предметы, золото и
+    /// метка «принято»; зеркальные колонки собираются одним
+    /// хелпером (RF3r), тело перенесено как есть.
+    fn trade_party(
+        &self,
+        pal: &Palette,
+        title: Key,
+        items: &[ItemSnapshot],
+        gold: i64,
+        locked: bool,
+        border: u32,
+    ) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .w(px(240.0))
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(pal.panel))
+            .border_1()
+            .border_color(rgb(border))
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(t(self.lang, title)),
+            )
+            .children(
+                items
+                    .iter()
+                    .map(|item| div().child(format!("• {} ×{}", item.name, item.qty.unwrap_or(1)))),
+            )
+            .child(div().text_color(rgb(pal.muted)).child(format!(
+                "{}: {}",
+                t(self.lang, Key::TradeGold),
+                gold
+            )))
+            .children(locked.then(|| {
+                div()
+                    .text_color(rgb(pal.success))
+                    .child(format!("✓ {}", t(self.lang, Key::TradeAccept)))
+            }))
+    }
+
+    /// Кнопки операций сделки: фиксация/принятие/отмена (сверка
+    /// версии — на сервере, §9). Вынесено из `trade_view` (RF3r).
+    fn trade_ops(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        lang: Lang,
+        pal: &Palette,
+        offer_id: &str,
+        version: u64,
+    ) -> Div {
         let mut ops = div().flex().flex_row().gap_2();
         {
-            let oid = offer_id.clone();
+            let oid = offer_id.to_string();
             ops = ops.child(act_btn(
                 cx,
                 t(lang, Key::TradePropose),
@@ -558,16 +563,15 @@ impl Root {
                         offer_id: oid.clone(),
                         version,
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Notice) {
+                        this.store.on_sheet_sent(Act::Trade)
                     }
                     let _ = cx;
                 },
             ));
         }
         {
-            let oid = offer_id.clone();
+            let oid = offer_id.to_string();
             ops = ops.child(act_btn(
                 cx,
                 t(lang, Key::TradeAccept),
@@ -578,16 +582,15 @@ impl Root {
                         offer_id: oid.clone(),
                         version,
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Notice) {
+                        this.store.on_sheet_sent(Act::Trade)
                     }
                     let _ = cx;
                 },
             ));
         }
         {
-            let oid = offer_id.clone();
+            let oid = offer_id.to_string();
             ops = ops.child(act_btn(
                 cx,
                 t(lang, Key::TradeCancel),
@@ -597,16 +600,14 @@ impl Root {
                     let cmd = TradeCancel {
                         offer_id: oid.clone(),
                     };
-                    match this.transport.send(&cmd) {
-                        Ok(_) => this.store.on_sheet_sent(Act::Trade),
-                        Err(e) => this.store.notice = Some(format!("нет связи: {e}")),
+                    if this.send_or_notice(&cmd, SendSlot::Notice) {
+                        this.store.on_sheet_sent(Act::Trade)
                     }
                     let _ = cx;
                 },
             ));
         }
-        col = col.child(ops);
-        col
+        ops
     }
 }
 

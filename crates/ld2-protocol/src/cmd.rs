@@ -13,13 +13,34 @@ pub trait Command: Serialize {
     const IDEMPOTENT: bool;
 }
 
+/// Запись реестра команд: wire-`type` и флаг идемпотентности (графа «Идемп.»
+/// `docs/protocol.md` §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandInfo {
+    pub name: &'static str,
+    pub idempotent: bool,
+}
+
 macro_rules! impl_commands {
-    ($(($name:ident, $ty:literal, $idem:literal)),* $(,)?) => {$(
-        impl Command for $name {
-            const TYPE: &'static str = $ty;
-            const IDEMPOTENT: bool = $idem;
-        }
-    )*};
+    ($(($name:ident, $ty:literal, $idem:literal)),* $(,)?) => {
+        $(
+            impl Command for $name {
+                const TYPE: &'static str = $ty;
+                const IDEMPOTENT: bool = $idem;
+            }
+        )*
+
+        /// Все команды протокола в порядке объявления — по записи на строку
+        /// `impl_commands!`. Реестр генерируется тем же списком, что и
+        /// `impl Command`, поэтому «добавил команду и забыл зарегистрировать»
+        /// невозможно. Источник истины для теста полноты `dispatch`
+        /// (`ld2-server/tests/command_registry.rs`) и сверки с §7.
+        pub const ALL_COMMANDS: &[CommandInfo] = &[
+            $(
+                CommandInfo { name: $ty, idempotent: $idem },
+            )*
+        ];
+    };
 }
 
 // ─── auth / session (§4.5) ───────────────────────────────────────────────────
@@ -100,6 +121,12 @@ pub struct LocationMove {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct EntityInfo {
     pub entity_id: String,
+}
+
+/// M35: ПКМ-осмотр персонажа — экипировка, уровень и профессии.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharInspect {
+    pub char_id: String,
 }
 
 /// M18/F35: диалог NPC — приветствие/строки с условиями + доступные квесты.
@@ -186,7 +213,15 @@ pub struct ItemDrop {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ItemMove {
     pub item_uid: String,
+    #[serde(default)]
     pub target_uid: String,
+    /// M28: целевой контейнер (`backpack`, `bags`, uid сумки);
+    /// `None` — старый обмен порядком по `target_uid`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_container: Option<String>,
+    /// M28: позиция внутри контейнера.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_index: Option<i32>,
 }
 
 // ─── магия (ФР-09; D4: руна = мана + заряд) ──────────────────────────────────
@@ -462,6 +497,17 @@ pub struct StateResync {
     pub last_state_version: u64,
 }
 
+/// M26: карта-граф мира (§7 аддитивно): чанк статического графа
+/// локаций. `offset` — индекс первой локации чанка; ack
+/// `{locations, offset, total}` — повторять до `offset >= total`
+/// (MAX_MESSAGE_BYTES = 64 КБ — полный граф в одно сообщение
+/// не влезает). Повтор безопасен (чтение).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct MapWorld {
+    #[serde(default)]
+    pub offset: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Ping {}
 
@@ -514,6 +560,13 @@ pub struct AdminClear {
     pub target: String,
 }
 
+/// M27 (hot reload контента): перечитать каталог `content/` на работающем
+/// сервере — идемпотентный сид в БД при смене версии + замена диалогов/
+/// магазинов/версии в памяти + сброс кэша карты мира. Только `role=admin`
+/// → `E_PERMISSION`; ack `{version, applied, locations, items}`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct AdminContentReload {}
+
 /// M24: содержимое выбранной цели правой колонки (кроме self —
 /// ack `{items: [{ref, id, name, type, rarity, qty}]}` — рюкзак
 /// (`self`/`char:<имя>`), лут трупа (`corpse:<id>`), будущий лут
@@ -536,7 +589,9 @@ impl_commands!(
     (SkillTrain, "cmd/skill.train", false),
     (LocationLook, "cmd/location.look", true),
     (LocationMove, "cmd/location.move", false),
+    (MapWorld, "cmd/map.world", true),
     (EntityInfo, "cmd/entity.info", true),
+    (CharInspect, "cmd/char.inspect", true),
     (NpcTalk, "cmd/npc.talk", true),
     (NpcReply, "cmd/npc.reply", false),
     (ShopList, "cmd/shop.list", true),
@@ -564,6 +619,7 @@ impl_commands!(
     (AdminGodMode, "cmd/admin.god_mode", false),
     (AdminTargetInfo, "cmd/admin.target.info", true),
     (AdminClear, "cmd/admin.clear", false),
+    (AdminContentReload, "cmd/admin.content.reload", true),
     (UpgradePreview, "cmd/upgrade.preview", true),
     (UpgradeStart, "cmd/upgrade.start", false),
     (CraftList, "cmd/craft.list", true),
@@ -615,6 +671,7 @@ mod tests {
             AuthRegister::TYPE,
             CharCreate::TYPE,
             LocationMove::TYPE,
+            MapWorld::TYPE,
             MagicRuneCast::TYPE,
             GuildRankSet::TYPE,
             StateResync::TYPE,
@@ -650,5 +707,91 @@ mod tests {
         })
         .expect("serialize");
         assert_eq!(json, serde_json::json!({ "skill_id": "power_strike" }));
+    }
+
+    /// Команды из таблицы §7 `docs/protocol.md`: `(имя без `cmd/`, идемпотентна)`.
+    fn protocol_doc_commands() -> Vec<(&'static str, bool)> {
+        let doc = include_str!("../../../docs/protocol.md");
+        let section = doc
+            .split("## 7. Команды")
+            .nth(1)
+            .expect("§7 в docs/protocol.md")
+            .split("\n## 8.")
+            .next()
+            .expect("конец §7");
+        let mut out = Vec::new();
+        for line in section.lines() {
+            let line = line.trim();
+            if !line.starts_with("| `") {
+                continue;
+            }
+            let cells: Vec<&str> = line.split(" | ").collect();
+            let idem = cells
+                .get(3)
+                .map(|c| c.trim_start().starts_with('+'))
+                .expect("графа «Идемп.» в §7");
+            let first = cells[0].trim_start_matches('|').trim();
+            for (i, token) in first.split('`').enumerate() {
+                if i % 2 == 0 {
+                    continue; // текст между backtick-ами
+                }
+                let token = token.trim();
+                let well_formed = !token.is_empty()
+                    && token.chars().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.'
+                    });
+                if well_formed && !out.iter().any(|(name, _)| *name == token) {
+                    out.push((token, idem));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn registry_matches_protocol_doc() {
+        let doc = protocol_doc_commands();
+        assert!(!doc.is_empty(), "таблица §7 не распознана");
+        let code: Vec<(&str, bool)> = ALL_COMMANDS
+            .iter()
+            .map(|c| {
+                (
+                    c.name.strip_prefix("cmd/").expect("префикс cmd/"),
+                    c.idempotent,
+                )
+            })
+            .collect();
+        for (name, idem) in &code {
+            let found = doc.iter().find(|(d, _)| d == name).unwrap_or_else(|| {
+                panic!("`{name}` есть в ALL_COMMANDS, но не описана в docs/protocol.md §7")
+            });
+            assert_eq!(*idem, found.1, "идемпотентность `{name}` расходится с §7");
+        }
+        for (name, _) in &doc {
+            assert!(
+                code.iter().any(|(c, _)| c == name),
+                "§7 описывает `{name}`, которой нет в ALL_COMMANDS"
+            );
+        }
+        assert_eq!(code.len(), doc.len(), "число команд в реестре и §7");
+    }
+
+    #[test]
+    fn registry_is_well_formed() {
+        assert!(ALL_COMMANDS.len() >= 70, "реестр подозрительно короткий");
+        let mut seen = std::collections::HashSet::new();
+        for c in ALL_COMMANDS {
+            assert!(c.name.starts_with("cmd/"), "{}", c.name);
+            let rest = &c.name["cmd/".len()..];
+            assert!(
+                rest.chars().all(|ch| {
+                    ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '.'
+                }),
+                "{}",
+                c.name
+            );
+            assert!(rest == "ping" || rest.contains('.'), "{}", c.name);
+            assert!(seen.insert(c.name), "дубль {}", c.name);
+        }
     }
 }

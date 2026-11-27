@@ -1,13 +1,57 @@
 {
   "items": [
     {
+      "id": "traveler_bag",
+      "type": "bag",
+      "name": "Походный рюкзак",
+      "rarity": "common",
+      "gold_value": 25,
+      "qty": 1,
+      "bag_slots": 20
+    },
+    {
+      "id": "linen_bag",
+      "type": "bag",
+      "name": "Льняная сумка",
+      "rarity": "uncommon",
+      "gold_value": 60,
+      "qty": 1,
+      "bag_slots": 8
+    },
+    {
+      "id": "wool_bag",
+      "type": "bag",
+      "name": "Шерстяная сумка",
+      "rarity": "rare",
+      "gold_value": 150,
+      "qty": 1,
+      "bag_slots": 12
+    },
+    {
+      "id": "silk_bag",
+      "type": "bag",
+      "name": "Шёлковая сумка",
+      "rarity": "epic",
+      "gold_value": 320,
+      "qty": 1,
+      "bag_slots": 16
+    },
+    {
       "id": "gold_coin",
       "type": "money",
       "name": "Золотая монета",
       "rarity": "common",
       "upgrade": 0,
       "gold_value": 1,
-      "qty": 10
+      "qty": 10,
+      "stats": {
+        "buff": {
+          "param": "accuracy",
+          "value": 1,
+          "duration_s": 5,
+          "max_stacks": 1
+        }
+      }
     },
     {
       "id": "sword_knight",
@@ -20,7 +64,8 @@
       "upgrade": 0,
       "cooldown_s": 1.0,
       "stats": {
-        "dmg": "6..9"
+        "dmg": "6..9",
+        "class": "warrior"
       },
       "gold_value": 180,
       "skill": "sword"
@@ -299,7 +344,31 @@
       "stats": {
         "dmg": "13..26",
         "param": {
-          "crit_chance": 3
+          "crit_chance": 3,
+          "accuracy": 1
+        },
+        "class": "warrior",
+        "attr": "str",
+        "value": 5,
+        "buff": {
+          "param": "crit_damage",
+          "value": 5,
+          "duration_s": 5,
+          "max_stacks": 1,
+          "pct": true
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 1,
+          "duration_s": 5,
+          "max_stacks": 1,
+          "pct": true
+        },
+        "effect": {
+          "kind": "stun",
+          "value": 1,
+          "duration_s": 3,
+          "period_s": 1
         }
       },
       "bonuses": [
@@ -330,12 +399,19 @@
       "slot": "main_hand",
       "hands": 2,
       "sockets": 4,
-      "rune_sockets": 2
+      "rune_sockets": 2,
+      "requires": {
+        "attr": {
+          "str": 46,
+          "dex": 54
+        },
+        "level": 60
+      }
     },
     {
       "id": "sword_1000_true",
       "type": "weapon",
-      "name": "Меч тысячи истин",
+      "name": "Клеймор тысячи истин",
       "rarity": "legendary",
       "upgrade": 10,
       "cooldown_s": 3.0,
@@ -384,6 +460,76 @@
       "rune_sockets": 2
     },
     {
+      "id": "sword_1000_true_1h",
+      "type": "weapon",
+      "name": "Клинок тысячи истин",
+      "rarity": "legendary",
+      "upgrade": 10,
+      "cooldown_s": 2.5,
+      "stats": {
+        "dmg": "15..24"
+      },
+      "bonuses": [
+        {
+          "kind": "attr",
+          "id": "str",
+          "value": 4
+        },
+        {
+          "kind": "attr",
+          "id": "dex",
+          "value": 4
+        },
+        {
+          "kind": "param",
+          "id": "damage",
+          "value": 5
+        },
+        {
+          "kind": "param",
+          "id": "accuracy",
+          "value": 4,
+          "pct": true
+        },
+        {
+          "kind": "param",
+          "id": "crit_chance",
+          "value": 10,
+          "pct": true
+        },
+        {
+          "kind": "skill",
+          "id": "sword",
+          "value": 1
+        }
+      ],
+      "gold_value": 3000,
+      "skill": "sword",
+      "slot": "main_hand",
+      "hands": 1,
+      "sockets": 4,
+      "rune_sockets": 2
+    },
+    {
+      "id": "shield_1000_true",
+      "type": "shield",
+      "name": "Щит тысячи истин",
+      "rarity": "legendary",
+      "upgrade": 10,
+      "stats": {
+        "armor": 15,
+        "param": {
+          "block_min": 12,
+          "block_max": 18,
+          "block_chance": 12
+        }
+      },
+      "gold_value": 2400,
+      "slot": "off_hand",
+      "sockets": 5,
+      "rune_sockets": 2
+    },
+    {
       "id": "hammer_battle",
       "type": "weapon",
       "name": "Боевой молот",
@@ -420,7 +566,10 @@
       "rarity": "common",
       "upgrade": 0,
       "stats": {
-        "armor": 3
+        "armor": 3,
+        "param": {
+          "block_chance": 5
+        }
       },
       "gold_value": 40,
       "slot": "off_hand"
@@ -432,7 +581,10 @@
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {
-        "armor": 6
+        "armor": 6,
+        "param": {
+          "block_chance": 8
+        }
       },
       "gold_value": 160,
       "slot": "off_hand"
@@ -1034,6 +1186,282 @@
       "gold_value": 80
     },
     {
+      "id": "rune_wolf_rage",
+      "type": "rune",
+      "name": "Руна волка: Ярость",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "wolves_rage",
+        "damage": 8,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "R",
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "warrior"
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_wolf_blood",
+      "type": "rune",
+      "name": "Руна волка: Ярость-Кровь",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "wolves_rage",
+        "damage": 9,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "RB",
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "warrior"
+      },
+      "gold_value": 130
+    },
+    {
+      "id": "rune_wolf_wail",
+      "type": "rune",
+      "name": "Руна волка: Ярость-Кровь-Воя",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "wolves_rage",
+        "damage": 10,
+        "chance": 0.3,
+        "charges": 4,
+        "max": 8,
+        "glyph": "RBW",
+        "buff": {
+          "param": "crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "effect": {
+          "kind": "bleed",
+          "value": 4,
+          "duration_s": 6
+        },
+        "class": "warrior"
+      },
+      "gold_value": 260
+    },
+    {
+      "id": "rune_hawk_eye",
+      "type": "rune",
+      "name": "Руна сокола: Око",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hawks_eye",
+        "damage": 8,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 8,
+        "glyph": "E",
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "class": "archer"
+      },
+      "gold_value": 55
+    },
+    {
+      "id": "rune_hawk_wind",
+      "type": "rune",
+      "name": "Руна сокола: Око-Ветер",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hawks_eye",
+        "damage": 9,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 8,
+        "glyph": "EW",
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "archer"
+      },
+      "gold_value": 130
+    },
+    {
+      "id": "rune_hawk_sting",
+      "type": "rune",
+      "name": "Руна сокола: Око-Ветер-Жало",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "hawks_eye",
+        "damage": 10,
+        "chance": 0.3,
+        "charges": 4,
+        "max": 8,
+        "glyph": "EWS",
+        "buff": {
+          "param": "accuracy",
+          "value": 6,
+          "duration_s": 12,
+          "max_stacks": 3
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "effect": {
+          "kind": "root",
+          "duration_s": 4
+        },
+        "class": "archer"
+      },
+      "gold_value": 260
+    },
+    {
+      "id": "rune_flame_spark",
+      "type": "rune",
+      "name": "Руна пламени: Искра",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "flame_word",
+        "damage": 10,
+        "chance": 0.3,
+        "charges": 6,
+        "max": 10,
+        "glyph": "S",
+        "school": "fire",
+        "buff": {
+          "param": "magic_crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "mage"
+      },
+      "gold_value": 60
+    },
+    {
+      "id": "rune_flame_gust",
+      "type": "rune",
+      "name": "Руна пламени: Искра-Порыв",
+      "rarity": "rare",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "flame_word",
+        "damage": 11,
+        "chance": 0.3,
+        "charges": 5,
+        "max": 10,
+        "glyph": "SG",
+        "school": "fire",
+        "buff": {
+          "param": "magic_crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "class": "mage"
+      },
+      "gold_value": 130
+    },
+    {
+      "id": "rune_flame_ash",
+      "type": "rune",
+      "name": "Руна пламени: Искра-Порыв-Пепел",
+      "rarity": "epic",
+      "upgrade": 0,
+      "cooldown_s": 1.0,
+      "stats": {
+        "spell": "flame_word",
+        "damage": 12,
+        "chance": 0.3,
+        "charges": 4,
+        "max": 10,
+        "glyph": "SGA",
+        "school": "fire",
+        "buff": {
+          "param": "magic_crit_chance",
+          "value": 8,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "buff2": {
+          "param": "damage",
+          "value": 10,
+          "pct": true,
+          "duration_s": 12,
+          "max_stacks": 2
+        },
+        "effect": {
+          "kind": "burn",
+          "value": 3,
+          "period_s": 2,
+          "duration_s": 6
+        },
+        "class": "mage"
+      },
+      "gold_value": 260
+    },
+    {
       "id": "scroll_frost",
       "type": "scroll",
       "name": "Свиток мороза",
@@ -1156,6 +1584,16 @@
       "upgrade": 0,
       "stats": {},
       "gold_value": 10,
+      "qty": 1
+    },
+    {
+      "id": "pelt_white_wolf",
+      "type": "hide",
+      "name": "Шкура белого волка",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 500,
       "qty": 1
     },
     {
@@ -1332,6 +1770,96 @@
         "quality": 5
       },
       "gold_value": 60,
+      "qty": 1
+    },
+    {
+      "id": "item_new_1",
+      "type": "gem",
+      "name": "Новый предмет",
+      "rarity": "common",
+      "upgrade": 0,
+      "gold_value": 0,
+      "stats": {
+        "dmg": "4..8"
+      },
+      "sockets": 0
+    },
+    {
+      "id": "arrow",
+      "type": "ammo",
+      "name": "Стрела",
+      "rarity": "common",
+      "gold_value": 1,
+      "qty": 200
+    },
+    {
+      "id": "quiver",
+      "type": "bag",
+      "name": "Колчан",
+      "rarity": "uncommon",
+      "gold_value": 80,
+      "qty": 1,
+      "bag_slots": 10,
+      "bag_types": [
+        "ammo"
+      ],
+      "bag_kind": "quiver"
+    },
+    {
+      "id": "herbalist_bag",
+      "type": "bag",
+      "name": "Сумка травника",
+      "rarity": "uncommon",
+      "gold_value": 90,
+      "qty": 1,
+      "bag_slots": 12,
+      "bag_types": [
+        "herb"
+      ],
+      "bag_kind": "reagent"
+    },
+    {
+      "id": "reagent_bag",
+      "type": "bag",
+      "name": "Сумка реагентов",
+      "rarity": "uncommon",
+      "gold_value": 100,
+      "qty": 1,
+      "bag_slots": 14,
+      "bag_types": [
+        "herb",
+        "ore_copper",
+        "wood_oak",
+        "hide",
+        "hide_scraps",
+        "meat",
+        "offal",
+        "branches",
+        "parchment",
+        "ink",
+        "flask"
+      ],
+      "bag_kind": "reagent"
+    },
+    {
+      "id": "keyring",
+      "type": "bag",
+      "name": "Ключница",
+      "rarity": "rare",
+      "gold_value": 120,
+      "qty": 1,
+      "bag_slots": 8,
+      "bag_types": [
+        "key"
+      ],
+      "bag_kind": "keyring"
+    },
+    {
+      "id": "old_key",
+      "type": "key",
+      "name": "Старый ключ",
+      "rarity": "common",
+      "gold_value": 5,
       "qty": 1
     }
   ]

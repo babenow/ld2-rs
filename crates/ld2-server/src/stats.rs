@@ -17,7 +17,9 @@
 use ld2_protocol::types::{DerivedParams, ItemSnapshot, SkillSnapshot};
 use std::collections::BTreeMap;
 
-/// Эффекты оружейных навыков §A за ранг: (урон %, крит %, уклон %).
+/// Эффекты оружейных навыков §A за ранг: (точность %, крит %, уклон %).
+/// M32 (заказчик): навык владения оружием даёт **точность**, а не урон;
+/// на урон влияет только сила.
 const WEAPON_EFFECTS: &[(&str, f64, f64, f64)] = &[
     ("sword", 2.0, 0.0, 0.0),
     ("axe", 2.0, 0.0, 0.0),
@@ -69,6 +71,16 @@ fn weapon_damage(equipped: &[ItemSnapshot], base: i64) -> (i64, i64) {
     (base, base)
 }
 
+/// Заказчик 2026-11-27: парирование — параметр только двуручного
+/// оружия; у одноручного его нет.
+fn weapon_is_twohanded(equipped: &[ItemSnapshot]) -> bool {
+    equipped
+        .iter()
+        .find(|i| i.item_type == "weapon" && i.stats.contains_key("dmg"))
+        .and_then(|i| i.hands)
+        == Some(2)
+}
+
 /// Навык снаряжённого оружия из `extra["skill"]` (см. док модуля).
 fn equipped_weapon_skill(equipped: &[ItemSnapshot]) -> Option<&str> {
     equipped
@@ -94,23 +106,25 @@ pub fn derive(
         attr(attrs, "int"),
     );
 
-    // Вклад снаряжённого оружейного навыка (§A — в процентах за ранг).
-    let (mut dmg_pct, mut crit_pct, mut dodge_pct) = (0.0f64, 0.0f64, 0.0f64);
+    // Вклад снаряжённого оружейного навыка (§A за ранг): точность
+    // (M32: не урон — на урон влияет только сила), крит, уклонение.
+    let (mut acc_pct, mut crit_pct, mut dodge_pct) = (0.0f64, 0.0f64, 0.0f64);
     if let Some(skill_id) = equipped_weapon_skill(equipped) {
-        if let Some(&(_, d, c, u)) = WEAPON_EFFECTS.iter().find(|(id, ..)| *id == skill_id) {
+        if let Some(&(_, a, c, u)) = WEAPON_EFFECTS.iter().find(|(id, ..)| *id == skill_id) {
             let r = rank(skills, skill_id) as f64;
-            dmg_pct = d * r;
+            acc_pct = a * r;
             crit_pct = c * r;
             dodge_pct = u * r;
         }
     }
 
     // ── физические ──
-    let dmg_mult = 1.0 + dmg_pct / 100.0;
-    let damage_min = (((w_min + strg / 2) as f64) * dmg_mult).round() as i64;
-    let damage_max = (((w_max + strg / 2) as f64) * dmg_mult).round() as i64;
-    // Точность: ловкость (GDD §1) — база под «стартовый» 80 %.
-    let accuracy = (75 + dex / 2).clamp(1, 99);
+    // M32 (заказчик): урон = оружие + сила/2 (+ руны); навык оружия
+    // урон не множит.
+    let damage_min = w_min + strg / 2;
+    let damage_max = w_max + strg / 2;
+    // Точность: ловкость (GDD §1) + оружейный навык (M32).
+    let accuracy = (75 + dex / 2 + acc_pct.round() as i64).clamp(1, 99);
     let crit_chance = ((5.0 + dex as f64 * 0.3 + crit_pct).round() as i64).clamp(0, 100);
     let crit_damage = 50 + dex / 5;
     // Броня — сумма статов экипировки (контент брони пока пуст → 0).
@@ -125,13 +139,22 @@ pub fn derive(
         + dodge_pct)
         .round() as i64)
         .clamp(0, 60);
-    // Парирование: навык `parring` (контент-ид) + dex; контрудар ~½ урона.
-    let parry_chance = (5 + rank(skills, "parring") + dex / 10).clamp(0, 60);
-    let parry_min = w_min / 2 + strg / 4;
-    let parry_max = w_max / 2 + strg / 4;
-    // Блок: §B «+2% шанса полного блока за ранг»; снижение урона —
-    // щит-предмет (в контенте пока нет → 0..0).
-    let block_chance = (rank(skills, "block") * 2).clamp(0, 60);
+    // Парирование (заказчик 2026-11-27): только двуручное оружие —
+    // у одноручного парирования нет. Урон контрудара зависит от силы,
+    // а не от оружия: `str/4 .. str/2`.
+    let twohanded = weapon_is_twohanded(equipped);
+    let parry_chance = if twohanded {
+        (5 + rank(skills, "parring") + dex / 10).clamp(0, 60)
+    } else {
+        0
+    };
+    let parry_min = if twohanded { strg / 4 } else { 0 };
+    let parry_max = if twohanded { strg / 2 } else { 0 };
+    // Блок: §B «+2% шанса полного блока за ранг»; сила и ловкость
+    // тоже дают шанс (заказчик), а базовый шанс — у щита
+    // (`stats.param.block_chance`). `block_min/max` — сколько урона
+    // блокирует щит.
+    let block_chance = (rank(skills, "block") * 2 + (strg + dex) / 10).clamp(0, 60);
 
     // ── магические ──
     let staff_magic: i64 = equipped
@@ -169,6 +192,93 @@ pub fn derive(
     // M18/F47: бонусы надетых предметов (ADR-010).
     apply_param_bonuses(&mut params, equipped);
     params
+}
+
+// ─── M30: максимумы и фасад пересчёта (docs/character-params.md) ────────────
+
+/// M30 §2.1: максимум HP — `hp_max_base + vit×hp_per_vit + level×hp_per_level`.
+/// Результат — **кэш** в колонке `characters.hp_max` (см. док §2.3):
+/// фасад чистый, персист делает вызывающая точка.
+pub fn max_hp(attrs: &BTreeMap<String, i64>, level: u32, cfg: &crate::config::Config) -> i64 {
+    let hp = &cfg.gameplay.health;
+    let raw = hp.hp_max_base as f64
+        + attr(attrs, "vit") as f64 * hp.hp_per_vit
+        + f64::from(level) * hp.hp_per_level;
+    // Валидатор не даёт отрицательных коэффициентов, но vit может
+    // уйти в минус аффиксами — максимум не бывает ниже 1.
+    (raw.round() as i64).max(1)
+}
+
+/// M30 §1.1: максимум маны — `mp_max_base + int×mp_per_int +
+/// arcana_rank×mp_per_arcana + spir×mp_per_spir` (духовность M30).
+/// Кэш в колонке `characters.mp_max`; у воина/лучника ресурс по
+/// профилю всё равно перекрывает ману (`resource_max`).
+pub fn max_mp(
+    attrs: &BTreeMap<String, i64>,
+    skills: &[SkillSnapshot],
+    cfg: &crate::config::Config,
+) -> i64 {
+    let mana = &cfg.gameplay.magic.mana;
+    let raw = mana.mp_max_base as f64
+        + attr(attrs, "int") as f64 * mana.mp_per_int
+        + rank(skills, "arcana") as f64 * mana.mp_per_arcana
+        + attr(attrs, "spir") as f64 * mana.mp_per_spir;
+    (raw.round() as i64).max(1)
+}
+
+/// M30: вход фасада [`recalculate`] — всё, что нужно для полного
+/// пересчёта, без БД и без события.
+pub struct RecalcInput<'a> {
+    /// Эффективные атрибуты: колонка `attrs` + самоцветы + бонусы
+    /// снаряжения (`character_state` собирает до вызова).
+    pub attrs: &'a BTreeMap<String, i64>,
+    pub skills: &'a [SkillSnapshot],
+    /// Снаряжённые предметы (для производных и бонусов `kind=param`).
+    pub equipped: &'a [ItemSnapshot],
+    /// Уровень персонажа (не ранг — для формулы HP).
+    pub level: u32,
+    /// Профиль (`warrior`/`archer`/…) — для рабочего максимума ресурса.
+    pub profile: &'a str,
+    pub cfg: &'a crate::config::Config,
+}
+
+/// M30: результат [`recalculate`] — все параметры разом. Порядок
+/// вычисления внутри фиксирован: `max_hp` → `max_mp` → `resource_max`
+/// (зависит от `mp_max`) → `derive`.
+pub struct Recalc {
+    pub hp_max: i64,
+    pub mp_max: i64,
+    /// Рабочий максимум ресурса профиля: ярость/энергия/мана.
+    pub resource_max: i64,
+    pub derived: DerivedParams,
+}
+
+/// M30: **фасад пересчёта всех параметров** (решение заказчика
+/// 2026-11-26): единая точка входа для снапшота, level-up, вставки/
+/// извлечения самоцвета и создания персонажа. Внутри — поочерёдные
+/// узкие функции (см. порядок в [`Recalc`]).
+///
+/// Фасад **чистый**: ничего не пишет в БД и не шлёт событий —
+/// персист (`db::characters::set_max`) и патчи `evt/char/stats` делает
+/// вызывающая точка. Регенерация сюда не входит: это тик-дельты
+/// (`regen_step`), а не параметры.
+pub fn recalculate(input: RecalcInput<'_>) -> Recalc {
+    let hp_max = max_hp(input.attrs, input.level, input.cfg);
+    let mp_max = max_mp(input.attrs, input.skills, input.cfg);
+    let resource_max =
+        crate::systems::resource_max(input.profile, &input.cfg.gameplay.resource, mp_max);
+    let derived = derive(
+        input.attrs,
+        input.skills,
+        input.equipped,
+        input.cfg.gameplay.combat.base_damage,
+    );
+    Recalc {
+        hp_max,
+        mp_max,
+        resource_max,
+        derived,
+    }
 }
 
 /// M18/F47/ADR-010: бонусы `kind=param` надетых предметов. Плоские
@@ -257,10 +367,47 @@ mod tests {
     use super::*;
 
     fn attrs10() -> BTreeMap<String, i64> {
-        ["str", "dex", "vit", "int"]
+        ["str", "dex", "vit", "int", "spir"]
             .iter()
             .map(|k| (k.to_string(), 10i64))
             .collect()
+    }
+
+    /// M30: фасад [`recalculate`] — стартовые значения на дефолтах
+    /// `server.example.toml` (hp 100, мана 110, профиль → ресурс).
+    #[test]
+    fn recalculate_facade_start_values() {
+        let example =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("server.example.toml");
+        let cfg = crate::config::Config::load(&example).expect("example валиден");
+        let attrs = attrs10();
+        let skills = [skill("arcana", 0)];
+        let out = recalculate(RecalcInput {
+            attrs: &attrs,
+            skills: &skills,
+            equipped: &[],
+            level: 1,
+            profile: "mage",
+            cfg: &cfg,
+        });
+        // hp: 40 + vit10×5 + уровень1×10 = 100 (без вклада ранга).
+        assert_eq!(out.hp_max, 100, "стартовое здоровье GDD §2.1");
+        // mp: 20 + int10×4 + arcana0×5 + spir10×5 = 110 (§1.1).
+        assert_eq!(out.mp_max, 110, "стартовая мана с духовностью");
+        assert_eq!(out.resource_max, 110, "маг — ресурс это мана");
+        // Производные считаются тем же `derive`, что и раньше.
+        assert_eq!(out.derived.accuracy, 80, "accuracy = 75 + dex/2");
+
+        // Воин: ресурс — ярость из конфига, мане формулы не мешает.
+        let warrior = recalculate(RecalcInput {
+            attrs: &attrs,
+            skills: &skills,
+            equipped: &[],
+            level: 1,
+            profile: "warrior",
+            cfg: &cfg,
+        });
+        assert_eq!(warrior.resource_max, 100, "воин — ярость");
     }
 
     fn skill(id: &str, rank: u32) -> SkillSnapshot {
@@ -272,6 +419,7 @@ mod tests {
             rank,
             xp: 0,
             xp_to_next: 0,
+            rank_cap: None,
         }
     }
 
@@ -291,6 +439,11 @@ mod tests {
             qty: None,
             gold_value: None,
             bonuses: None,
+            container: None,
+            slot_index: None,
+            bag_slots: None,
+            bag_types: None,
+            bag_kind: None,
             extra: extra.as_object().cloned().unwrap_or_default(),
         }
     }
@@ -308,9 +461,10 @@ mod tests {
             "5+dex·0.3 / 50+dex/5"
         );
         assert_eq!((d.armor, d.dodge), (0, 7), "без брони / 3+dex·0.4");
-        assert_eq!((d.parry_min, d.parry_max), (5, 5), "w/2 + str/4");
-        assert_eq!(d.parry_chance, 6, "5 + dex/10");
-        assert_eq!((d.block_min, d.block_max, d.block_chance), (0, 0, 0));
+        // Без оружия парирования нет (только двуручное оружие).
+        assert_eq!((d.parry_min, d.parry_max, d.parry_chance), (0, 0, 0));
+        // str+dex 20 → +2% шанса блока (щита нет, навыка нет).
+        assert_eq!((d.block_min, d.block_max, d.block_chance), (0, 0, 2));
         assert_eq!(
             (
                 d.magic_defense,
@@ -339,17 +493,79 @@ mod tests {
             skill("arcana", 2),
         ];
         let d = derive(&attrs10(), &skills, &[dagger], 6);
-        // (2 + 5) × 1.045 = 7.315 → 7; (4 + 5) × 1.045 = 9.405 → 9.
-        assert_eq!((d.damage_min, d.damage_max), (7, 9), "dagger +1.5%/ранг");
+        // M32: урон — только оружие + сила/2 (навык его не множит).
+        assert_eq!((d.damage_min, d.damage_max), (7, 9), "2+5 / 4+5");
+        // M32: кинжал р.3 даёт точность: 75 + 5 + 1.5×3 = 84.5 → 85.
+        assert_eq!(d.accuracy, 85, "dagger +1.5% точности/ранг");
         // 5 + 10·0.3 + 0.7·3 = 10.1 → 10.
         assert_eq!(d.crit_chance, 10, "dagger +0.7% крита/ранг");
         // 3 + dex·0.4(4) + evasion 5 + вклад кинжала 0 = 12
         // (бонус +0.5/ранг — у `unarmed`, не у кинжала).
         assert_eq!(d.dodge, 12, "уклон с evasion");
-        assert_eq!(d.parry_chance, 6, "parring не изучен");
-        assert_eq!(d.block_chance, 4, "block +2%/ранг");
+        assert_eq!(
+            (d.parry_min, d.parry_max, d.parry_chance),
+            (0, 0, 0),
+            "кинжал (одноручный) не парирует"
+        );
+        assert_eq!(d.block_chance, 6, "block +2%/ранг + str/dex");
         assert_eq!(d.magic_dispel, 9, "int/2 + m_dispel 4");
         assert_eq!(d.magic_crit_chance, 9, "5 + 3 + arcana/2");
+    }
+
+    /// Заказчик 2026-11-27: парирование — только у двуручного оружия;
+    /// парируемый урон зависит от силы, а не от оружия.
+    #[test]
+    fn parry_only_twohanded_and_scales_with_strength() {
+        let mut twohand = item(
+            serde_json::json!({"dmg": "10..20"}),
+            serde_json::json!({"skill": "twohand"}),
+        );
+        twohand.hands = Some(2);
+        let d = derive(&attrs10(), &[skill("parring", 3)], &[twohand], 6);
+        assert_eq!((d.parry_min, d.parry_max), (2, 5), "сила/4 .. сила/2");
+        assert_eq!(d.parry_chance, 9, "5 + parring 3 + dex/10");
+
+        let mut strong = attrs10();
+        strong.insert("str".into(), 30);
+        let mut twohand = item(
+            serde_json::json!({"dmg": "10..20"}),
+            serde_json::json!({"skill": "twohand"}),
+        );
+        twohand.hands = Some(2);
+        let d = derive(&strong, &[], &[twohand], 6);
+        assert_eq!((d.parry_min, d.parry_max), (7, 15), "сила 30");
+
+        let mut onehand = item(
+            serde_json::json!({"dmg": "10..20"}),
+            serde_json::json!({"skill": "sword"}),
+        );
+        onehand.hands = Some(1);
+        let d = derive(&attrs10(), &[skill("parring", 3)], &[onehand], 6);
+        assert_eq!(
+            (d.parry_min, d.parry_max, d.parry_chance),
+            (0, 0, 0),
+            "одноручное оружие не парирует"
+        );
+    }
+
+    /// M32 (заказчик): навык владения оружием даёт **точность**, а не
+    /// урон; урон определяется только оружием и силой.
+    #[test]
+    fn weapon_skill_adds_accuracy_not_damage() {
+        let sword = item(
+            serde_json::json!({"dmg": "6..9"}),
+            serde_json::json!({"skill": "sword"}),
+        );
+        let plain = derive(&attrs10(), &[], std::slice::from_ref(&sword), 6);
+        let skilled = derive(&attrs10(), &[skill("sword", 5)], &[sword], 6);
+        assert_eq!(
+            (skilled.damage_min, skilled.damage_max),
+            (plain.damage_min, plain.damage_max),
+            "навык не меняет урон"
+        );
+        assert_eq!((plain.damage_min, plain.damage_max), (11, 14), "6+5 / 9+5");
+        assert_eq!(plain.accuracy, 80, "без навыка");
+        assert_eq!(skilled.accuracy, 90, "5 рангов × 2 % точности");
     }
 
     /// M17/F30a: руна в сокете оружия даёт +урон в «Параметрах»;
