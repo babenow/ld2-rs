@@ -222,7 +222,7 @@ pub(super) fn interrupt_on_hit(state: &SharedState, char_id: &str) -> Option<Str
 /// M39: завершение сбора ресурса (сервер-джоб 5 с). Выдаёт руду,
 /// бонусный камень, опыт; обновляет запас узла и шлёт итог.
 pub(super) async fn gather_step(state: &SharedState) {
-    let now = crate::time::now_epoch();
+    let now = crate::time::now_ms();
     let due = {
         let mut world = state.world.lock().expect("мир");
         world.due_gathers(now)

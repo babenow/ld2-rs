@@ -41,7 +41,7 @@ pub struct GatherJob {
     pub name: String,
     /// M39: шанс успешной добычи (руда); `None` — без проверки.
     pub chance: Option<f64>,
-    /// Epoch-с окончания.
+    /// Epoch-мс окончания (M39: бар 2..6 с).
     pub at: i64,
 }
 

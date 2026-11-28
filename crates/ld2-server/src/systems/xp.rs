@@ -102,6 +102,14 @@ pub fn harvest_xp_gain(required: u32, char_level: u32) -> i64 {
     ((base * mult).round() as i64).min(HARVEST_XP_MAX)
 }
 
+/// M39: время добычи руды — 2..6 с по разнице уровней жилы и
+/// профессии; выше жила — дольше (гейт не пускает разницу 25+).
+pub fn mining_gather_seconds(required: u32, prof_level: u32) -> i64 {
+    const MIN_S: i64 = 2;
+    let gap = required.saturating_sub(prof_level).min(24);
+    MIN_S + (f64::from(gap) / 24.0 * 4.0).round() as i64
+}
+
 /// M39: опыт за успешную добычу руды — обратно шансу: лёгкая жила
 /// (шанс = базовый) даёт минимум, рискованная (шанс = минимум) — 40.
 pub fn mining_xp_gain(cfg: &crate::config::ProfessionsSection, chance: f64) -> i64 {

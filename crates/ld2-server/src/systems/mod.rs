@@ -198,6 +198,18 @@ mod tests {
         assert!((mining_chance(&cfg, 80, 80) - 0.95).abs() < 1e-9, "не 100%");
     }
 
+    /// M39: время добычи руды — 2..6 с по разнице уровней; выше
+    /// жила — дольше, разница 25+ зажата в 6 с.
+    #[test]
+    fn mining_gather_seconds_scale_with_level_gap() {
+        assert_eq!(mining_gather_seconds(35, 40), 2, "жила ниже");
+        assert_eq!(mining_gather_seconds(41, 35), 3, "зазор 6");
+        assert_eq!(mining_gather_seconds(47, 35), 4, "зазор 12");
+        assert_eq!(mining_gather_seconds(53, 35), 5, "зазор 18");
+        assert_eq!(mining_gather_seconds(59, 35), 6, "зазор 24");
+        assert_eq!(mining_gather_seconds(100, 35), 6, "зазор >24 зажат");
+    }
+
     /// M39: опыт за успешную добычу обратен шансу: 10 при базовом
     /// шансе, 40 при минимальном; вне диапазона — кламп.
     #[test]

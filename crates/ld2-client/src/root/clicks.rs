@@ -395,19 +395,43 @@ impl Root {
                 if self.store.harvest.is_some() {
                     return true;
                 }
-                let name = self
+                // M39: время сбора — 2..6 с по разнице уровней жилы и
+                // профессии (зеркало серверной формулы); прочее — 5 с.
+                let (name, duration_ms) = self
                     .store
                     .snapshot
                     .as_ref()
-                    .and_then(|s| s.location.entities.iter().find(|e| e.id == id))
-                    .map(|e| e.name.clone())
-                    .unwrap_or_default();
+                    .and_then(|s| {
+                        let entity = s.location.entities.iter().find(|e| e.id == id)?;
+                        let name = entity.name.clone();
+                        let mining = entity.extra.get("profession").and_then(|v| v.as_str())
+                            == Some(domain::PROFESSION_MINING);
+                        if !mining {
+                            return Some((name, 5_000));
+                        }
+                        let required = entity
+                            .extra
+                            .get("required_level")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(1);
+                        let level = s
+                            .char
+                            .professions
+                            .iter()
+                            .find(|p| p.id == domain::PROFESSION_MINING)
+                            .map(|p| i64::from(p.level))
+                            .unwrap_or(0);
+                        let gap = (required - level).clamp(0, 24) as f64;
+                        let seconds = 2.0 + (gap / 24.0 * 4.0).round();
+                        Some((name, (seconds as i64) * 1000))
+                    })
+                    .unwrap_or_else(|| (String::new(), 5_000));
                 let cmd = ld2_protocol::cmd::ResourceGather {
                     entity_id: id.clone(),
                 };
                 if self.send_or_notice(&cmd, SendSlot::World) {
                     self.store.on_world_sent(Act::Gather);
-                    // M39: сбор — сервер-джоб 5 с, прогресс-бар как у шкуры.
+                    // M39: сбор — сервер-джоб 2..6 с, прогресс-бар как у шкуры.
                     self.store.harvest = Some(ld2_core::store::HarvestProgress {
                         started_ms: self.now_ms(),
                         action: "gather".into(),
@@ -417,7 +441,7 @@ impl Root {
                     self.start_progress(
                         ProgressSource::Harvest,
                         format!("{} · {name}", t(self.lang, Key::GatherBtn)),
-                        5_000,
+                        duration_ms,
                     );
                 }
             }

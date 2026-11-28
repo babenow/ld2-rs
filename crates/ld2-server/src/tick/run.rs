@@ -66,6 +66,9 @@ pub async fn run(state: SharedState) {
             _ = interval.tick() => {}
         }
         tick_once(&state).await;
+        // M39: сбор завершается на границе своего бара (мс), а не раз
+        // в секунду — проверяем каждый тик.
+        gather_step(&state).await;
         ticks += 1;
         if ticks.is_multiple_of(u64::from(tick_hz)) {
             // Раз в секунду: мана-реген (§2.4), истечение статусов (§10)
@@ -81,8 +84,6 @@ pub async fn run(state: SharedState) {
             respawn_step(&state).await;
             // Снятие шкур: готовые разделки (сервер-джобы5 с).
             harvest_step(&state).await;
-            // M39: завершённые сборы ресурсов (сервер-джоб5 с).
-            gather_step(&state).await;
             // M18/F58c: заряды рун (режим `time`; `item` — без тикера).
             recharge_acc += 1.0;
             let interval_s = state.config.gameplay.magic.rune_recharge_s;
