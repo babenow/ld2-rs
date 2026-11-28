@@ -201,6 +201,27 @@ impl Config {
                 self.gameplay.professions.level_xp_growth
             ));
         }
+        if self.gameplay.professions.rank_xp_mult.is_empty() {
+            out.push("gameplay.professions.rank_xp_mult: список не должен быть пустым".into());
+        }
+        if self
+            .gameplay
+            .professions
+            .rank_xp_mult
+            .iter()
+            .any(|m| !m.is_finite() || *m < 1.0)
+        {
+            out.push("gameplay.professions.rank_xp_mult: множители должны быть ≥ 1.0".into());
+        }
+        if self
+            .gameplay
+            .professions
+            .rank_xp_mult
+            .windows(2)
+            .any(|w| w[1] < w[0])
+        {
+            out.push("gameplay.professions.rank_xp_mult: множители не должны убывать".into());
+        }
         if self.gameplay.professions.max_level == 0 {
             out.push("gameplay.professions.max_level: должен быть ≥ 1".into());
         }

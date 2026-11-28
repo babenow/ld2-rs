@@ -11,6 +11,7 @@ use ld2_protocol::names;
 
 use ld2_protocol::evt::{
     CharStats, CraftProfession, EntityDespawn, EntityMove, HarvestResult, ItemAdded, ItemState,
+    ResourceGathered,
 };
 use ld2_protocol::types::EntityKind;
 use serde_json::json;
@@ -315,6 +316,22 @@ pub(super) async fn gather_step(state: &SharedState) {
             for addr in world.chars_in_location(&after.location_id) {
                 if !node_text.is_empty() {
                     world.send_to_char(&addr, node_text.clone());
+                }
+            }
+            // M39: добыча руды — общая строка журнала всем в локации.
+            if node.profession.as_deref() == Some(PROFESSION_MINING) {
+                let gathered = job_event(
+                    names::EVT_RESOURCE_GATHERED,
+                    &ResourceGathered {
+                        char_id: job.char_id.clone(),
+                        by_name: job.char_name.clone(),
+                        gender: job.gender.clone(),
+                    },
+                );
+                if !gathered.is_empty() {
+                    for addr in world.chars_in_location(&after.location_id) {
+                        world.send_to_char(&addr, gathered.clone());
+                    }
                 }
             }
         }

@@ -115,7 +115,7 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         return;
     };
     let ws = common::start_ws_server(&db_url).await;
-    let (mut c, _login, _char) = in_world(&ws).await;
+    let (mut c, _login, char_id) = in_world(&ws).await;
     give_gold(&mut c, 1000).await;
 
     // Ранги: учим шахтёра и травника у Старины (спавн — деревня).
@@ -172,6 +172,18 @@ async fn gather_tool_profession_yield_and_exhaustion() {
     let moved = c.wait_event("evt/entity/move").await;
     assert_eq!(moved["payload"]["entity_id"], "r_forest_ore");
     assert_eq!(moved["payload"]["patch"]["hp"]["cur"], 2);
+    // M40: добыча руды — общая строка журнала всем в локации.
+    let gathered = c.wait_event("evt/resource/gathered").await;
+    assert_eq!(
+        gathered["payload"]["char_id"], char_id,
+        "кто добыл: {gathered}"
+    );
+    assert!(
+        gathered["payload"]["by_name"]
+            .as_str()
+            .is_some_and(|n| !n.is_empty()),
+        "имя добытчика: {gathered}"
+    );
     // M39: завершение сбора — итог как у разделки (клиент гасит бар).
     let result = c.wait_event("evt/harvest/result").await;
     assert_eq!(
