@@ -45,11 +45,11 @@ VERSION_TIME = [3, 5, 7]
 ORES = [
     # id, name, rarity, gold, req_level, min_rank, max, respawn, node_prefix
     ("ore_copper", "Медная руда", "common", 6, 1, 1, 3, (60, 120)),
-    ("ore_tin", "Оловянная руда", "common", 12, 15, 1, 3, (90, 150)),
-    ("ore_iron", "Железная руда", "uncommon", 24, 30, 2, 3, (120, 180)),
-    ("ore_silver", "Серебряная руда", "uncommon", 48, 45, 3, 3, (180, 240)),
-    ("ore_gold", "Золотая руда", "rare", 120, 60, 4, 2, (240, 360)),
-    ("ore_mithril", "Мифриловая руда", "epic", 300, 80, 5, 2, (360, 600)),
+    ("ore_tin", "Оловянная руда", "common", 12, 35, 1, 3, (90, 150)),
+    ("ore_iron", "Железная руда", "uncommon", 24, 50, 2, 3, (120, 180)),
+    ("ore_silver", "Серебряная руда", "uncommon", 48, 65, 3, 3, (180, 240)),
+    ("ore_gold", "Золотая руда", "rare", 120, 80, 4, 2, (240, 360)),
+    ("ore_mithril", "Мифриловая руда", "epic", 300, 100, 5, 2, (360, 600)),
 ]
 ORE_BY_ID = {row[0]: row for row in ORES}
 
@@ -335,8 +335,8 @@ def mine_locations() -> list[dict]:
                 vein_node("ore_copper_1", "Медная жила", "ore_copper", 3, (60, 120), 1, 1, copper_mixed, copper_pure, copper_chance),
                 vein_node("ore_copper_2", "Медная жила", "ore_copper", 3, (60, 120), 1, 1, copper_mixed, copper_pure, copper_chance),
                 vein_node("ore_copper_3", "Медная жила", "ore_copper", 3, (60, 120), 1, 1, copper_mixed, copper_pure, copper_chance),
-                vein_node("ore_tin_1", "Оловянная жила", "ore_tin", 3, (90, 150), 15, 1, tin_mixed, tin_pure, tin_chance),
-                vein_node("ore_tin_2", "Оловянная жила", "ore_tin", 3, (90, 150), 15, 1, tin_mixed, tin_pure, tin_chance),
+                vein_node("ore_tin_1", "Оловянная жила", "ore_tin", 3, (90, 150), 35, 1, tin_mixed, tin_pure, tin_chance),
+                vein_node("ore_tin_2", "Оловянная жила", "ore_tin", 3, (90, 150), 35, 1, tin_mixed, tin_pure, tin_chance),
             ],
         },
         {
@@ -350,11 +350,11 @@ def mine_locations() -> list[dict]:
                 {"id": "e_mine_deep", "label": "спуск в глубины мифрила", "to": "l_mine_mithril"},
             ],
             "entities": [
-                vein_node("ore_iron_1", "Железная жила", "ore_iron", 3, (120, 180), 30, 2, iron_mixed, iron_pure, iron_chance),
-                vein_node("ore_iron_2", "Железная жила", "ore_iron", 3, (120, 180), 30, 2, iron_mixed, iron_pure, iron_chance),
-                vein_node("ore_iron_3", "Железная жила", "ore_iron", 3, (120, 180), 30, 2, iron_mixed, iron_pure, iron_chance),
-                vein_node("ore_silver_1", "Серебряная жила", "ore_silver", 3, (180, 240), 45, 3, silver_mixed, silver_pure, silver_chance),
-                vein_node("ore_silver_2", "Серебряная жила", "ore_silver", 3, (180, 240), 45, 3, silver_mixed, silver_pure, silver_chance),
+                vein_node("ore_iron_1", "Железная жила", "ore_iron", 3, (120, 180), 50, 2, iron_mixed, iron_pure, iron_chance),
+                vein_node("ore_iron_2", "Железная жила", "ore_iron", 3, (120, 180), 50, 2, iron_mixed, iron_pure, iron_chance),
+                vein_node("ore_iron_3", "Железная жила", "ore_iron", 3, (120, 180), 50, 2, iron_mixed, iron_pure, iron_chance),
+                vein_node("ore_silver_1", "Серебряная жила", "ore_silver", 3, (180, 240), 65, 3, silver_mixed, silver_pure, silver_chance),
+                vein_node("ore_silver_2", "Серебряная жила", "ore_silver", 3, (180, 240), 65, 3, silver_mixed, silver_pure, silver_chance),
             ],
         },
         {
@@ -367,10 +367,10 @@ def mine_locations() -> list[dict]:
                 {"id": "e_mine_iron", "label": "наверх, в железные штольни", "to": "l_mine_iron"},
             ],
             "entities": [
-                vein_node("ore_gold_1", "Золотая жила", "ore_gold", 2, (240, 360), 60, 4, gold_mixed, gold_pure, gold_chance),
-                vein_node("ore_gold_2", "Золотая жила", "ore_gold", 2, (240, 360), 60, 4, gold_mixed, gold_pure, gold_chance),
-                vein_node("ore_mithril_1", "Мифриловая жила", "ore_mithril", 2, (360, 600), 80, 5, mithril_mixed, mithril_pure, mithril_chance),
-                vein_node("ore_mithril_2", "Мифриловая жила", "ore_mithril", 2, (360, 600), 80, 5, mithril_mixed, mithril_pure, mithril_chance),
+                vein_node("ore_gold_1", "Золотая жила", "ore_gold", 2, (240, 360), 80, 4, gold_mixed, gold_pure, gold_chance),
+                vein_node("ore_gold_2", "Золотая жила", "ore_gold", 2, (240, 360), 80, 4, gold_mixed, gold_pure, gold_chance),
+                vein_node("ore_mithril_1", "Мифриловая жила", "ore_mithril", 2, (360, 600), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
+                vein_node("ore_mithril_2", "Мифриловая жила", "ore_mithril", 2, (360, 600), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
             ],
         },
     ]
@@ -414,7 +414,7 @@ def update_locations(locations: dict) -> None:
         # Стартовая жила — без камней, чтобы базовый сбор оставался простым.
         copper_node.pop("gems", None)
 
-    # Оловянная жила в старом лесу — доступна с 15 уровня.
+    # Оловянная жила в старом лесу — доступна с 35 уровня.
     forest["entities"] = [e for e in forest["entities"] if e.get("id") != "r_forest_tin"]
     forest["entities"].append(
         vein_node(
@@ -423,7 +423,7 @@ def update_locations(locations: dict) -> None:
             "ore_tin",
             2,
             (120, 180),
-            15,
+            35,
             1,
             TIN_MIXED,
             TIN_PURE,

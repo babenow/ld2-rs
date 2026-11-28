@@ -356,7 +356,7 @@
           "profession": "mining",
           "min_rank": 1,
           "tool": "pickaxe",
-          "required_level": 15,
+          "required_level": 35,
           "gems": {
             "chance": 0.06,
             "mixed_share": 0.1,
@@ -30694,7 +30694,7 @@
           "profession": "mining",
           "min_rank": 1,
           "tool": "pickaxe",
-          "required_level": 15,
+          "required_level": 35,
           "gems": {
             "chance": 0.06,
             "mixed_share": 0.1,
@@ -30724,7 +30724,7 @@
           "profession": "mining",
           "min_rank": 1,
           "tool": "pickaxe",
-          "required_level": 15,
+          "required_level": 35,
           "gems": {
             "chance": 0.06,
             "mixed_share": 0.1,
@@ -30777,7 +30777,7 @@
           "profession": "mining",
           "min_rank": 2,
           "tool": "pickaxe",
-          "required_level": 30,
+          "required_level": 50,
           "gems": {
             "chance": 0.07,
             "mixed_share": 0.1,
@@ -30808,7 +30808,7 @@
           "profession": "mining",
           "min_rank": 2,
           "tool": "pickaxe",
-          "required_level": 30,
+          "required_level": 50,
           "gems": {
             "chance": 0.07,
             "mixed_share": 0.1,
@@ -30839,7 +30839,7 @@
           "profession": "mining",
           "min_rank": 2,
           "tool": "pickaxe",
-          "required_level": 30,
+          "required_level": 50,
           "gems": {
             "chance": 0.07,
             "mixed_share": 0.1,
@@ -30870,7 +30870,7 @@
           "profession": "mining",
           "min_rank": 3,
           "tool": "pickaxe",
-          "required_level": 45,
+          "required_level": 65,
           "gems": {
             "chance": 0.08,
             "mixed_share": 0.1,
@@ -30899,7 +30899,7 @@
           "profession": "mining",
           "min_rank": 3,
           "tool": "pickaxe",
-          "required_level": 45,
+          "required_level": 65,
           "gems": {
             "chance": 0.08,
             "mixed_share": 0.1,
@@ -30946,7 +30946,7 @@
           "profession": "mining",
           "min_rank": 4,
           "tool": "pickaxe",
-          "required_level": 60,
+          "required_level": 80,
           "gems": {
             "chance": 0.1,
             "mixed_share": 0.1,
@@ -30979,7 +30979,7 @@
           "profession": "mining",
           "min_rank": 4,
           "tool": "pickaxe",
-          "required_level": 60,
+          "required_level": 80,
           "gems": {
             "chance": 0.1,
             "mixed_share": 0.1,
@@ -31012,7 +31012,7 @@
           "profession": "mining",
           "min_rank": 5,
           "tool": "pickaxe",
-          "required_level": 80,
+          "required_level": 100,
           "gems": {
             "chance": 0.12,
             "mixed_share": 0.1,
@@ -31068,7 +31068,7 @@
           "profession": "mining",
           "min_rank": 5,
           "tool": "pickaxe",
-          "required_level": 80,
+          "required_level": 100,
           "gems": {
             "chance": 0.12,
             "mixed_share": 0.1,
