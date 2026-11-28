@@ -48,7 +48,8 @@
             "keyring",
             "old_key",
             "tool_chisel",
-            "artifact_lamp"
+            "artifact_lamp",
+            "artifact_hunter"
           ]
         }
       ]
@@ -69,7 +70,8 @@
             "bow_hunter",
             "axe_war",
             "hammer_battle",
-            "twohand_sword"
+            "twohand_sword",
+            "skinning_knife_master"
           ]
         }
       ]

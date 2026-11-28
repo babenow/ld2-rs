@@ -312,6 +312,17 @@ pub enum ItemRemovalReason {
     Unknown,
 }
 
+impl ItemRemovalReason {
+    /// M39: обычный выброс — `dropped`, предмет с печатью — `destroyed`.
+    pub fn for_drop(personal: bool) -> Self {
+        if personal {
+            Self::Destroyed
+        } else {
+            Self::Dropped
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemRemoved {
     pub uid: String,

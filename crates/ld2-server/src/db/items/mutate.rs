@@ -13,7 +13,7 @@ pub async fn insert(
         "INSERT INTO items (character_id, def_id, qty, sort_order) \
          VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
          FROM items WHERE character_id = $1), 0)) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
+         RETURNING uid, def_id, qty, upgrade, personal, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)
     .bind(def_id)
@@ -38,7 +38,7 @@ pub async fn insert_stateful(
         "INSERT INTO items (character_id, def_id, qty, upgrade, sockets, bonuses, sort_order) \
          VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT MAX(sort_order) + 1 \
          FROM items WHERE character_id = $1), 0)) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
+         RETURNING uid, def_id, qty, upgrade, personal, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)
     .bind(def_id)
@@ -59,6 +59,33 @@ pub async fn set_bonuses(pool: &PgPool, uid: &str, bonuses: Value) -> Result<(),
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// M39: поставить печать персональности на инстанс.
+pub async fn set_personal(pool: &PgPool, uid: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE items SET personal = TRUE WHERE uid = $1")
+        .bind(uid)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// M39: привязать все ещё не привязанные инстансы данного определения
+/// (первое применение пассивного инструмента, например кирки).
+pub async fn bind_by_def(
+    pool: &PgPool,
+    char_id: &str,
+    def_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE items SET personal = TRUE \
+         WHERE character_id = $1 AND def_id = $2 AND personal = FALSE \
+         RETURNING uid",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_all(pool)
+    .await
 }
 
 /// Надеть/снять (slot = NULL — снять).
@@ -95,7 +122,7 @@ pub async fn delete(pool: &PgPool, uid: &str) -> Result<u64, sqlx::Error> {
 pub async fn delete_all(pool: &PgPool, char_id: &str) -> Result<Vec<ItemRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemRow>(
         "DELETE FROM items WHERE character_id = $1 AND container <> 'bags' \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
+         RETURNING uid, def_id, qty, upgrade, personal, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)
     .fetch_all(pool)
@@ -187,7 +214,7 @@ pub async fn take_loot_tx(
             .execute(&mut *tx)
             .await?;
         let row = sqlx::query_as::<_, ItemRow>(
-            "SELECT uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index \
+            "SELECT uid, def_id, qty, upgrade, personal, equipped_slot, sockets, bonuses, container, slot_index \
              FROM items WHERE uid = $1 AND character_id = $2",
         )
         .bind(&uid)
@@ -201,7 +228,7 @@ pub async fn take_loot_tx(
         "INSERT INTO items (character_id, def_id, qty, sort_order) \
          VALUES ($1, $2, $3, COALESCE((SELECT MAX(sort_order) + 1 \
          FROM items WHERE character_id = $1), 0)) \
-         RETURNING uid, def_id, qty, upgrade, equipped_slot, sockets, bonuses, container, slot_index",
+         RETURNING uid, def_id, qty, upgrade, personal, equipped_slot, sockets, bonuses, container, slot_index",
     )
     .bind(char_id)
     .bind(def_id)

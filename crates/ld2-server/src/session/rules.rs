@@ -140,7 +140,7 @@ pub(crate) fn item_snapshot(
         item_type: def.item_type.clone(),
         name: def.name.clone(),
         description: (!def.description.trim().is_empty()).then(|| def.description.clone()),
-        personal: def.personal,
+        personal: item.personal,
         rarity: def.rarity.clone(),
         upgrade: def.upgrade + item.upgrade,
         stats: def.stats.clone().as_object().cloned().unwrap_or_default(),
@@ -317,6 +317,7 @@ mod tests {
             def_id: "sword_1".into(),
             qty: 2,
             upgrade: 2,
+            personal: false,
             equipped_slot: None,
             sockets,
             bonuses,
@@ -396,9 +397,15 @@ mod tests {
         let mut def = item_def("weapon", 0, None);
         def.description = "Удваивает шанс камня.".into();
         def.personal = true;
-        let snap = item_snapshot(&item_row(json!([]), None), &def);
+        let mut row = item_row(json!([]), None);
+        let snap = item_snapshot(&row, &def);
         assert_eq!(snap.description.as_deref(), Some("Удваивает шанс камня."));
-        assert!(snap.personal, "флаг персональности в снапшоте");
+        assert!(
+            !snap.personal,
+            "до первого надевания печати нет (def.personal — лишь триггер)"
+        );
+        row.personal = true;
+        assert!(item_snapshot(&row, &def).personal, "печать на инстансе");
 
         def.description = "  ".into();
         let snap = item_snapshot(&item_row(json!([]), None), &def);

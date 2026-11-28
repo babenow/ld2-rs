@@ -4,20 +4,17 @@
 //!
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
-
-use ld2_protocol::names;
-
-use ld2_protocol::cmd::EntityInfo;
-use ld2_protocol::envelope::Envelope;
-use ld2_protocol::evt::{EntityDespawn, ItemAdded, ItemState};
-use ld2_protocol::types::Entity;
-use ld2_protocol::ErrorCode;
-use tracing::warn;
-
 use super::rules::{entity_loot_defs, item_snapshot};
 use super::{event_payload_text, event_text, out_event, Out, Session};
 use crate::consts::GENDER_MALE;
 use crate::db;
+use ld2_protocol::cmd::EntityInfo;
+use ld2_protocol::envelope::Envelope;
+use ld2_protocol::evt::{EntityDespawn, ItemAdded, ItemState};
+use ld2_protocol::names;
+use ld2_protocol::types::Entity;
+use ld2_protocol::ErrorCode;
+use tracing::warn;
 
 impl Session {
     /// `cmd/entity.info` (§7): осмотр статической сущности текущей локации
@@ -34,7 +31,6 @@ impl Session {
             Ok(id) => id,
             Err(out) => return vec![out],
         };
-
         // Динамический труп (M12.5): живёт в мире, не в строке локации.
         let dyn_loot = {
             let world = self.state.world.lock().expect("мир");
@@ -73,6 +69,7 @@ impl Session {
                     def_id: def_id.clone(),
                     qty: def.qty,
                     upgrade: 0,
+                    personal: false,
                     equipped_slot: None,
                     sockets: serde_json::json!([]),
                     container: "backpack".into(),
@@ -82,8 +79,7 @@ impl Session {
                 };
                 loot.push(item_snapshot(&row, &def));
             }
-            // Снятие шкур: лут освежевания — отдельный блок «Внутри»
-            // (uid `inner:<corpse>:<idx>` — взятие тем же take_loot).
+            // Снятие шкур: «Внутри» — отдельный блок (uid inner:<corpse>:<idx>).
             let mut inner = Vec::new();
             let mut inner_remaining = 0usize;
             for (i, def_id) in inner_slots.iter().enumerate() {
@@ -108,6 +104,7 @@ impl Session {
                     def_id: def_id.clone(),
                     qty: def.qty,
                     upgrade: 0,
+                    personal: false,
                     equipped_slot: None,
                     sockets: serde_json::json!([]),
                     container: "backpack".into(),
@@ -143,7 +140,6 @@ impl Session {
                 }),
             )];
         }
-
         // Статическая сущность из сида (D26) вместе с её лутом (однократно).
         let current = self.location_id.clone().unwrap_or_default();
         let entities = match db::locations::get(&self.state.pool, &current).await {
@@ -205,6 +201,7 @@ impl Session {
                 def_id: def_id.clone(),
                 qty: def.qty,
                 upgrade: 0,
+                personal: false,
                 equipped_slot: None,
                 sockets: serde_json::json!([]),
                 container: "backpack".into(),
@@ -214,8 +211,7 @@ impl Session {
             };
             loot.push(item_snapshot(&row, &def));
         }
-        // M24: надстройки сундука — uid продолжает индексацию после
-        // базовых defs (take_loot: ветка idx >= base_len).
+        // M24: надстройки сундука — uid продолжает индексацию базовых defs.
         let base_len = defs.len();
         let mut extras_remaining = 0usize;
         for (n, slot) in extras.iter().enumerate() {
@@ -241,6 +237,7 @@ impl Session {
                 // M24: количество стака админа, не из определения.
                 qty: i32::try_from(*qty).unwrap_or(i32::MAX),
                 upgrade: 0,
+                personal: false,
                 equipped_slot: None,
                 sockets: serde_json::json!([]),
                 container: "backpack".into(),

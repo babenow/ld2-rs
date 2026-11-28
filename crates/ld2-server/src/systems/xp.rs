@@ -63,6 +63,12 @@ pub fn hide_chance(level: u32) -> f64 {
     (HIDE_CHANCE_BASE + HIDE_CHANCE_PER_LEVEL * f64::from(level)).min(HIDE_CHANCE_MAX)
 }
 
+/// M39: итоговый шанс шкуры/редкого трофея с учётом ножа (×) и
+/// фетиша (+), всегда 0..1.
+pub fn hide_chance_with(base: f64, mult: f64, add: f64) -> f64 {
+    (base * mult + add).clamp(0.0, 1.0)
+}
+
 /// Снятие шкур: шанс **крита** — по рангу профессии (р1 →5 % …
 /// р5 →25 %); при крите в лут сверх обычного результата падает
 /// **+2 шкуры** текущего качества.

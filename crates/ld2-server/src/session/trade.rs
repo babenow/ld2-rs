@@ -178,20 +178,13 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
         };
-        // M39: персональный предмет нельзя передавать другому игроку.
-        match db::items::def(pool, &item.def_id).await {
-            Ok(Some(def)) if def.personal => {
-                return vec![Self::err(
-                    seq,
-                    ErrorCode::ItemPersonal,
-                    "персональный предмет нельзя передавать",
-                )];
-            }
-            Ok(_) => {}
-            Err(e) => {
-                warn!("trade.add (определение): {e}");
-                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-            }
+        // M39: персональный (привязанный) предмет нельзя передавать.
+        if item.personal {
+            return vec![Self::err(
+                seq,
+                ErrorCode::ItemPersonal,
+                "персональный предмет нельзя передавать",
+            )];
         }
         // R8: надетый предмет в сделку нельзя (перенос сбрасывал бы
         // `equipped_slot` у получателя — бонусы без экипирования).
@@ -387,8 +380,7 @@ impl Session {
             for (uid, qty) in &side.items {
                 // Предмет всё ещё у стороны? Частичный перенос стака.
                 let cur: Option<(i32, String, bool)> = sqlx::query_as(
-                    "SELECT i.qty, i.character_id, d.personal FROM items i \
-                     JOIN item_defs d ON d.id = i.def_id WHERE i.uid = $1 FOR UPDATE",
+                    "SELECT qty, character_id, personal FROM items WHERE uid = $1 FOR UPDATE",
                 )
                 .bind(uid)
                 .fetch_optional(&mut *tx)

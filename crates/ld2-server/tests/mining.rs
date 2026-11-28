@@ -193,13 +193,31 @@ fn mining_tools_content_is_configured() {
     assert_eq!(by_id("pickaxe_master")["name"], "Кирка мастера");
     assert_eq!(by_id("artifact_lamp")["type"], "artifact");
     assert_eq!(by_id("artifact_lamp")["slot"], "artifact");
-    for id in ["pickaxe_master", "artifact_lamp"] {
+    assert_eq!(by_id("skinning_knife_master")["type"], "skinning_knife");
+    assert_eq!(by_id("skinning_knife_master")["name"], "Нож мастера");
+    assert_eq!(by_id("artifact_hunter")["type"], "artifact");
+    assert_eq!(by_id("artifact_hunter")["slot"], "artifact");
+    for id in [
+        "pickaxe_master",
+        "artifact_lamp",
+        "skinning_knife_master",
+        "artifact_hunter",
+    ] {
         let description = by_id(id)["description"].as_str().unwrap_or_default();
+        let effect = if id == "skinning_knife_master" || id == "artifact_hunter" {
+            "шкур"
+        } else {
+            "самоцвет"
+        };
         assert!(
-            description.contains("самоцвет"),
+            description.contains(effect),
             "у {id} должно быть описание эффекта: {description:?}"
         );
-        assert_eq!(by_id(id)["personal"], true, "{id} — персональный");
+        assert_eq!(
+            by_id(id)["personal"],
+            true,
+            "{id}: флаг «печать при первом надевании»"
+        );
     }
 
     let shops: serde_json::Value =
@@ -221,7 +239,9 @@ fn mining_tools_content_is_configured() {
             })
     };
     assert!(shop_has("npc_weaponsmith", "pickaxe_master"));
+    assert!(shop_has("npc_weaponsmith", "skinning_knife_master"));
     assert!(shop_has("npc_city_elder", "artifact_lamp"));
+    assert!(shop_has("npc_city_elder", "artifact_hunter"));
 }
 
 async fn give(c: &mut WsClient, def_id: &str) -> String {
@@ -454,9 +474,11 @@ async fn mining_tools_description_reaches_snapshot() {
             description.contains("самоцвет"),
             "{id}: описание не дошло до снапшота: {added}"
         );
-        assert_eq!(
-            added["payload"]["item"]["personal"], true,
-            "{id}: флаг персональности не дошёл: {added}"
+        assert!(
+            !added["payload"]["item"]["personal"]
+                .as_bool()
+                .unwrap_or(false),
+            "{id}: до надевания печати нет: {added}"
         );
     }
 }
@@ -470,12 +492,69 @@ async fn personal_item_drop_destroys_it() {
     };
     let ws = common::start_ws_server(&db_url).await;
     let (mut c, _login, _char) = in_world(&ws).await;
-    let uid = give(&mut c, "pickaxe_master").await;
+    let uid = give(&mut c, "artifact_lamp").await;
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": uid, "slot": "artifact1" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "надеть лампу: {ack}");
+    assert_eq!(ack["payload"]["item"]["personal"], true, "печать: {ack}");
+
     let seq = c.send("cmd/item.drop", json!({ "item_uid": uid })).await;
     assert_eq!(c.ack(seq).await["result"], "ok", "выброс");
     let removed = c.wait_event("evt/item/removed").await;
     assert_eq!(
         removed["payload"]["reason"], "destroyed",
         "персональный предмет уничтожен: {removed}"
+    );
+}
+
+/// M39: «Кирка мастера» получает печать при первом применении (добыче).
+#[tokio::test]
+async fn master_pickaxe_seals_on_first_gather() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let tmp = temp_content();
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.world.content_dir = tmp;
+            cfg.gameplay.professions.mining_chance_base = 1.0;
+            cfg.gameplay.professions.mining_chance_min = 1.0;
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world(&ws).await;
+    give_gold(&mut c, 1500).await;
+    learn(&mut c, "mining").await;
+    let pickaxe = give(&mut c, "pickaxe_master").await;
+
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    kill_wolf(&mut c).await;
+    let seq = c
+        .send(
+            "cmd/resource.gather",
+            json!({ "entity_id": "r_forest_ore" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "медь");
+    let sealed = c
+        .wait(|v| {
+            v["type"] == "evt/item/state"
+                && v["payload"]["uid"] == pickaxe
+                && v["payload"]["patch"]["item"]["personal"] == true
+        })
+        .await;
+    assert_eq!(
+        sealed["payload"]["patch"]["item"]["personal"], true,
+        "кирка привязана: {sealed}"
     );
 }

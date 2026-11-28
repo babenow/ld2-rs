@@ -173,6 +173,7 @@ impl Session {
                     def_id: def.id.clone(),
                     qty: unit.clamp(1, i64::from(i32::MAX)) as i32,
                     upgrade: 0,
+                    personal: false,
                     equipped_slot: None,
                     sockets: serde_json::json!([]),
                     container: "backpack".into(),

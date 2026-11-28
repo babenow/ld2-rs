@@ -296,7 +296,15 @@ async fn personal_item_cannot_be_traded() {
     let ws = common::start_ws_server(&db_url).await;
     let (mut a, _, _) = in_world(&ws).await;
     let (mut b, _, char_b) = in_world(&ws).await;
-    let pickaxe = give(&mut a, "pickaxe_master").await;
+    let lamp = give(&mut a, "artifact_lamp").await;
+    let seq = a
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": lamp, "slot": "artifact1" }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "надеть лампу: {ack}");
 
     let offer_id = open_trade(&mut a, &char_b).await;
     a.wait_event("evt/trade/state").await;
@@ -304,7 +312,7 @@ async fn personal_item_cannot_be_traded() {
     let seq = a
         .send(
             "cmd/trade.add_item",
-            json!({ "offer_id": offer_id, "item_uid": pickaxe }),
+            json!({ "offer_id": offer_id, "item_uid": lamp }),
         )
         .await;
     let ack = a.ack(seq).await;

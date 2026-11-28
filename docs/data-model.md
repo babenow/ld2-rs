@@ -29,7 +29,7 @@
 | Файл | Содержимое | Куда попадает |
 |---|---|---|
 | `locations.json` | 1194 локации | `locations` |
-| `items.json` | 260 определений | `item_defs` |
+| `items.json` | 262 определений | `item_defs` |
 | `skills.json` | 34 навыка | `skills` |
 | `professions.json` | 14 профессий | `professions` |
 | `recipes.json` | 99 рецептов | `recipes` |
@@ -67,13 +67,13 @@
 сохраняются, редактор их не теряет. Валидация проверяет обязательные поля
 и типы, но не запрещает расширения.
 
-### 1.1 `items.json` → предметы (260, сид в `item_defs`)
+### 1.1 `items.json` → предметы (262, сид в `item_defs`)
 
 | Поле | Тип | Смысл |
 |---|---|---|
 | `id`, `name` | str | ключ и отображаемое имя |
 | `description` | str? | текст для карточки/тултипа (M39) |
-| `personal` | bool? | персональный: нельзя передавать, выброс уничтожает (M39) |
+| `personal` | bool? | при первом надевании/применении становится персональным (M39) |
 | `type` | str | тип предмета (см. ниже) |
 | `rarity` | str | `common` / `uncommon` / `rare` / `epic` / `legendary` |
 | `upgrade` | int | **базовый** уровень предмета (0 у обычных, 10 у `sword_1000_true`) |
@@ -90,16 +90,16 @@
 | `bonuses` | list | `[{kind, id, value, pct?}]`, `kind ∈ attr \| param \| skill` |
 | `extra` | obj | неизвестные поля |
 
-Типы (260): `gem` 117, `armor` 23, `rune` 18, `weapon` 11, `bag` 8,
+Типы (262): `gem` 117, `armor` 23, `rune` 18, `weapon` 11, `bag` 8,
 `hide` 6, `hide_scraps` 5, `shield` 3, `upgrade_stone` 3, `staff` 2,
-`artifact` 3, `pickaxe` 2; `raw_*` 32 (12 смешанных + 20 чистых), `ore_*` 9
+`artifact` 4, `pickaxe` 2, `skinning_knife` 2; `raw_*` 32
+(12 смешанных + 20 чистых), `ore_*` 9
 (`ore_copper`…`ore_mithril`, включая `ore_bronze`, `ore_platinum`,
-`ore_adamantite`); `wood_oak`, `skinning_knife`, `sickle`,
-`scroll`, `quill`, `potion`, `parchment`, `offal`, `money`,
+`ore_adamantite`); `wood_oak`, `sickle`, `scroll`, `quill`, `potion`, `parchment`, `offal`, `money`,
 `meat`, `ink`, `herb`, `flask`, `chisel`, `branches`, `axe`, `ammo`,
 `key` — по 1.
 
-Редкости: `common` 72, `uncommon` 76, `rare` 54, `epic` 51,
+Редкости: `common` 72, `uncommon` 76, `rare` 55, `epic` 52,
 `legendary` 7.
 
 Слоты (13): `main_hand`, `off_hand`, `head`, `body`, `legs`, `feet`,
@@ -487,7 +487,7 @@ price        = max(round(price_gold × rate), 1)
 | Таблица | Колонки | Смысл |
 |---|---|---|
 | `item_defs` | `id`, `item_type`, `name`, `description`, `personal`, `rarity`, `upgrade`, `stats`, `requires`, `gold_value`, `qty`, `skill`, `sockets`, `rune_sockets`, `slot`, `hands`, `cooldown_s`, `bonuses` | определения предметов |
-| `items` | `uid`, `character_id?`, `def_id FK`, `qty`, `upgrade`, `equipped_slot`, `created_at`, `sockets`, `sort_order`, `bonuses` | инстансы; `upgrade` — дельта к `item_defs.upgrade` |
+| `items` | `uid`, `character_id?`, `def_id FK`, `qty`, `upgrade`, `personal`, `equipped_slot`, `created_at`, `sockets`, `sort_order`, `bonuses` | инстансы; `upgrade` — дельта к `item_defs.upgrade`; `personal` — печать персональности (M39) |
 | `loot_taken` | `uid`, `character_id`, `taken_at`; PK `(uid, character_id)` | отметки взятого лута; сбрасываются при респавне сущности |
 | `character_skills` | `character_id`, `skill_id`, `xp`, `rank`; PK пара | прогресс навыков |
 | `skills` | `id`, `name`, `skill_group`, `description` | справочник навыков |
@@ -701,8 +701,9 @@ ItemSnapshot {
 
 - `type` — `item_type` из определения; `upgrade` — суммарный уровень.
 - `description` — текст из контента для карточки/тултипа; нет поля — без описания.
-- `personal` — персональный предмет: нельзя передавать, при выбросе
-  уничтожается; нет поля — обычный.
+- `personal` — на предмете стоит печать: нельзя передавать, при выбросе
+  уничтожается. Печать ставится при первом надевании (для инструментов —
+  первом применении); нет поля — обычный.
 - `stats` — открытая карта; `requires` — `{attr, level?, profession?}`.
 - `sockets: Vec<Socket>` — `{index, rune?: RuneInfo, accepts?: "rune"|"gem"}`;
   `RuneInfo {name, spell, charges, max, damage?, def_id?, glyph?, class?,

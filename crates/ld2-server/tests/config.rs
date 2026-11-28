@@ -326,3 +326,27 @@ fn master_pickaxe_multiplier_is_at_least_one() {
         "gameplay.professions.mining_master_gem_mult",
     );
 }
+
+/// M39: «Нож мастера» не может уменьшать шанс шкур.
+#[test]
+fn skinning_master_multiplier_is_at_least_one() {
+    assert_problem(
+        &edited(
+            "skinning_master_loot_mult = 2.0",
+            "skinning_master_loot_mult = 0.5",
+        ),
+        "gameplay.professions.skinning_master_loot_mult",
+    );
+}
+
+/// M39: бонус «Фетиша охотника» — не более 2 п.п.
+#[test]
+fn hunter_loot_bonus_is_capped_at_two_points() {
+    assert_problem(
+        &edited(
+            "skinning_hunter_loot_bonus = 0.02",
+            "skinning_hunter_loot_bonus = 0.05",
+        ),
+        "gameplay.professions.skinning_hunter_loot_bonus",
+    );
+}

@@ -382,6 +382,12 @@ pub struct ProfessionsSection {
     /// M39: «Лампа шахтёра» — шанс получить 2 руды вместо 1.
     #[serde(default = "default_lamp_double_ore_chance")]
     pub mining_lamp_double_ore_chance: f64,
+    /// M39: «Нож мастера» — множитель шанса шкур/редких трофеев.
+    #[serde(default = "default_skinning_master_mult")]
+    pub skinning_master_loot_mult: f64,
+    /// M39: «Фетиш охотника» — прибавка к шансу шкур/редких трофеев.
+    #[serde(default = "default_skinning_hunter_bonus")]
+    pub skinning_hunter_loot_bonus: f64,
     /// Потолок уровня (на нём опыт перестаёт копиться; верхний ранг
     /// «Мастер» заканчивает на этом уровне).
     pub max_level: u32,
@@ -421,4 +427,12 @@ fn default_lamp_gem_bonus() -> f64 {
 
 fn default_lamp_double_ore_chance() -> f64 {
     0.05
+}
+
+fn default_skinning_master_mult() -> f64 {
+    2.0
+}
+
+fn default_skinning_hunter_bonus() -> f64 {
+    0.02
 }

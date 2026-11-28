@@ -4,12 +4,10 @@
 //!
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
-
-use ld2_protocol::names;
-
 use ld2_protocol::cmd::{ItemDrop, ItemEquip, ItemMove, ItemUnequip, ItemUse};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::{CharStats, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState};
+use ld2_protocol::names;
 use ld2_protocol::types::{Entity, Requires};
 use ld2_protocol::ErrorCode;
 use tracing::warn;
@@ -715,6 +713,12 @@ impl Session {
             warn!("item.equip (надевание): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        if def.personal && !item.personal {
+            if let Err(e) = db::items::set_personal(&pool, &item.uid).await {
+                warn!("item.equip (печать): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
         // M17/F30b: двуручник в правой руке блокирует левую — щит
         // автоматически снимается (как в WoW при смене на двуручное).
         if cmd.slot == SLOT_MAIN_HAND && def.hands >= TWO_HANDS {
@@ -871,9 +875,9 @@ impl Session {
             .lock()
             .expect("мир")
             .char_location(&char_id);
-        // M39: персональный предмет не падает на землю — сразу
-        // уничтожается (reason Destroyed ниже).
-        if let Some(location_id) = ground_loc.as_ref().filter(|_| !def.personal) {
+        // M39: привязанный персональный предмет не падает на землю —
+        // сразу уничтожается (reason Destroyed ниже).
+        if let Some(location_id) = ground_loc.as_ref().filter(|_| !item.personal) {
             let ttl = self.state.config.world.drop_ttl_s;
             let expires_at = crate::time::now_epoch() + ttl.max(0);
             let (by_name, gender) = self
@@ -935,11 +939,6 @@ impl Session {
             }
             let _ = dropped; // id наземного предмета — для будущего подбора
         }
-        let reason = if def.personal {
-            ItemRemovalReason::Destroyed
-        } else {
-            ItemRemovalReason::Dropped
-        };
         if qty >= i64::from(item.qty) {
             if let Err(e) = db::items::delete(pool, &item.uid).await {
                 warn!("item.drop: {e}");
@@ -952,7 +951,7 @@ impl Session {
                     None,
                     serde_json::to_value(ItemRemoved {
                         uid: item.uid.clone(),
-                        reason,
+                        reason: ItemRemovalReason::for_drop(item.personal),
                     })
                     .unwrap_or_default(),
                 ),

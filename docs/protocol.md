@@ -242,7 +242,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 { "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest|bag
   "name": "Ясеневый посох", "rarity": "rare",
   "description": "Посох огня: +2 к магии.",  // M39: текст для карточки/тултипа; нет поля — без описания
-  "personal": true,                          // M39: нельзя передавать; выброс уничтожает; нет поля — обычный
+  "personal": true,                          // M39: печать (нельзя передавать; выброс уничтожает); нет поля — обычный
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },
   "requires": { "attr": { "int": 12 }, "profession": null, "level": null },
@@ -319,7 +319,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.use` (камень) | `{item_uid}` | `{stone_uid, quality}` | − | **M18/F54:** `type=upgrade_stone` — выбирает активный камень усиления (не расходуется); ack несёт uid и качество в процентных пунктах. Следующие `upgrade.preview`/`start` работают с ним, 1 шт. списывается на старте |
 | `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
-| `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут). Персональный предмет (`personal`) не падает на землю, а уничтожается (`evt/item/removed`, reason `destroyed`) |
+| `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут). Предмет с печатью (`personal`) не падает на землю, а уничтожается (`evt/item/removed`, reason `destroyed`) |
 | `item.move` | `{item_uid, target_uid?}` или `{item_uid, to_container, to_index}` | `{}` / `{item_uid, container, slot_index}` | − | перемещение (M28): legacy `target_uid` — поменять местами в рюкзаке; `to_container` (`backpack`/`bags`/uid сумки) + `to_index` — положить в ячейку контейнера (ack несёт итоговое место); снятие/надевание сумки — перенос в `bags`/из `bags`; непустую сумку снять/выбросить нельзя (`E_INVENTORY_FULL`); сумка с `bag_types` принимает только эти типы (`E_BAG_TYPE`); спец-слоты панели (`bag_slots+0/1/2` — реагенты, колчан, ключница) принимают только сумку своего `bag_kind` (`E_BAG_SLOT`) |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны предмета с сокетами (M25 — не только посох); **M24**: `stats.class` руны (warrior\|archer\|mage) — каст только своему классу, иначе `E_REQUIREMENT_ATTR` (нет поля — любому классу) |
@@ -344,7 +344,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `party.leave` | `{}` | `{}` | + | выйти |
 | `party.kick` | `{player_id}` | `{}` | − | исключить |
 | `trade.open` | `{player_id}` | `{offer_id}` (→ `evt/trade/state`) | − | открыть сделку |
-| `trade.add_item` | `{offer_id, item_uid, qty?}` | `{}` (→ `evt/trade/state`) | − | положить предмет; надетый нельзя (`E_BUSY`), персональный — `E_ITEM_PERSONAL` (M39) |
+| `trade.add_item` | `{offer_id, item_uid, qty?}` | `{}` (→ `evt/trade/state`) | − | положить предмет; надетый нельзя (`E_BUSY`), с печатью — `E_ITEM_PERSONAL` (M39) |
 | `trade.set_gold` | `{offer_id, gold}` | `{}` (→ `evt/trade/state`) | − | предложить золото |
 | `trade.propose` / `trade.accept` | `{offer_id, version}` | `{}` | − | зафиксировать (сверка version) |
 | `trade.cancel` | `{offer_id}` | `{}` | + | отмена |
@@ -493,7 +493,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_BUSY` | M24: персонаж занят разделкой — действия мира/развития отклоняются, пока идёт таймер (`item.*` — исключение, прерывает по M23) |
 | `E_BAD_QTY` | M24: количество в админ-диалоге вне допустимого диапазона (1..=999; для валюты `type=money` верхней границы нет — до INTEGER-стака) |
 | `E_ITEM_GONE` | предмета уже нет (двойное действие/обмен) |
-| `E_ITEM_PERSONAL` | M39: персональный предмет нельзя передавать (сделка) |
+| `E_ITEM_PERSONAL` | M39: предмет с печатью персональности нельзя передавать (сделка) |
 | `E_UPGRADE_PREVIEW_STALE` | `preview_id` устарел (пересоздать превью) |
 | `E_UPGRADE_MAX` | достигнут максимум улучшения |
 | `E_TRADE_STALE` | `version` сделки не совпал → перерисовать окно |

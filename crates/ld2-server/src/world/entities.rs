@@ -448,6 +448,8 @@ impl World {
         action: &str,
         level: u32,
         rank: u32,
+        loot_mult: f64,
+        loot_add: f64,
     ) -> Option<(LiveCorpse, Vec<String>, Vec<String>)> {
         let corpse = self.corpses.get_mut(corpse_id)?;
         let rank = rank.clamp(RANK_MIN, RANK_MAX);
@@ -457,7 +459,12 @@ impl World {
                     return None;
                 }
                 corpse.skin_done = true;
-                let def = if roll_chance(crate::systems::hide_chance(level)) {
+                let chance = crate::systems::hide_chance_with(
+                    crate::systems::hide_chance(level),
+                    loot_mult,
+                    loot_add,
+                );
+                let def = if roll_chance(chance) {
                     format!("hide_q{rank}")
                 } else {
                     format!("hide_scraps_q{rank}")
@@ -491,7 +498,8 @@ impl World {
                     })
                     .unwrap_or_default();
                 for (def, chance) in extras {
-                    if roll_chance(chance.clamp(0.0, 1.0)) {
+                    let chance = crate::systems::hide_chance_with(chance, loot_mult, loot_add);
+                    if roll_chance(chance) {
                         corpse.loot.push(Some(def.clone()));
                         skin.push(def);
                     }
