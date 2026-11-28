@@ -6,6 +6,15 @@ use ld2_protocol::names;
 
 use super::super::*;
 
+/// M39: события, которые обслуживает [`AppStore::reduce_world`] —
+/// локация, сущности, персонаж и общая строка добычи ресурса.
+pub(crate) fn is_world_event(msg_type: &str) -> bool {
+    msg_type == names::EVT_LOCATION_CHANGED
+        || msg_type == names::EVT_RESOURCE_GATHERED
+        || msg_type.starts_with(names::EVT_ENTITY_PREFIX)
+        || (msg_type.starts_with(names::EVT_CHAR_PREFIX) && msg_type != names::EVT_CHAR_AFFLICT)
+}
+
 impl AppStore {
     /// Диспетчер мировых событий: локация, сущности, персонаж.
     pub(crate) fn reduce_world(
@@ -15,10 +24,36 @@ impl AppStore {
     ) -> Vec<Effect> {
         match msg_type {
             names::EVT_LOCATION_CHANGED => self.reduce_location(payload),
+            names::EVT_RESOURCE_GATHERED => self.reduce_resource_gathered(payload),
             m if m.starts_with(names::EVT_ENTITY_PREFIX) => self.reduce_entity(m, payload),
             m if m.starts_with(names::EVT_CHAR_PREFIX) => self.reduce_char(m, payload),
             _ => vec![],
         }
+    }
+
+    /// M39: добыча руды — своя строка «Вы добыли руду», чужая —
+    /// «{имя} добыл(а) руду» (род из события).
+    fn reduce_resource_gathered(&mut self, payload: serde_json::Value) -> Vec<Effect> {
+        let Ok(gathered) = serde_json::from_value::<ld2_protocol::evt::ResourceGathered>(payload)
+        else {
+            return vec![];
+        };
+        let mine = self
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.char.id == gathered.char_id);
+        let text = if mine {
+            "Вы добыли руду".to_string()
+        } else {
+            let verb = if gathered.gender == crate::domain::GENDER_FEMALE {
+                "добыла"
+            } else {
+                "добыл"
+            };
+            format!("{} {verb} руду", gathered.by_name)
+        };
+        self.push_log(LogKind::Location, text);
+        vec![]
     }
 
     fn reduce_location(&mut self, payload: serde_json::Value) -> Vec<Effect> {

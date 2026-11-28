@@ -83,6 +83,9 @@ pub const EVT_ITEM_STATE: &str = <super::evt::ItemState as Event>::TYPE;
 pub const EVT_ITEM_DROPPED: &str = <super::evt::ItemDropped as Event>::TYPE;
 /// `evt/item/expired`
 pub const EVT_ITEM_EXPIRED: &str = <super::evt::ItemExpired as Event>::TYPE;
+/// `evt/resource/gathered`
+pub const EVT_RESOURCE_GATHERED: &str = <super::evt::ResourceGathered as Event>::TYPE;
+
 /// `evt/harvest/result`
 pub const EVT_HARVEST_RESULT: &str = <super::evt::HarvestResult as Event>::TYPE;
 /// `evt/char/level_up`

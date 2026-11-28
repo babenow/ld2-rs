@@ -288,10 +288,17 @@ impl Session {
         }
         // 5) M39: сбор по времени — сервер-джоб 5 с, выдача в тике.
         let at = crate::time::now_epoch() + JOB_SECONDS;
+        let (char_name, gender) = self
+            .char
+            .as_ref()
+            .map(|c| (c.name.clone(), c.gender.clone()))
+            .unwrap_or_default();
         {
             let mut world = self.state.world.lock().expect("мир");
             world.start_gather(crate::world::GatherJob {
                 char_id: char_id.clone(),
+                char_name,
+                gender,
                 entity_id: cmd.entity_id.clone(),
                 name: node.name.clone(),
                 at,

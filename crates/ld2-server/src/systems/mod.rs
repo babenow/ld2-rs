@@ -120,6 +120,7 @@ mod tests {
             fail_xp_ratio: 0.2,
             level_xp_base: 40,
             level_xp_growth: 1.02,
+            rank_xp_mult: vec![1.0, 1.2, 1.45, 1.75, 2.1],
             max_level: 250,
             rank_span: 50,
             rank_up_gold_base: 200,
@@ -168,21 +169,55 @@ mod tests {
         );
     }
 
-    /// M21: формула уровня `round(40 × 1.02^L)` — растёт монотонно.
+    /// M21/M39: формула уровня `round(40 × 1.02^L × mult(ранг))` —
+    /// монотонно растёт; на рангах 2+ действует множитель.
     #[test]
     fn profession_level_curve_grows() {
         let cfg = prof_cfg();
-        assert_eq!(profession_level_xp(&cfg, 0), 40, "L0");
-        assert_eq!(profession_level_xp(&cfg, 1), 41, "L1");
-        assert_eq!(profession_level_xp(&cfg, 50), 108, "L50");
-        assert_eq!(profession_level_xp(&cfg, 100), 290, "L100");
+        assert_eq!(profession_level_xp(&cfg, 0), 40, "L0, ранг1");
+        assert_eq!(profession_level_xp(&cfg, 1), 41, "L1, ранг1");
+        assert_eq!(profession_level_xp(&cfg, 50), 129, "L50, ранг2 ×1.2");
+        assert_eq!(profession_level_xp(&cfg, 100), 420, "L100, ранг3 ×1.45");
         let (a, b) = (
             profession_level_xp(&cfg, 150),
             profession_level_xp(&cfg, 151),
         );
         assert!(b > a, "каждый уровень дороже: {a} → {b}");
         let top = profession_level_xp(&cfg, 249);
-        assert!((5_000..=6_000).contains(&top), "потолочный уровень: {top}");
+        assert!(
+            (11_000..=12_000).contains(&top),
+            "потолочный уровень (ранг5 ×2.1): {top}"
+        );
+    }
+
+    /// M39: число успешных действий на ранг растёт мягкой геометрией —
+    /// иначе смысл множителей теряется. Считаем по XP действия ранга
+    /// рецепта (40 + 25×ранг); точный XP зависит от источника.
+    #[test]
+    fn profession_rank_action_counts_grow_softly() {
+        let cfg = prof_cfg();
+        let actions: Vec<f64> = (1..=crate::systems::profession_rank_max(&cfg))
+            .map(|rank| {
+                let start = (rank - 1) * cfg.rank_span;
+                let total: i64 = (start..start + cfg.rank_span)
+                    .map(|level| profession_level_xp(&cfg, level))
+                    .sum();
+                let per_action =
+                    cfg.xp_per_craft_base + cfg.xp_per_craft_per_rank * i64::from(rank);
+                total as f64 / per_action.max(1) as f64
+            })
+            .collect();
+        assert!(
+            actions.windows(2).all(|w| w[1] > w[0]),
+            "действий на ранг больше: {actions:?}"
+        );
+        for w in actions.windows(2) {
+            let ratio = w[1] / w[0];
+            assert!(
+                (1.5..=3.5).contains(&ratio),
+                "мягкая геометрия, а не скачок: {actions:?}"
+            );
+        }
     }
 
     /// M21/M22: не больше **одного уровня** за одно начисление, но
@@ -200,8 +235,8 @@ mod tests {
         assert_eq!(profession_level_up(&cfg, 41, 1, 600), (600, 2));
         // Следующее начисление: шкала была полной → снова +1.
         assert_eq!(profession_level_up(&cfg, 600, 2, 10), (600 - 42 + 10, 3));
-        // Потолок: на L250 опыт не копится.
-        assert_eq!(profession_level_up(&cfg, 40, 249, 10_000), (0, 250));
+        // Потолок: на L250 опыт не копится (порог L249 — 11 634).
+        assert_eq!(profession_level_up(&cfg, 40, 249, 20_000), (0, 250));
         assert_eq!(profession_level_up(&cfg, 7, 250, 100), (0, 250));
         // Отрицательный gain не уводит XP в минус.
         assert_eq!(profession_level_up(&cfg, 5, 1, -100), (0, 1));

@@ -262,12 +262,7 @@ impl AppStore {
             return vec![];
         };
         match msg_type {
-            m if m == names::EVT_LOCATION_CHANGED
-                || m.starts_with(names::EVT_ENTITY_PREFIX)
-                || (m.starts_with(names::EVT_CHAR_PREFIX) && m != names::EVT_CHAR_AFFLICT) =>
-            {
-                self.reduce_world(m, payload)
-            }
+            m if reducers::world::is_world_event(m) => self.reduce_world(m, payload),
             m if m.starts_with(names::EVT_COMBAT_PREFIX)
                 || m.starts_with(names::EVT_MOB_PREFIX)
                 || m == names::EVT_MAGIC_CAST
@@ -1023,6 +1018,37 @@ mod tests {
             Some(serde_json::json!({ "uid": "ore1", "patch": { "qty": 1 } })),
         );
         assert_eq!(store.log.len(), before, "уменьшение стака молчит");
+    }
+
+    /// M40: добыча руды — общая строка журнала; свой персонаж —
+    /// «Вы добыли руду», чужой — по полу.
+    #[test]
+    fn resource_gathered_logs_self_and_others() {
+        let mut store = in_game();
+        let before = store.log.len();
+        store.apply_event(
+            "evt/resource/gathered",
+            Some(serde_json::json!({
+                "char_id": "c1", "by_name": "Ким", "gender": "male"
+            })),
+        );
+        store.apply_event(
+            "evt/resource/gathered",
+            Some(serde_json::json!({
+                "char_id": "c2", "by_name": "Сара", "gender": "female"
+            })),
+        );
+        let lines: Vec<&str> = store
+            .log
+            .iter()
+            .skip(before)
+            .map(|l| l.text.as_str())
+            .collect();
+        assert_eq!(
+            lines,
+            ["Вы добыли руду", "Сара добыла руду"],
+            "строки добычи: {lines:?}"
+        );
     }
 
     /// M14/F4: глобальный кулдаун — 1 с; повтор не укорачивает окно.
