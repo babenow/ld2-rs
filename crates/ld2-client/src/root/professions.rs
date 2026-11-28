@@ -11,9 +11,11 @@
 //! заполненные карточки либо пустые с надписями «Первая профессия»/
 //! «Вторая профессия» (указание заказчика); прочие основные не
 //! показываются. Ниже — дополнительные: **всегда все три** (изученные —
-//! полные карточки, нет — пустые с названием; изучаются параллельно). По указанию заказчика из окна убраны: список
-//! рецептов, выпадающий список обучения и подписи «Уровень x»/
-//! надпись ранга под полосами (обучение — у тренера в диалоге).
+//! полные карточки, нет — пустые с названием; изучаются параллельно).
+//! По указанию заказчика из окна убраны список рецептов, выпадающий
+//! список обучения и надпись ранга под полосами (обучение — у тренера
+//! в диалоге). M39: под шкалой ранга показывается «Уровень 75/100»
+//! (абсолютный уровень / граница ранга).
 
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Div, Window};
 use ld2_core::domain;
@@ -24,7 +26,11 @@ use ld2_protocol::types::ProfessionSnapshot;
 
 use crate::palette::Palette;
 
-use super::{act_btn, scrollable_tab, sheet::bar, PopupKind, Root};
+use super::{
+    act_btn, scrollable_tab,
+    sheet::{bar, bar_track},
+    PopupKind, Root,
+};
 
 /// M21: основные профессии (окно показывает только **два слота** —
 /// лимит primary; слоты заполненные или пустые с подписью слота).
@@ -84,6 +90,13 @@ fn rank_key(rank: u32) -> Key {
         4 => Key::ProfRank4,
         _ => Key::ProfRank5,
     }
+}
+
+/// M39: подпись уровня под шкалой ранга — абсолютный уровень и его
+/// граница: 75/100 для ранга 2, 100/150 для ранга 3.
+fn level_caption(lang: Lang, level: u32, rank: u32, span: u32) -> String {
+    let boundary = rank.max(1).saturating_mul(span.max(1));
+    format!("{} {level}/{boundary}", t(lang, Key::ProfLevelLabel))
 }
 
 /// Карточка изученной профессии: заголовок (название + ранг), две
@@ -148,12 +161,22 @@ fn prof_card(
         prof.level.to_string()
     };
     col = col.child(bar(level_frac, level_nums, pal.accent, pal));
-    col = col.child(bar(
-        band_frac,
-        format!("{in_band}/{span}"),
-        pal.success,
-        pal,
-    ));
+    // M39: уровень профессии — как абсолютная отметка на шкале ранга:
+    // «Уровень 75/100», «100/150» и т. д. Сама шкала по-прежнему
+    // показывает прогресс внутри текущего ранга.
+    col = col.child(
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(bar_track(band_frac, pal.success, pal))
+            .child(
+                div()
+                    .text_size(px(crate::ui_tokens::FONT_SM))
+                    .text_color(rgb(pal.muted))
+                    .child(level_caption(lang, prof.level, rank, span)),
+            ),
+    );
     // Действия: повышение ранга (цена из extra) + сброс.
     let mut btns = div().flex().flex_row().gap_2().items_center().flex_wrap();
     if let Some(cost) = prof.extra.get("rank_up_gold").and_then(|v| v.as_i64()) {
@@ -372,4 +395,17 @@ impl Root {
 /// Общий вертикальный контейнер секций.
 fn col_gap() -> Div {
     div().flex().flex_col().gap_2().px_1().py_1()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::level_caption;
+    use ld2_core::l10n::Lang;
+
+    #[test]
+    fn level_caption_uses_absolute_level_and_rank_boundary() {
+        assert_eq!(level_caption(Lang::Ru, 75, 2, 50), "Уровень 75/100");
+        assert_eq!(level_caption(Lang::Ru, 100, 3, 50), "Уровень 100/150");
+        assert_eq!(level_caption(Lang::Ru, 250, 5, 50), "Уровень 250/250");
+    }
 }
