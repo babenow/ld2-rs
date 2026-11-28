@@ -299,6 +299,8 @@
 - **Сокеты**: параметрические самоцветы (`bonuses` kind `param`)
   применяются к `derived` надетой экипировки наравне с атрибутами.
 
-- **Бенчмарк камней**: [`benchmarks/ore-gems.md`](./benchmarks/ore-gems.md) —
+- **Бенчмарк камней**: [`benchmarks/README.md`](./benchmarks/README.md) —
   шанс камня, ожидаемое число камней с жилы, распределение и камни/час
-  с инструментами и без; скрипт `scripts/bench-ore-gems.py`.
+  с инструментами и без. Запуск: `scripts/bench-ore-gems.sh` (bash)
+  или `scripts\bench-ore-gems.bat` (Windows); отчёт
+  `docs/benchmarks/ore-gems.md` — локальный, в `.gitignore`.
