@@ -8,16 +8,6 @@ const HIDE_CHANCE_MAX: f64 = 0.6;
 const CRIT_CHANCE_PER_RANK: f64 = 0.05;
 const RANK_MIN: u32 = 1;
 const RANK_MAX: u32 = 5;
-const HARVEST_XP_BASE: f64 = 10.0;
-const HARVEST_XP_PER_REQUIRED: f64 = 1.5;
-const HARVEST_DIFF_LOW: f64 = -10.0;
-const HARVEST_DIFF_MID: f64 = 9.0;
-const HARVEST_DIFF_HIGH: f64 = 24.0;
-const HARVEST_MULT_LOW: f64 = 1.5;
-const HARVEST_MULT_NORMAL: f64 = 1.0;
-const HARVEST_MULT_HIGH: f64 = 0.5;
-const HARVEST_MULT_ZERO: f64 = 0.0;
-const HARVEST_XP_MAX: i64 = 40;
 const SKILL_GROUP_WEAPON: &str = "weapon";
 
 /// Порог ранга: `round(base_xp × growth^rank)` (skills.md §2.2, D25).
@@ -80,26 +70,19 @@ pub fn harvest_crit(rank: u32) -> f64 {
     f64::from(rank.clamp(RANK_MIN, RANK_MAX)) * CRIT_CHANCE_PER_RANK
 }
 
-/// Снятие шкур: опыт за «Снятие шкуры» (освежевание не даёт опыта) —
-/// зависит от требуемого уровня животного: `база = 10 + треб ×1.5`,
-/// далее множитель по разнице (уровень персонажа − требуемый):
-/// −10 и ниже →×1.5, в пределах ±10 →×1.0, +10…+24 →×0.5,
-/// +25 и выше →×0; **потолок40 за действие** (указание заказчика:
-/// «максимум30-40»). Животное с требуемым уровнем выше персонажа на
-/// 25+ разделать нельзя (гейт — на сервере).
-pub fn harvest_xp_gain(required: u32, char_level: u32) -> i64 {
-    let base = HARVEST_XP_BASE + f64::from(required) * HARVEST_XP_PER_REQUIRED;
-    let diff = f64::from(char_level) - f64::from(required);
-    let mult = if diff <= HARVEST_DIFF_LOW {
-        HARVEST_MULT_LOW
-    } else if diff <= HARVEST_DIFF_MID {
-        HARVEST_MULT_NORMAL
-    } else if diff <= HARVEST_DIFF_HIGH {
-        HARVEST_MULT_HIGH
-    } else {
-        HARVEST_MULT_ZERO
-    };
-    ((base * mult).round() as i64).min(HARVEST_XP_MAX)
+/// M39: общая шкала сложности действия — база при уровне профессии не
+/// ниже требования; каждый уровень требования выше снижает шанс, но не
+/// ниже минимума. Для руды это реальный шанс добычи; для снятия шкур —
+/// только мера сложности (действие всегда succeeds).
+pub fn action_chance(
+    cfg: &crate::config::ProfessionsSection,
+    required: u32,
+    prof_level: u32,
+) -> f64 {
+    let base = cfg.mining_chance_base.clamp(0.0, 1.0);
+    let min = cfg.mining_chance_min.clamp(0.0, base);
+    let diff = f64::from(required.saturating_sub(prof_level));
+    (base - diff * cfg.mining_chance_per_level.max(0.0)).clamp(min, base)
 }
 
 /// M39: время добычи руды — 2..6 с по разнице уровней жилы и
@@ -110,11 +93,21 @@ pub fn mining_gather_seconds(required: u32, prof_level: u32) -> i64 {
     MIN_S + (f64::from(gap) / 24.0 * 4.0).round() as i64
 }
 
-/// M39: опыт за успешную добычу руды — обратно шансу: лёгкая жила
-/// (шанс = базовый) даёт минимум, рискованная (шанс = минимум) — 40.
-pub fn mining_xp_gain(cfg: &crate::config::ProfessionsSection, chance: f64) -> i64 {
+/// M39: общий опыт за успешное действие — обратно шансу сложности:
+/// лёгкое действие (шанс = базовый) даёт 10, рискованное (шанс =
+/// минимум) — 40. Если профессия выше требования на 25+, опыт 0
+/// («серая» цель; сама добыча/разделка при этом разрешена).
+pub fn action_xp_gain(
+    cfg: &crate::config::ProfessionsSection,
+    chance: f64,
+    required: u32,
+    prof_level: u32,
+) -> i64 {
     const XP_MIN: i64 = 10;
     const XP_MAX: i64 = 40;
+    if prof_level.saturating_sub(required) >= 25 {
+        return 0;
+    }
     let base = cfg.mining_chance_base.clamp(0.0, 1.0);
     let min = cfg.mining_chance_min.clamp(0.0, base);
     if base <= min {
@@ -125,17 +118,19 @@ pub fn mining_xp_gain(cfg: &crate::config::ProfessionsSection, chance: f64) -> i
     (XP_MIN as f64 + t * (XP_MAX - XP_MIN) as f64).round() as i64
 }
 
-/// M39: шанс успешной добычи руды. База — при уровне профессии не ниже
-/// жилы; каждый уровень жилы выше снижает шанс, но не ниже минимума.
-pub fn mining_chance(
+/// M39: опыт за снятие шкуры — та же шкала, что у руды; шанс только
+/// мера сложности, разделка всегда succeeds.
+pub fn skinning_xp_gain(
     cfg: &crate::config::ProfessionsSection,
     required: u32,
     prof_level: u32,
-) -> f64 {
-    let base = cfg.mining_chance_base.clamp(0.0, 1.0);
-    let min = cfg.mining_chance_min.clamp(0.0, base);
-    let diff = f64::from(required.saturating_sub(prof_level));
-    (base - diff * cfg.mining_chance_per_level.max(0.0)).clamp(min, base)
+) -> i64 {
+    action_xp_gain(
+        cfg,
+        action_chance(cfg, required, prof_level),
+        required,
+        prof_level,
+    )
 }
 
 /// M21: снимок профессии для wire (§6): `xp_to_next` — порог

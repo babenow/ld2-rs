@@ -145,57 +145,30 @@ mod tests {
         assert!((harvest_crit(9) - 0.25).abs() < 1e-9, "ранг зажат5");
     }
 
-    /// M22: опыт за снятие шкуры — база «10 + треб ×1.5» × множитель
-    /// по разнице уровней, **потолок40 за действие**
-    /// (таблица docs/professions.md §3).
-    #[test]
-    fn harvest_xp_gain_by_level_diff() {
-        // diff −5 (ниже требования) →×1: round(10 +5×1.5) = 18.
-        assert_eq!(harvest_xp_gain(5, 0), 18);
-        // ровно на уровне →×1.
-        assert_eq!(harvest_xp_gain(5, 5), 18);
-        // diff −10 и ниже →×1.5: round(25×1.5) = 38.
-        assert_eq!(harvest_xp_gain(10, 0), 38);
-        // diff +10…+24 →×0.5.
-        assert_eq!(harvest_xp_gain(5, 15), 9);
-        assert_eq!(harvest_xp_gain(5, 29), 9);
-        // diff +25 и выше →×0.
-        assert_eq!(harvest_xp_gain(5, 30), 0);
-        assert_eq!(harvest_xp_gain(1, 26), 0);
-        // Потолок: сколько бы ни было «в плюс», не больше40.
-        assert_eq!(harvest_xp_gain(40, 0), 40, "потолок40");
-        assert_eq!(harvest_xp_gain(200, 0), 40, "потолок40");
-        assert_eq!(
-            harvest_xp_gain(200, 200),
-            40,
-            "на уровне — база выше потолка"
-        );
-    }
-
     /// M39: шанс добычи руды падает с разницей уровней жилы и
     /// профессии, но не ниже минимума; при профессии не ниже жилы —
     /// база (не 100 %).
     #[test]
-    fn mining_chance_falls_with_level_gap_and_floors() {
+    fn action_chance_falls_with_level_gap_and_floors() {
         let cfg = prof_cfg();
         assert!(
-            (mining_chance(&cfg, 15, 40) - 0.95).abs() < 1e-9,
+            (action_chance(&cfg, 15, 40) - 0.95).abs() < 1e-9,
             "жила ниже"
         );
-        assert!((mining_chance(&cfg, 35, 40) - 0.95).abs() < 1e-9, "равный");
+        assert!((action_chance(&cfg, 35, 40) - 0.95).abs() < 1e-9, "равный");
         assert!(
-            (mining_chance(&cfg, 50, 40) - 0.60).abs() < 1e-9,
+            (action_chance(&cfg, 50, 40) - 0.60).abs() < 1e-9,
             "жила +10: 0.95 − 0.35"
         );
         assert!(
-            (mining_chance(&cfg, 100, 80) - 0.25).abs() < 1e-9,
+            (action_chance(&cfg, 100, 80) - 0.25).abs() < 1e-9,
             "жила +20: 0.95 − 0.70"
         );
         assert!(
-            (mining_chance(&cfg, 65, 40) - 0.15).abs() < 1e-9,
+            (action_chance(&cfg, 65, 40) - 0.15).abs() < 1e-9,
             "пол минимума"
         );
-        assert!((mining_chance(&cfg, 80, 80) - 0.95).abs() < 1e-9, "не 100%");
+        assert!((action_chance(&cfg, 80, 80) - 0.95).abs() < 1e-9, "не 100%");
     }
 
     /// M39: время добычи руды — 2..6 с по разнице уровней; выше
@@ -210,17 +183,40 @@ mod tests {
         assert_eq!(mining_gather_seconds(100, 35), 6, "зазор >24 зажат");
     }
 
-    /// M39: опыт за успешную добычу обратен шансу: 10 при базовом
-    /// шансе, 40 при минимальном; вне диапазона — кламп.
+    /// M39: общий опыт за действие — 10..40 обратно шансу; при
+    /// профессии выше требования на 25+ — 0 («серая» цель).
     #[test]
-    fn mining_xp_is_inverse_to_chance() {
+    fn action_xp_is_inverse_to_chance_and_zero_when_grey() {
         let cfg = prof_cfg();
-        assert_eq!(mining_xp_gain(&cfg, 0.95), 10, "базовый шанс");
-        assert_eq!(mining_xp_gain(&cfg, 0.60), 23, "средний шанс");
-        assert_eq!(mining_xp_gain(&cfg, 0.35), 33, "низкий шанс");
-        assert_eq!(mining_xp_gain(&cfg, 0.15), 40, "минимум");
-        assert_eq!(mining_xp_gain(&cfg, 1.0), 10, "выше базы — кламп");
-        assert_eq!(mining_xp_gain(&cfg, 0.0), 40, "ниже минимума — кламп");
+        // required 50, level 40 — не «серая» цель.
+        assert_eq!(action_xp_gain(&cfg, 0.95, 50, 40), 10, "базовый шанс");
+        assert_eq!(action_xp_gain(&cfg, 0.60, 50, 40), 23, "средний шанс");
+        assert_eq!(action_xp_gain(&cfg, 0.35, 50, 40), 33, "низкий шанс");
+        assert_eq!(action_xp_gain(&cfg, 0.15, 50, 40), 40, "минимум");
+        assert_eq!(action_xp_gain(&cfg, 1.0, 50, 40), 10, "выше базы — кламп");
+        assert_eq!(action_xp_gain(&cfg, 0.0, 50, 40), 40, "ниже минимума");
+        assert_eq!(
+            action_xp_gain(&cfg, 0.95, 10, 40),
+            0,
+            "профессия выше жилы на 30 — опыта нет"
+        );
+        assert_eq!(
+            action_xp_gain(&cfg, 0.95, 16, 40),
+            10,
+            "ровно 24 — ещё опыт"
+        );
+    }
+
+    /// M39: снятие шкур использует ту же шкалу, что руда; при
+    /// профессии выше животного на 25+ опыт 0.
+    #[test]
+    fn skinning_xp_uses_shared_scale_and_grey_rule() {
+        let cfg = prof_cfg();
+        assert_eq!(skinning_xp_gain(&cfg, 20, 0), 36, "волк ур.20, проф.0");
+        assert_eq!(skinning_xp_gain(&cfg, 5, 0), 17, "животное ур.5");
+        assert_eq!(skinning_xp_gain(&cfg, 45, 20), 40, "высокое животное");
+        assert_eq!(skinning_xp_gain(&cfg, 5, 30), 0, "проф. выше на 25");
+        assert_eq!(skinning_xp_gain(&cfg, 5, 29), 10, "выше на 24 — опыт");
     }
 
     /// M21/M39: формула уровня `round(40 × 1.02^L × mult(ранг))` —

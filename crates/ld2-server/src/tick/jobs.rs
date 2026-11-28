@@ -287,7 +287,14 @@ pub(super) async fn gather_step(state: &SharedState) {
                 texts.push(text);
             }
         }
-        if let Some(text) = grant_gather_xp(state, &job.char_id, &node.profession, job.chance).await
+        if let Some(text) = grant_gather_xp(
+            state,
+            &job.char_id,
+            &node.profession,
+            job.chance,
+            &node.required_level,
+        )
+        .await
         {
             texts.push(text);
         }
@@ -382,6 +389,7 @@ async fn grant_gather_xp(
     char_id: &str,
     profession: &Option<String>,
     chance: Option<f64>,
+    required_level: &u32,
 ) -> Option<String> {
     let prof = profession.as_deref()?;
     let (_, xp_old, rank, level) = db::professions::learned(&state.pool, char_id)
@@ -391,10 +399,18 @@ async fn grant_gather_xp(
         .find(|(id, _, _, _)| id == prof)?;
     let cfg = &state.config.gameplay.professions;
     let gain = if prof == PROFESSION_MINING {
-        crate::systems::mining_xp_gain(cfg, chance.unwrap_or(cfg.mining_chance_base))
+        crate::systems::action_xp_gain(
+            cfg,
+            chance.unwrap_or(cfg.mining_chance_base),
+            *required_level,
+            level.max(0) as u32,
+        )
     } else {
         cfg.xp_per_craft_base + cfg.xp_per_craft_per_rank * i64::from(rank)
     };
+    if gain <= 0 {
+        return None; // серая цель/потолок — без события опыта
+    }
     let gain = crate::progress::profession_xp(state, char_id, gain).await;
     let (xp_new, level_new) =
         crate::systems::profession_level_up(cfg, xp_old, level.max(0) as u32, gain);
@@ -551,7 +567,11 @@ pub(super) async fn harvest_step(state: &SharedState) {
         // XP — только за снятие шкуры (освежевание не даёт).
         if job.action == ACTION_SKIN {
             if let Some((_, xp_old, rank_row, _)) = learned {
-                let gain = crate::systems::harvest_xp_gain(required, level);
+                let gain = crate::systems::skinning_xp_gain(
+                    &state.config.gameplay.professions,
+                    required,
+                    level,
+                );
                 if gain > 0 {
                     // M33/M34: премиум и другие множители профессии.
                     let gain = crate::progress::profession_xp(state, &job.char_id, gain).await;

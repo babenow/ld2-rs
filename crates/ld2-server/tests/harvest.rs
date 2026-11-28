@@ -154,18 +154,17 @@ async fn harvest_gates_gut_and_skin_flow() {
     let ack = harvest(&mut c, &corpse, "gut").await;
     assert_eq!(ack["error"]["code"], "E_ITEM_GONE", "повтор gut: {ack}");
 
-    // Снятие шкуры: старт → итог + XP (треб волка5, уровень0 →
-    // diff −5 →×1 →100 XP → уровень ≥2).
+    // Снятие шкуры: старт → итог + XP. M39: волк ур.20, проф.0 →
+    // «шанс сложности» 25 % → 36 XP; до порога 40 уровня нет.
     let ack = harvest(&mut c, &corpse, "skin").await;
     assert_eq!(ack["result"], "ok", "старт skin: {ack}");
     let result = harvest_result(&mut c).await;
     assert_eq!(result["payload"]["ok"], true, "skin готов: {result}");
     let prof = c.wait_event("evt/craft/profession").await;
     assert_eq!(prof["payload"]["profession"]["id"], "skinning");
+    assert_eq!(prof["payload"]["gain"], 36, "XP снятия шкуры: {prof}");
     let level = prof["payload"]["profession"]["level"].as_i64().unwrap_or(0);
-    // M22: не больше1 уровня за начисление (600 XP → уровень1,
-    // шкала зажата новым порогом).
-    assert_eq!(level, 1, "ровно1 уровень за действие: {prof}");
+    assert_eq!(level, 0, "36 < 40 — уровня нет: {prof}");
 
     // Лут: дроп волка (2) + шкура/обрезки (1…3 с критом) — общий
     // список; «Внутри» не тронут.
