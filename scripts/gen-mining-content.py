@@ -136,15 +136,15 @@ ALL_PURE = [f"raw_stone_{key}" for key, _, _, _, _, _ in PURE]
 
 VEINS = [
     # ore_id, mixed, pure, chance
-    ("ore_copper", COPPER_MIXED, COPPER_PURE, 0.0125),
-    ("ore_tin", TIN_MIXED, TIN_PURE, 0.015),
-    ("ore_iron", IRON_MIXED, IRON_PURE, 0.0175),
-    ("ore_bronze", IRON_MIXED, IRON_PURE, 0.01875),
-    ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.02),
-    ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.025),
-    ("ore_platinum", GOLD_MIXED, GOLD_PURE, 0.025),
-    ("ore_adamantite", ALL_MIXED, ALL_PURE, 0.0275),
-    ("ore_mithril", ALL_MIXED, ALL_PURE, 0.03),
+    ("ore_copper", COPPER_MIXED, COPPER_PURE, 0.00625),
+    ("ore_tin", TIN_MIXED, TIN_PURE, 0.0075),
+    ("ore_iron", IRON_MIXED, IRON_PURE, 0.00875),
+    ("ore_bronze", IRON_MIXED, IRON_PURE, 0.009375),
+    ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.01),
+    ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.0125),
+    ("ore_platinum", GOLD_MIXED, GOLD_PURE, 0.0125),
+    ("ore_adamantite", ALL_MIXED, ALL_PURE, 0.01375),
+    ("ore_mithril", ALL_MIXED, ALL_PURE, 0.015),
 ]
 VEIN_BY_ORE = {ore: (mixed, pure, chance) for ore, mixed, pure, chance in VEINS}
 
@@ -364,6 +364,7 @@ def vein_node(
     mixed: list[str],
     pure: list[str],
     chance: float,
+    chance_mult: float = 1.0,
 ) -> dict:
     return {
         "id": node_id,
@@ -379,6 +380,7 @@ def vein_node(
         "required_level": req_level,
         "gems": {
             "chance": chance,
+            "chance_mult": chance_mult,
             "mixed_share": 0.1,
             "mixed": mixed,
             "pure": pure,
@@ -534,7 +536,7 @@ def update_locations(locations: dict) -> None:
             1,
             TIN_MIXED,
             TIN_PURE,
-            0.015,
+            0.0075,
         )
     )
     del by_id  # больше не нужен
