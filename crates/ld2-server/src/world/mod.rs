@@ -690,7 +690,7 @@ mod tests {
                 {"id": "m_bonus", "kind": "monster", "name": "Белый волк",
                  "hp": {"cur": 10, "max": 10},
                  "harvest": {"level": 45, "skin": true, "skin_extra": [
-                     {"def_id": "pelt_white_wolf", "chance": 0.3}
+                     {"def_id": "pelt_white_wolf", "chance": 0.5}
                  ]}}
             ]),
         );
