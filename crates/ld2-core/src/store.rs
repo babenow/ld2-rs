@@ -1088,6 +1088,34 @@ mod tests {
         );
     }
 
+    /// M39: отказ «жила пуста» — журнальная строка, а не красный
+    /// баннер мира.
+    #[test]
+    fn vein_empty_ack_logs_instead_of_error() {
+        let mut store = in_game();
+        store.pending = Some(Act::Gather);
+        let ack = ld2_protocol::Ack::error(
+            1,
+            None,
+            &ld2_protocol::ErrorCode::VeinEmpty,
+            "В жиле нет больше руды. Подождите, пока руда появится снова",
+        );
+        store.apply_ack(ack);
+        assert!(
+            store.world_error.is_none(),
+            "без баннера: {:?}",
+            store.world_error
+        );
+        assert!(
+            store
+                .log
+                .iter()
+                .any(|l| l.text.contains("В жиле нет больше руды")),
+            "строка в журнале: {:?}",
+            store.log
+        );
+    }
+
     /// M14/F4: глобальный кулдаун — 1 с; повтор не укорачивает окно.
     #[test]
     fn global_cooldown_blocks_one_second_and_never_shrinks() {

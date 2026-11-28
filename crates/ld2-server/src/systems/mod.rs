@@ -198,6 +198,19 @@ mod tests {
         assert!((mining_chance(&cfg, 80, 80) - 0.95).abs() < 1e-9, "не 100%");
     }
 
+    /// M39: опыт за успешную добычу обратен шансу: 10 при базовом
+    /// шансе, 40 при минимальном; вне диапазона — кламп.
+    #[test]
+    fn mining_xp_is_inverse_to_chance() {
+        let cfg = prof_cfg();
+        assert_eq!(mining_xp_gain(&cfg, 0.95), 10, "базовый шанс");
+        assert_eq!(mining_xp_gain(&cfg, 0.60), 23, "средний шанс");
+        assert_eq!(mining_xp_gain(&cfg, 0.35), 33, "низкий шанс");
+        assert_eq!(mining_xp_gain(&cfg, 0.15), 40, "минимум");
+        assert_eq!(mining_xp_gain(&cfg, 1.0), 10, "выше базы — кламп");
+        assert_eq!(mining_xp_gain(&cfg, 0.0), 40, "ниже минимума — кламп");
+    }
+
     /// M21/M39: формула уровня `round(40 × 1.02^L × mult(ранг))` —
     /// монотонно растёт; на рангах 2+ действует множитель.
     #[test]

@@ -349,8 +349,8 @@
           "resource": "ore_tin",
           "max": 2,
           "respawn": {
-            "min_s": 120,
-            "max_s": 180
+            "min_s": 200,
+            "max_s": 330
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -30687,8 +30687,8 @@
           "resource": "ore_tin",
           "max": 3,
           "respawn": {
-            "min_s": 90,
-            "max_s": 150
+            "min_s": 200,
+            "max_s": 330
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -30717,8 +30717,8 @@
           "resource": "ore_tin",
           "max": 3,
           "respawn": {
-            "min_s": 90,
-            "max_s": 150
+            "min_s": 200,
+            "max_s": 330
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -30770,8 +30770,8 @@
           "resource": "ore_iron",
           "max": 3,
           "respawn": {
-            "min_s": 120,
-            "max_s": 180
+            "min_s": 260,
+            "max_s": 420
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -30801,8 +30801,8 @@
           "resource": "ore_iron",
           "max": 3,
           "respawn": {
-            "min_s": 120,
-            "max_s": 180
+            "min_s": 260,
+            "max_s": 420
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -30832,8 +30832,8 @@
           "resource": "ore_iron",
           "max": 3,
           "respawn": {
-            "min_s": 120,
-            "max_s": 180
+            "min_s": 260,
+            "max_s": 420
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -30863,8 +30863,8 @@
           "resource": "ore_silver",
           "max": 3,
           "respawn": {
-            "min_s": 180,
-            "max_s": 240
+            "min_s": 320,
+            "max_s": 510
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -30892,8 +30892,8 @@
           "resource": "ore_silver",
           "max": 3,
           "respawn": {
-            "min_s": 180,
-            "max_s": 240
+            "min_s": 320,
+            "max_s": 510
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -30939,8 +30939,8 @@
           "resource": "ore_gold",
           "max": 2,
           "respawn": {
-            "min_s": 240,
-            "max_s": 360
+            "min_s": 380,
+            "max_s": 600
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -30972,8 +30972,8 @@
           "resource": "ore_gold",
           "max": 2,
           "respawn": {
-            "min_s": 240,
-            "max_s": 360
+            "min_s": 380,
+            "max_s": 600
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -31005,8 +31005,8 @@
           "resource": "ore_mithril",
           "max": 2,
           "respawn": {
-            "min_s": 360,
-            "max_s": 600
+            "min_s": 460,
+            "max_s": 720
           },
           "despawn_when_empty": false,
           "profession": "mining",
@@ -31061,8 +31061,8 @@
           "resource": "ore_mithril",
           "max": 2,
           "respawn": {
-            "min_s": 360,
-            "max_s": 600
+            "min_s": 460,
+            "max_s": 720
           },
           "despawn_when_empty": false,
           "profession": "mining",

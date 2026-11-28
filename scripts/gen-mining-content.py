@@ -42,14 +42,21 @@ VERSION_XP = [40, 70, 110]
 VERSION_TIME = [3, 5, 7]
 
 # ─── руды и жилы ─────────────────────────────────────────────────────────────
+def vein_respawn(req_level: int) -> tuple[int, int]:
+    """M39: респавн жилы растёт с её уровнем: 60+4L .. 120+6L (медь — 60..120)."""
+    if req_level <= 1:
+        return (60, 120)
+    return (60 + 4 * req_level, 120 + 6 * req_level)
+
+
 ORES = [
     # id, name, rarity, gold, req_level, min_rank, max, respawn, node_prefix
     ("ore_copper", "Медная руда", "common", 6, 1, 1, 3, (60, 120)),
-    ("ore_tin", "Оловянная руда", "common", 12, 35, 1, 3, (90, 150)),
-    ("ore_iron", "Железная руда", "uncommon", 24, 50, 2, 3, (120, 180)),
-    ("ore_silver", "Серебряная руда", "uncommon", 48, 65, 3, 3, (180, 240)),
-    ("ore_gold", "Золотая руда", "rare", 120, 80, 4, 2, (240, 360)),
-    ("ore_mithril", "Мифриловая руда", "epic", 300, 100, 5, 2, (360, 600)),
+    ("ore_tin", "Оловянная руда", "common", 12, 35, 1, 3, (200, 330)),
+    ("ore_iron", "Железная руда", "uncommon", 24, 50, 2, 3, (260, 420)),
+    ("ore_silver", "Серебряная руда", "uncommon", 48, 65, 3, 3, (320, 510)),
+    ("ore_gold", "Золотая руда", "rare", 120, 80, 4, 2, (380, 600)),
+    ("ore_mithril", "Мифриловая руда", "epic", 300, 100, 5, 2, (460, 720)),
 ]
 ORE_BY_ID = {row[0]: row for row in ORES}
 
@@ -332,11 +339,11 @@ def mine_locations() -> list[dict]:
                 {"id": "e_mine_deep", "label": "спуск в железные штольни", "to": "l_mine_iron"},
             ],
             "entities": [
-                vein_node("ore_copper_1", "Медная жила", "ore_copper", 3, (60, 120), 1, 1, copper_mixed, copper_pure, copper_chance),
-                vein_node("ore_copper_2", "Медная жила", "ore_copper", 3, (60, 120), 1, 1, copper_mixed, copper_pure, copper_chance),
-                vein_node("ore_copper_3", "Медная жила", "ore_copper", 3, (60, 120), 1, 1, copper_mixed, copper_pure, copper_chance),
-                vein_node("ore_tin_1", "Оловянная жила", "ore_tin", 3, (90, 150), 35, 1, tin_mixed, tin_pure, tin_chance),
-                vein_node("ore_tin_2", "Оловянная жила", "ore_tin", 3, (90, 150), 35, 1, tin_mixed, tin_pure, tin_chance),
+                vein_node("ore_copper_1", "Медная жила", "ore_copper", 3, vein_respawn(1), 1, 1, copper_mixed, copper_pure, copper_chance),
+                vein_node("ore_copper_2", "Медная жила", "ore_copper", 3, vein_respawn(1), 1, 1, copper_mixed, copper_pure, copper_chance),
+                vein_node("ore_copper_3", "Медная жила", "ore_copper", 3, vein_respawn(1), 1, 1, copper_mixed, copper_pure, copper_chance),
+                vein_node("ore_tin_1", "Оловянная жила", "ore_tin", 3, vein_respawn(35), 35, 1, tin_mixed, tin_pure, tin_chance),
+                vein_node("ore_tin_2", "Оловянная жила", "ore_tin", 3, vein_respawn(35), 35, 1, tin_mixed, tin_pure, tin_chance),
             ],
         },
         {
@@ -350,11 +357,11 @@ def mine_locations() -> list[dict]:
                 {"id": "e_mine_deep", "label": "спуск в глубины мифрила", "to": "l_mine_mithril"},
             ],
             "entities": [
-                vein_node("ore_iron_1", "Железная жила", "ore_iron", 3, (120, 180), 50, 2, iron_mixed, iron_pure, iron_chance),
-                vein_node("ore_iron_2", "Железная жила", "ore_iron", 3, (120, 180), 50, 2, iron_mixed, iron_pure, iron_chance),
-                vein_node("ore_iron_3", "Железная жила", "ore_iron", 3, (120, 180), 50, 2, iron_mixed, iron_pure, iron_chance),
-                vein_node("ore_silver_1", "Серебряная жила", "ore_silver", 3, (180, 240), 65, 3, silver_mixed, silver_pure, silver_chance),
-                vein_node("ore_silver_2", "Серебряная жила", "ore_silver", 3, (180, 240), 65, 3, silver_mixed, silver_pure, silver_chance),
+                vein_node("ore_iron_1", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
+                vein_node("ore_iron_2", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
+                vein_node("ore_iron_3", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
+                vein_node("ore_silver_1", "Серебряная жила", "ore_silver", 3, vein_respawn(65), 65, 3, silver_mixed, silver_pure, silver_chance),
+                vein_node("ore_silver_2", "Серебряная жила", "ore_silver", 3, vein_respawn(65), 65, 3, silver_mixed, silver_pure, silver_chance),
             ],
         },
         {
@@ -367,10 +374,10 @@ def mine_locations() -> list[dict]:
                 {"id": "e_mine_iron", "label": "наверх, в железные штольни", "to": "l_mine_iron"},
             ],
             "entities": [
-                vein_node("ore_gold_1", "Золотая жила", "ore_gold", 2, (240, 360), 80, 4, gold_mixed, gold_pure, gold_chance),
-                vein_node("ore_gold_2", "Золотая жила", "ore_gold", 2, (240, 360), 80, 4, gold_mixed, gold_pure, gold_chance),
-                vein_node("ore_mithril_1", "Мифриловая жила", "ore_mithril", 2, (360, 600), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
-                vein_node("ore_mithril_2", "Мифриловая жила", "ore_mithril", 2, (360, 600), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
+                vein_node("ore_gold_1", "Золотая жила", "ore_gold", 2, vein_respawn(80), 80, 4, gold_mixed, gold_pure, gold_chance),
+                vein_node("ore_gold_2", "Золотая жила", "ore_gold", 2, vein_respawn(80), 80, 4, gold_mixed, gold_pure, gold_chance),
+                vein_node("ore_mithril_1", "Мифриловая жила", "ore_mithril", 2, vein_respawn(100), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
+                vein_node("ore_mithril_2", "Мифриловая жила", "ore_mithril", 2, vein_respawn(100), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
             ],
         },
     ]
@@ -422,7 +429,7 @@ def update_locations(locations: dict) -> None:
             "Оловянная жила",
             "ore_tin",
             2,
-            (120, 180),
+            vein_respawn(35),
             35,
             1,
             TIN_MIXED,

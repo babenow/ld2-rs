@@ -102,6 +102,21 @@ pub fn harvest_xp_gain(required: u32, char_level: u32) -> i64 {
     ((base * mult).round() as i64).min(HARVEST_XP_MAX)
 }
 
+/// M39: опыт за успешную добычу руды — обратно шансу: лёгкая жила
+/// (шанс = базовый) даёт минимум, рискованная (шанс = минимум) — 40.
+pub fn mining_xp_gain(cfg: &crate::config::ProfessionsSection, chance: f64) -> i64 {
+    const XP_MIN: i64 = 10;
+    const XP_MAX: i64 = 40;
+    let base = cfg.mining_chance_base.clamp(0.0, 1.0);
+    let min = cfg.mining_chance_min.clamp(0.0, base);
+    if base <= min {
+        return XP_MIN;
+    }
+    let chance = chance.clamp(0.0, 1.0).max(min).min(base);
+    let t = (base - chance) / (base - min);
+    (XP_MIN as f64 + t * (XP_MAX - XP_MIN) as f64).round() as i64
+}
+
 /// M39: шанс успешной добычи руды. База — при уровне профессии не ниже
 /// жилы; каждый уровень жилы выше снижает шанс, но не ниже минимума.
 pub fn mining_chance(

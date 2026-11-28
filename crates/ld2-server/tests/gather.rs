@@ -113,8 +113,8 @@ async fn premium_boosts_profession_xp_on_gather() {
     let prof = c.wait_event("evt/craft/profession").await;
     assert_eq!(prof["payload"]["profession"]["id"], "mining");
     assert_eq!(
-        prof["payload"]["gain"], 18,
-        "12 × 1.5 = 18 (премиум, медная жила ур.1): {prof}"
+        prof["payload"]["gain"], 15,
+        "10 × 1.5 = 15 (премиум, медная жила ур.1): {prof}"
     );
 }
 
@@ -221,7 +221,13 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         )
         .await;
     let ack = c.ack(seq).await;
-    assert_eq!(ack["error"]["code"], "E_TARGET_GONE", "исчерпана: {ack}");
+    assert_eq!(ack["error"]["code"], "E_VEIN_EMPTY", "исчерпана: {ack}");
+    assert!(
+        ack["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("В жиле нет больше руды")),
+        "сообщение пустой жилы: {ack}"
+    );
 
     // Трава ×1: исчерпание скрывает объект (despawn_when_empty).
     let seq = c
@@ -271,8 +277,8 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         .sum();
     assert_eq!(herb, 1, "собрана1 трава: {inv:?}");
 
-    // M38: опыт горного дела — как у снятия шкур (за ур.1 даёт 12 XP);
-    // 3 добычи = 36 XP, до уровня 1 (порог 40) не хватает. Ранг остаётся1.
+    // M39: опыт горного дела обратен шансу (chance=1.0 в тесте → 10 XP);
+    // 3 добычи = 30 XP, до уровня 1 (порог 40) не хватает. Ранг остаётся1.
     let profs = snap["payload"]["char"]["professions"]
         .as_array()
         .expect("professions");
@@ -283,9 +289,9 @@ async fn gather_tool_profession_yield_and_exhaustion() {
     assert_eq!(
         mining["level"].as_i64().unwrap_or(0),
         0,
-        "уровень за3 добычи (36/40 XP): {profs:?}"
+        "уровень за 3 добычи (30/40 XP): {profs:?}"
     );
-    assert_eq!(mining["xp"].as_i64().unwrap_or(0), 36, "3×12 XP");
+    assert_eq!(mining["xp"].as_i64().unwrap_or(0), 30, "3×10 XP");
     assert_eq!(mining["rank"], 1, "ранг без тренера не растёт");
     assert_eq!(mining["rank_span"], 50, "границы рангов в extra");
 }

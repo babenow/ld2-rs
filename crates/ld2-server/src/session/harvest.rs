@@ -211,6 +211,20 @@ impl Session {
             let world = self.state.world.lock().expect("мир");
             match world.resource(&cmd.entity_id) {
                 Some(n) if n.location_id == current && !n.hidden && n.current > 0 => n.clone(),
+                Some(n) if n.location_id == current && !n.hidden => {
+                    if n.profession.as_deref() == Some(PROFESSION_MINING) {
+                        return vec![Self::err(
+                            seq,
+                            ErrorCode::VeinEmpty,
+                            "В жиле нет больше руды. Подождите, пока руда появится снова",
+                        )];
+                    }
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::TargetGone,
+                        "ресурс исчерпан — подождите возрождения",
+                    )];
+                }
                 _ => {
                     return vec![Self::err(seq, ErrorCode::TargetGone, "ресурс недоступен")];
                 }

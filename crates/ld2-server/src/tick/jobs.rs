@@ -287,8 +287,7 @@ pub(super) async fn gather_step(state: &SharedState) {
                 texts.push(text);
             }
         }
-        if let Some(text) =
-            grant_gather_xp(state, &job.char_id, &node.profession, &node.required_level).await
+        if let Some(text) = grant_gather_xp(state, &job.char_id, &node.profession, job.chance).await
         {
             texts.push(text);
         }
@@ -382,7 +381,7 @@ async fn grant_gather_xp(
     state: &SharedState,
     char_id: &str,
     profession: &Option<String>,
-    required_level: &u32,
+    chance: Option<f64>,
 ) -> Option<String> {
     let prof = profession.as_deref()?;
     let (_, xp_old, rank, level) = db::professions::learned(&state.pool, char_id)
@@ -392,7 +391,7 @@ async fn grant_gather_xp(
         .find(|(id, _, _, _)| id == prof)?;
     let cfg = &state.config.gameplay.professions;
     let gain = if prof == PROFESSION_MINING {
-        crate::systems::harvest_xp_gain(*required_level, level.max(0) as u32)
+        crate::systems::mining_xp_gain(cfg, chance.unwrap_or(cfg.mining_chance_base))
     } else {
         cfg.xp_per_craft_base + cfg.xp_per_craft_per_rank * i64::from(rank)
     };

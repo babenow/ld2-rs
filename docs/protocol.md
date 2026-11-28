@@ -355,7 +355,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `ping` | `{}` | `{}` (→ `evt/pong`) | + | RTT |
 | `time.sync` | `{}` | `{}` (→ `evt/time.sync`) | + | калибровка времени |
 | `corpse.harvest` | `{ entity_id, action: "skin"\|"gut" }` | `{ action, name }` | − | снятие шкур: разделка трупа животного — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result`); ошибки: `E_PROFESSION` (не изучена), `E_TOOL_MISSING` (нет ножа), `E_LEVEL_REQUIRED` (требуемый уровень выше на25+), `E_TARGET_GONE` (нет флагов/уже разделано/нет трупа), `E_COOLDOWN` (повторный старт на том же трупе; на другом — переключение: текущая разделка прерывается, шкура брошенного трупа портится) |
-| `resource.gather` | `{ entity_id }` | `{}` | − | M20/F20b + M39: добыча 1 единицы ресурса — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result` с `action:"gather"`); инструмент, ранг профессии и уровень жилы (допуск25) проверяются на сервере; пока джоб идёт, персонаж занят (`E_BUSY`). Руда добывается с шансом (см. `[gameplay.professions] mining_chance_*`): провал списывает 1 запас жилы, руда/камень/XP не выдаются, итог `ok=false` + `text`. Отказы: `E_TOOL_MISSING`/`E_PROFESSION`/`E_LEVEL_REQUIRED`/`E_TARGET_GONE`/`E_INVENTORY_FULL` |
+| `resource.gather` | `{ entity_id }` | `{}` | − | M20/F20b + M39: добыча 1 единицы ресурса — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result` с `action:"gather"`); инструмент, ранг профессии и уровень жилы (допуск25) проверяются на сервере; пока джоб идёт, персонаж занят (`E_BUSY`). Руда добывается с шансом (см. `[gameplay.professions] mining_chance_*`): провал списывает 1 запас жилы, руда/камень/XP не выдаются, итог `ok=false` + `text`; успех даёт 10..40 XP обратно шансу. Пустая жила — `E_VEIN_EMPTY` без запуска джоба. Отказы: `E_TOOL_MISSING`/`E_PROFESSION`/`E_LEVEL_REQUIRED`/`E_TARGET_GONE`/`E_INVENTORY_FULL` |
 | `dialog.choice` | `{ dialog_id, page_id, action_id }` | `{}` | − | M20: выбор действия в игровом многостраничном диалоге (**заготовка**) |
 | `dialog.submit` | `{ dialog_id, values {id → значение} }` | `{ values }` | − | M20: ввод execute-диалога; **M24**: ветка `admin.*` в `dialog_id` — выдача/удаление предмета (роль проверяется повторно; qty ≥ 1, верхняя граница 999 — **кроме валюты** `type=money` (без потолка, до INTEGER-стака) → `E_BAD_QTY`) |
 | `admin.items` | `{}` | `{ items: [{id, name, type, rarity, qty, upgrade, gold_value}] }` | + | M24: каталог всех предметов для админ-окна (одним запросом); только `role=admin` → `E_PERMISSION` |
@@ -475,6 +475,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `skill.train`, M14/M18) |
 | `E_EXIT_BLOCKED` | выход закрыт (завал, требование, правило) |
 | `E_TARGET_GONE` | цели нет (умерла/ушла) |
+| `E_VEIN_EMPTY` | жила пуста: руда ещё не возродилась (M39; клиент пишет журнальную строку «В жиле нет больше руды…») |
 | `E_NOT_IN_COMBAT` / `E_IN_COMBAT` | бой разрешён/запрещён здесь |
 | `E_COOLDOWN` | действие на кулдауне |
 | `E_NO_CHARGES` | у руны нет зарядов (меньше затраты `cost`, M18/F58c) |
