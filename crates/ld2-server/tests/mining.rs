@@ -163,7 +163,7 @@ async fn mining_drops_gem_and_jeweler_cuts_it() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_LEVEL_REQUIRED", "уровень: {ack}");
 
-    // В деревню: ювелирный стол, резец и камень → гранёный камень брони.
+    // В деревню: ювелирный стол, резец и камень → гранёный сардоникс.
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_south" }))
         .await;

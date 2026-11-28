@@ -748,7 +748,7 @@
     {
       "id": "gem_str",
       "type": "gem",
-      "name": "Самоцвет силы",
+      "name": "Кровавик",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {
@@ -760,7 +760,7 @@
     {
       "id": "gem_str_fine",
       "type": "gem",
-      "name": "Крупный самоцвет силы",
+      "name": "Крупный кровавик",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {
@@ -772,7 +772,7 @@
     {
       "id": "gem_dex",
       "type": "gem",
-      "name": "Самоцвет ловкости",
+      "name": "Турмалин",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {
@@ -784,7 +784,7 @@
     {
       "id": "gem_dex_fine",
       "type": "gem",
-      "name": "Крупный самоцвет ловкости",
+      "name": "Крупный турмалин",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {
@@ -796,7 +796,7 @@
     {
       "id": "gem_vit",
       "type": "gem",
-      "name": "Самоцвет стойкости",
+      "name": "Нефрит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {
@@ -808,7 +808,7 @@
     {
       "id": "gem_vit_fine",
       "type": "gem",
-      "name": "Крупный самоцвет стойкости",
+      "name": "Крупный нефрит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {
@@ -820,7 +820,7 @@
     {
       "id": "gem_int",
       "type": "gem",
-      "name": "Самоцвет разума",
+      "name": "Лазурит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {
@@ -832,7 +832,7 @@
     {
       "id": "gem_int_fine",
       "type": "gem",
-      "name": "Крупный самоцвет разума",
+      "name": "Крупный лазурит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {
@@ -844,7 +844,7 @@
     {
       "id": "gem_str_weak",
       "type": "gem",
-      "name": "Тусклый самоцвет силы",
+      "name": "Тусклый кровавик",
       "rarity": "common",
       "upgrade": 0,
       "stats": {
@@ -856,7 +856,7 @@
     {
       "id": "gem_str_brilliant",
       "type": "gem",
-      "name": "Сияющий самоцвет силы",
+      "name": "Сияющий кровавик",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {
@@ -868,7 +868,7 @@
     {
       "id": "gem_str_legendary",
       "type": "gem",
-      "name": "Легендарный самоцвет силы",
+      "name": "Легендарный кровавик",
       "rarity": "legendary",
       "upgrade": 0,
       "stats": {
@@ -880,7 +880,7 @@
     {
       "id": "gem_dex_weak",
       "type": "gem",
-      "name": "Тусклый самоцвет ловкости",
+      "name": "Тусклый турмалин",
       "rarity": "common",
       "upgrade": 0,
       "stats": {
@@ -892,7 +892,7 @@
     {
       "id": "gem_dex_brilliant",
       "type": "gem",
-      "name": "Сияющий самоцвет ловкости",
+      "name": "Сияющий турмалин",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {
@@ -904,7 +904,7 @@
     {
       "id": "gem_dex_legendary",
       "type": "gem",
-      "name": "Легендарный самоцвет ловкости",
+      "name": "Легендарный турмалин",
       "rarity": "legendary",
       "upgrade": 0,
       "stats": {
@@ -916,7 +916,7 @@
     {
       "id": "gem_vit_weak",
       "type": "gem",
-      "name": "Тусклый самоцвет стойкости",
+      "name": "Тусклый нефрит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {
@@ -928,7 +928,7 @@
     {
       "id": "gem_vit_brilliant",
       "type": "gem",
-      "name": "Сияющий самоцвет стойкости",
+      "name": "Сияющий нефрит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {
@@ -940,7 +940,7 @@
     {
       "id": "gem_vit_legendary",
       "type": "gem",
-      "name": "Легендарный самоцвет стойкости",
+      "name": "Легендарный нефрит",
       "rarity": "legendary",
       "upgrade": 0,
       "stats": {
@@ -952,7 +952,7 @@
     {
       "id": "gem_int_weak",
       "type": "gem",
-      "name": "Тусклый самоцвет разума",
+      "name": "Тусклый лазурит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {
@@ -964,7 +964,7 @@
     {
       "id": "gem_int_brilliant",
       "type": "gem",
-      "name": "Сияющий самоцвет разума",
+      "name": "Сияющий лазурит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {
@@ -976,7 +976,7 @@
     {
       "id": "gem_int_legendary",
       "type": "gem",
-      "name": "Легендарный самоцвет разума",
+      "name": "Легендарный лазурит",
       "rarity": "legendary",
       "upgrade": 0,
       "stats": {
@@ -2857,7 +2857,7 @@
     {
       "id": "raw_stone_str",
       "type": "raw_stone_str",
-      "name": "Необработанный камень силы",
+      "name": "Необработанный пирит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -2867,7 +2867,7 @@
     {
       "id": "gem_stone_str_1",
       "type": "gem",
-      "name": "Гранёный камень силы",
+      "name": "Гранёный пирит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -2883,7 +2883,7 @@
     {
       "id": "gem_stone_str_2",
       "type": "gem",
-      "name": "Огранённый камень силы",
+      "name": "Огранённый пирит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -2899,7 +2899,7 @@
     {
       "id": "gem_stone_str_3",
       "type": "gem",
-      "name": "Совершенный камень силы",
+      "name": "Совершенный пирит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -2915,7 +2915,7 @@
     {
       "id": "raw_stone_dex",
       "type": "raw_stone_dex",
-      "name": "Необработанный камень ловкости",
+      "name": "Необработанный хризопраз",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -2925,7 +2925,7 @@
     {
       "id": "gem_stone_dex_1",
       "type": "gem",
-      "name": "Гранёный камень ловкости",
+      "name": "Гранёный хризопраз",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -2941,7 +2941,7 @@
     {
       "id": "gem_stone_dex_2",
       "type": "gem",
-      "name": "Огранённый камень ловкости",
+      "name": "Огранённый хризопраз",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -2957,7 +2957,7 @@
     {
       "id": "gem_stone_dex_3",
       "type": "gem",
-      "name": "Совершенный камень ловкости",
+      "name": "Совершенный хризопраз",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -2973,7 +2973,7 @@
     {
       "id": "raw_stone_vit",
       "type": "raw_stone_vit",
-      "name": "Необработанный камень стойкости",
+      "name": "Необработанный авантюрин",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -2983,7 +2983,7 @@
     {
       "id": "gem_stone_vit_1",
       "type": "gem",
-      "name": "Гранёный камень стойкости",
+      "name": "Гранёный авантюрин",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -2999,7 +2999,7 @@
     {
       "id": "gem_stone_vit_2",
       "type": "gem",
-      "name": "Огранённый камень стойкости",
+      "name": "Огранённый авантюрин",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3015,7 +3015,7 @@
     {
       "id": "gem_stone_vit_3",
       "type": "gem",
-      "name": "Совершенный камень стойкости",
+      "name": "Совершенный авантюрин",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3031,7 +3031,7 @@
     {
       "id": "raw_stone_int",
       "type": "raw_stone_int",
-      "name": "Необработанный камень разума",
+      "name": "Необработанный флюорит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3041,7 +3041,7 @@
     {
       "id": "gem_stone_int_1",
       "type": "gem",
-      "name": "Гранёный камень разума",
+      "name": "Гранёный флюорит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3057,7 +3057,7 @@
     {
       "id": "gem_stone_int_2",
       "type": "gem",
-      "name": "Огранённый камень разума",
+      "name": "Огранённый флюорит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3073,7 +3073,7 @@
     {
       "id": "gem_stone_int_3",
       "type": "gem",
-      "name": "Совершенный камень разума",
+      "name": "Совершенный флюорит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3089,7 +3089,7 @@
     {
       "id": "raw_stone_accuracy",
       "type": "raw_stone_accuracy",
-      "name": "Необработанный камень точности",
+      "name": "Необработанный циркон",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3099,7 +3099,7 @@
     {
       "id": "gem_stone_accuracy_1",
       "type": "gem",
-      "name": "Гранёный камень точности",
+      "name": "Гранёный циркон",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3115,7 +3115,7 @@
     {
       "id": "gem_stone_accuracy_2",
       "type": "gem",
-      "name": "Огранённый камень точности",
+      "name": "Огранённый циркон",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3131,7 +3131,7 @@
     {
       "id": "gem_stone_accuracy_3",
       "type": "gem",
-      "name": "Совершенный камень точности",
+      "name": "Совершенный циркон",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3147,7 +3147,7 @@
     {
       "id": "raw_stone_damage",
       "type": "raw_stone_damage",
-      "name": "Необработанный камень урона",
+      "name": "Необработанный пироп",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3157,7 +3157,7 @@
     {
       "id": "gem_stone_damage_1",
       "type": "gem",
-      "name": "Гранёный камень урона",
+      "name": "Гранёный пироп",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3173,7 +3173,7 @@
     {
       "id": "gem_stone_damage_2",
       "type": "gem",
-      "name": "Огранённый камень урона",
+      "name": "Огранённый пироп",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3189,7 +3189,7 @@
     {
       "id": "gem_stone_damage_3",
       "type": "gem",
-      "name": "Совершенный камень урона",
+      "name": "Совершенный пироп",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3205,7 +3205,7 @@
     {
       "id": "raw_stone_crit_chance",
       "type": "raw_stone_crit_chance",
-      "name": "Необработанный камень крита",
+      "name": "Необработанный хризолит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3215,7 +3215,7 @@
     {
       "id": "gem_stone_crit_chance_1",
       "type": "gem",
-      "name": "Гранёный камень крита",
+      "name": "Гранёный хризолит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3232,7 +3232,7 @@
     {
       "id": "gem_stone_crit_chance_2",
       "type": "gem",
-      "name": "Огранённый камень крита",
+      "name": "Огранённый хризолит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3249,7 +3249,7 @@
     {
       "id": "gem_stone_crit_chance_3",
       "type": "gem",
-      "name": "Совершенный камень крита",
+      "name": "Совершенный хризолит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3266,7 +3266,7 @@
     {
       "id": "raw_stone_crit_damage",
       "type": "raw_stone_crit_damage",
-      "name": "Необработанный камень силы крита",
+      "name": "Необработанный гелиодор",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3276,7 +3276,7 @@
     {
       "id": "gem_stone_crit_damage_1",
       "type": "gem",
-      "name": "Гранёный камень силы крита",
+      "name": "Гранёный гелиодор",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3293,7 +3293,7 @@
     {
       "id": "gem_stone_crit_damage_2",
       "type": "gem",
-      "name": "Огранённый камень силы крита",
+      "name": "Огранённый гелиодор",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3310,7 +3310,7 @@
     {
       "id": "gem_stone_crit_damage_3",
       "type": "gem",
-      "name": "Совершенный камень силы крита",
+      "name": "Совершенный гелиодор",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3327,7 +3327,7 @@
     {
       "id": "raw_stone_armor",
       "type": "raw_stone_armor",
-      "name": "Необработанный камень брони",
+      "name": "Необработанный сардоникс",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3337,7 +3337,7 @@
     {
       "id": "gem_stone_armor_1",
       "type": "gem",
-      "name": "Гранёный камень брони",
+      "name": "Гранёный сардоникс",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3353,7 +3353,7 @@
     {
       "id": "gem_stone_armor_2",
       "type": "gem",
-      "name": "Огранённый камень брони",
+      "name": "Огранённый сардоникс",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3369,7 +3369,7 @@
     {
       "id": "gem_stone_armor_3",
       "type": "gem",
-      "name": "Совершенный камень брони",
+      "name": "Совершенный сардоникс",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3385,7 +3385,7 @@
     {
       "id": "raw_stone_dodge",
       "type": "raw_stone_dodge",
-      "name": "Необработанный камень уклонения",
+      "name": "Необработанный кунцит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3395,7 +3395,7 @@
     {
       "id": "gem_stone_dodge_1",
       "type": "gem",
-      "name": "Гранёный камень уклонения",
+      "name": "Гранёный кунцит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3412,7 +3412,7 @@
     {
       "id": "gem_stone_dodge_2",
       "type": "gem",
-      "name": "Огранённый камень уклонения",
+      "name": "Огранённый кунцит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3429,7 +3429,7 @@
     {
       "id": "gem_stone_dodge_3",
       "type": "gem",
-      "name": "Совершенный камень уклонения",
+      "name": "Совершенный кунцит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3446,7 +3446,7 @@
     {
       "id": "raw_stone_parry",
       "type": "raw_stone_parry",
-      "name": "Необработанный камень парирования",
+      "name": "Необработанный родонит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3456,7 +3456,7 @@
     {
       "id": "gem_stone_parry_1",
       "type": "gem",
-      "name": "Гранёный камень парирования",
+      "name": "Гранёный родонит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3477,7 +3477,7 @@
     {
       "id": "gem_stone_parry_2",
       "type": "gem",
-      "name": "Огранённый камень парирования",
+      "name": "Огранённый родонит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3498,7 +3498,7 @@
     {
       "id": "gem_stone_parry_3",
       "type": "gem",
-      "name": "Совершенный камень парирования",
+      "name": "Совершенный родонит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3519,7 +3519,7 @@
     {
       "id": "raw_stone_parry_chance",
       "type": "raw_stone_parry_chance",
-      "name": "Необработанный камень шанса парирования",
+      "name": "Необработанный родохрозит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3529,7 +3529,7 @@
     {
       "id": "gem_stone_parry_chance_1",
       "type": "gem",
-      "name": "Гранёный камень шанса парирования",
+      "name": "Гранёный родохрозит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3546,7 +3546,7 @@
     {
       "id": "gem_stone_parry_chance_2",
       "type": "gem",
-      "name": "Огранённый камень шанса парирования",
+      "name": "Огранённый родохрозит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3563,7 +3563,7 @@
     {
       "id": "gem_stone_parry_chance_3",
       "type": "gem",
-      "name": "Совершенный камень шанса парирования",
+      "name": "Совершенный родохрозит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3580,7 +3580,7 @@
     {
       "id": "raw_stone_block",
       "type": "raw_stone_block",
-      "name": "Необработанный камень блока",
+      "name": "Необработанный диоптаз",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3590,7 +3590,7 @@
     {
       "id": "gem_stone_block_1",
       "type": "gem",
-      "name": "Гранёный камень блока",
+      "name": "Гранёный диоптаз",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3611,7 +3611,7 @@
     {
       "id": "gem_stone_block_2",
       "type": "gem",
-      "name": "Огранённый камень блока",
+      "name": "Огранённый диоптаз",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3632,7 +3632,7 @@
     {
       "id": "gem_stone_block_3",
       "type": "gem",
-      "name": "Совершенный камень блока",
+      "name": "Совершенный диоптаз",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3653,7 +3653,7 @@
     {
       "id": "raw_stone_block_chance",
       "type": "raw_stone_block_chance",
-      "name": "Необработанный камень шанса блока",
+      "name": "Необработанный сердолик",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3663,7 +3663,7 @@
     {
       "id": "gem_stone_block_chance_1",
       "type": "gem",
-      "name": "Гранёный камень шанса блока",
+      "name": "Гранёный сердолик",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3680,7 +3680,7 @@
     {
       "id": "gem_stone_block_chance_2",
       "type": "gem",
-      "name": "Огранённый камень шанса блока",
+      "name": "Огранённый сердолик",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3697,7 +3697,7 @@
     {
       "id": "gem_stone_block_chance_3",
       "type": "gem",
-      "name": "Совершенный камень шанса блока",
+      "name": "Совершенный сердолик",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3714,7 +3714,7 @@
     {
       "id": "raw_stone_magic_defense",
       "type": "raw_stone_magic_defense",
-      "name": "Необработанный камень магической защиты",
+      "name": "Необработанный селестин",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3724,7 +3724,7 @@
     {
       "id": "gem_stone_magic_defense_1",
       "type": "gem",
-      "name": "Гранёный камень магической защиты",
+      "name": "Гранёный селестин",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3740,7 +3740,7 @@
     {
       "id": "gem_stone_magic_defense_2",
       "type": "gem",
-      "name": "Огранённый камень магической защиты",
+      "name": "Огранённый селестин",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3756,7 +3756,7 @@
     {
       "id": "gem_stone_magic_defense_3",
       "type": "gem",
-      "name": "Совершенный камень магической защиты",
+      "name": "Совершенный селестин",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3772,7 +3772,7 @@
     {
       "id": "raw_stone_magic_dodge",
       "type": "raw_stone_magic_dodge",
-      "name": "Необработанный камень магического уклонения",
+      "name": "Необработанный халцедон",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3782,7 +3782,7 @@
     {
       "id": "gem_stone_magic_dodge_1",
       "type": "gem",
-      "name": "Гранёный камень магического уклонения",
+      "name": "Гранёный халцедон",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3799,7 +3799,7 @@
     {
       "id": "gem_stone_magic_dodge_2",
       "type": "gem",
-      "name": "Огранённый камень магического уклонения",
+      "name": "Огранённый халцедон",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3816,7 +3816,7 @@
     {
       "id": "gem_stone_magic_dodge_3",
       "type": "gem",
-      "name": "Совершенный камень магического уклонения",
+      "name": "Совершенный халцедон",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3833,7 +3833,7 @@
     {
       "id": "raw_stone_magic_resist",
       "type": "raw_stone_magic_resist",
-      "name": "Необработанный камень магического сопротивления",
+      "name": "Необработанный раухтопаз",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3843,7 +3843,7 @@
     {
       "id": "gem_stone_magic_resist_1",
       "type": "gem",
-      "name": "Гранёный камень магического сопротивления",
+      "name": "Гранёный раухтопаз",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3860,7 +3860,7 @@
     {
       "id": "gem_stone_magic_resist_2",
       "type": "gem",
-      "name": "Огранённый камень магического сопротивления",
+      "name": "Огранённый раухтопаз",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3877,7 +3877,7 @@
     {
       "id": "gem_stone_magic_resist_3",
       "type": "gem",
-      "name": "Совершенный камень магического сопротивления",
+      "name": "Совершенный раухтопаз",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3894,7 +3894,7 @@
     {
       "id": "raw_stone_magic_dispel",
       "type": "raw_stone_magic_dispel",
-      "name": "Необработанный камень рассеивания",
+      "name": "Необработанный апофиллит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3904,7 +3904,7 @@
     {
       "id": "gem_stone_magic_dispel_1",
       "type": "gem",
-      "name": "Гранёный камень рассеивания",
+      "name": "Гранёный апофиллит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3921,7 +3921,7 @@
     {
       "id": "gem_stone_magic_dispel_2",
       "type": "gem",
-      "name": "Огранённый камень рассеивания",
+      "name": "Огранённый апофиллит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3938,7 +3938,7 @@
     {
       "id": "gem_stone_magic_dispel_3",
       "type": "gem",
-      "name": "Совершенный камень рассеивания",
+      "name": "Совершенный апофиллит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -3955,7 +3955,7 @@
     {
       "id": "raw_stone_magic_crit_damage",
       "type": "raw_stone_magic_crit_damage",
-      "name": "Необработанный камень магического крита",
+      "name": "Необработанный танзанит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -3965,7 +3965,7 @@
     {
       "id": "gem_stone_magic_crit_damage_1",
       "type": "gem",
-      "name": "Гранёный камень магического крита",
+      "name": "Гранёный танзанит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -3982,7 +3982,7 @@
     {
       "id": "gem_stone_magic_crit_damage_2",
       "type": "gem",
-      "name": "Огранённый камень магического крита",
+      "name": "Огранённый танзанит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -3999,7 +3999,7 @@
     {
       "id": "gem_stone_magic_crit_damage_3",
       "type": "gem",
-      "name": "Совершенный камень магического крита",
+      "name": "Совершенный танзанит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},
@@ -4016,7 +4016,7 @@
     {
       "id": "raw_stone_magic_crit_chance",
       "type": "raw_stone_magic_crit_chance",
-      "name": "Необработанный камень шанса магического крита",
+      "name": "Необработанный бенитоит",
       "rarity": "common",
       "upgrade": 0,
       "stats": {},
@@ -4026,7 +4026,7 @@
     {
       "id": "gem_stone_magic_crit_chance_1",
       "type": "gem",
-      "name": "Гранёный камень шанса магического крита",
+      "name": "Гранёный бенитоит",
       "rarity": "uncommon",
       "upgrade": 0,
       "stats": {},
@@ -4043,7 +4043,7 @@
     {
       "id": "gem_stone_magic_crit_chance_2",
       "type": "gem",
-      "name": "Огранённый камень шанса магического крита",
+      "name": "Огранённый бенитоит",
       "rarity": "rare",
       "upgrade": 0,
       "stats": {},
@@ -4060,7 +4060,7 @@
     {
       "id": "gem_stone_magic_crit_chance_3",
       "type": "gem",
-      "name": "Совершенный камень шанса магического крита",
+      "name": "Совершенный бенитоит",
       "rarity": "epic",
       "upgrade": 0,
       "stats": {},

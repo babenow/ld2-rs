@@ -77,27 +77,27 @@ MIXED = [
 ]
 
 PURE = [
-    # key, label, kind, param, category, pct
-    ("str", "силы", "attr", "str", "attr", False),
-    ("dex", "ловкости", "attr", "dex", "attr", False),
-    ("vit", "стойкости", "attr", "vit", "attr", False),
-    ("int", "разума", "attr", "int", "attr", False),
-    ("accuracy", "точности", "param", "accuracy", "accuracy", False),
-    ("damage", "урона", "param", "damage", "flat", False),
-    ("crit_chance", "крита", "param", "crit_chance", "chance", True),
-    ("crit_damage", "силы крита", "param", "crit_damage", "crit_damage", True),
-    ("armor", "брони", "param", "armor", "flat", False),
-    ("dodge", "уклонения", "param", "dodge", "chance", True),
-    ("parry", "парирования", "range", "parry", "flat", False),
-    ("parry_chance", "шанса парирования", "param", "parry_chance", "chance", True),
-    ("block", "блока", "range", "block", "flat", False),
-    ("block_chance", "шанса блока", "param", "block_chance", "chance", True),
-    ("magic_defense", "магической защиты", "param", "magic_defense", "flat", False),
-    ("magic_dodge", "магического уклонения", "param", "magic_dodge", "chance", True),
-    ("magic_resist", "магического сопротивления", "param", "magic_resist", "chance", True),
-    ("magic_dispel", "рассеивания", "param", "magic_dispel", "chance", True),
-    ("magic_crit_damage", "магического крита", "param", "magic_crit_damage", "crit_damage", True),
-    ("magic_crit_chance", "шанса магического крита", "param", "magic_crit_chance", "chance", True),
+    # key, name, kind, param, category, pct
+    ("str", "Пирит", "attr", "str", "attr", False),
+    ("dex", "Хризопраз", "attr", "dex", "attr", False),
+    ("vit", "Авантюрин", "attr", "vit", "attr", False),
+    ("int", "Флюорит", "attr", "int", "attr", False),
+    ("accuracy", "Циркон", "param", "accuracy", "accuracy", False),
+    ("damage", "Пироп", "param", "damage", "flat", False),
+    ("crit_chance", "Хризолит", "param", "crit_chance", "chance", True),
+    ("crit_damage", "Гелиодор", "param", "crit_damage", "crit_damage", True),
+    ("armor", "Сардоникс", "param", "armor", "flat", False),
+    ("dodge", "Кунцит", "param", "dodge", "chance", True),
+    ("parry", "Родонит", "range", "parry", "flat", False),
+    ("parry_chance", "Родохрозит", "param", "parry_chance", "chance", True),
+    ("block", "Диоптаз", "range", "block", "flat", False),
+    ("block_chance", "Сердолик", "param", "block_chance", "chance", True),
+    ("magic_defense", "Селестин", "param", "magic_defense", "flat", False),
+    ("magic_dodge", "Халцедон", "param", "magic_dodge", "chance", True),
+    ("magic_resist", "Раухтопаз", "param", "magic_resist", "chance", True),
+    ("magic_dispel", "Апофиллит", "param", "magic_dispel", "chance", True),
+    ("magic_crit_damage", "Танзанит", "param", "magic_crit_damage", "crit_damage", True),
+    ("magic_crit_chance", "Бенитоит", "param", "magic_crit_chance", "chance", True),
 ]
 
 # ─── пулы жил ────────────────────────────────────────────────────────────────
@@ -220,12 +220,12 @@ def generated_items() -> list[dict]:
                 )
             )
 
-    for key, label, kind, param, category, pct in PURE:
+    for key, name, kind, param, category, pct in PURE:
         raw_id = f"raw_stone_{key}"
         items.append(
             raw_item(
                 raw_id,
-                f"Необработанный камень {label}",
+                f"Необработанный {name.lower()}",
                 "common",
                 25,
                 raw_id,
@@ -235,7 +235,7 @@ def generated_items() -> list[dict]:
             items.append(
                 gem_item(
                     f"gem_stone_{key}_{v + 1}",
-                    f"{VERSION_NAMES[v]} камень {label}",
+                    f"{VERSION_NAMES[v]} {name.lower()}",
                     VERSION_RARITY[v],
                     VERSION_GOLD[v],
                     pure_bonuses(kind, param, category, pct, v),
@@ -271,7 +271,7 @@ def generated_recipes() -> list[dict]:
             recipes.append(
                 {
                     "id": f"rec_cut_stone_{key}_{v + 1}",
-                    "name": f"{VERSION_NAMES[v]} камень {label}",
+                    "name": f"{VERSION_NAMES[v]} {name.lower()}",
                     "profession": "jeweler",
                     "rank": v + 1,
                     "station": "jeweler_table",

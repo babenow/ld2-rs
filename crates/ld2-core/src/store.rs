@@ -934,7 +934,7 @@ mod tests {
                 "item": {
                     "uid": "g1",
                     "type": "raw_stone_armor",
-                    "name": "Необработанный камень брони",
+                    "name": "Необработанный сардоникс",
                     "rarity": "common",
                     "upgrade": 0,
                     "stats": {},
@@ -952,7 +952,7 @@ mod tests {
             .collect();
         assert_eq!(
             lines,
-            ["Найден самоцвет: Необработанный камень брони"],
+            ["Найден самоцвет: Необработанный сардоникс"],
             "новый камень: {lines:?}"
         );
 
@@ -970,8 +970,8 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "Найден самоцвет: Необработанный камень брони",
-                "Найден самоцвет: Необработанный камень брони"
+                "Найден самоцвет: Необработанный сардоникс",
+                "Найден самоцвет: Необработанный сардоникс"
             ],
             "стак камня: {lines:?}"
         );
@@ -2518,7 +2518,7 @@ mod tests {
                     "shop": { "tabs": [
                         { "currency": "gold_coin", "currency_name": "Золотая монета",
                           "items": [] },
-                        { "currency": "gem_str", "currency_name": "Самоцвет силы",
+                        { "currency": "gem_str", "currency_name": "Кровавик",
                           "items": [] }
                     ]}
                 }),
@@ -2568,7 +2568,7 @@ mod tests {
                                              "name": "Зелье лечения", "rarity": "common",
                                              "upgrade": 0, "stats": {}, "sockets": [],
                                              "qty": 1 } } ] },
-                    { "currency": "gem_str", "currency_name": "Самоцвет силы", "items": [] }
+                    { "currency": "gem_str", "currency_name": "Кровавик", "items": [] }
                 ]}
             }),
         )
