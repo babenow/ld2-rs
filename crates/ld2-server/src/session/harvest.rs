@@ -282,7 +282,7 @@ impl Session {
                 )];
             }
             if prof == PROFESSION_MINING {
-                gather_chance = Some(crate::systems::mining_chance(
+                gather_chance = Some(crate::systems::action_chance(
                     &self.state.config.gameplay.professions,
                     node.required_level,
                     level_u,

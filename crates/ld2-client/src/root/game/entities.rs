@@ -2,11 +2,7 @@
 
 use ld2_core::domain;
 
-use super::gather::{
-    self, HARVEST_DIFF_HIGH, HARVEST_DIFF_LOW, HARVEST_DIFF_MID, HARVEST_LEVEL_GAP,
-    HARVEST_MULT_HIGH, HARVEST_MULT_LOW, HARVEST_MULT_NORMAL, HARVEST_MULT_ZERO, HARVEST_XP_BASE,
-    HARVEST_XP_MAX, HARVEST_XP_PER_LEVEL,
-};
+use super::gather::{self, HARVEST_LEVEL_GAP};
 use super::*;
 
 const MS_PER_SECOND: i64 = 1000;
@@ -624,26 +620,13 @@ impl Root {
                         .map(|p| p.level as i64)
                         .unwrap_or(0);
                     let required = harv.get("level").and_then(|v| v.as_i64()).unwrap_or(1);
-                    let diff = level - required;
                     let blocked = required - level >= HARVEST_LEVEL_GAP;
                     if harv.get(domain::ACTION_SKIN).and_then(|v| v.as_bool()) == Some(true)
                         && harv.get("skin_done").and_then(|v| v.as_bool()) != Some(true)
                     {
-                        // Ожидаемый опыт — формула сервера (дубль на
-                        // клиенте): min(40, round((10 + треб×1.5) ×
-                        // множитель по разнице уровней)).
-                        let base =
-                            HARVEST_XP_BASE + f64::from(required as u32) * HARVEST_XP_PER_LEVEL;
-                        let mult = if diff <= HARVEST_DIFF_LOW {
-                            HARVEST_MULT_LOW
-                        } else if diff <= HARVEST_DIFF_MID {
-                            HARVEST_MULT_NORMAL
-                        } else if diff <= HARVEST_DIFF_HIGH {
-                            HARVEST_MULT_HIGH
-                        } else {
-                            HARVEST_MULT_ZERO
-                        };
-                        let xp = ((base * mult).round() as i64).min(HARVEST_XP_MAX);
+                        // M39: ожидаемый опыт — общая шкала 10..40
+                        // (обратно сложности), как у руды.
+                        let xp = gather::action_xp(required, level);
                         let icon = gather::xp_icon(xp, blocked);
                         let item = MenuItem::new(t(lang, Key::SkinBtn)).icon(icon);
                         menu = menu.item(if blocked {
