@@ -205,6 +205,13 @@ pub struct ItemSnapshot {
     #[serde(rename = "type")]
     pub item_type: String,
     pub name: String,
+    /// M39: текстовое описание для карточки/тултипа; аддитивно §11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// M39: персональный предмет — нельзя передавать, при выбросе
+    /// уничтожается; аддитивно §11.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub personal: bool,
     /// Rarity: открытая строка (common…legendary + расширения сервера).
     pub rarity: String,
     /// Уровень улучшения `+N` (ФР-10).

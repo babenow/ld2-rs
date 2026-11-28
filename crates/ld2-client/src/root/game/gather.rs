@@ -7,23 +7,34 @@ use ld2_core::l10n::Lang;
 
 use super::*;
 
-/// Гейт уровня жилы — как у снятия шкур: не хватает 25+ → сбор закрыт.
+/// Гейт уровня жилы/животного: не хватает 25+ → действие закрыто.
 pub(super) const HARVEST_LEVEL_GAP: i64 = 25;
-/// Опыт: `min(40, round((10 + required × 1.5) × множитель))`.
-pub(super) const HARVEST_XP_BASE: f64 = 10.0;
-pub(super) const HARVEST_XP_PER_LEVEL: f64 = 1.5;
-pub(super) const HARVEST_DIFF_LOW: i64 = -10;
-pub(super) const HARVEST_DIFF_MID: i64 = 9;
-pub(super) const HARVEST_DIFF_HIGH: i64 = 24;
-pub(super) const HARVEST_MULT_LOW: f64 = 1.5;
-pub(super) const HARVEST_MULT_NORMAL: f64 = 1.0;
-pub(super) const HARVEST_MULT_HIGH: f64 = 0.5;
-pub(super) const HARVEST_MULT_ZERO: f64 = 0.0;
-pub(super) const HARVEST_XP_MAX: i64 = 40;
 
-/// Прогноз опыта за сбор: `(xp, tier, blocked)`, где tier 1 — повышенный
-/// (уровень ниже жилы на 10+), 0 — обычный, -1 — пониженный (выше на
-/// 10+), -2 — опыт не начисляется (25+); `blocked` — гейт уровня 25.
+// M39: зеркало дефолтов `[gameplay.professions] mining_chance_*` для
+// прогноза опыта; сервер — истина.
+const ACTION_CHANCE_BASE: f64 = 0.95;
+const ACTION_CHANCE_PER_LEVEL: f64 = 0.035;
+const ACTION_CHANCE_MIN: f64 = 0.15;
+const ACTION_XP_MIN: i64 = 10;
+const ACTION_XP_MAX: i64 = 40;
+
+/// M39: общий прогноз опыта за действие (руда/шкура) — 10..40 обратно
+/// «шансу сложности»; 0, если профессия выше требования на 25+.
+pub(super) fn action_xp(required: i64, level: i64) -> i64 {
+    if level.saturating_sub(required) >= HARVEST_LEVEL_GAP {
+        return 0;
+    }
+    let gap = (required - level).max(0) as f64;
+    let chance = (ACTION_CHANCE_BASE - gap * ACTION_CHANCE_PER_LEVEL)
+        .clamp(ACTION_CHANCE_MIN, ACTION_CHANCE_BASE);
+    let t = (ACTION_CHANCE_BASE - chance) / (ACTION_CHANCE_BASE - ACTION_CHANCE_MIN);
+    (ACTION_XP_MIN as f64 + t * (ACTION_XP_MAX - ACTION_XP_MIN) as f64).round() as i64
+}
+
+/// Прогноз опыта за сбор: `(xp, tier, blocked)`, где tier 1 — опыт
+/// ≥30 (жирная кнопка), 0 — 15..29, -1 — 10..14; `blocked` — гейт
+/// уровня/ранга. Опыт обратен шансу: чем выше жила над профессией,
+/// тем ниже шанс и больше опыт (10..40).
 /// `None` — не горное дело (у прочих ресурсов опыт от уровня не зависит).
 pub(super) fn xp_preview(store: &AppStore, entity: &Entity) -> Option<(i64, i8, bool)> {
     if entity.extra.get("profession").and_then(|v| v.as_str()) != Some(domain::PROFESSION_MINING) {
@@ -48,18 +59,16 @@ pub(super) fn xp_preview(store: &AppStore, entity: &Entity) -> Option<(i64, i8, 
         .get("min_rank")
         .and_then(|v| v.as_i64())
         .unwrap_or(1);
-    let diff = level - required;
-    let (mult, tier) = if diff <= HARVEST_DIFF_LOW {
-        (HARVEST_MULT_LOW, 1)
-    } else if diff <= HARVEST_DIFF_MID {
-        (HARVEST_MULT_NORMAL, 0)
-    } else if diff <= HARVEST_DIFF_HIGH {
-        (HARVEST_MULT_HIGH, -1)
+    let xp = action_xp(required, level);
+    let tier = if xp == 0 {
+        -2
+    } else if xp >= 30 {
+        1
+    } else if xp >= 15 {
+        0
     } else {
-        (HARVEST_MULT_ZERO, -2)
+        -1
     };
-    let base = HARVEST_XP_BASE + required as f64 * HARVEST_XP_PER_LEVEL;
-    let xp = ((base * mult).round() as i64).min(HARVEST_XP_MAX);
     let blocked = i64::from(prof.rank) < min_rank || required - level >= HARVEST_LEVEL_GAP;
     Some((xp, tier, blocked))
 }

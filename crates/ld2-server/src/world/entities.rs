@@ -39,7 +39,9 @@ pub struct GatherJob {
     pub gender: String,
     pub entity_id: String,
     pub name: String,
-    /// Epoch-с окончания.
+    /// M39: шанс успешной добычи (руда); `None` — без проверки.
+    pub chance: Option<f64>,
+    /// Epoch-мс окончания (M39: бар 2..6 с).
     pub at: i64,
 }
 
@@ -55,6 +57,25 @@ pub struct HarvestJob {
     pub name: String,
     /// Epoch-с окончания (старт +5 с).
     pub at: i64,
+}
+
+impl HarvestJob {
+    /// M39: итог разделки для wire (аддитивное поле `text` — None).
+    pub fn result(
+        &self,
+        ok: bool,
+        ruined: bool,
+        text: Option<String>,
+    ) -> ld2_protocol::evt::HarvestResult {
+        ld2_protocol::evt::HarvestResult {
+            entity_id: self.corpse_id.clone(),
+            name: self.name.clone(),
+            action: self.action.clone(),
+            ok,
+            ruined,
+            text,
+        }
+    }
 }
 
 /// M38: таблица бонусных самоцветов рудной жилы.
@@ -427,6 +448,8 @@ impl World {
         action: &str,
         level: u32,
         rank: u32,
+        loot_mult: f64,
+        loot_add: f64,
     ) -> Option<(LiveCorpse, Vec<String>, Vec<String>)> {
         let corpse = self.corpses.get_mut(corpse_id)?;
         let rank = rank.clamp(RANK_MIN, RANK_MAX);
@@ -436,7 +459,12 @@ impl World {
                     return None;
                 }
                 corpse.skin_done = true;
-                let def = if roll_chance(crate::systems::hide_chance(level)) {
+                let chance = crate::systems::hide_chance_with(
+                    crate::systems::hide_chance(level),
+                    loot_mult,
+                    loot_add,
+                );
+                let def = if roll_chance(chance) {
                     format!("hide_q{rank}")
                 } else {
                     format!("hide_scraps_q{rank}")
@@ -470,7 +498,8 @@ impl World {
                     })
                     .unwrap_or_default();
                 for (def, chance) in extras {
-                    if roll_chance(chance.clamp(0.0, 1.0)) {
+                    let chance = crate::systems::hide_chance_with(chance, loot_mult, loot_add);
+                    if roll_chance(chance) {
                         corpse.loot.push(Some(def.clone()));
                         skin.push(def);
                     }
@@ -501,11 +530,18 @@ impl World {
     pub fn resource(&self, entity_id: &str) -> Option<&ResourceNode> {
         self.resources.get(entity_id)
     }
-    /// M38: бросок бонусного самоцвета жилы. `None` — камень не выпал
-    /// или таблица пуста; иначе id необработанного камня.
-    pub fn roll_resource_gem(&mut self, entity_id: &str) -> Option<String> {
+    /// M38: бросок бонусного самоцвета жилы. `chance_mult`/`chance_add`
+    /// учитывают «Кирку мастера» и «Лампу шахтёра». `None` — камень не
+    /// выпал или таблица пуста; иначе id необработанного камня.
+    pub fn roll_resource_gem(
+        &mut self,
+        entity_id: &str,
+        chance_mult: f64,
+        chance_add: f64,
+    ) -> Option<String> {
         let table = self.resources.get(entity_id)?.gems.clone()?;
-        if table.chance <= 0.0 || self.roll01() >= table.chance {
+        let chance = Self::gem_chance_with(table.chance, chance_mult, chance_add);
+        if chance <= 0.0 || self.roll01() >= chance {
             return None;
         }
         let group = if self.roll01() < table.mixed_share {
@@ -518,6 +554,12 @@ impl World {
         }
         let index = ((self.roll01() * group.len() as f64) as usize).min(group.len() - 1);
         Some(group[index].clone())
+    }
+
+    /// M39: итоговый шанс камня с учётом множителя (кирка) и прибавки
+    /// (лампа); всегда 0..1.
+    pub(crate) fn gem_chance_with(base: f64, mult: f64, add: f64) -> f64 {
+        (base * mult + add).clamp(0.0, 1.0)
     }
 
     /// M20/F20b: добыть 1 единицу (валидации инструмента/ранга — на

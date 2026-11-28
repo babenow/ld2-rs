@@ -273,7 +273,7 @@ mod tests {
             accepts: Some("gem".into()),
             rune: Some(RuneInfo {
                 class: None,
-                name: "Самоцвет силы".into(),
+                name: "Кровавик".into(),
                 spell: String::new(),
                 charges: 0,
                 max: 0,
@@ -362,6 +362,8 @@ mod tests {
             uid: "i_t".into(),
             item_type: item_type.into(),
             name: "Тест".into(),
+            description: None,
+            personal: false,
             rarity: "common".into(),
             upgrade: 0,
             stats: Default::default(),

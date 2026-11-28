@@ -55,6 +55,195 @@ fn temp_content() -> PathBuf {
     tmp
 }
 
+/// M39: бронзовая жила — ранг 2, уровень 75, в «Железных штольнях».
+#[test]
+fn bronze_vein_content_is_configured() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let items: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(src.join("items.json")).expect("items"))
+            .expect("items json");
+    let ore = items["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|i| i["id"] == "ore_bronze")
+        .expect("ore_bronze");
+    assert_eq!(ore["type"], "ore_bronze");
+    assert_eq!(ore["name"], "Бронзовая руда");
+
+    let locs: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(src.join("locations.json")).expect("locations"),
+    )
+    .expect("locations json");
+    let iron = locs["locations"]
+        .as_array()
+        .expect("locations")
+        .iter()
+        .find(|l| l["id"] == "l_mine_iron")
+        .expect("l_mine_iron");
+    let bronze = iron["entities"]
+        .as_array()
+        .expect("entities")
+        .iter()
+        .find(|e| e["id"] == "ore_bronze_1")
+        .expect("ore_bronze_1");
+    assert_eq!(bronze["resource"], "ore_bronze");
+    assert_eq!(bronze["required_level"], 75);
+    assert_eq!(bronze["min_rank"], 2);
+}
+
+/// M39: рудная прогрессия — серебро/золото р3, платина/адамантит р4,
+/// мифрил р5.
+#[test]
+fn high_ore_tiers_content_is_configured() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let items: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(src.join("items.json")).expect("items"))
+            .expect("items json");
+    for (id, name, rarity) in [
+        ("ore_platinum", "Платиновая руда", "rare"),
+        ("ore_adamantite", "Адамантитовая руда", "epic"),
+    ] {
+        let item = items["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|i| i["id"] == id)
+            .unwrap_or_else(|| panic!("{id}"));
+        assert_eq!(item["name"], name);
+        assert_eq!(item["rarity"], rarity);
+    }
+
+    let locs: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(src.join("locations.json")).expect("locations"),
+    )
+    .expect("locations json");
+    for (loc_id, node_id, resource, level, rank) in [
+        ("l_mine_silver", "ore_silver_1", "ore_silver", 100, 3),
+        ("l_mine_silver", "ore_gold_1", "ore_gold", 126, 3),
+        ("l_mine_platinum", "ore_platinum_1", "ore_platinum", 150, 4),
+        (
+            "l_mine_platinum",
+            "ore_adamantite_1",
+            "ore_adamantite",
+            176,
+            4,
+        ),
+        ("l_mine_mithril", "ore_mithril_1", "ore_mithril", 200, 5),
+    ] {
+        let loc = locs["locations"]
+            .as_array()
+            .expect("locations")
+            .iter()
+            .find(|l| l["id"] == loc_id)
+            .unwrap_or_else(|| panic!("{loc_id}"));
+        let node = loc["entities"]
+            .as_array()
+            .expect("entities")
+            .iter()
+            .find(|e| e["id"] == node_id)
+            .unwrap_or_else(|| panic!("{node_id}"));
+        assert_eq!(node["resource"], resource);
+        assert_eq!(node["required_level"], level);
+        assert_eq!(node["min_rank"], rank);
+    }
+}
+
+/// M39: базовый шанс камней из жил — 1–3 %.
+#[test]
+fn gem_chances_are_within_one_to_three_percent() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let locs: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(src.join("locations.json")).expect("locations"),
+    )
+    .expect("locations json");
+    let mut seen = 0;
+    for loc in locs["locations"].as_array().expect("locations") {
+        for entity in loc["entities"].as_array().into_iter().flatten() {
+            let Some(chance) = entity["gems"]["chance"].as_f64() else {
+                continue;
+            };
+            seen += 1;
+            assert!(
+                (0.01..=0.03).contains(&chance),
+                "шанс камня {} = {chance}, ожидалось 0.01..=0.03",
+                entity["id"]
+            );
+        }
+    }
+    assert!(seen > 0, "в контенте нет жил с камнями");
+}
+
+/// M39: «Кирка мастера» и «Лампа шахтёра» есть в контенте и магазинах.
+#[test]
+fn mining_tools_content_is_configured() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let items: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(src.join("items.json")).expect("items"))
+            .expect("items json");
+    let by_id = |id: &str| {
+        items["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|i| i["id"] == id)
+            .unwrap_or_else(|| panic!("{id}"))
+    };
+    assert_eq!(by_id("pickaxe_master")["type"], "pickaxe");
+    assert_eq!(by_id("pickaxe_master")["name"], "Кирка мастера");
+    assert_eq!(by_id("artifact_lamp")["type"], "artifact");
+    assert_eq!(by_id("artifact_lamp")["slot"], "artifact");
+    assert_eq!(by_id("skinning_knife_master")["type"], "skinning_knife");
+    assert_eq!(by_id("skinning_knife_master")["name"], "Нож мастера");
+    assert_eq!(by_id("artifact_hunter")["type"], "artifact");
+    assert_eq!(by_id("artifact_hunter")["slot"], "artifact");
+    for id in [
+        "pickaxe_master",
+        "artifact_lamp",
+        "skinning_knife_master",
+        "artifact_hunter",
+    ] {
+        let description = by_id(id)["description"].as_str().unwrap_or_default();
+        let effect = if id == "skinning_knife_master" || id == "artifact_hunter" {
+            "шкур"
+        } else {
+            "самоцвет"
+        };
+        assert!(
+            description.contains(effect),
+            "у {id} должно быть описание эффекта: {description:?}"
+        );
+        assert_eq!(
+            by_id(id)["personal"],
+            true,
+            "{id}: флаг «печать при первом надевании»"
+        );
+    }
+
+    let shops: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(src.join("shops.json")).expect("shops"))
+            .expect("shops json");
+    let shop_has = |npc: &str, item: &str| {
+        shops["npcs"]
+            .as_array()
+            .expect("npcs")
+            .iter()
+            .find(|n| n["id"] == npc)
+            .and_then(|n| n["currencies"].as_array())
+            .is_some_and(|tabs| {
+                tabs.iter().any(|tab| {
+                    tab["items"]
+                        .as_array()
+                        .is_some_and(|items| items.iter().any(|i| i == item))
+                })
+            })
+    };
+    assert!(shop_has("npc_weaponsmith", "pickaxe_master"));
+    assert!(shop_has("npc_weaponsmith", "skinning_knife_master"));
+    assert!(shop_has("npc_city_elder", "artifact_lamp"));
+    assert!(shop_has("npc_city_elder", "artifact_hunter"));
+}
+
 async fn give(c: &mut WsClient, def_id: &str) -> String {
     let seq = c
         .send(
@@ -110,6 +299,9 @@ async fn mining_drops_gem_and_jeweler_cuts_it() {
         "ws://{}/ws",
         common::start_server_with(&db_url, |cfg| {
             cfg.world.content_dir = tmp;
+            // M39: тест проверяет лут/гемы, а не шанс добычи.
+            cfg.gameplay.professions.mining_chance_base = 1.0;
+            cfg.gameplay.professions.mining_chance_min = 1.0;
         })
         .await
     );
@@ -145,10 +337,10 @@ async fn mining_drops_gem_and_jeweler_cuts_it() {
     let raw_uid = gem["payload"]["item"]["uid"].as_str().expect("uid");
     assert_eq!(gem["payload"]["item"]["type"], "raw_stone_armor");
 
-    // Опыт горного дела — по формуле снятия шкур (медь ур.1 → 12 XP).
+    // M39: опыт горного дела обратен шансу (chance=1.0 в тесте → 10 XP).
     let prof = c.wait_event("evt/craft/profession").await;
     assert_eq!(prof["payload"]["profession"]["id"], "mining");
-    assert_eq!(prof["payload"]["gain"], 12, "XP меди: {prof}");
+    assert_eq!(prof["payload"]["gain"], 10, "XP меди: {prof}");
 
     // Гейт уровня: оловянная жила ур.30 при уровне 0 → E_LEVEL_REQUIRED.
     let seq = c
@@ -160,7 +352,7 @@ async fn mining_drops_gem_and_jeweler_cuts_it() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_LEVEL_REQUIRED", "уровень: {ack}");
 
-    // В деревню: ювелирный стол, резец и камень → гранёный камень брони.
+    // В деревню: ювелирный стол, резец и камень → гранёный сардоникс.
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_south" }))
         .await;
@@ -204,4 +396,165 @@ async fn mining_drops_gem_and_jeweler_cuts_it() {
         "броня 6 + камень 2: {ack}"
     );
     let _ = raw_uid;
+}
+
+/// M39: «Лампа шахтёра» в слоте артефакта даёт 2 руды вместо 1
+/// (шанс в тесте принудительно 100 %).
+#[tokio::test]
+async fn miner_lamp_doubles_ore() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let tmp = temp_content();
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.world.content_dir = tmp;
+            cfg.gameplay.professions.mining_chance_base = 1.0;
+            cfg.gameplay.professions.mining_chance_min = 1.0;
+            cfg.gameplay.professions.mining_lamp_double_ore_chance = 1.0;
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world(&ws).await;
+    give_gold(&mut c, 1500).await;
+    learn(&mut c, "mining").await;
+    give(&mut c, "pickaxe").await;
+    let lamp = give(&mut c, "artifact_lamp").await;
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": lamp, "slot": "artifact1" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "надеть лампу: {ack}");
+
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    kill_wolf(&mut c).await;
+    let seq = c
+        .send(
+            "cmd/resource.gather",
+            json!({ "entity_id": "r_forest_ore" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "медь");
+    let ore = c
+        .wait(|v| v["type"] == "evt/item/added" && v["payload"]["item"]["def_id"] == "ore_copper")
+        .await;
+    assert_eq!(ore["payload"]["item"]["qty"], 2, "лампа: {ore}");
+}
+
+/// M39: описание предметов доходит до клиента в `evt/item/added`.
+#[tokio::test]
+async fn mining_tools_description_reaches_snapshot() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+    for id in ["pickaxe_master", "artifact_lamp"] {
+        let seq = c
+            .send(
+                "cmd/chat.send",
+                json!({ "channel": "system", "text": format!("/scenario give {id}") }),
+            )
+            .await;
+        assert_eq!(c.ack(seq).await["result"], "ok", "give {id}");
+        let added = c.wait_event("evt/item/added").await;
+        let description = added["payload"]["item"]["description"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            description.contains("самоцвет"),
+            "{id}: описание не дошло до снапшота: {added}"
+        );
+        assert!(
+            !added["payload"]["item"]["personal"]
+                .as_bool()
+                .unwrap_or(false),
+            "{id}: до надевания печати нет: {added}"
+        );
+    }
+}
+
+/// M39: персональный предмет при выбросе уничтожается, не падая на землю.
+#[tokio::test]
+async fn personal_item_drop_destroys_it() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+    let uid = give(&mut c, "artifact_lamp").await;
+    let seq = c
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": uid, "slot": "artifact1" }),
+        )
+        .await;
+    let ack = c.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "надеть лампу: {ack}");
+    assert_eq!(ack["payload"]["item"]["personal"], true, "печать: {ack}");
+
+    let seq = c.send("cmd/item.drop", json!({ "item_uid": uid })).await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "выброс");
+    let removed = c.wait_event("evt/item/removed").await;
+    assert_eq!(
+        removed["payload"]["reason"], "destroyed",
+        "персональный предмет уничтожен: {removed}"
+    );
+}
+
+/// M39: «Кирка мастера» получает печать при первом применении (добыче).
+#[tokio::test]
+async fn master_pickaxe_seals_on_first_gather() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let tmp = temp_content();
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.world.content_dir = tmp;
+            cfg.gameplay.professions.mining_chance_base = 1.0;
+            cfg.gameplay.professions.mining_chance_min = 1.0;
+        })
+        .await
+    );
+    let (mut c, _login, _char) = in_world(&ws).await;
+    give_gold(&mut c, 1500).await;
+    learn(&mut c, "mining").await;
+    let pickaxe = give(&mut c, "pickaxe_master").await;
+
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    kill_wolf(&mut c).await;
+    let seq = c
+        .send(
+            "cmd/resource.gather",
+            json!({ "entity_id": "r_forest_ore" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "медь");
+    let sealed = c
+        .wait(|v| {
+            v["type"] == "evt/item/state"
+                && v["payload"]["uid"] == pickaxe
+                && v["payload"]["patch"]["item"]["personal"] == true
+        })
+        .await;
+    assert_eq!(
+        sealed["payload"]["patch"]["item"]["personal"], true,
+        "кирка привязана: {sealed}"
+    );
 }

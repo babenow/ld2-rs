@@ -222,8 +222,14 @@ impl AppStore {
                         self.push_log(LogKind::Loot, format!("Вы освежевали труп {}", result.name));
                     }
                 } else if result.action == "gather" {
-                    // M39: сбор прерван (урон/жила исчезла/нет места).
-                    self.push_log(LogKind::Loot, format!("Сбор прерван: {}", result.name));
+                    // M39: сбор прерван (урон/жила исчезла/нет места)
+                    // или не повезло с шансом — сервер шлёт готовую
+                    // строку «Не удалось добыть руду: …».
+                    let text = result
+                        .text
+                        .clone()
+                        .unwrap_or_else(|| format!("Сбор прерван: {}", result.name));
+                    self.push_log(LogKind::Loot, text);
                 } else if result.ruined {
                     // M22: разделка прервана взаимодействием с предметом.
                     self.push_log(LogKind::Loot, "Шкура испорчена".to_string());

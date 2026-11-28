@@ -306,8 +306,21 @@ pub enum ItemRemovalReason {
     Traded,
     Dropped,
     LostOnDeath,
+    /// M39: персональный предмет уничтожен при выбросе.
+    Destroyed,
     #[serde(other)]
     Unknown,
+}
+
+impl ItemRemovalReason {
+    /// M39: обычный выброс — `dropped`, предмет с печатью — `destroyed`.
+    pub fn for_drop(personal: bool) -> Self {
+        if personal {
+            Self::Destroyed
+        } else {
+            Self::Dropped
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -573,6 +586,10 @@ pub struct HarvestResult {
     /// испорчена» и чистит прогресс-бар.
     #[serde(default)]
     pub ruined: bool,
+    /// M39: готовая строка журнала (например, «Не удалось добыть
+    /// руду»); `None` — клиентский шаблон по `action`/`ok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 /// M22: новый уровень персонажа — журнал: себе «Вы получили новый

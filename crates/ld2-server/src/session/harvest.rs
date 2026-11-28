@@ -13,7 +13,9 @@ use tracing::warn;
 
 use super::event_payload_text;
 use super::{Out, Session};
-use crate::consts::{ACTION_GUT, ACTION_SKIN, ITEM_SKINNING_KNIFE, PROFESSION_SKINNING};
+use crate::consts::{
+    ACTION_GUT, ACTION_SKIN, ITEM_SKINNING_KNIFE, PROFESSION_MINING, PROFESSION_SKINNING,
+};
 use crate::db;
 
 const MIN_LEVEL: i64 = 1;
@@ -162,13 +164,7 @@ impl Session {
         };
         let mut outs: Vec<Out> = Vec::new();
         if let Some(job) = interrupted {
-            let result = ld2_protocol::evt::HarvestResult {
-                entity_id: job.corpse_id.clone(),
-                name: job.name.clone(),
-                action: job.action.clone(),
-                ok: false,
-                ruined: true,
-            };
+            let result = job.result(false, true, None);
             if let Some(text) = event_payload_text(names::EVT_HARVEST_RESULT, &result) {
                 outs.push(Out::Text(text));
             }
@@ -215,6 +211,20 @@ impl Session {
             let world = self.state.world.lock().expect("мир");
             match world.resource(&cmd.entity_id) {
                 Some(n) if n.location_id == current && !n.hidden && n.current > 0 => n.clone(),
+                Some(n) if n.location_id == current && !n.hidden => {
+                    if n.profession.as_deref() == Some(PROFESSION_MINING) {
+                        return vec![Self::err(
+                            seq,
+                            ErrorCode::VeinEmpty,
+                            "В жиле нет больше руды. Подождите, пока руда появится снова",
+                        )];
+                    }
+                    return vec![Self::err(
+                        seq,
+                        ErrorCode::TargetGone,
+                        "ресурс исчерпан — подождите возрождения",
+                    )];
+                }
                 _ => {
                     return vec![Self::err(seq, ErrorCode::TargetGone, "ресурс недоступен")];
                 }
@@ -234,6 +244,8 @@ impl Session {
             }
         }
         // 3) ранг/уровень профессии (профессия должна быть изучена).
+        let mut gather_chance: Option<f64> = None;
+        let mut gather_seconds = JOB_SECONDS;
         if let Some(prof) = &node.profession {
             let learned = match db::professions::learned(pool, &char_id).await {
                 Ok(v) => v,
@@ -269,6 +281,15 @@ impl Session {
                     ),
                 )];
             }
+            if prof == PROFESSION_MINING {
+                gather_chance = Some(crate::systems::action_chance(
+                    &self.state.config.gameplay.professions,
+                    node.required_level,
+                    level_u,
+                ));
+                gather_seconds =
+                    crate::systems::mining_gather_seconds(node.required_level, level_u);
+            }
         }
         // 4) место в инвентаре до уменьшения запаса (паритет take_loot).
         let slots = self.state.config.gameplay.inventory.slots;
@@ -286,8 +307,8 @@ impl Session {
                 return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
             }
         }
-        // 5) M39: сбор по времени — сервер-джоб 5 с, выдача в тике.
-        let at = crate::time::now_epoch() + JOB_SECONDS;
+        // 5) M39: сбор по времени — 2..6 с (руда) / 5 с, выдача в тике.
+        let at = crate::time::now_ms() + gather_seconds * 1000;
         let (char_name, gender) = self
             .char
             .as_ref()
@@ -301,6 +322,7 @@ impl Session {
                 gender,
                 entity_id: cmd.entity_id.clone(),
                 name: node.name.clone(),
+                chance: gather_chance,
                 at,
             });
         }

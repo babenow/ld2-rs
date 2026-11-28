@@ -363,6 +363,31 @@ pub struct ProfessionsSection {
     /// геометрию роста числа успешных действий; не задан — дефолт.
     #[serde(default = "default_rank_xp_mult")]
     pub rank_xp_mult: Vec<f64>,
+    /// M39: шанс успешной добычи руды, когда уровень профессии не ниже
+    /// жилы (0..1; 1.0 — без промахов).
+    #[serde(default = "default_mining_chance_base")]
+    pub mining_chance_base: f64,
+    /// M39: снижение шанса за каждый уровень жилы выше профессии.
+    #[serde(default = "default_mining_chance_per_level")]
+    pub mining_chance_per_level: f64,
+    /// M39: минимальный шанс добычи (0..base).
+    #[serde(default = "default_mining_chance_min")]
+    pub mining_chance_min: f64,
+    /// M39: «Кирка мастера» — множитель шанса камней из жилы.
+    #[serde(default = "default_master_gem_mult")]
+    pub mining_master_gem_mult: f64,
+    /// M39: «Лампа шахтёра» — прибавка к шансу камней (0.02 = +2 п.п.).
+    #[serde(default = "default_lamp_gem_bonus")]
+    pub mining_lamp_gem_bonus: f64,
+    /// M39: «Лампа шахтёра» — шанс получить 2 руды вместо 1.
+    #[serde(default = "default_lamp_double_ore_chance")]
+    pub mining_lamp_double_ore_chance: f64,
+    /// M39: «Нож мастера» — множитель шанса шкур/редких трофеев.
+    #[serde(default = "default_skinning_master_mult")]
+    pub skinning_master_loot_mult: f64,
+    /// M39: «Фетиш охотника» — прибавка к шансу шкур/редких трофеев.
+    #[serde(default = "default_skinning_hunter_bonus")]
+    pub skinning_hunter_loot_bonus: f64,
     /// Потолок уровня (на нём опыт перестаёт копиться; верхний ранг
     /// «Мастер» заканчивает на этом уровне).
     pub max_level: u32,
@@ -378,4 +403,36 @@ pub struct ProfessionsSection {
 /// 1.75 / 2.1. Список правится в `[gameplay.professions]`.
 fn default_rank_xp_mult() -> Vec<f64> {
     vec![1.0, 1.2, 1.45, 1.75, 2.1]
+}
+
+fn default_mining_chance_base() -> f64 {
+    0.95
+}
+
+fn default_mining_chance_per_level() -> f64 {
+    0.035
+}
+
+fn default_mining_chance_min() -> f64 {
+    0.15
+}
+
+fn default_master_gem_mult() -> f64 {
+    2.0
+}
+
+fn default_lamp_gem_bonus() -> f64 {
+    0.02
+}
+
+fn default_lamp_double_ore_chance() -> f64 {
+    0.05
+}
+
+fn default_skinning_master_mult() -> f64 {
+    2.0
+}
+
+fn default_skinning_hunter_bonus() -> f64 {
+    0.02
 }

@@ -503,6 +503,8 @@ mod tests {
             uid: "t1".into(),
             item_type: "weapon".into(),
             name: "Т".into(),
+            description: None,
+            personal: false,
             rarity: "common".into(),
             upgrade: 0,
             stats: stats.as_object().cloned().unwrap_or_default(),

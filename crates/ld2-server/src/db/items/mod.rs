@@ -27,6 +27,9 @@ pub struct ItemRow {
     pub def_id: String,
     pub qty: i32,
     pub upgrade: i32,
+    /// M39: печать персональности на инстансе (ставится при первом
+    /// надевании/применении предмета с `item_defs.personal`).
+    pub personal: bool,
     pub equipped_slot: Option<String>,
     /// Сокеты посоха: `[{index, rune?, def_id?}]` (ADR-002; `def_id` —
     /// служебное поле для извлечения, в §6 не попадает).
@@ -45,6 +48,10 @@ pub struct ItemDefRow {
     pub id: String,
     pub item_type: String,
     pub name: String,
+    /// M39: описание для карточки/тултипа; пусто — без описания.
+    pub description: String,
+    /// M39: персональный предмет — нельзя передавать, выброс уничтожает.
+    pub personal: bool,
     pub rarity: String,
     pub upgrade: i32,
     pub stats: Value,

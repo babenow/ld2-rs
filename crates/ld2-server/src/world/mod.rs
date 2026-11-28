@@ -366,6 +366,17 @@ mod tests {
         );
     }
 
+    /// M39: «Кирка мастера» ×2 и «Лампа шахтёра» +2 п.п. к шансу
+    /// камня; итог всегда 0..1.
+    #[test]
+    fn gem_chance_with_pickaxe_and_lamp_clamps() {
+        assert!((World::gem_chance_with(0.0125, 1.0, 0.0) - 0.0125).abs() < 1e-9);
+        assert!((World::gem_chance_with(0.0125, 2.0, 0.0) - 0.025).abs() < 1e-9);
+        assert!((World::gem_chance_with(0.0125, 1.0, 0.02) - 0.0325).abs() < 1e-9);
+        assert!((World::gem_chance_with(0.0125, 2.0, 0.02) - 0.045).abs() < 1e-9);
+        assert_eq!(World::gem_chance_with(0.6, 2.0, 0.02), 1.0, "clamp 1");
+    }
+
     /// M20/F20b: ресурс убывает по 1 за добычу; при 0 — респавн
     /// min..max; трава (despawn_when_empty) скрывается, жила остаётся
     /// видимой и исчерпанной до возобновления.
@@ -659,6 +670,45 @@ mod tests {
         }
     }
 
+    /// M39: множитель/прибавка повышают шанс шкуры и трофея.
+    #[test]
+    fn hide_chance_with_tools_clamps() {
+        use crate::systems::hide_chance_with;
+        assert!((hide_chance_with(0.03, 2.0, 0.0) - 0.06).abs() < 1e-9);
+        assert!((hide_chance_with(0.03, 1.0, 0.02) - 0.05).abs() < 1e-9);
+        assert!((hide_chance_with(0.03, 2.0, 0.02) - 0.08).abs() < 1e-9);
+        assert_eq!(hide_chance_with(0.9, 2.0, 0.02), 1.0);
+    }
+
+    /// M39: множитель ножа гарантированно поднимает шкуру и трофей.
+    #[test]
+    fn harvest_tool_multiplier_boosts_hide_and_extra() {
+        let mut world = World::default();
+        let row = (
+            "l_test".to_string(),
+            serde_json::json!([
+                {"id": "m_bonus", "kind": "monster", "name": "Белый волк",
+                 "hp": {"cur": 10, "max": 10},
+                 "harvest": {"level": 45, "skin": true, "skin_extra": [
+                     {"def_id": "pelt_white_wolf", "chance": 0.5}
+                 ]}}
+            ]),
+        );
+        world.seed_mobs(&[row], None);
+        let corpse_id = world.kill_mob("m_bonus").expect("труп");
+        let (_corpse, skin, _) = world
+            .finish_harvest(&corpse_id, "skin", 20, 3, 3.0, 0.0)
+            .expect("шкура");
+        assert!(
+            skin.contains(&"hide_q3".to_string()),
+            "усиленный шанс шкуры: {skin:?}"
+        );
+        assert!(
+            skin.contains(&"pelt_white_wolf".to_string()),
+            "усиленный шанс трофея: {skin:?}"
+        );
+    }
+
     /// M37: редкий трофей со снятия шкуры (`harvest.skin_extra`).
     #[test]
     fn skin_extra_drops_configured_loot() {
@@ -683,7 +733,7 @@ mod tests {
 
         let corpse_id = world.kill_mob("m_pelt").expect("труп");
         let (corpse, skin, _) = world
-            .finish_harvest(&corpse_id, "skin", 20, 3)
+            .finish_harvest(&corpse_id, "skin", 20, 3, 1.0, 0.0)
             .expect("шкура");
         assert!(
             skin.contains(&"pelt_white_wolf".to_string()),
@@ -700,7 +750,7 @@ mod tests {
 
         let corpse_id = world.kill_mob("m_no_pelt").expect("труп");
         let (corpse, skin, _) = world
-            .finish_harvest(&corpse_id, "skin", 20, 3)
+            .finish_harvest(&corpse_id, "skin", 20, 3, 1.0, 0.0)
             .expect("шкура");
         assert!(
             !corpse.loot.iter().flatten().any(|d| d == "pelt_white_wolf")

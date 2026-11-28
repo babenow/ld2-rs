@@ -47,7 +47,9 @@
             "reagent_bag",
             "keyring",
             "old_key",
-            "tool_chisel"
+            "tool_chisel",
+            "artifact_lamp",
+            "artifact_hunter"
           ]
         }
       ]
@@ -62,12 +64,14 @@
           "items": [
             "axe",
             "pickaxe",
+            "pickaxe_master",
             "dagger_knife",
             "sword_knight",
             "bow_hunter",
             "axe_war",
             "hammer_battle",
-            "twohand_sword"
+            "twohand_sword",
+            "skinning_knife_master"
           ]
         }
       ]

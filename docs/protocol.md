@@ -241,6 +241,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 // ItemSnapshot
 { "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest|bag
   "name": "Ясеневый посох", "rarity": "rare",
+  "description": "Посох огня: +2 к магии.",  // M39: текст для карточки/тултипа; нет поля — без описания
+  "personal": true,                          // M39: печать (нельзя передавать; выброс уничтожает); нет поля — обычный
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },
   "requires": { "attr": { "int": 12 }, "profession": null, "level": null },
@@ -317,7 +319,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `item.use` (камень) | `{item_uid}` | `{stone_uid, quality}` | − | **M18/F54:** `type=upgrade_stone` — выбирает активный камень усиления (не расходуется); ack несёт uid и качество в процентных пунктах. Следующие `upgrade.preview`/`start` работают с ним, 1 шт. списывается на старте |
 | `item.equip` | `{item_uid, slot}` | `{char, item}` | + | надеть (M17/F30b: слот↔предмет, руки, класс) |
 | `item.unequip` | `{slot}` | `{char, item}` | + | снять |
-| `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут) |
+| `item.drop` | `{item_uid, qty?}` | `{}` | − | выбросить (в PvP-зоне = лут). Предмет с печатью (`personal`) не падает на землю, а уничтожается (`evt/item/removed`, reason `destroyed`) |
 | `item.move` | `{item_uid, target_uid?}` или `{item_uid, to_container, to_index}` | `{}` / `{item_uid, container, slot_index}` | − | перемещение (M28): legacy `target_uid` — поменять местами в рюкзаке; `to_container` (`backpack`/`bags`/uid сумки) + `to_index` — положить в ячейку контейнера (ack несёт итоговое место); снятие/надевание сумки — перенос в `bags`/из `bags`; непустую сумку снять/выбросить нельзя (`E_INVENTORY_FULL`); сумка с `bag_types` принимает только эти типы (`E_BAG_TYPE`); спец-слоты панели (`bag_slots+0/1/2` — реагенты, колчан, ключница) принимают только сумку своего `bag_kind` (`E_BAG_SLOT`) |
 | `magic.scroll_cast` | `{item_uid, target_id?}` | `{}` | − | каст со свитка |
 | `magic.rune_cast` | `{staff_uid, socket_index, target_id?}` | `{}` | − | каст с руны предмета с сокетами (M25 — не только посох); **M24**: `stats.class` руны (warrior\|archer\|mage) — каст только своему классу, иначе `E_REQUIREMENT_ATTR` (нет поля — любому классу) |
@@ -342,7 +344,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `party.leave` | `{}` | `{}` | + | выйти |
 | `party.kick` | `{player_id}` | `{}` | − | исключить |
 | `trade.open` | `{player_id}` | `{offer_id}` (→ `evt/trade/state`) | − | открыть сделку |
-| `trade.add_item` | `{offer_id, item_uid, qty?}` | `{}` (→ `evt/trade/state`) | − | положить предмет |
+| `trade.add_item` | `{offer_id, item_uid, qty?}` | `{}` (→ `evt/trade/state`) | − | положить предмет; надетый нельзя (`E_BUSY`), с печатью — `E_ITEM_PERSONAL` (M39) |
 | `trade.set_gold` | `{offer_id, gold}` | `{}` (→ `evt/trade/state`) | − | предложить золото |
 | `trade.propose` / `trade.accept` | `{offer_id, version}` | `{}` | − | зафиксировать (сверка version) |
 | `trade.cancel` | `{offer_id}` | `{}` | + | отмена |
@@ -354,8 +356,8 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `state.resync` | `{last_state_version}` | `{}` (→ snapshot/delta) | + | восстановление |
 | `ping` | `{}` | `{}` (→ `evt/pong`) | + | RTT |
 | `time.sync` | `{}` | `{}` (→ `evt/time.sync`) | + | калибровка времени |
-| `corpse.harvest` | `{ entity_id, action: "skin"\|"gut" }` | `{ action, name }` | − | снятие шкур: разделка трупа животного — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result`); ошибки: `E_PROFESSION` (не изучена), `E_TOOL_MISSING` (нет ножа), `E_LEVEL_REQUIRED` (требуемый уровень выше на25+), `E_TARGET_GONE` (нет флагов/уже разделано/нет трупа), `E_COOLDOWN` (повторный старт на том же трупе; на другом — переключение: текущая разделка прерывается, шкура брошенного трупа портится) |
-| `resource.gather` | `{ entity_id }` | `{}` | − | M20/F20b + M39: добыча 1 единицы ресурса — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result` с `action:"gather"`); инструмент, ранг профессии и уровень жилы (допуск25) проверяются на сервере; пока джоб идёт, персонаж занят (`E_BUSY`); отказы: `E_TOOL_MISSING`/`E_PROFESSION`/`E_LEVEL_REQUIRED`/`E_TARGET_GONE`/`E_INVENTORY_FULL` |
+| `corpse.harvest` | `{ entity_id, action: "skin"\|"gut" }` | `{ action, name }` | − | снятие шкур: разделка трупа животного — сервер-джоб5 с (нажатие → прогрессбар → `evt/harvest/result`); опыт skin — общая шкала 10..40 (0 при профессии выше животного на 25+); ошибки: `E_PROFESSION` (не изучена), `E_TOOL_MISSING` (нет ножа), `E_LEVEL_REQUIRED` (требуемый уровень выше на25+), `E_TARGET_GONE` (нет флагов/уже разделано/нет трупа), `E_COOLDOWN` (повторный старт на том же трупе; на другом — переключение: текущая разделка прерывается, шкура брошенного трупа портится) |
+| `resource.gather` | `{ entity_id }` | `{}` | − | M20/F20b + M39: добыча 1 единицы ресурса — сервер-джоб 2–6 с для руды (нажатие → прогрессбар → `evt/harvest/result` с `action:"gather"`); инструмент, ранг профессии и уровень жилы (допуск25) проверяются на сервере; пока джоб идёт, персонаж занят (`E_BUSY`). Руда добывается с шансом (см. `[gameplay.professions] mining_chance_*`): провал списывает 1 запас жилы, руда/камень/XP не выдаются, итог `ok=false` + `text`; успех даёт 10..40 XP обратно шансу; профессия выше жилы на 25+ — 0 XP. Пустая жила — `E_VEIN_EMPTY` без запуска джоба. Отказы: `E_TOOL_MISSING`/`E_PROFESSION`/`E_LEVEL_REQUIRED`/`E_TARGET_GONE`/`E_INVENTORY_FULL` |
 | `dialog.choice` | `{ dialog_id, page_id, action_id }` | `{}` | − | M20: выбор действия в игровом многостраничном диалоге (**заготовка**) |
 | `dialog.submit` | `{ dialog_id, values {id → значение} }` | `{ values }` | − | M20: ввод execute-диалога; **M24**: ветка `admin.*` в `dialog_id` — выдача/удаление предмета (роль проверяется повторно; qty ≥ 1, верхняя граница 999 — **кроме валюты** `type=money` (без потолка, до INTEGER-стака) → `E_BAD_QTY`) |
 | `admin.items` | `{}` | `{ items: [{id, name, type, rarity, qty, upgrade, gold_value}] }` | + | M24: каталог всех предметов для админ-окна (одним запросом); только `role=admin` → `E_PERMISSION` |
@@ -416,12 +418,12 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | Событие | Payload | Назначение |
 |---|---|---|
 | `evt/item/added` | `{ item: ItemSnapshot }` | предмет получен |
-| `evt/item/removed` | `{ uid, reason }` | потерян/израсходован (`reason` = consumed\|traded\|dropped\|lost_on_death) |
+| `evt/item/removed` | `{ uid, reason }` | потерян/израсходован (`reason` = consumed\|traded\|dropped\|lost_on_death\|destroyed; M39: персональный предмет при выбросе) |
 | `evt/item/state` | `{ uid, patch }` | патч предмета (upgrade, sockets, qty) |
 | `evt/item/dropped` | `{ char_id, by_name, gender, qty, item_name }` | M20: выброс — журнал «{by} выбросил(а)…» / «Вы выбросили…» (всем в локации) |
 | `evt/item/expired` | `{ uid, name }` | M20: предмет в локации исчез по TTL — «{name} исчез» |
 | `evt/char/level_up` | `{ char_id, name, gender, level }` | M22: новый уровень персонажа — журнал «Вы получили новый уровень!…» (своему) / «{имя} получил(а) новый уровень!» (в локации) |
-| `evt/harvest/result` | `{ entity_id, name, action, ok, ruined? }` | снятие шкур: итог разделки — журнал «Вы освежевали труп …»/«Вы сняли шкуру с трупа …» (при `ok`), прогресс-бар чистится; лут добавляется в труп (`evt/corpse/created` — обновление); `ruined=true` — разделка прервана: взаимодействием с предметом/уроном (skin → «Шкура испорчена», повтор невозможен; gut → отмена, повтор можно) либо переключением на другой труп (M24: шкура брошенного трупа портится всегда); при переключении итог шлётся до ack нового старта. **M39** `action:"gather"` — итог сбора ресурса: бар чистится, руда/камень уже пришли `evt/item/added`/`evt/item/state` (камень из жилы — строка «Найден самоцвет…»), `ok=false` — сбор прерван уроном/жила исчезла/нет места (`ruined` не используется) |
+| `evt/harvest/result` | `{ entity_id, name, action, ok, ruined?, text? }` | снятие шкур: итог разделки — журнал «Вы освежевали труп …»/«Вы сняли шкуру с трупа …» (при `ok`), прогресс-бар чистится; лут добавляется в труп (`evt/corpse/created` — обновление); `ruined=true` — разделка прервана: взаимодействием с предметом/уроном (skin → «Шкура испорчена», повтор невозможен; gut → отмена, повтор можно) либо переключением на другой труп (M24: шкура брошенного трупа портится всегда); при переключении итог шлётся до ack нового старта. **M39** `action:"gather"` — итог сбора ресурса: бар чистится, руда/камень уже пришли `evt/item/added`/`evt/item/state` (камень из жилы — строка «Найден самоцвет…»), `ok=false` — сбор прерван уроном/жила исчезла/нет места/не повезло с шансом (`ruined` не используется); `text` — готовая строка журнала (например, «Не удалось добыть руду: …») |
 | `evt/resource/gathered` | `{ char_id, by_name, gender }` | M40: успешная добыча руды — общая строка журнала всем в локации: «Вы добыли руду» / «{имя} добыл(а) руду» |
 | `evt/dialog/open` | `{ id, kind: "page"\|"execute", title, pages: [{id, text, actions: [{id, label}]}], inputs: [{id, label, kind, default}] }` | M20: игровой диалог — многостраничный (кнопки действий + «Назад» на клиенте) или execute (поля ввода → `cmd/dialog.submit`) — **заготовка** |
 | `evt/upgrade/result` | `{ uid, ok, new_upgrade?, item_destroyed?, cost {} }` | итог улучшения |
@@ -475,6 +477,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_NO_TRAINER` | в локации нет тренера для этой профессии/навыка (`craft.learn`, `skill.train`, M14/M18) |
 | `E_EXIT_BLOCKED` | выход закрыт (завал, требование, правило) |
 | `E_TARGET_GONE` | цели нет (умерла/ушла) |
+| `E_VEIN_EMPTY` | жила пуста: руда ещё не возродилась (M39; клиент пишет журнальную строку «В жиле нет больше руды…») |
 | `E_NOT_IN_COMBAT` / `E_IN_COMBAT` | бой разрешён/запрещён здесь |
 | `E_COOLDOWN` | действие на кулдауне |
 | `E_NO_CHARGES` | у руны нет зарядов (меньше затраты `cost`, M18/F58c) |
@@ -490,6 +493,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 | `E_BUSY` | M24: персонаж занят разделкой — действия мира/развития отклоняются, пока идёт таймер (`item.*` — исключение, прерывает по M23) |
 | `E_BAD_QTY` | M24: количество в админ-диалоге вне допустимого диапазона (1..=999; для валюты `type=money` верхней границы нет — до INTEGER-стака) |
 | `E_ITEM_GONE` | предмета уже нет (двойное действие/обмен) |
+| `E_ITEM_PERSONAL` | M39: предмет с печатью персональности нельзя передавать (сделка) |
 | `E_UPGRADE_PREVIEW_STALE` | `preview_id` устарел (пересоздать превью) |
 | `E_UPGRADE_MAX` | достигнут максимум улучшения |
 | `E_TRADE_STALE` | `version` сделки не совпал → перерисовать окно |

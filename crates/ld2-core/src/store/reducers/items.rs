@@ -159,6 +159,7 @@ impl AppStore {
                     let verb = match removed.reason {
                         ItemRemovalReason::Consumed => "использовали",
                         ItemRemovalReason::Traded => "обменяли",
+                        ItemRemovalReason::Destroyed => "уничтожили",
                         _ => "потеряли",
                     };
                     let upg = if rupg > 0 {

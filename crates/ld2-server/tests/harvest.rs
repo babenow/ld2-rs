@@ -154,18 +154,17 @@ async fn harvest_gates_gut_and_skin_flow() {
     let ack = harvest(&mut c, &corpse, "gut").await;
     assert_eq!(ack["error"]["code"], "E_ITEM_GONE", "повтор gut: {ack}");
 
-    // Снятие шкуры: старт → итог + XP (треб волка5, уровень0 →
-    // diff −5 →×1 →100 XP → уровень ≥2).
+    // Снятие шкуры: старт → итог + XP. M39: волк ур.20, проф.0 →
+    // «шанс сложности» 25 % → 36 XP; до порога 40 уровня нет.
     let ack = harvest(&mut c, &corpse, "skin").await;
     assert_eq!(ack["result"], "ok", "старт skin: {ack}");
     let result = harvest_result(&mut c).await;
     assert_eq!(result["payload"]["ok"], true, "skin готов: {result}");
     let prof = c.wait_event("evt/craft/profession").await;
     assert_eq!(prof["payload"]["profession"]["id"], "skinning");
+    assert_eq!(prof["payload"]["gain"], 36, "XP снятия шкуры: {prof}");
     let level = prof["payload"]["profession"]["level"].as_i64().unwrap_or(0);
-    // M22: не больше1 уровня за начисление (600 XP → уровень1,
-    // шкала зажата новым порогом).
-    assert_eq!(level, 1, "ровно1 уровень за действие: {prof}");
+    assert_eq!(level, 0, "36 < 40 — уровня нет: {prof}");
 
     // Лут: дроп волка (2) + шкура/обрезки (1…3 с критом) — общий
     // список; «Внутри» не тронут.
@@ -492,4 +491,100 @@ async fn harvest_switch_to_another_corpse_interrupts_and_ruins() {
     );
     let ack = harvest(&mut c, &corpse_a, "gut").await;
     assert_eq!(ack["result"], "ok", "gut A повторно: {ack}");
+}
+
+/// M39: «Нож мастера» удваивает шанс шкуры и редкого трофея.
+#[tokio::test]
+async fn master_skinning_knife_boosts_hide_and_pelt() {
+    use std::path::PathBuf;
+
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let tmp = std::env::temp_dir().join(format!(
+        "ld2-skin-tools-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("время")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp).expect("temp content");
+    for entry in std::fs::read_dir(&src).expect("content dir") {
+        let entry = entry.expect("entry");
+        std::fs::copy(entry.path(), tmp.join(entry.file_name())).expect("copy");
+    }
+    let path = tmp.join("locations.json");
+    let mut locs: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("locations")).expect("parse");
+    for loc in locs["locations"].as_array_mut().expect("locations") {
+        if loc["id"] != "l_forest" {
+            continue;
+        }
+        for entity in loc["entities"].as_array_mut().expect("entities") {
+            if entity["id"] == "m_3" {
+                entity["hp"] = json!({"cur": 1, "max": 1});
+                entity["damage"] = json!(0);
+                entity["harvest"]["level"] = json!(1);
+                entity["harvest"]["skin_extra"] = json!([
+                    {"def_id": "pelt_white_wolf", "chance": 0.5}
+                ]);
+            }
+        }
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&locs).expect("ser"))
+        .expect("write locations");
+
+    let ws = format!(
+        "ws://{}/ws",
+        common::start_server_with(&db_url, |cfg| {
+            cfg.world.content_dir = tmp;
+        })
+        .await
+    );
+    let (mut c, _login, char_id) = in_world(&ws).await;
+    give_gold(&mut c, 1000).await;
+    let seq = c
+        .send("cmd/craft.learn", json!({ "profession_id": "skinning" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "learn skinning");
+    c.wait_event("evt/craft/profession").await;
+    give(&mut c, "skinning_knife_master").await;
+
+    // Уровень 45: базовый шанс шкуры 60 %, нож ×2 → 100 %.
+    let cfg = common::test_config(&db_url, |_| {});
+    let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
+    sqlx::query(
+        "UPDATE character_professions SET level = 45 \
+         WHERE character_id = $1 AND profession_id = 'skinning'",
+    )
+    .bind(&char_id)
+    .execute(&pool)
+    .await
+    .expect("уровень skinning");
+    pool.close().await;
+
+    let corpse = kill_wolf(&mut c).await;
+    let ack = harvest(&mut c, &corpse, "skin").await;
+    assert_eq!(ack["result"], "ok", "старт skin: {ack}");
+    let result = harvest_result(&mut c).await;
+    assert_eq!(result["payload"]["ok"], true, "skin готов: {result}");
+
+    let info = {
+        let seq = c
+            .send("cmd/entity.info", json!({ "entity_id": corpse }))
+            .await;
+        c.ack(seq).await
+    };
+    let loot = info["payload"]["loot"].as_array().expect("loot");
+    assert!(
+        loot.iter().any(|i| i["def_id"] == "hide_q1"),
+        "нож гарантировал шкуру: {loot:?}"
+    );
+    assert!(
+        loot.iter().any(|i| i["def_id"] == "pelt_white_wolf"),
+        "нож гарантировал редкий трофей: {loot:?}"
+    );
 }

@@ -178,8 +178,15 @@ async fn auto_attack_log_line_has_hits_as() {
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "атака");
 
+    // Бросок попадания случаен: ждём именно успешный удар, иначе
+    // первый evt/combat/hit может оказаться промахом.
     let hit = c
-        .wait(|v| v["type"] == "evt/combat/hit" && v["payload"]["source"] == char_id)
+        .wait(|v| {
+            v["type"] == "evt/combat/hit"
+                && v["payload"]["source"] == char_id
+                && v["payload"]["target"] == "m_3"
+                && v["payload"]["miss"] == false
+        })
         .await;
     let text = hit["payload"]["text"].as_str().expect("текст удара");
     assert!(text.starts_with("Вы бьёте"), "обращение кастеру: {text}");
@@ -191,6 +198,22 @@ async fn auto_attack_log_line_has_hits_as() {
 }
 
 /// Ранг навыка напрямую в БД (гейт `power_strike`: владение мечом 5).
+/// Выдать предмет dev-сценарием → uid.
+async fn give(c: &mut ld2_test_kit::WsClient, def_id: &str) -> String {
+    let seq = c
+        .send(
+            "cmd/chat.send",
+            json!({ "channel": "system", "text": format!("/scenario give {def_id}") }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "give {def_id}");
+    let added = c.wait_event("evt/item/added").await;
+    added["payload"]["item"]["uid"]
+        .as_str()
+        .expect("uid")
+        .to_string()
+}
+
 async fn set_skill_rank(db_url: &str, char_id: &str, skill: &str, rank: i32) {
     let cfg = common::test_config(db_url, |_| {});
     let pool = ld2_server::db::pool(&cfg.database).await.expect("pool");
@@ -294,6 +317,13 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
     set_skill_rank(&db_url, &char_id, "sword", 5).await;
     // M17/F30e: удар стоит25 ярости — даём ресурс (старт — 0).
     set_resource(&db_url, &char_id, 100, 100).await;
+    // Кэш боя обновляется при экипировке: без меча точность остаётся
+    // низкой, и проверка попадания становится флейковой.
+    let uid = give(&mut c, "armor_bronze").await;
+    let seq = c
+        .send("cmd/item.equip", json!({ "item_uid": uid, "slot": "body" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "надеть броню");
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))
         .await;
@@ -333,7 +363,7 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
     }
-    let hit = hit.expect("способность попала (4 попытки)");
+    let hit = hit.expect("способность попала (8 попыток)");
     let amount = hit["payload"]["amount"].as_i64().expect("amount");
     assert!((1..=20).contains(&amount), "урон способности: {hit}");
 
@@ -409,6 +439,13 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
     set_skill_rank(&db_url, &char_id, "sword", 5).await;
     // M17/F30e: удар стоит25 ярости — даём ресурс (старт — 0).
     set_resource(&db_url, &char_id, 100, 100).await;
+    // Кэш боя обновляется при экипировке: без меча точность остаётся
+    // низкой, и проверка попадания становится флейковой.
+    let uid = give(&mut c, "armor_bronze").await;
+    let seq = c
+        .send("cmd/item.equip", json!({ "item_uid": uid, "slot": "body" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "надеть броню");
 
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_north" }))
@@ -417,9 +454,9 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
 
     // Первый удар способностью (M32: урон листа ×1.8 − броня моба).
     // Бросок попадания случаен, а точная последовательность ГПСЧ зависит
-    // от тиков мобов — при промахе повторяем после кулдауна (до 3 раз).
+    // от тиков мобов — при промахе повторяем после кулдауна (до 8 раз).
     let mut hit = None;
-    for attempt in 0..4 {
+    for attempt in 0..8 {
         let seq = c
             .send(
                 "cmd/skill.use",
@@ -449,7 +486,7 @@ async fn skill_use_power_strike_kills_and_grants_xp() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
     }
-    let hit = hit.expect("способность попала (3 попытки)");
+    let hit = hit.expect("способность попала (8 попыток)");
     let amount = hit["payload"]["amount"].as_i64().expect("amount");
     assert!(amount > 0, "удар нанёс урон: {hit}");
     // M17/F30f: в логе имя способности (не id) и жирный урон.

@@ -139,6 +139,8 @@ pub(crate) fn item_snapshot(
         uid: item.uid.clone(),
         item_type: def.item_type.clone(),
         name: def.name.clone(),
+        description: (!def.description.trim().is_empty()).then(|| def.description.clone()),
+        personal: item.personal,
         rarity: def.rarity.clone(),
         upgrade: def.upgrade + item.upgrade,
         stats: def.stats.clone().as_object().cloned().unwrap_or_default(),
@@ -285,6 +287,8 @@ mod tests {
             id: "sword_1".into(),
             item_type: item_type.into(),
             name: "Меч".into(),
+            description: String::new(),
+            personal: false,
             rarity: "common".into(),
             upgrade: 1,
             stats: json!({
@@ -313,6 +317,7 @@ mod tests {
             def_id: "sword_1".into(),
             qty: 2,
             upgrade: 2,
+            personal: false,
             equipped_slot: None,
             sockets,
             bonuses,
@@ -384,6 +389,27 @@ mod tests {
         );
         assert_eq!(socket_accepts(&json!({ "index": 0 }), 0, 2), "rune");
         assert_eq!(socket_accepts(&json!({ "index": 2 }), 2, 2), "gem");
+    }
+
+    /// M39: описание из определения уходит в снапшот; пустое — не шлём.
+    #[test]
+    fn item_snapshot_carries_description_when_present() {
+        let mut def = item_def("weapon", 0, None);
+        def.description = "Удваивает шанс камня.".into();
+        def.personal = true;
+        let mut row = item_row(json!([]), None);
+        let snap = item_snapshot(&row, &def);
+        assert_eq!(snap.description.as_deref(), Some("Удваивает шанс камня."));
+        assert!(
+            !snap.personal,
+            "до первого надевания печати нет (def.personal — лишь триггер)"
+        );
+        row.personal = true;
+        assert!(item_snapshot(&row, &def).personal, "печать на инстансе");
+
+        def.description = "  ".into();
+        let snap = item_snapshot(&item_row(json!([]), None), &def);
+        assert_eq!(snap.description, None, "пустое описание не отправляется");
     }
 
     #[test]
