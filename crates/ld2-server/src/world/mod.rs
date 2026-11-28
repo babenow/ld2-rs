@@ -366,6 +366,17 @@ mod tests {
         );
     }
 
+    /// M39: «Кирка мастера» ×2 и «Лампа шахтёра» +2 п.п. к шансу
+    /// камня; итог всегда 0..1.
+    #[test]
+    fn gem_chance_with_pickaxe_and_lamp_clamps() {
+        assert!((World::gem_chance_with(0.0125, 1.0, 0.0) - 0.0125).abs() < 1e-9);
+        assert!((World::gem_chance_with(0.0125, 2.0, 0.0) - 0.025).abs() < 1e-9);
+        assert!((World::gem_chance_with(0.0125, 1.0, 0.02) - 0.0325).abs() < 1e-9);
+        assert!((World::gem_chance_with(0.0125, 2.0, 0.02) - 0.045).abs() < 1e-9);
+        assert_eq!(World::gem_chance_with(0.6, 2.0, 0.02), 1.0, "clamp 1");
+    }
+
     /// M20/F20b: ресурс убывает по 1 за добычу; при 0 — респавн
     /// min..max; трава (despawn_when_empty) скрывается, жила остаётся
     /// видимой и исчерпанной до возобновления.

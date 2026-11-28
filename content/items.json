@@ -4103,6 +4103,26 @@
         }
       ],
       "gold_value": 1200
+    },
+    {
+      "id": "pickaxe_master",
+      "type": "pickaxe",
+      "name": "Кирка мастера",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 1200,
+      "qty": 1
+    },
+    {
+      "id": "artifact_lamp",
+      "type": "artifact",
+      "name": "Лампа шахтера",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 900,
+      "slot": "artifact"
     }
   ]
 }

@@ -142,6 +142,10 @@ rank_xp_mult = [1.0, 1.2, 1.45, 1.75, 2.1]
 mining_chance_base = 0.95
 mining_chance_per_level = 0.035
 mining_chance_min = 0.15
+# M39: «Кирка мастера» ×2 к камням; «Лампа шахтёра» +2 п.п. и 5 % на 2 руды.
+mining_master_gem_mult = 2.0
+mining_lamp_gem_bonus = 0.02
+mining_lamp_double_ore_chance = 0.05
 max_level = 250         # потолок уровня (верхний ранг «Мастер»)
 rank_span = 50          # уровней в ранге (границы: 50/100/150/200)
 rank_up_gold_base = 200 # ранг у тренера: round(base × growth^ранг)

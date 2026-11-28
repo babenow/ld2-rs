@@ -2,10 +2,11 @@
 """Генератор контента M38: горное дело и самоцветы.
 
 Идемпотентно обновляет:
-  * content/items.json   — 6 руд, 32 необработанных камня, 96 обработанных;
+  * content/items.json   — 9 руд, 32 необработанных камня, 96 обработанных,
+                           «Кирка мастера» и «Лампа шахтёра»;
   * content/recipes.json — 96 рецептов ювелира (3 версии на камень);
-  * content/locations.json — 3 рудника, жилы, ювелирный стол;
-  * content/shops.json   — резец у городского старосты.
+  * content/locations.json — 5 рудников, жилы, ювелирный стол;
+  * content/shops.json   — резец и лампа у старосты, кирка у оружейника.
 
 Запуск:  python3 scripts/gen-mining-content.py
 """
@@ -134,15 +135,15 @@ ALL_PURE = [f"raw_stone_{key}" for key, _, _, _, _, _ in PURE]
 
 VEINS = [
     # ore_id, mixed, pure, chance
-    ("ore_copper", COPPER_MIXED, COPPER_PURE, 0.025),
-    ("ore_tin", TIN_MIXED, TIN_PURE, 0.03),
-    ("ore_iron", IRON_MIXED, IRON_PURE, 0.035),
-    ("ore_bronze", IRON_MIXED, IRON_PURE, 0.0375),
-    ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.04),
-    ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.05),
-    ("ore_platinum", GOLD_MIXED, GOLD_PURE, 0.05),
-    ("ore_adamantite", ALL_MIXED, ALL_PURE, 0.055),
-    ("ore_mithril", ALL_MIXED, ALL_PURE, 0.06),
+    ("ore_copper", COPPER_MIXED, COPPER_PURE, 0.0125),
+    ("ore_tin", TIN_MIXED, TIN_PURE, 0.015),
+    ("ore_iron", IRON_MIXED, IRON_PURE, 0.0175),
+    ("ore_bronze", IRON_MIXED, IRON_PURE, 0.01875),
+    ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.02),
+    ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.025),
+    ("ore_platinum", GOLD_MIXED, GOLD_PURE, 0.025),
+    ("ore_adamantite", ALL_MIXED, ALL_PURE, 0.0275),
+    ("ore_mithril", ALL_MIXED, ALL_PURE, 0.03),
 ]
 VEIN_BY_ORE = {ore: (mixed, pure, chance) for ore, mixed, pure, chance in VEINS}
 
@@ -247,6 +248,31 @@ def generated_items() -> list[dict]:
                     pure_bonuses(kind, param, category, pct, v),
                 )
             )
+    # M39: инструменты-модификаторы добычи.
+    items.append(
+        {
+            "id": "pickaxe_master",
+            "type": "pickaxe",
+            "name": "Кирка мастера",
+            "rarity": "rare",
+            "upgrade": 0,
+            "stats": {},
+            "gold_value": 1200,
+            "qty": 1,
+        }
+    )
+    items.append(
+        {
+            "id": "artifact_lamp",
+            "type": "artifact",
+            "name": "Лампа шахтера",
+            "rarity": "epic",
+            "upgrade": 0,
+            "stats": {},
+            "gold_value": 900,
+            "slot": "artifact",
+        }
+    )
     return items
 
 
@@ -474,7 +500,7 @@ def update_locations(locations: dict) -> None:
             1,
             TIN_MIXED,
             TIN_PURE,
-            0.06,
+            0.015,
         )
     )
     del by_id  # больше не нужен
@@ -495,17 +521,28 @@ def update_recipes(recipes: dict) -> None:
     recipes["recipes"].extend(generated)
 
 
+def add_shop_item(npc: dict, item_id: str) -> None:
+    """Идемпотентно добавить предмет в золотую вкладку магазина."""
+    for currency in npc.get("currencies", []):
+        if currency.get("currency") != "gold_coin":
+            continue
+        items = currency.setdefault("items", [])
+        if item_id not in items:
+            items.append(item_id)
+
+
 def update_shops(shops: dict) -> None:
     for npc in shops["npcs"]:
-        if npc.get("id") != "npc_city_elder":
-            continue
-        for currency in npc.get("currencies", []):
-            if currency.get("currency") != "gold_coin":
-                continue
-            items = currency.setdefault("items", [])
-            items[:] = [i for i in items if i != "chisel"]
-            if "tool_chisel" not in items:
-                items.append("tool_chisel")
+        if npc.get("id") == "npc_city_elder":
+            for currency in npc.get("currencies", []):
+                if currency.get("currency") != "gold_coin":
+                    continue
+                items = currency.setdefault("items", [])
+                items[:] = [i for i in items if i != "chisel"]
+            add_shop_item(npc, "tool_chisel")
+            add_shop_item(npc, "artifact_lamp")
+        elif npc.get("id") == "npc_weaponsmith":
+            add_shop_item(npc, "pickaxe_master")
 
 
 def main() -> None:

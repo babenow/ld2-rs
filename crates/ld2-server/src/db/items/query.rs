@@ -202,6 +202,34 @@ pub async fn loot_taken_exists(
     .await
 }
 
+/// M39: есть ли у персонажа предмет с данным `def_id` (в любом слоте,
+/// включая надетые).
+pub async fn has_def(pool: &PgPool, char_id: &str, def_id: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM items WHERE character_id = $1 AND def_id = $2)",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// M39: надет ли предмет с данным `def_id` (эффекты артефактов).
+pub async fn has_equipped_def(
+    pool: &PgPool,
+    char_id: &str,
+    def_id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM items \
+         WHERE character_id = $1 AND def_id = $2 AND equipped_slot IS NOT NULL)",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_one(pool)
+    .await
+}
+
 /// M20/F20b: есть ли у персонажа предмет с этим `item_type`
 /// (паритет проверки инструмента крафта).
 pub async fn has_item_type(

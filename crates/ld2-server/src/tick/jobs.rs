@@ -17,6 +17,7 @@ use ld2_protocol::types::EntityKind;
 use serde_json::json;
 use tracing::warn;
 
+use super::gather::{gather_bonuses, gather_fits};
 use crate::consts::{ACTION_SKIN, PROFESSION_MINING, PROFESSION_SKINNING};
 use crate::db;
 use crate::state::SharedState;
@@ -269,8 +270,18 @@ pub(super) async fn gather_step(state: &SharedState) {
             );
             continue;
         }
+        // M39: «Кирка мастера» ×2 к камням; «Лампа шахтёра» +2 п.п.
+        // и шанс 2 руды. Только для горного дела.
+        let mining = node.profession.as_deref() == Some(PROFESSION_MINING);
+        let (gem_mult, gem_add, ore_qty) = if mining {
+            gather_bonuses(state, &job.char_id).await
+        } else {
+            (1.0, 0.0, 1)
+        };
         let mut texts = Vec::new();
-        if let Some(text) = grant_gather_item(state, &job.char_id, &node.def_id, slots).await {
+        if let Some(text) =
+            grant_gather_item(state, &job.char_id, &node.def_id, slots, ore_qty).await
+        {
             texts.push(text);
         } else {
             // Инвентарь успел заполниться — руда не выдана, сбор сорван.
@@ -280,10 +291,10 @@ pub(super) async fn gather_step(state: &SharedState) {
         }
         let gem = {
             let mut world = state.world.lock().expect("мир");
-            world.roll_resource_gem(&job.entity_id)
+            world.roll_resource_gem(&job.entity_id, gem_mult, gem_add)
         };
         if let Some(gem_id) = gem {
-            if let Some(text) = grant_gather_item(state, &job.char_id, &gem_id, slots).await {
+            if let Some(text) = grant_gather_item(state, &job.char_id, &gem_id, slots, 1).await {
                 texts.push(text);
             }
         }
@@ -330,26 +341,13 @@ pub(super) async fn gather_step(state: &SharedState) {
     }
 }
 
-/// M39: хватит ли места под предмет (стак или свободный слот).
-async fn gather_fits(state: &SharedState, char_id: &str, def_id: &str, slots: u32) -> bool {
-    let pool = &state.pool;
-    if db::items::stackable_exists(pool, char_id, def_id)
-        .await
-        .unwrap_or(false)
-    {
-        return true;
-    }
-    db::items::has_space(pool, char_id, i64::from(slots))
-        .await
-        .unwrap_or(false)
-}
-
 /// M39: выдача предмета на сбор (руда/камень) с проверкой места.
 async fn grant_gather_item(
     state: &SharedState,
     char_id: &str,
     def_id: &str,
     slots: u32,
+    qty: i64,
 ) -> Option<String> {
     let pool = &state.pool;
     let stacked_exists = db::items::stackable_exists(pool, char_id, def_id)
@@ -363,7 +361,7 @@ async fn grant_gather_item(
         return None;
     }
     let def = db::items::def(pool, def_id).await.ok()??;
-    let (row, stacked) = db::items::grant_stacking(pool, char_id, def_id, 1)
+    let (row, stacked) = db::items::grant_stacking(pool, char_id, def_id, qty.max(1))
         .await
         .ok()?;
     let item = crate::session::item_snapshot(&row, &def);

@@ -373,6 +373,15 @@ pub struct ProfessionsSection {
     /// M39: минимальный шанс добычи (0..base).
     #[serde(default = "default_mining_chance_min")]
     pub mining_chance_min: f64,
+    /// M39: «Кирка мастера» — множитель шанса камней из жилы.
+    #[serde(default = "default_master_gem_mult")]
+    pub mining_master_gem_mult: f64,
+    /// M39: «Лампа шахтёра» — прибавка к шансу камней (0.02 = +2 п.п.).
+    #[serde(default = "default_lamp_gem_bonus")]
+    pub mining_lamp_gem_bonus: f64,
+    /// M39: «Лампа шахтёра» — шанс получить 2 руды вместо 1.
+    #[serde(default = "default_lamp_double_ore_chance")]
+    pub mining_lamp_double_ore_chance: f64,
     /// Потолок уровня (на нём опыт перестаёт копиться; верхний ранг
     /// «Мастер» заканчивает на этом уровне).
     pub max_level: u32,
@@ -400,4 +409,16 @@ fn default_mining_chance_per_level() -> f64 {
 
 fn default_mining_chance_min() -> f64 {
     0.15
+}
+
+fn default_master_gem_mult() -> f64 {
+    2.0
+}
+
+fn default_lamp_gem_bonus() -> f64 {
+    0.02
+}
+
+fn default_lamp_double_ore_chance() -> f64 {
+    0.05
 }

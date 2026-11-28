@@ -29,7 +29,7 @@
 | Файл | Содержимое | Куда попадает |
 |---|---|---|
 | `locations.json` | 1194 локации | `locations` |
-| `items.json` | 258 определений | `item_defs` |
+| `items.json` | 260 определений | `item_defs` |
 | `skills.json` | 34 навыка | `skills` |
 | `professions.json` | 14 профессий | `professions` |
 | `recipes.json` | 99 рецептов | `recipes` |
@@ -67,7 +67,7 @@
 сохраняются, редактор их не теряет. Валидация проверяет обязательные поля
 и типы, но не запрещает расширения.
 
-### 1.1 `items.json` → предметы (258, сид в `item_defs`)
+### 1.1 `items.json` → предметы (260, сид в `item_defs`)
 
 | Поле | Тип | Смысл |
 |---|---|---|
@@ -88,16 +88,16 @@
 | `bonuses` | list | `[{kind, id, value, pct?}]`, `kind ∈ attr \| param \| skill` |
 | `extra` | obj | неизвестные поля |
 
-Типы (258): `gem` 117, `armor` 23, `rune` 18, `weapon` 11, `bag` 8,
+Типы (260): `gem` 117, `armor` 23, `rune` 18, `weapon` 11, `bag` 8,
 `hide` 6, `hide_scraps` 5, `shield` 3, `upgrade_stone` 3, `staff` 2,
-`artifact` 2; `raw_*` 32 (12 смешанных + 20 чистых), `ore_*` 9
+`artifact` 3, `pickaxe` 2; `raw_*` 32 (12 смешанных + 20 чистых), `ore_*` 9
 (`ore_copper`…`ore_mithril`, включая `ore_bronze`, `ore_platinum`,
 `ore_adamantite`); `wood_oak`, `skinning_knife`, `sickle`,
-`scroll`, `quill`, `potion`, `pickaxe`, `parchment`, `offal`, `money`,
+`scroll`, `quill`, `potion`, `parchment`, `offal`, `money`,
 `meat`, `ink`, `herb`, `flask`, `chisel`, `branches`, `axe`, `ammo`,
 `key` — по 1.
 
-Редкости: `common` 72, `uncommon` 76, `rare` 53, `epic` 50,
+Редкости: `common` 72, `uncommon` 76, `rare` 54, `epic` 51,
 `legendary` 7.
 
 Слоты (13): `main_hand`, `off_hand`, `head`, `body`, `legs`, `feet`,

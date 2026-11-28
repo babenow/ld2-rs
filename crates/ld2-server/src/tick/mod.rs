@@ -9,6 +9,7 @@
 
 mod combat;
 mod expire;
+mod gather;
 mod jobs;
 mod plan;
 mod run;

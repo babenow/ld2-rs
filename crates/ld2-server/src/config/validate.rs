@@ -235,6 +235,15 @@ impl Config {
         if p.mining_chance_per_level < 0.0 {
             out.push("gameplay.professions.mining_chance_per_level: должен быть ≥ 0".into());
         }
+        if p.mining_master_gem_mult < 1.0 {
+            out.push("gameplay.professions.mining_master_gem_mult: должен быть ≥ 1.0".into());
+        }
+        if !(0.0..=0.02).contains(&p.mining_lamp_gem_bonus) {
+            out.push("gameplay.professions.mining_lamp_gem_bonus: должен быть 0..0.02".into());
+        }
+        if !(0.0..=1.0).contains(&p.mining_lamp_double_ore_chance) {
+            out.push("gameplay.professions.mining_lamp_double_ore_chance: должен быть 0..1".into());
+        }
         if self.gameplay.professions.max_level == 0 {
             out.push("gameplay.professions.max_level: должен быть ≥ 1".into());
         }
