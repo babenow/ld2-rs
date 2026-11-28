@@ -109,6 +109,8 @@ foreach ($loc in $Locations.locations) {
         $stock = if ($null -ne $entity.max) { [int]$entity.max } else { 1 }
         $required = if ($null -ne $entity.required_level) { [int]$entity.required_level } else { 1 }
         $chance = [double]$entity.gems.chance
+        $chanceMult = if ($null -ne $entity.gems.chance_mult) { [double]$entity.gems.chance_mult } else { 1.0 }
+        $chance = $chance * $chanceMult
         $rmin = if ($null -ne $entity.respawn -and $null -ne $entity.respawn.min_s) { [double]$entity.respawn.min_s } else { 60.0 }
         $rmax = if ($null -ne $entity.respawn -and $null -ne $entity.respawn.max_s) { [double]$entity.respawn.max_s } else { 120.0 }
         $current = $Veins[$entity.resource]
@@ -138,6 +140,7 @@ Add-Line ''
 Add-Line '- уровень профессии = требуемому уровню жилы: гейт пройден, добыча 2 с, шанс успеха 95 %;'
 Add-Line '- провал добычи (5 %) тоже списывает 1 запас жилы, но камня не даёт;'
 Add-Line '- одна попытка = одна единица запаса; камень — 1 шт. за успешный бросок;'
+Add-Line '- шанс жилы = `gems.chance × gems.chance_mult`; по умолчанию `chance_mult = 1.0`;'
 Add-Line '- «Камней/час» — одна жила: полный запас × 2 с + средний респавн; без переходов между жилами;'
 Add-Line '- для руды взята самая ёмкая жила (у олова в лесу есть жила с запасом 2);'
 Add-Line ("- инструменты: кирка ×{0}, лампа +{1} п.п. (`mining_master_gem_mult` / `mining_lamp_gem_bonus`)." -f (Format-Num $MasterMult 0), (Format-Num ($LampAdd * 100) 0))
@@ -146,14 +149,14 @@ Add-Line '## 1. Без инструментов'
 Add-Line ''
 Add-Line '### Как читать таблицу 1'
 Add-Line ''
-Add-Line '- **Шанс/успех** — шанс камня в одном успешном сборе (поле `gems.chance` у жилы).'
+Add-Line '- **Шанс/успех** — шанс камня в одном успешном сборе: `gems.chance × gems.chance_mult` у жилы.'
 Add-Line '- **Шанс/попытка** — с учётом 5 % провала добычи: `0.95 × шанс/успех`. Провал тоже списывает 1 запас, поэтому это вероятность на единицу запаса.'
 Add-Line '- **1 камень в N попыток** — `1 / шанс/попытка`: сколько в среднем единиц запаса нужно пройти до первого камня.'
 Add-Line '- **Камней/жила** — ожидание для полной жилы: `запас × шанс/попытка`.'
 Add-Line '- **≥1 камень/жила** — `1 − P(0)`: шанс, что за полный запас выпадет хотя бы один камень.'
 Add-Line '- **Камней/час** — одна жила без переходов: `камней/жила × 3600 / (запас × 2 с + средний респавн)`.'
 Add-Line ''
-Add-Line 'Пример для меди: 3 единицы запаса × 1.1875% = 0.036 камня с жилы; один камень в среднем раз в 84.2 попытки; P(0) = 96.5%; цикл 3 × 2 с + 90 с = 96 с → 1.34 камня/час.'
+Add-Line 'Пример для меди: 3 единицы запаса × 0.59375% = 0.018 камня с жилы; один камень в среднем раз в 168.4 попытки; P(0) = 98.2%; цикл 3 × 2 с + 90 с = 96 с → 0.67 камня/час.'
 Add-Line ''
 Add-Line '| Руда | Ур. | Запас жилы | Шанс/успех | Шанс/попытка | 1 камень в N попыток | Камней/жила | ≥1 камень/жила | Камней/час |'
 Add-Line '|---|---:|---:|---:|---:|---:|---:|---:|---:|'

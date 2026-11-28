@@ -383,7 +383,7 @@ interval = max(round(base_ms × phase.interval_mult), min_attack_interval_s × 1
 | `profession`, `min_rank` | гейт профессии |
 | `tool` | тип нужного инструмента |
 | `required_level` | M38: требуемый уровень профессии (допуск 25) |
-| `gems` | M38: `{chance, mixed_share, mixed[], pure[]}` — бонусные камни |
+| `gems` | M38/M39: `{chance, chance_mult, mixed_share, mixed[], pure[]}` — бонусные камни; `chance_mult` — множитель шанса конкретной жилы (дефолт 1.0) |
 
 Четыре узла: `r_forest_herb` (`herb`, 1, 30–60, `despawn_when_empty`,
 herbalist, ранг 1, `sickle`), `r_forest_tree` (`wood_oak`, 2, 60–120,

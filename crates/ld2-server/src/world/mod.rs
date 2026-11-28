@@ -374,7 +374,33 @@ mod tests {
         assert!((World::gem_chance_with(0.0125, 2.0, 0.0) - 0.025).abs() < 1e-9);
         assert!((World::gem_chance_with(0.0125, 1.0, 0.02) - 0.0325).abs() < 1e-9);
         assert!((World::gem_chance_with(0.0125, 2.0, 0.02) - 0.045).abs() < 1e-9);
+        // Множитель жилы применяется до инструментов: 0.00625 × 3 × 2 + 0.02.
+        assert!((World::gem_chance_with(0.00625 * 3.0, 2.0, 0.02) - 0.0575).abs() < 1e-9);
         assert_eq!(World::gem_chance_with(0.6, 2.0, 0.02), 1.0, "clamp 1");
+    }
+
+    /// M39: множитель шанса камня из конкретной жилы читается из контента.
+    #[test]
+    fn resource_gem_chance_mult_parses() {
+        let mut world = World::default();
+        let row = (
+            "l_t".to_string(),
+            serde_json::json!([
+                {"id": "r_vein", "kind": "resource", "name": "Жила",
+                 "resource": "ore_copper", "max": 2,
+                 "respawn": {"min_s": 5, "max_s": 10},
+                 "profession": "mining", "min_rank": 1, "tool": "pickaxe",
+                 "gems": {"chance": 0.00625, "chance_mult": 3.0,
+                          "mixed_share": 0.1, "mixed": [], "pure": ["raw_stone_armor"]}}
+            ]),
+        );
+        world.seed_mobs(&[row], None);
+        let gems = world
+            .resource("r_vein")
+            .and_then(|r| r.gems.clone())
+            .expect("gems");
+        assert!((gems.chance - 0.00625).abs() < 1e-12);
+        assert!((gems.chance_mult - 3.0).abs() < 1e-12);
     }
 
     /// M20/F20b: ресурс убывает по 1 за добычу; при 0 — респавн
