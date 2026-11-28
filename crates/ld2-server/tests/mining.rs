@@ -199,6 +199,7 @@ fn mining_tools_content_is_configured() {
             description.contains("самоцвет"),
             "у {id} должно быть описание эффекта: {description:?}"
         );
+        assert_eq!(by_id(id)["personal"], true, "{id} — персональный");
     }
 
     let shops: serde_json::Value =
@@ -453,5 +454,28 @@ async fn mining_tools_description_reaches_snapshot() {
             description.contains("самоцвет"),
             "{id}: описание не дошло до снапшота: {added}"
         );
+        assert_eq!(
+            added["payload"]["item"]["personal"], true,
+            "{id}: флаг персональности не дошёл: {added}"
+        );
     }
+}
+
+/// M39: персональный предмет при выбросе уничтожается, не падая на землю.
+#[tokio::test]
+async fn personal_item_drop_destroys_it() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+    let uid = give(&mut c, "pickaxe_master").await;
+    let seq = c.send("cmd/item.drop", json!({ "item_uid": uid })).await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "выброс");
+    let removed = c.wait_event("evt/item/removed").await;
+    assert_eq!(
+        removed["payload"]["reason"], "destroyed",
+        "персональный предмет уничтожен: {removed}"
+    );
 }

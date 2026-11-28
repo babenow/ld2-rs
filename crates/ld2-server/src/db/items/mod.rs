@@ -47,6 +47,8 @@ pub struct ItemDefRow {
     pub name: String,
     /// M39: описание для карточки/тултипа; пусто — без описания.
     pub description: String,
+    /// M39: персональный предмет — нельзя передавать, выброс уничтожает.
+    pub personal: bool,
     pub rarity: String,
     pub upgrade: i32,
     pub stats: Value,

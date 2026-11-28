@@ -306,6 +306,8 @@ pub enum ItemRemovalReason {
     Traded,
     Dropped,
     LostOnDeath,
+    /// M39: персональный предмет уничтожен при выбросе.
+    Destroyed,
     #[serde(other)]
     Unknown,
 }

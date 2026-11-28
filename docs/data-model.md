@@ -73,6 +73,7 @@
 |---|---|---|
 | `id`, `name` | str | ключ и отображаемое имя |
 | `description` | str? | текст для карточки/тултипа (M39) |
+| `personal` | bool? | персональный: нельзя передавать, выброс уничтожает (M39) |
 | `type` | str | тип предмета (см. ниже) |
 | `rarity` | str | `common` / `uncommon` / `rare` / `epic` / `legendary` |
 | `upgrade` | int | **базовый** уровень предмета (0 у обычных, 10 у `sword_1000_true`) |
@@ -485,7 +486,7 @@ price        = max(round(price_gold × rate), 1)
 
 | Таблица | Колонки | Смысл |
 |---|---|---|
-| `item_defs` | `id`, `item_type`, `name`, `description`, `rarity`, `upgrade`, `stats`, `requires`, `gold_value`, `qty`, `skill`, `sockets`, `rune_sockets`, `slot`, `hands`, `cooldown_s`, `bonuses` | определения предметов |
+| `item_defs` | `id`, `item_type`, `name`, `description`, `personal`, `rarity`, `upgrade`, `stats`, `requires`, `gold_value`, `qty`, `skill`, `sockets`, `rune_sockets`, `slot`, `hands`, `cooldown_s`, `bonuses` | определения предметов |
 | `items` | `uid`, `character_id?`, `def_id FK`, `qty`, `upgrade`, `equipped_slot`, `created_at`, `sockets`, `sort_order`, `bonuses` | инстансы; `upgrade` — дельта к `item_defs.upgrade` |
 | `loot_taken` | `uid`, `character_id`, `taken_at`; PK `(uid, character_id)` | отметки взятого лута; сбрасываются при респавне сущности |
 | `character_skills` | `character_id`, `skill_id`, `xp`, `rank`; PK пара | прогресс навыков |
@@ -692,7 +693,7 @@ CharacterState {
 
 ```rust
 ItemSnapshot {
-  uid, type, name, description?, rarity, upgrade, stats,
+  uid, type, name, description?, personal?, rarity, upgrade, stats,
   requires?, sockets?, def_id?, slot?, hands?,
   qty?, gold_value?, bonuses?, extra
 }
@@ -700,6 +701,8 @@ ItemSnapshot {
 
 - `type` — `item_type` из определения; `upgrade` — суммарный уровень.
 - `description` — текст из контента для карточки/тултипа; нет поля — без описания.
+- `personal` — персональный предмет: нельзя передавать, при выбросе
+  уничтожается; нет поля — обычный.
 - `stats` — открытая карта; `requires` — `{attr, level?, profession?}`.
 - `sockets: Vec<Socket>` — `{index, rune?: RuneInfo, accepts?: "rune"|"gem"}`;
   `RuneInfo {name, spell, charges, max, damage?, def_id?, glyph?, class?,

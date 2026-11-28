@@ -81,9 +81,9 @@ pub async fn with_sockets(
 /// Определение предмета; `None` — нет в сиде.
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
-        "SELECT id, item_type, name, description, rarity, upgrade, stats, requires, \
-                gold_value, qty, sockets, rune_sockets, slot, hands, skill, cooldown_s, \
-                bonuses, bag_slots, bag_types, bag_kind \
+        "SELECT id, item_type, name, description, personal, rarity, upgrade, stats, \
+                requires, gold_value, qty, sockets, rune_sockets, slot, hands, skill, \
+                cooldown_s, bonuses, bag_slots, bag_types, bag_kind \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)
@@ -109,9 +109,9 @@ pub async fn admin_inventory(
 /// запросом); порядок — по типу и имени.
 pub async fn defs_all(pool: &PgPool) -> Result<Vec<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
-        "SELECT id, item_type, name, description, rarity, upgrade, stats, requires, \
-                gold_value, qty, sockets, rune_sockets, slot, hands, skill, cooldown_s, \
-                bonuses, bag_slots, bag_types, bag_kind \
+        "SELECT id, item_type, name, description, personal, rarity, upgrade, stats, \
+                requires, gold_value, qty, sockets, rune_sockets, slot, hands, skill, \
+                cooldown_s, bonuses, bag_slots, bag_types, bag_kind \
          FROM item_defs ORDER BY item_type, name",
     )
     .fetch_all(pool)
