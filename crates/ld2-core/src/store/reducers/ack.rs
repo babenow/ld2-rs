@@ -117,7 +117,14 @@ impl AppStore {
                 if self.harvest.as_ref().is_some_and(|h| h.action == "gather") {
                     self.harvest = None;
                 }
-                self.world_error = Some(msg);
+                // Пустая жила — не ошибка, а журнальная строка
+                // «В жиле нет больше руды. Подождите…».
+                if ack.error_code() == Some(ErrorCode::VeinEmpty) {
+                    self.world_error = None;
+                    self.push_log(LogKind::Location, msg);
+                } else {
+                    self.world_error = Some(msg);
+                }
             }
             // Профессии (M21): ранг/сброс — тосты (у тренера/граница).
             Act::CraftRankUp | Act::ProfessionReset => self.notice = Some(msg),

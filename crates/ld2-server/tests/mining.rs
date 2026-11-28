@@ -148,10 +148,10 @@ async fn mining_drops_gem_and_jeweler_cuts_it() {
     let raw_uid = gem["payload"]["item"]["uid"].as_str().expect("uid");
     assert_eq!(gem["payload"]["item"]["type"], "raw_stone_armor");
 
-    // Опыт горного дела — по формуле снятия шкур (медь ур.1 → 12 XP).
+    // M39: опыт горного дела обратен шансу (chance=1.0 в тесте → 10 XP).
     let prof = c.wait_event("evt/craft/profession").await;
     assert_eq!(prof["payload"]["profession"]["id"], "mining");
-    assert_eq!(prof["payload"]["gain"], 12, "XP меди: {prof}");
+    assert_eq!(prof["payload"]["gain"], 10, "XP меди: {prof}");
 
     // Гейт уровня: оловянная жила ур.30 при уровне 0 → E_LEVEL_REQUIRED.
     let seq = c
@@ -163,7 +163,7 @@ async fn mining_drops_gem_and_jeweler_cuts_it() {
     let ack = c.ack(seq).await;
     assert_eq!(ack["error"]["code"], "E_LEVEL_REQUIRED", "уровень: {ack}");
 
-    // В деревню: ювелирный стол, резец и камень → гранёный камень брони.
+    // В деревню: ювелирный стол, резец и камень → гранёный сардоникс.
     let seq = c
         .send("cmd/location.move", json!({ "exit_id": "e_south" }))
         .await;

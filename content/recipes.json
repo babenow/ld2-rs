@@ -1020,7 +1020,7 @@
     },
     {
       "id": "rec_cut_stone_str_1",
-      "name": "Гранёный камень силы",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1046,7 +1046,7 @@
     },
     {
       "id": "rec_cut_stone_str_2",
-      "name": "Огранённый камень силы",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1072,7 +1072,7 @@
     },
     {
       "id": "rec_cut_stone_str_3",
-      "name": "Совершенный камень силы",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1098,7 +1098,7 @@
     },
     {
       "id": "rec_cut_stone_dex_1",
-      "name": "Гранёный камень ловкости",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1124,7 +1124,7 @@
     },
     {
       "id": "rec_cut_stone_dex_2",
-      "name": "Огранённый камень ловкости",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1150,7 +1150,7 @@
     },
     {
       "id": "rec_cut_stone_dex_3",
-      "name": "Совершенный камень ловкости",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1176,7 +1176,7 @@
     },
     {
       "id": "rec_cut_stone_vit_1",
-      "name": "Гранёный камень стойкости",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1202,7 +1202,7 @@
     },
     {
       "id": "rec_cut_stone_vit_2",
-      "name": "Огранённый камень стойкости",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1228,7 +1228,7 @@
     },
     {
       "id": "rec_cut_stone_vit_3",
-      "name": "Совершенный камень стойкости",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1254,7 +1254,7 @@
     },
     {
       "id": "rec_cut_stone_int_1",
-      "name": "Гранёный камень разума",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1280,7 +1280,7 @@
     },
     {
       "id": "rec_cut_stone_int_2",
-      "name": "Огранённый камень разума",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1306,7 +1306,7 @@
     },
     {
       "id": "rec_cut_stone_int_3",
-      "name": "Совершенный камень разума",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1332,7 +1332,7 @@
     },
     {
       "id": "rec_cut_stone_accuracy_1",
-      "name": "Гранёный камень точности",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1358,7 +1358,7 @@
     },
     {
       "id": "rec_cut_stone_accuracy_2",
-      "name": "Огранённый камень точности",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1384,7 +1384,7 @@
     },
     {
       "id": "rec_cut_stone_accuracy_3",
-      "name": "Совершенный камень точности",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1410,7 +1410,7 @@
     },
     {
       "id": "rec_cut_stone_damage_1",
-      "name": "Гранёный камень урона",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1436,7 +1436,7 @@
     },
     {
       "id": "rec_cut_stone_damage_2",
-      "name": "Огранённый камень урона",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1462,7 +1462,7 @@
     },
     {
       "id": "rec_cut_stone_damage_3",
-      "name": "Совершенный камень урона",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1488,7 +1488,7 @@
     },
     {
       "id": "rec_cut_stone_crit_chance_1",
-      "name": "Гранёный камень крита",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1514,7 +1514,7 @@
     },
     {
       "id": "rec_cut_stone_crit_chance_2",
-      "name": "Огранённый камень крита",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1540,7 +1540,7 @@
     },
     {
       "id": "rec_cut_stone_crit_chance_3",
-      "name": "Совершенный камень крита",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1566,7 +1566,7 @@
     },
     {
       "id": "rec_cut_stone_crit_damage_1",
-      "name": "Гранёный камень силы крита",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1592,7 +1592,7 @@
     },
     {
       "id": "rec_cut_stone_crit_damage_2",
-      "name": "Огранённый камень силы крита",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1618,7 +1618,7 @@
     },
     {
       "id": "rec_cut_stone_crit_damage_3",
-      "name": "Совершенный камень силы крита",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1644,7 +1644,7 @@
     },
     {
       "id": "rec_cut_stone_armor_1",
-      "name": "Гранёный камень брони",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1670,7 +1670,7 @@
     },
     {
       "id": "rec_cut_stone_armor_2",
-      "name": "Огранённый камень брони",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1696,7 +1696,7 @@
     },
     {
       "id": "rec_cut_stone_armor_3",
-      "name": "Совершенный камень брони",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1722,7 +1722,7 @@
     },
     {
       "id": "rec_cut_stone_dodge_1",
-      "name": "Гранёный камень уклонения",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1748,7 +1748,7 @@
     },
     {
       "id": "rec_cut_stone_dodge_2",
-      "name": "Огранённый камень уклонения",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1774,7 +1774,7 @@
     },
     {
       "id": "rec_cut_stone_dodge_3",
-      "name": "Совершенный камень уклонения",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1800,7 +1800,7 @@
     },
     {
       "id": "rec_cut_stone_parry_1",
-      "name": "Гранёный камень парирования",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1826,7 +1826,7 @@
     },
     {
       "id": "rec_cut_stone_parry_2",
-      "name": "Огранённый камень парирования",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1852,7 +1852,7 @@
     },
     {
       "id": "rec_cut_stone_parry_3",
-      "name": "Совершенный камень парирования",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1878,7 +1878,7 @@
     },
     {
       "id": "rec_cut_stone_parry_chance_1",
-      "name": "Гранёный камень шанса парирования",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1904,7 +1904,7 @@
     },
     {
       "id": "rec_cut_stone_parry_chance_2",
-      "name": "Огранённый камень шанса парирования",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -1930,7 +1930,7 @@
     },
     {
       "id": "rec_cut_stone_parry_chance_3",
-      "name": "Совершенный камень шанса парирования",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -1956,7 +1956,7 @@
     },
     {
       "id": "rec_cut_stone_block_1",
-      "name": "Гранёный камень блока",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -1982,7 +1982,7 @@
     },
     {
       "id": "rec_cut_stone_block_2",
-      "name": "Огранённый камень блока",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -2008,7 +2008,7 @@
     },
     {
       "id": "rec_cut_stone_block_3",
-      "name": "Совершенный камень блока",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -2034,7 +2034,7 @@
     },
     {
       "id": "rec_cut_stone_block_chance_1",
-      "name": "Гранёный камень шанса блока",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -2060,7 +2060,7 @@
     },
     {
       "id": "rec_cut_stone_block_chance_2",
-      "name": "Огранённый камень шанса блока",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -2086,7 +2086,7 @@
     },
     {
       "id": "rec_cut_stone_block_chance_3",
-      "name": "Совершенный камень шанса блока",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -2112,7 +2112,7 @@
     },
     {
       "id": "rec_cut_stone_magic_defense_1",
-      "name": "Гранёный камень магической защиты",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -2138,7 +2138,7 @@
     },
     {
       "id": "rec_cut_stone_magic_defense_2",
-      "name": "Огранённый камень магической защиты",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -2164,7 +2164,7 @@
     },
     {
       "id": "rec_cut_stone_magic_defense_3",
-      "name": "Совершенный камень магической защиты",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -2190,7 +2190,7 @@
     },
     {
       "id": "rec_cut_stone_magic_dodge_1",
-      "name": "Гранёный камень магического уклонения",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -2216,7 +2216,7 @@
     },
     {
       "id": "rec_cut_stone_magic_dodge_2",
-      "name": "Огранённый камень магического уклонения",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -2242,7 +2242,7 @@
     },
     {
       "id": "rec_cut_stone_magic_dodge_3",
-      "name": "Совершенный камень магического уклонения",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -2268,7 +2268,7 @@
     },
     {
       "id": "rec_cut_stone_magic_resist_1",
-      "name": "Гранёный камень магического сопротивления",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -2294,7 +2294,7 @@
     },
     {
       "id": "rec_cut_stone_magic_resist_2",
-      "name": "Огранённый камень магического сопротивления",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -2320,7 +2320,7 @@
     },
     {
       "id": "rec_cut_stone_magic_resist_3",
-      "name": "Совершенный камень магического сопротивления",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -2346,7 +2346,7 @@
     },
     {
       "id": "rec_cut_stone_magic_dispel_1",
-      "name": "Гранёный камень рассеивания",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -2372,7 +2372,7 @@
     },
     {
       "id": "rec_cut_stone_magic_dispel_2",
-      "name": "Огранённый камень рассеивания",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -2398,7 +2398,7 @@
     },
     {
       "id": "rec_cut_stone_magic_dispel_3",
-      "name": "Совершенный камень рассеивания",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -2424,7 +2424,7 @@
     },
     {
       "id": "rec_cut_stone_magic_crit_damage_1",
-      "name": "Гранёный камень магического крита",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -2450,7 +2450,7 @@
     },
     {
       "id": "rec_cut_stone_magic_crit_damage_2",
-      "name": "Огранённый камень магического крита",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -2476,7 +2476,7 @@
     },
     {
       "id": "rec_cut_stone_magic_crit_damage_3",
-      "name": "Совершенный камень магического крита",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",
@@ -2502,7 +2502,7 @@
     },
     {
       "id": "rec_cut_stone_magic_crit_chance_1",
-      "name": "Гранёный камень шанса магического крита",
+      "name": "Гранёный аквамарин",
       "profession": "jeweler",
       "rank": 1,
       "station": "jeweler_table",
@@ -2528,7 +2528,7 @@
     },
     {
       "id": "rec_cut_stone_magic_crit_chance_2",
-      "name": "Огранённый камень шанса магического крита",
+      "name": "Огранённый аквамарин",
       "profession": "jeweler",
       "rank": 2,
       "station": "jeweler_table",
@@ -2554,7 +2554,7 @@
     },
     {
       "id": "rec_cut_stone_magic_crit_chance_3",
-      "name": "Совершенный камень шанса магического крита",
+      "name": "Совершенный аквамарин",
       "profession": "jeweler",
       "rank": 3,
       "station": "jeweler_table",

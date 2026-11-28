@@ -21,9 +21,18 @@ pub(super) const HARVEST_MULT_HIGH: f64 = 0.5;
 pub(super) const HARVEST_MULT_ZERO: f64 = 0.0;
 pub(super) const HARVEST_XP_MAX: i64 = 40;
 
-/// Прогноз опыта за сбор: `(xp, tier, blocked)`, где tier 1 — повышенный
-/// (уровень ниже жилы на 10+), 0 — обычный, -1 — пониженный (выше на
-/// 10+), -2 — опыт не начисляется (25+); `blocked` — гейт уровня 25.
+// M39: зеркало дефолтов `[gameplay.professions] mining_chance_*` для
+// прогноза опыта в кнопке; сервер — истина.
+const MINING_CHANCE_BASE: f64 = 0.95;
+const MINING_CHANCE_PER_LEVEL: f64 = 0.035;
+const MINING_CHANCE_MIN: f64 = 0.15;
+const MINING_XP_MIN: i64 = 10;
+const MINING_XP_MAX: i64 = 40;
+
+/// Прогноз опыта за сбор: `(xp, tier, blocked)`, где tier 1 — опыт
+/// ≥30 (жирная кнопка), 0 — 15..29, -1 — 10..14; `blocked` — гейт
+/// уровня/ранга. Опыт обратен шансу: чем выше жила над профессией,
+/// тем ниже шанс и больше опыт (10..40).
 /// `None` — не горное дело (у прочих ресурсов опыт от уровня не зависит).
 pub(super) fn xp_preview(store: &AppStore, entity: &Entity) -> Option<(i64, i8, bool)> {
     if entity.extra.get("profession").and_then(|v| v.as_str()) != Some(domain::PROFESSION_MINING) {
@@ -48,18 +57,22 @@ pub(super) fn xp_preview(store: &AppStore, entity: &Entity) -> Option<(i64, i8, 
         .get("min_rank")
         .and_then(|v| v.as_i64())
         .unwrap_or(1);
-    let diff = level - required;
-    let (mult, tier) = if diff <= HARVEST_DIFF_LOW {
-        (HARVEST_MULT_LOW, 1)
-    } else if diff <= HARVEST_DIFF_MID {
-        (HARVEST_MULT_NORMAL, 0)
-    } else if diff <= HARVEST_DIFF_HIGH {
-        (HARVEST_MULT_HIGH, -1)
+    let gap = (required - level).max(0) as f64;
+    let chance = (MINING_CHANCE_BASE - gap * MINING_CHANCE_PER_LEVEL)
+        .clamp(MINING_CHANCE_MIN, MINING_CHANCE_BASE);
+    let t = if MINING_CHANCE_BASE > MINING_CHANCE_MIN {
+        (MINING_CHANCE_BASE - chance) / (MINING_CHANCE_BASE - MINING_CHANCE_MIN)
     } else {
-        (HARVEST_MULT_ZERO, -2)
+        0.0
     };
-    let base = HARVEST_XP_BASE + required as f64 * HARVEST_XP_PER_LEVEL;
-    let xp = ((base * mult).round() as i64).min(HARVEST_XP_MAX);
+    let xp = (MINING_XP_MIN as f64 + t * (MINING_XP_MAX - MINING_XP_MIN) as f64).round() as i64;
+    let tier = if xp >= 30 {
+        1
+    } else if xp >= 15 {
+        0
+    } else {
+        -1
+    };
     let blocked = i64::from(prof.rank) < min_rank || required - level >= HARVEST_LEVEL_GAP;
     Some((xp, tier, blocked))
 }

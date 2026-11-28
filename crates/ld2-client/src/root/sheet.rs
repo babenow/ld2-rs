@@ -273,7 +273,7 @@ mod tests {
             accepts: Some("gem".into()),
             rune: Some(RuneInfo {
                 class: None,
-                name: "Самоцвет силы".into(),
+                name: "Кровавик".into(),
                 spell: String::new(),
                 charges: 0,
                 max: 0,
