@@ -30749,7 +30749,7 @@
       "flags": [
         "pvp"
       ],
-      "text": "Крепи штолен скрипят; в темноте пахнет бронзой, ржавой водой и серебром.",
+      "text": "Крепи штолен скрипят; в темноте пахнет бронзой и ржавой водой.",
       "exits": [
         {
           "id": "e_mine_copper",
@@ -30758,8 +30758,8 @@
         },
         {
           "id": "e_mine_deep",
-          "label": "спуск в глубины мифрила",
-          "to": "l_mine_mithril"
+          "label": "спуск в серебряные копи",
+          "to": "l_mine_silver"
         }
       ],
       "entities": [
@@ -30917,7 +30917,30 @@
               "raw_stone_dodge"
             ]
           }
+        }
+      ]
+    },
+    {
+      "id": "l_mine_silver",
+      "name": "Серебряные копи",
+      "spawn": false,
+      "flags": [
+        "pvp"
+      ],
+      "text": "Белые прожилки серебра и жёлтые искры золота в чёрных сводах.",
+      "exits": [
+        {
+          "id": "e_mine_iron",
+          "label": "наверх, в железные штольни",
+          "to": "l_mine_iron"
         },
+        {
+          "id": "e_mine_deep",
+          "label": "спуск в платиновые залы",
+          "to": "l_mine_platinum"
+        }
+      ],
+      "entities": [
         {
           "id": "ore_silver_1",
           "kind": "resource",
@@ -30925,14 +30948,14 @@
           "resource": "ore_silver",
           "max": 3,
           "respawn": {
-            "min_s": 320,
-            "max_s": 510
+            "min_s": 460,
+            "max_s": 720
           },
           "despawn_when_empty": false,
           "profession": "mining",
           "min_rank": 3,
           "tool": "pickaxe",
-          "required_level": 65,
+          "required_level": 100,
           "gems": {
             "chance": 0.08,
             "mixed_share": 0.1,
@@ -30954,14 +30977,14 @@
           "resource": "ore_silver",
           "max": 3,
           "respawn": {
-            "min_s": 320,
-            "max_s": 510
+            "min_s": 460,
+            "max_s": 720
           },
           "despawn_when_empty": false,
           "profession": "mining",
           "min_rank": 3,
           "tool": "pickaxe",
-          "required_level": 65,
+          "required_level": 100,
           "gems": {
             "chance": 0.08,
             "mixed_share": 0.1,
@@ -30975,25 +30998,7 @@
               "raw_stone_block_chance"
             ]
           }
-        }
-      ]
-    },
-    {
-      "id": "l_mine_mithril",
-      "name": "Глубины мифрила",
-      "spawn": false,
-      "flags": [
-        "pvp"
-      ],
-      "text": "Дальше штолен — холодные залы; жилы светятся голубым, а золото лежит в трещинах.",
-      "exits": [
-        {
-          "id": "e_mine_iron",
-          "label": "наверх, в железные штольни",
-          "to": "l_mine_iron"
-        }
-      ],
-      "entities": [
+        },
         {
           "id": "ore_gold_1",
           "kind": "resource",
@@ -31001,14 +31006,14 @@
           "resource": "ore_gold",
           "max": 2,
           "respawn": {
-            "min_s": 380,
-            "max_s": 600
+            "min_s": 564,
+            "max_s": 876
           },
           "despawn_when_empty": false,
           "profession": "mining",
-          "min_rank": 4,
+          "min_rank": 3,
           "tool": "pickaxe",
-          "required_level": 80,
+          "required_level": 126,
           "gems": {
             "chance": 0.1,
             "mixed_share": 0.1,
@@ -31034,14 +31039,70 @@
           "resource": "ore_gold",
           "max": 2,
           "respawn": {
-            "min_s": 380,
-            "max_s": 600
+            "min_s": 564,
+            "max_s": 876
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 3,
+          "tool": "pickaxe",
+          "required_level": 126,
+          "gems": {
+            "chance": 0.1,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_topaz",
+              "raw_sapphire",
+              "raw_opal",
+              "raw_garnet"
+            ],
+            "pure": [
+              "raw_stone_magic_defense",
+              "raw_stone_magic_dodge",
+              "raw_stone_magic_resist",
+              "raw_stone_magic_dispel"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "l_mine_platinum",
+      "name": "Платиновые залы",
+      "spawn": false,
+      "flags": [
+        "pvp"
+      ],
+      "text": "Тяжёлый платиновый блеск; адамантит впитывает свет факелов.",
+      "exits": [
+        {
+          "id": "e_mine_silver",
+          "label": "наверх, в серебряные копи",
+          "to": "l_mine_silver"
+        },
+        {
+          "id": "e_mine_deep",
+          "label": "спуск в глубины мифрила",
+          "to": "l_mine_mithril"
+        }
+      ],
+      "entities": [
+        {
+          "id": "ore_platinum_1",
+          "kind": "resource",
+          "name": "Платиновая жила",
+          "resource": "ore_platinum",
+          "max": 2,
+          "respawn": {
+            "min_s": 660,
+            "max_s": 1020
           },
           "despawn_when_empty": false,
           "profession": "mining",
           "min_rank": 4,
           "tool": "pickaxe",
-          "required_level": 80,
+          "required_level": 150,
           "gems": {
             "chance": 0.1,
             "mixed_share": 0.1,
@@ -31061,20 +31122,183 @@
           }
         },
         {
+          "id": "ore_platinum_2",
+          "kind": "resource",
+          "name": "Платиновая жила",
+          "resource": "ore_platinum",
+          "max": 2,
+          "respawn": {
+            "min_s": 660,
+            "max_s": 1020
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 4,
+          "tool": "pickaxe",
+          "required_level": 150,
+          "gems": {
+            "chance": 0.1,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_topaz",
+              "raw_sapphire",
+              "raw_opal",
+              "raw_garnet"
+            ],
+            "pure": [
+              "raw_stone_magic_defense",
+              "raw_stone_magic_dodge",
+              "raw_stone_magic_resist",
+              "raw_stone_magic_dispel"
+            ]
+          }
+        },
+        {
+          "id": "ore_adamantite_1",
+          "kind": "resource",
+          "name": "Адамантитовая жила",
+          "resource": "ore_adamantite",
+          "max": 2,
+          "respawn": {
+            "min_s": 764,
+            "max_s": 1176
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 4,
+          "tool": "pickaxe",
+          "required_level": 176,
+          "gems": {
+            "chance": 0.11,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_malachite",
+              "raw_obsidian",
+              "raw_amethyst",
+              "raw_topaz",
+              "raw_ruby",
+              "raw_sapphire",
+              "raw_emerald",
+              "raw_onyx",
+              "raw_opal",
+              "raw_garnet",
+              "raw_aquamarine"
+            ],
+            "pure": [
+              "raw_stone_str",
+              "raw_stone_dex",
+              "raw_stone_vit",
+              "raw_stone_int",
+              "raw_stone_accuracy",
+              "raw_stone_damage",
+              "raw_stone_crit_chance",
+              "raw_stone_crit_damage",
+              "raw_stone_armor",
+              "raw_stone_dodge",
+              "raw_stone_parry",
+              "raw_stone_parry_chance",
+              "raw_stone_block",
+              "raw_stone_block_chance",
+              "raw_stone_magic_defense",
+              "raw_stone_magic_dodge",
+              "raw_stone_magic_resist",
+              "raw_stone_magic_dispel",
+              "raw_stone_magic_crit_damage",
+              "raw_stone_magic_crit_chance"
+            ]
+          }
+        },
+        {
+          "id": "ore_adamantite_2",
+          "kind": "resource",
+          "name": "Адамантитовая жила",
+          "resource": "ore_adamantite",
+          "max": 2,
+          "respawn": {
+            "min_s": 764,
+            "max_s": 1176
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 4,
+          "tool": "pickaxe",
+          "required_level": 176,
+          "gems": {
+            "chance": 0.11,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_agate",
+              "raw_malachite",
+              "raw_obsidian",
+              "raw_amethyst",
+              "raw_topaz",
+              "raw_ruby",
+              "raw_sapphire",
+              "raw_emerald",
+              "raw_onyx",
+              "raw_opal",
+              "raw_garnet",
+              "raw_aquamarine"
+            ],
+            "pure": [
+              "raw_stone_str",
+              "raw_stone_dex",
+              "raw_stone_vit",
+              "raw_stone_int",
+              "raw_stone_accuracy",
+              "raw_stone_damage",
+              "raw_stone_crit_chance",
+              "raw_stone_crit_damage",
+              "raw_stone_armor",
+              "raw_stone_dodge",
+              "raw_stone_parry",
+              "raw_stone_parry_chance",
+              "raw_stone_block",
+              "raw_stone_block_chance",
+              "raw_stone_magic_defense",
+              "raw_stone_magic_dodge",
+              "raw_stone_magic_resist",
+              "raw_stone_magic_dispel",
+              "raw_stone_magic_crit_damage",
+              "raw_stone_magic_crit_chance"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "l_mine_mithril",
+      "name": "Глубины мифрила",
+      "spawn": false,
+      "flags": [
+        "pvp"
+      ],
+      "text": "Холодные залы; мифрил светится голубым в трещинах чёрного камня.",
+      "exits": [
+        {
+          "id": "e_mine_platinum",
+          "label": "наверх, в платиновые залы",
+          "to": "l_mine_platinum"
+        }
+      ],
+      "entities": [
+        {
           "id": "ore_mithril_1",
           "kind": "resource",
           "name": "Мифриловая жила",
           "resource": "ore_mithril",
           "max": 2,
           "respawn": {
-            "min_s": 460,
-            "max_s": 720
+            "min_s": 860,
+            "max_s": 1320
           },
           "despawn_when_empty": false,
           "profession": "mining",
           "min_rank": 5,
           "tool": "pickaxe",
-          "required_level": 100,
+          "required_level": 200,
           "gems": {
             "chance": 0.12,
             "mixed_share": 0.1,
@@ -31123,14 +31347,14 @@
           "resource": "ore_mithril",
           "max": 2,
           "respawn": {
-            "min_s": 460,
-            "max_s": 720
+            "min_s": 860,
+            "max_s": 1320
           },
           "despawn_when_empty": false,
           "profession": "mining",
           "min_rank": 5,
           "tool": "pickaxe",
-          "required_level": 100,
+          "required_level": 200,
           "gems": {
             "chance": 0.12,
             "mixed_share": 0.1,

@@ -55,9 +55,11 @@ ORES = [
     ("ore_tin", "Оловянная руда", "common", 12, 35, 1, 3, (200, 330)),
     ("ore_iron", "Железная руда", "uncommon", 24, 50, 2, 3, (260, 420)),
     ("ore_bronze", "Бронзовая руда", "uncommon", 36, 75, 2, 3, (360, 570)),
-    ("ore_silver", "Серебряная руда", "uncommon", 48, 65, 3, 3, (320, 510)),
-    ("ore_gold", "Золотая руда", "rare", 120, 80, 4, 2, (380, 600)),
-    ("ore_mithril", "Мифриловая руда", "epic", 300, 100, 5, 2, (460, 720)),
+    ("ore_silver", "Серебряная руда", "uncommon", 48, 100, 3, 3, (460, 720)),
+    ("ore_gold", "Золотая руда", "rare", 120, 126, 3, 2, (564, 876)),
+    ("ore_platinum", "Платиновая руда", "rare", 180, 150, 4, 2, (660, 1020)),
+    ("ore_adamantite", "Адамантитовая руда", "epic", 240, 176, 4, 2, (764, 1176)),
+    ("ore_mithril", "Мифриловая руда", "epic", 300, 200, 5, 2, (860, 1320)),
 ]
 ORE_BY_ID = {row[0]: row for row in ORES}
 
@@ -138,6 +140,8 @@ VEINS = [
     ("ore_bronze", IRON_MIXED, IRON_PURE, 0.075),
     ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.08),
     ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.10),
+    ("ore_platinum", GOLD_MIXED, GOLD_PURE, 0.10),
+    ("ore_adamantite", ALL_MIXED, ALL_PURE, 0.11),
     ("ore_mithril", ALL_MIXED, ALL_PURE, 0.12),
 ]
 VEIN_BY_ORE = {ore: (mixed, pure, chance) for ore, mixed, pure, chance in VEINS}
@@ -329,6 +333,8 @@ def mine_locations() -> list[dict]:
     bronze_mixed, bronze_pure, bronze_chance = VEIN_BY_ORE["ore_bronze"]
     silver_mixed, silver_pure, silver_chance = VEIN_BY_ORE["ore_silver"]
     gold_mixed, gold_pure, gold_chance = VEIN_BY_ORE["ore_gold"]
+    platinum_mixed, platinum_pure, platinum_chance = VEIN_BY_ORE["ore_platinum"]
+    adamantite_mixed, adamantite_pure, adamantite_chance = VEIN_BY_ORE["ore_adamantite"]
     mithril_mixed, mithril_pure, mithril_chance = VEIN_BY_ORE["ore_mithril"]
     return [
         {
@@ -354,10 +360,10 @@ def mine_locations() -> list[dict]:
             "name": "Железные штольни",
             "spawn": False,
             "flags": ["pvp"],
-            "text": "Крепи штолен скрипят; в темноте пахнет бронзой, ржавой водой и серебром.",
+            "text": "Крепи штолен скрипят; в темноте пахнет бронзой и ржавой водой.",
             "exits": [
                 {"id": "e_mine_copper", "label": "наверх, в медный карьер", "to": "l_mine_copper"},
-                {"id": "e_mine_deep", "label": "спуск в глубины мифрила", "to": "l_mine_mithril"},
+                {"id": "e_mine_deep", "label": "спуск в серебряные копи", "to": "l_mine_silver"},
             ],
             "entities": [
                 vein_node("ore_iron_1", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
@@ -365,8 +371,40 @@ def mine_locations() -> list[dict]:
                 vein_node("ore_iron_3", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
                 vein_node("ore_bronze_1", "Бронзовая жила", "ore_bronze", 3, vein_respawn(75), 75, 2, bronze_mixed, bronze_pure, bronze_chance),
                 vein_node("ore_bronze_2", "Бронзовая жила", "ore_bronze", 3, vein_respawn(75), 75, 2, bronze_mixed, bronze_pure, bronze_chance),
-                vein_node("ore_silver_1", "Серебряная жила", "ore_silver", 3, vein_respawn(65), 65, 3, silver_mixed, silver_pure, silver_chance),
-                vein_node("ore_silver_2", "Серебряная жила", "ore_silver", 3, vein_respawn(65), 65, 3, silver_mixed, silver_pure, silver_chance),
+            ],
+        },
+        {
+            "id": "l_mine_silver",
+            "name": "Серебряные копи",
+            "spawn": False,
+            "flags": ["pvp"],
+            "text": "Белые прожилки серебра и жёлтые искры золота в чёрных сводах.",
+            "exits": [
+                {"id": "e_mine_iron", "label": "наверх, в железные штольни", "to": "l_mine_iron"},
+                {"id": "e_mine_deep", "label": "спуск в платиновые залы", "to": "l_mine_platinum"},
+            ],
+            "entities": [
+                vein_node("ore_silver_1", "Серебряная жила", "ore_silver", 3, vein_respawn(100), 100, 3, silver_mixed, silver_pure, silver_chance),
+                vein_node("ore_silver_2", "Серебряная жила", "ore_silver", 3, vein_respawn(100), 100, 3, silver_mixed, silver_pure, silver_chance),
+                vein_node("ore_gold_1", "Золотая жила", "ore_gold", 2, vein_respawn(126), 126, 3, gold_mixed, gold_pure, gold_chance),
+                vein_node("ore_gold_2", "Золотая жила", "ore_gold", 2, vein_respawn(126), 126, 3, gold_mixed, gold_pure, gold_chance),
+            ],
+        },
+        {
+            "id": "l_mine_platinum",
+            "name": "Платиновые залы",
+            "spawn": False,
+            "flags": ["pvp"],
+            "text": "Тяжёлый платиновый блеск; адамантит впитывает свет факелов.",
+            "exits": [
+                {"id": "e_mine_silver", "label": "наверх, в серебряные копи", "to": "l_mine_silver"},
+                {"id": "e_mine_deep", "label": "спуск в глубины мифрила", "to": "l_mine_mithril"},
+            ],
+            "entities": [
+                vein_node("ore_platinum_1", "Платиновая жила", "ore_platinum", 2, vein_respawn(150), 150, 4, platinum_mixed, platinum_pure, platinum_chance),
+                vein_node("ore_platinum_2", "Платиновая жила", "ore_platinum", 2, vein_respawn(150), 150, 4, platinum_mixed, platinum_pure, platinum_chance),
+                vein_node("ore_adamantite_1", "Адамантитовая жила", "ore_adamantite", 2, vein_respawn(176), 176, 4, adamantite_mixed, adamantite_pure, adamantite_chance),
+                vein_node("ore_adamantite_2", "Адамантитовая жила", "ore_adamantite", 2, vein_respawn(176), 176, 4, adamantite_mixed, adamantite_pure, adamantite_chance),
             ],
         },
         {
@@ -374,19 +412,16 @@ def mine_locations() -> list[dict]:
             "name": "Глубины мифрила",
             "spawn": False,
             "flags": ["pvp"],
-            "text": "Дальше штолен — холодные залы; жилы светятся голубым, а золото лежит в трещинах.",
+            "text": "Холодные залы; мифрил светится голубым в трещинах чёрного камня.",
             "exits": [
-                {"id": "e_mine_iron", "label": "наверх, в железные штольни", "to": "l_mine_iron"},
+                {"id": "e_mine_platinum", "label": "наверх, в платиновые залы", "to": "l_mine_platinum"},
             ],
             "entities": [
-                vein_node("ore_gold_1", "Золотая жила", "ore_gold", 2, vein_respawn(80), 80, 4, gold_mixed, gold_pure, gold_chance),
-                vein_node("ore_gold_2", "Золотая жила", "ore_gold", 2, vein_respawn(80), 80, 4, gold_mixed, gold_pure, gold_chance),
-                vein_node("ore_mithril_1", "Мифриловая жила", "ore_mithril", 2, vein_respawn(100), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
-                vein_node("ore_mithril_2", "Мифриловая жила", "ore_mithril", 2, vein_respawn(100), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
+                vein_node("ore_mithril_1", "Мифриловая жила", "ore_mithril", 2, vein_respawn(200), 200, 5, mithril_mixed, mithril_pure, mithril_chance),
+                vein_node("ore_mithril_2", "Мифриловая жила", "ore_mithril", 2, vein_respawn(200), 200, 5, mithril_mixed, mithril_pure, mithril_chance),
             ],
         },
     ]
-
 
 def update_locations(locations: dict) -> None:
     locs = locations["locations"]

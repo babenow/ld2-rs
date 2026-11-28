@@ -92,6 +92,63 @@ fn bronze_vein_content_is_configured() {
     assert_eq!(bronze["min_rank"], 2);
 }
 
+/// M39: рудная прогрессия — серебро/золото р3, платина/адамантит р4,
+/// мифрил р5.
+#[test]
+fn high_ore_tiers_content_is_configured() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let items: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(src.join("items.json")).expect("items"))
+            .expect("items json");
+    for (id, name, rarity) in [
+        ("ore_platinum", "Платиновая руда", "rare"),
+        ("ore_adamantite", "Адамантитовая руда", "epic"),
+    ] {
+        let item = items["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|i| i["id"] == id)
+            .unwrap_or_else(|| panic!("{id}"));
+        assert_eq!(item["name"], name);
+        assert_eq!(item["rarity"], rarity);
+    }
+
+    let locs: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(src.join("locations.json")).expect("locations"),
+    )
+    .expect("locations json");
+    for (loc_id, node_id, resource, level, rank) in [
+        ("l_mine_silver", "ore_silver_1", "ore_silver", 100, 3),
+        ("l_mine_silver", "ore_gold_1", "ore_gold", 126, 3),
+        ("l_mine_platinum", "ore_platinum_1", "ore_platinum", 150, 4),
+        (
+            "l_mine_platinum",
+            "ore_adamantite_1",
+            "ore_adamantite",
+            176,
+            4,
+        ),
+        ("l_mine_mithril", "ore_mithril_1", "ore_mithril", 200, 5),
+    ] {
+        let loc = locs["locations"]
+            .as_array()
+            .expect("locations")
+            .iter()
+            .find(|l| l["id"] == loc_id)
+            .unwrap_or_else(|| panic!("{loc_id}"));
+        let node = loc["entities"]
+            .as_array()
+            .expect("entities")
+            .iter()
+            .find(|e| e["id"] == node_id)
+            .unwrap_or_else(|| panic!("{node_id}"));
+        assert_eq!(node["resource"], resource);
+        assert_eq!(node["required_level"], level);
+        assert_eq!(node["min_rank"], rank);
+    }
+}
+
 async fn give(c: &mut WsClient, def_id: &str) -> String {
     let seq = c
         .send(

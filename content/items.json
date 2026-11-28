@@ -1913,6 +1913,26 @@
       "qty": 1
     },
     {
+      "id": "ore_platinum",
+      "type": "ore_platinum",
+      "name": "Платиновая руда",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 180,
+      "qty": 1
+    },
+    {
+      "id": "ore_adamantite",
+      "type": "ore_adamantite",
+      "name": "Адамантитовая руда",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 240,
+      "qty": 1
+    },
+    {
       "id": "ore_mithril",
       "type": "ore_mithril",
       "name": "Мифриловая руда",
