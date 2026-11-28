@@ -302,3 +302,27 @@ fn rune_recharge_interval_must_be_positive() {
     let text = edited("rune_recharge_s = 30.0", "rune_recharge_s = -1.0");
     assert_problem(&text, "rune_recharge_s");
 }
+
+/// M39: бонус «Лампы шахтёра» — не более 2 п.п.
+#[test]
+fn lamp_gem_bonus_is_capped_at_two_points() {
+    assert_problem(
+        &edited(
+            "mining_lamp_gem_bonus = 0.02",
+            "mining_lamp_gem_bonus = 0.05",
+        ),
+        "gameplay.professions.mining_lamp_gem_bonus",
+    );
+}
+
+/// M39: «Кирка мастера» не может уменьшать шанс камня.
+#[test]
+fn master_pickaxe_multiplier_is_at_least_one() {
+    assert_problem(
+        &edited(
+            "mining_master_gem_mult = 2.0",
+            "mining_master_gem_mult = 0.5",
+        ),
+        "gameplay.professions.mining_master_gem_mult",
+    );
+}

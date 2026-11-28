@@ -45,6 +45,8 @@ pub struct ItemDefRow {
     pub id: String,
     pub item_type: String,
     pub name: String,
+    /// M39: описание для карточки/тултипа; пусто — без описания.
+    pub description: String,
     pub rarity: String,
     pub upgrade: i32,
     pub stats: Value,

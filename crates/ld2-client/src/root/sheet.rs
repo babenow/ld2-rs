@@ -362,6 +362,7 @@ mod tests {
             uid: "i_t".into(),
             item_type: item_type.into(),
             name: "Тест".into(),
+            description: None,
             rarity: "common".into(),
             upgrade: 0,
             stats: Default::default(),

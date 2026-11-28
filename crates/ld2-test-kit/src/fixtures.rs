@@ -23,7 +23,6 @@ pub const REFRESH_TOKEN: &str = "rt_mock_refresh";
 pub const LOGIN2: &str = "demo2";
 /// Пароль тот же — тестам удобнее, логин разный.
 pub const PASSWORD2: &str = "demo123";
-
 /// Стоимость каста руны в мане (D4: руна тратит ману + заряд).
 pub const RUNE_MP_COST: i64 = 10;
 /// Лимит первичных профессий (D10, §5).
@@ -32,15 +31,12 @@ pub const PROFESSION_LIMIT: u32 = 2;
 /// в реальном сервере, полем конфига (D6, DoD M2 — «без правки кода»).
 pub const CHAR_SLOT_LIMIT: u32 = 8;
 pub const UPGRADE_MAX: u32 = 9;
-
 /// Профили персонажей (D3, ADR-003).
 pub const PROFILES: &[&str] = &["warrior", "archer", "mage"];
-
 /// `evt/session.start` — дословно по protocol.md §5 (лимит слотов — параметр).
 pub fn session_config(char_slot_limit: u32) -> SessionConfig {
     session_config_for(LOGIN, char_slot_limit)
 }
-
 /// Конфиг сессии для конкретного аккаунта: список персонажей и refresh-токен
 /// свои (DoD M8 — второй клиент со своим персонажем `c2`).
 pub fn session_config_for(login: &str, char_slot_limit: u32) -> SessionConfig {
@@ -58,7 +54,6 @@ fn refresh_token_for(login: &str) -> String {
         format!("rt_{login}")
     }
 }
-
 /// Персонажи аккаунта (список слотов §5 `characters[]`).
 pub fn chars_for(login: &str) -> Vec<CharacterSummary> {
     if login == LOGIN2 {
@@ -67,7 +62,6 @@ pub fn chars_for(login: &str) -> Vec<CharacterSummary> {
         vec![character_summary()]
     }
 }
-
 /// Проверка учётных данных фикстурных аккаунтов.
 pub fn account(login: &str, password: &str) -> bool {
     (login == LOGIN && password == PASSWORD) || (login == LOGIN2 && password == PASSWORD2)
@@ -337,6 +331,7 @@ pub fn staff_item() -> ItemSnapshot {
         def_id: None,
         item_type: "staff".into(),
         name: "Ясеневый посох".into(),
+        description: None,
         rarity: "rare".into(),
         upgrade: 2,
         stats,
@@ -386,6 +381,7 @@ pub fn scroll_item() -> ItemSnapshot {
         def_id: None,
         item_type: "scroll".into(),
         name: "Свиток огненного шара".into(),
+        description: None,
         rarity: "common".into(),
         upgrade: 0,
         stats,
@@ -416,6 +412,7 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
         def_id: None,
         item_type: "rune".into(),
         name: "Руна льда".into(),
+        description: None,
         rarity: "common".into(),
         upgrade: 0,
         stats,
@@ -450,6 +447,7 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
                 "Дубовая доска"
             }
             .into(),
+            description: None,
             rarity: "common".into(),
             upgrade: 0,
             stats: Default::default(),

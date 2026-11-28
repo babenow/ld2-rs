@@ -2,10 +2,11 @@
 """Генератор контента M38: горное дело и самоцветы.
 
 Идемпотентно обновляет:
-  * content/items.json   — 6 руд, 32 необработанных камня, 96 обработанных;
+  * content/items.json   — 9 руд, 32 необработанных камня, 96 обработанных,
+                           «Кирка мастера» и «Лампа шахтёра»;
   * content/recipes.json — 96 рецептов ювелира (3 версии на камень);
-  * content/locations.json — 3 рудника, жилы, ювелирный стол;
-  * content/shops.json   — резец у городского старосты.
+  * content/locations.json — 5 рудников, жилы, ювелирный стол;
+  * content/shops.json   — резец и лампа у старосты, кирка у оружейника.
 
 Запуск:  python3 scripts/gen-mining-content.py
 """
@@ -54,9 +55,12 @@ ORES = [
     ("ore_copper", "Медная руда", "common", 6, 1, 1, 3, (60, 120)),
     ("ore_tin", "Оловянная руда", "common", 12, 35, 1, 3, (200, 330)),
     ("ore_iron", "Железная руда", "uncommon", 24, 50, 2, 3, (260, 420)),
-    ("ore_silver", "Серебряная руда", "uncommon", 48, 65, 3, 3, (320, 510)),
-    ("ore_gold", "Золотая руда", "rare", 120, 80, 4, 2, (380, 600)),
-    ("ore_mithril", "Мифриловая руда", "epic", 300, 100, 5, 2, (460, 720)),
+    ("ore_bronze", "Бронзовая руда", "uncommon", 36, 75, 2, 3, (360, 570)),
+    ("ore_silver", "Серебряная руда", "uncommon", 48, 100, 3, 3, (460, 720)),
+    ("ore_gold", "Золотая руда", "rare", 120, 126, 3, 2, (564, 876)),
+    ("ore_platinum", "Платиновая руда", "rare", 180, 150, 4, 2, (660, 1020)),
+    ("ore_adamantite", "Адамантитовая руда", "epic", 240, 176, 4, 2, (764, 1176)),
+    ("ore_mithril", "Мифриловая руда", "epic", 300, 200, 5, 2, (860, 1320)),
 ]
 ORE_BY_ID = {row[0]: row for row in ORES}
 
@@ -131,12 +135,15 @@ ALL_PURE = [f"raw_stone_{key}" for key, _, _, _, _, _ in PURE]
 
 VEINS = [
     # ore_id, mixed, pure, chance
-    ("ore_copper", COPPER_MIXED, COPPER_PURE, 0.05),
-    ("ore_tin", TIN_MIXED, TIN_PURE, 0.06),
-    ("ore_iron", IRON_MIXED, IRON_PURE, 0.07),
-    ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.08),
-    ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.10),
-    ("ore_mithril", ALL_MIXED, ALL_PURE, 0.12),
+    ("ore_copper", COPPER_MIXED, COPPER_PURE, 0.0125),
+    ("ore_tin", TIN_MIXED, TIN_PURE, 0.015),
+    ("ore_iron", IRON_MIXED, IRON_PURE, 0.0175),
+    ("ore_bronze", IRON_MIXED, IRON_PURE, 0.01875),
+    ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.02),
+    ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.025),
+    ("ore_platinum", GOLD_MIXED, GOLD_PURE, 0.025),
+    ("ore_adamantite", ALL_MIXED, ALL_PURE, 0.0275),
+    ("ore_mithril", ALL_MIXED, ALL_PURE, 0.03),
 ]
 VEIN_BY_ORE = {ore: (mixed, pure, chance) for ore, mixed, pure, chance in VEINS}
 
@@ -241,6 +248,33 @@ def generated_items() -> list[dict]:
                     pure_bonuses(kind, param, category, pct, v),
                 )
             )
+    # M39: инструменты-модификаторы добычи.
+    items.append(
+        {
+            "id": "pickaxe_master",
+            "type": "pickaxe",
+            "name": "Кирка мастера",
+            "description": "Пока кирка лежит в инвентаре, шанс найти самоцвет в жиле удваивается.",
+            "rarity": "rare",
+            "upgrade": 0,
+            "stats": {},
+            "gold_value": 1200,
+            "qty": 1,
+        }
+    )
+    items.append(
+        {
+            "id": "artifact_lamp",
+            "type": "artifact",
+            "name": "Лампа шахтера",
+            "description": "Надетый артефакт: +2 п.п. к шансу найти самоцвет и 5% шанс добыть 2 руды вместо 1.",
+            "rarity": "epic",
+            "upgrade": 0,
+            "stats": {},
+            "gold_value": 900,
+            "slot": "artifact",
+        }
+    )
     return items
 
 
@@ -324,8 +358,11 @@ def mine_locations() -> list[dict]:
     copper_mixed, copper_pure, copper_chance = VEIN_BY_ORE["ore_copper"]
     tin_mixed, tin_pure, tin_chance = VEIN_BY_ORE["ore_tin"]
     iron_mixed, iron_pure, iron_chance = VEIN_BY_ORE["ore_iron"]
+    bronze_mixed, bronze_pure, bronze_chance = VEIN_BY_ORE["ore_bronze"]
     silver_mixed, silver_pure, silver_chance = VEIN_BY_ORE["ore_silver"]
     gold_mixed, gold_pure, gold_chance = VEIN_BY_ORE["ore_gold"]
+    platinum_mixed, platinum_pure, platinum_chance = VEIN_BY_ORE["ore_platinum"]
+    adamantite_mixed, adamantite_pure, adamantite_chance = VEIN_BY_ORE["ore_adamantite"]
     mithril_mixed, mithril_pure, mithril_chance = VEIN_BY_ORE["ore_mithril"]
     return [
         {
@@ -351,17 +388,51 @@ def mine_locations() -> list[dict]:
             "name": "Железные штольни",
             "spawn": False,
             "flags": ["pvp"],
-            "text": "Крепи штолен скрипят; в темноте пахнет ржавой водой и серебром.",
+            "text": "Крепи штолен скрипят; в темноте пахнет бронзой и ржавой водой.",
             "exits": [
                 {"id": "e_mine_copper", "label": "наверх, в медный карьер", "to": "l_mine_copper"},
-                {"id": "e_mine_deep", "label": "спуск в глубины мифрила", "to": "l_mine_mithril"},
+                {"id": "e_mine_deep", "label": "спуск в серебряные копи", "to": "l_mine_silver"},
             ],
             "entities": [
                 vein_node("ore_iron_1", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
                 vein_node("ore_iron_2", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
                 vein_node("ore_iron_3", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
-                vein_node("ore_silver_1", "Серебряная жила", "ore_silver", 3, vein_respawn(65), 65, 3, silver_mixed, silver_pure, silver_chance),
-                vein_node("ore_silver_2", "Серебряная жила", "ore_silver", 3, vein_respawn(65), 65, 3, silver_mixed, silver_pure, silver_chance),
+                vein_node("ore_bronze_1", "Бронзовая жила", "ore_bronze", 3, vein_respawn(75), 75, 2, bronze_mixed, bronze_pure, bronze_chance),
+                vein_node("ore_bronze_2", "Бронзовая жила", "ore_bronze", 3, vein_respawn(75), 75, 2, bronze_mixed, bronze_pure, bronze_chance),
+            ],
+        },
+        {
+            "id": "l_mine_silver",
+            "name": "Серебряные копи",
+            "spawn": False,
+            "flags": ["pvp"],
+            "text": "Белые прожилки серебра и жёлтые искры золота в чёрных сводах.",
+            "exits": [
+                {"id": "e_mine_iron", "label": "наверх, в железные штольни", "to": "l_mine_iron"},
+                {"id": "e_mine_deep", "label": "спуск в платиновые залы", "to": "l_mine_platinum"},
+            ],
+            "entities": [
+                vein_node("ore_silver_1", "Серебряная жила", "ore_silver", 3, vein_respawn(100), 100, 3, silver_mixed, silver_pure, silver_chance),
+                vein_node("ore_silver_2", "Серебряная жила", "ore_silver", 3, vein_respawn(100), 100, 3, silver_mixed, silver_pure, silver_chance),
+                vein_node("ore_gold_1", "Золотая жила", "ore_gold", 2, vein_respawn(126), 126, 3, gold_mixed, gold_pure, gold_chance),
+                vein_node("ore_gold_2", "Золотая жила", "ore_gold", 2, vein_respawn(126), 126, 3, gold_mixed, gold_pure, gold_chance),
+            ],
+        },
+        {
+            "id": "l_mine_platinum",
+            "name": "Платиновые залы",
+            "spawn": False,
+            "flags": ["pvp"],
+            "text": "Тяжёлый платиновый блеск; адамантит впитывает свет факелов.",
+            "exits": [
+                {"id": "e_mine_silver", "label": "наверх, в серебряные копи", "to": "l_mine_silver"},
+                {"id": "e_mine_deep", "label": "спуск в глубины мифрила", "to": "l_mine_mithril"},
+            ],
+            "entities": [
+                vein_node("ore_platinum_1", "Платиновая жила", "ore_platinum", 2, vein_respawn(150), 150, 4, platinum_mixed, platinum_pure, platinum_chance),
+                vein_node("ore_platinum_2", "Платиновая жила", "ore_platinum", 2, vein_respawn(150), 150, 4, platinum_mixed, platinum_pure, platinum_chance),
+                vein_node("ore_adamantite_1", "Адамантитовая жила", "ore_adamantite", 2, vein_respawn(176), 176, 4, adamantite_mixed, adamantite_pure, adamantite_chance),
+                vein_node("ore_adamantite_2", "Адамантитовая жила", "ore_adamantite", 2, vein_respawn(176), 176, 4, adamantite_mixed, adamantite_pure, adamantite_chance),
             ],
         },
         {
@@ -369,19 +440,16 @@ def mine_locations() -> list[dict]:
             "name": "Глубины мифрила",
             "spawn": False,
             "flags": ["pvp"],
-            "text": "Дальше штолен — холодные залы; жилы светятся голубым, а золото лежит в трещинах.",
+            "text": "Холодные залы; мифрил светится голубым в трещинах чёрного камня.",
             "exits": [
-                {"id": "e_mine_iron", "label": "наверх, в железные штольни", "to": "l_mine_iron"},
+                {"id": "e_mine_platinum", "label": "наверх, в платиновые залы", "to": "l_mine_platinum"},
             ],
             "entities": [
-                vein_node("ore_gold_1", "Золотая жила", "ore_gold", 2, vein_respawn(80), 80, 4, gold_mixed, gold_pure, gold_chance),
-                vein_node("ore_gold_2", "Золотая жила", "ore_gold", 2, vein_respawn(80), 80, 4, gold_mixed, gold_pure, gold_chance),
-                vein_node("ore_mithril_1", "Мифриловая жила", "ore_mithril", 2, vein_respawn(100), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
-                vein_node("ore_mithril_2", "Мифриловая жила", "ore_mithril", 2, vein_respawn(100), 100, 5, mithril_mixed, mithril_pure, mithril_chance),
+                vein_node("ore_mithril_1", "Мифриловая жила", "ore_mithril", 2, vein_respawn(200), 200, 5, mithril_mixed, mithril_pure, mithril_chance),
+                vein_node("ore_mithril_2", "Мифриловая жила", "ore_mithril", 2, vein_respawn(200), 200, 5, mithril_mixed, mithril_pure, mithril_chance),
             ],
         },
     ]
-
 
 def update_locations(locations: dict) -> None:
     locs = locations["locations"]
@@ -434,7 +502,7 @@ def update_locations(locations: dict) -> None:
             1,
             TIN_MIXED,
             TIN_PURE,
-            0.06,
+            0.015,
         )
     )
     del by_id  # больше не нужен
@@ -455,17 +523,28 @@ def update_recipes(recipes: dict) -> None:
     recipes["recipes"].extend(generated)
 
 
+def add_shop_item(npc: dict, item_id: str) -> None:
+    """Идемпотентно добавить предмет в золотую вкладку магазина."""
+    for currency in npc.get("currencies", []):
+        if currency.get("currency") != "gold_coin":
+            continue
+        items = currency.setdefault("items", [])
+        if item_id not in items:
+            items.append(item_id)
+
+
 def update_shops(shops: dict) -> None:
     for npc in shops["npcs"]:
-        if npc.get("id") != "npc_city_elder":
-            continue
-        for currency in npc.get("currencies", []):
-            if currency.get("currency") != "gold_coin":
-                continue
-            items = currency.setdefault("items", [])
-            items[:] = [i for i in items if i != "chisel"]
-            if "tool_chisel" not in items:
-                items.append("tool_chisel")
+        if npc.get("id") == "npc_city_elder":
+            for currency in npc.get("currencies", []):
+                if currency.get("currency") != "gold_coin":
+                    continue
+                items = currency.setdefault("items", [])
+                items[:] = [i for i in items if i != "chisel"]
+            add_shop_item(npc, "tool_chisel")
+            add_shop_item(npc, "artifact_lamp")
+        elif npc.get("id") == "npc_weaponsmith":
+            add_shop_item(npc, "pickaxe_master")
 
 
 def main() -> None:

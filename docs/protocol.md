@@ -241,6 +241,7 @@ Manager / Secret Service), service = `ld2.client`, ключ = `<host>:<login>`. 
 // ItemSnapshot
 { "uid": "i_17", "type": "staff",            // weapon|armor|staff|shield|artifact|potion|scroll|rune|gem|material|quest|bag
   "name": "Ясеневый посох", "rarity": "rare",
+  "description": "Посох огня: +2 к магии.",  // M39: текст для карточки/тултипа; нет поля — без описания
   "upgrade": 2,                              // +N, 0 если не улучшен
   "stats": { "dmg": "3..5", "magic": 2 },
   "requires": { "attr": { "int": 12 }, "profession": null, "level": null },

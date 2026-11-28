@@ -1883,6 +1883,16 @@
       "qty": 1
     },
     {
+      "id": "ore_bronze",
+      "type": "ore_bronze",
+      "name": "Бронзовая руда",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 36,
+      "qty": 1
+    },
+    {
       "id": "ore_silver",
       "type": "ore_silver",
       "name": "Серебряная руда",
@@ -1900,6 +1910,26 @@
       "upgrade": 0,
       "stats": {},
       "gold_value": 120,
+      "qty": 1
+    },
+    {
+      "id": "ore_platinum",
+      "type": "ore_platinum",
+      "name": "Платиновая руда",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 180,
+      "qty": 1
+    },
+    {
+      "id": "ore_adamantite",
+      "type": "ore_adamantite",
+      "name": "Адамантитовая руда",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 240,
       "qty": 1
     },
     {
@@ -4073,6 +4103,28 @@
         }
       ],
       "gold_value": 1200
+    },
+    {
+      "id": "pickaxe_master",
+      "type": "pickaxe",
+      "name": "Кирка мастера",
+      "description": "Пока кирка лежит в инвентаре, шанс найти самоцвет в жиле удваивается.",
+      "rarity": "rare",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 1200,
+      "qty": 1
+    },
+    {
+      "id": "artifact_lamp",
+      "type": "artifact",
+      "name": "Лампа шахтера",
+      "description": "Надетый артефакт: +2 п.п. к шансу найти самоцвет и 5% шанс добыть 2 руды вместо 1.",
+      "rarity": "epic",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 900,
+      "slot": "artifact"
     }
   ]
 }

@@ -81,9 +81,9 @@ pub async fn with_sockets(
 /// Определение предмета; `None` — нет в сиде.
 pub async fn def(pool: &PgPool, def_id: &str) -> Result<Option<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
-        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
-                rune_sockets, slot, hands, skill, cooldown_s, bonuses, bag_slots, bag_types, \
-                bag_kind \
+        "SELECT id, item_type, name, description, rarity, upgrade, stats, requires, \
+                gold_value, qty, sockets, rune_sockets, slot, hands, skill, cooldown_s, \
+                bonuses, bag_slots, bag_types, bag_kind \
          FROM item_defs WHERE id = $1",
     )
     .bind(def_id)
@@ -109,9 +109,9 @@ pub async fn admin_inventory(
 /// запросом); порядок — по типу и имени.
 pub async fn defs_all(pool: &PgPool) -> Result<Vec<ItemDefRow>, sqlx::Error> {
     sqlx::query_as::<_, ItemDefRow>(
-        "SELECT id, item_type, name, rarity, upgrade, stats, requires, gold_value, qty, sockets, \
-                rune_sockets, slot, hands, skill, cooldown_s, bonuses, bag_slots, bag_types, \
-                bag_kind \
+        "SELECT id, item_type, name, description, rarity, upgrade, stats, requires, \
+                gold_value, qty, sockets, rune_sockets, slot, hands, skill, cooldown_s, \
+                bonuses, bag_slots, bag_types, bag_kind \
          FROM item_defs ORDER BY item_type, name",
     )
     .fetch_all(pool)
@@ -198,6 +198,34 @@ pub async fn loot_taken_exists(
     )
     .bind(loot_uid)
     .bind(char_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// M39: есть ли у персонажа предмет с данным `def_id` (в любом слоте,
+/// включая надетые).
+pub async fn has_def(pool: &PgPool, char_id: &str, def_id: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM items WHERE character_id = $1 AND def_id = $2)",
+    )
+    .bind(char_id)
+    .bind(def_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// M39: надет ли предмет с данным `def_id` (эффекты артефактов).
+pub async fn has_equipped_def(
+    pool: &PgPool,
+    char_id: &str,
+    def_id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM items \
+         WHERE character_id = $1 AND def_id = $2 AND equipped_slot IS NOT NULL)",
+    )
+    .bind(char_id)
+    .bind(def_id)
     .fetch_one(pool)
     .await
 }

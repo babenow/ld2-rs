@@ -47,7 +47,8 @@
             "reagent_bag",
             "keyring",
             "old_key",
-            "tool_chisel"
+            "tool_chisel",
+            "artifact_lamp"
           ]
         }
       ]
@@ -62,6 +63,7 @@
           "items": [
             "axe",
             "pickaxe",
+            "pickaxe_master",
             "dagger_knife",
             "sword_knight",
             "bow_hunter",

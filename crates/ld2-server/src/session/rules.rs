@@ -139,6 +139,7 @@ pub(crate) fn item_snapshot(
         uid: item.uid.clone(),
         item_type: def.item_type.clone(),
         name: def.name.clone(),
+        description: (!def.description.trim().is_empty()).then(|| def.description.clone()),
         rarity: def.rarity.clone(),
         upgrade: def.upgrade + item.upgrade,
         stats: def.stats.clone().as_object().cloned().unwrap_or_default(),
@@ -285,6 +286,7 @@ mod tests {
             id: "sword_1".into(),
             item_type: item_type.into(),
             name: "Меч".into(),
+            description: String::new(),
             rarity: "common".into(),
             upgrade: 1,
             stats: json!({
@@ -384,6 +386,19 @@ mod tests {
         );
         assert_eq!(socket_accepts(&json!({ "index": 0 }), 0, 2), "rune");
         assert_eq!(socket_accepts(&json!({ "index": 2 }), 2, 2), "gem");
+    }
+
+    /// M39: описание из определения уходит в снапшот; пустое — не шлём.
+    #[test]
+    fn item_snapshot_carries_description_when_present() {
+        let mut def = item_def("weapon", 0, None);
+        def.description = "Удваивает шанс камня.".into();
+        let snap = item_snapshot(&item_row(json!([]), None), &def);
+        assert_eq!(snap.description.as_deref(), Some("Удваивает шанс камня."));
+
+        def.description = "  ".into();
+        let snap = item_snapshot(&item_row(json!([]), None), &def);
+        assert_eq!(snap.description, None, "пустое описание не отправляется");
     }
 
     #[test]

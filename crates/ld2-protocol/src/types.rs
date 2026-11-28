@@ -205,6 +205,9 @@ pub struct ItemSnapshot {
     #[serde(rename = "type")]
     pub item_type: String,
     pub name: String,
+    /// M39: текстовое описание для карточки/тултипа; аддитивно §11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Rarity: открытая строка (common…legendary + расширения сервера).
     pub rarity: String,
     /// Уровень улучшения `+N` (ФР-10).

@@ -1117,6 +1117,7 @@ mod tests {
             uid: format!("i_{name}_{qty}"),
             item_type: item_type.into(),
             name: name.into(),
+            description: None,
             rarity: "common".into(),
             upgrade: 0,
             stats: Default::default(),

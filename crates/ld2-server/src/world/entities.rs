@@ -522,11 +522,18 @@ impl World {
     pub fn resource(&self, entity_id: &str) -> Option<&ResourceNode> {
         self.resources.get(entity_id)
     }
-    /// M38: бросок бонусного самоцвета жилы. `None` — камень не выпал
-    /// или таблица пуста; иначе id необработанного камня.
-    pub fn roll_resource_gem(&mut self, entity_id: &str) -> Option<String> {
+    /// M38: бросок бонусного самоцвета жилы. `chance_mult`/`chance_add`
+    /// учитывают «Кирку мастера» и «Лампу шахтёра». `None` — камень не
+    /// выпал или таблица пуста; иначе id необработанного камня.
+    pub fn roll_resource_gem(
+        &mut self,
+        entity_id: &str,
+        chance_mult: f64,
+        chance_add: f64,
+    ) -> Option<String> {
         let table = self.resources.get(entity_id)?.gems.clone()?;
-        if table.chance <= 0.0 || self.roll01() >= table.chance {
+        let chance = Self::gem_chance_with(table.chance, chance_mult, chance_add);
+        if chance <= 0.0 || self.roll01() >= chance {
             return None;
         }
         let group = if self.roll01() < table.mixed_share {
@@ -539,6 +546,12 @@ impl World {
         }
         let index = ((self.roll01() * group.len() as f64) as usize).min(group.len() - 1);
         Some(group[index].clone())
+    }
+
+    /// M39: итоговый шанс камня с учётом множителя (кирка) и прибавки
+    /// (лампа); всегда 0..1.
+    pub(crate) fn gem_chance_with(base: f64, mult: f64, add: f64) -> f64 {
+        (base * mult + add).clamp(0.0, 1.0)
     }
 
     /// M20/F20b: добыть 1 единицу (валидации инструмента/ранга — на

@@ -78,6 +78,9 @@ pub struct ContentItemDef {
     #[serde(rename = "type")]
     pub item_type: String,
     pub name: String,
+    /// M39: текст для карточки/тултипа предмета; пусто — без описания.
+    #[serde(default)]
+    pub description: String,
     pub rarity: String,
     #[serde(default)]
     pub upgrade: i32,
