@@ -41,6 +41,11 @@ fn parse_gem_table(g: &serde_json::Map<String, serde_json::Value>) -> GemTable {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0)
             .clamp(0.0, 1.0),
+        chance_mult: g
+            .get("chance_mult")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0)
+            .max(0.0),
         mixed_share: g
             .get("mixed_share")
             .and_then(|v| v.as_f64())

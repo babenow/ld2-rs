@@ -515,6 +515,22 @@ pub(crate) fn severity_rgb(severity: Severity) -> u32 {
     }
 }
 
+/// Только дорожка прогресса без подписи (для составных карточек).
+pub(crate) fn bar_track(frac: f32, fill: u32, pal: &Palette) -> Div {
+    div()
+        .w(px(140.0))
+        .h(px(10.0))
+        .rounded_md()
+        .bg(rgb(pal.border))
+        .child(
+            div()
+                .h_full()
+                .w(gpui::relative(frac.clamp(0.0, 1.0)))
+                .rounded_md()
+                .bg(rgb(fill)),
+        )
+}
+
 /// Полоса-прогресс (паритет egui ProgressBar).
 pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
     div()
@@ -522,20 +538,7 @@ pub(crate) fn bar(frac: f32, label: String, fill: u32, pal: &Palette) -> Div {
         .flex_row()
         .items_center()
         .gap_2()
-        .child(
-            div()
-                .w(px(140.0))
-                .h(px(10.0))
-                .rounded_md()
-                .bg(rgb(pal.border))
-                .child(
-                    div()
-                        .h_full()
-                        .w(gpui::relative(frac.clamp(0.0, 1.0)))
-                        .rounded_md()
-                        .bg(rgb(fill)),
-                ),
-        )
+        .child(bar_track(frac, fill, pal))
         .child(
             div()
                 .text_size(px(crate::ui_tokens::FONT_SM))

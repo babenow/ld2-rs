@@ -149,9 +149,9 @@ fn high_ore_tiers_content_is_configured() {
     }
 }
 
-/// M39: базовый шанс камней из жил — 1–3 %.
+/// M39: базовый шанс камней из жил — 0.5–1.5 %.
 #[test]
-fn gem_chances_are_within_one_to_three_percent() {
+fn gem_chances_are_within_half_to_one_and_half_percent() {
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
     let locs: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(src.join("locations.json")).expect("locations"),
@@ -165,8 +165,14 @@ fn gem_chances_are_within_one_to_three_percent() {
             };
             seen += 1;
             assert!(
-                (0.01..=0.03).contains(&chance),
-                "шанс камня {} = {chance}, ожидалось 0.01..=0.03",
+                (0.005..=0.015).contains(&chance),
+                "шанс камня {} = {chance}, ожидалось 0.005..=0.015",
+                entity["id"]
+            );
+            let chance_mult = entity["gems"]["chance_mult"].as_f64();
+            assert!(
+                chance_mult.is_some_and(|m| m > 0.0),
+                "у жилы {} нет положительного gems.chance_mult",
                 entity["id"]
             );
         }

@@ -83,6 +83,8 @@ impl HarvestJob {
 pub struct GemTable {
     /// Шанс, что вместе с рудой выпадет камень (0..1).
     pub chance: f64,
+    /// M39: множитель шанса конкретной жилы (1.0 — не менять).
+    pub chance_mult: f64,
     /// Доля смешанных камней среди выпавших (0..1); остальные — чистые.
     pub mixed_share: f64,
     /// id необработанных смешанных самоцветов.
@@ -530,17 +532,19 @@ impl World {
     pub fn resource(&self, entity_id: &str) -> Option<&ResourceNode> {
         self.resources.get(entity_id)
     }
-    /// M38: бросок бонусного самоцвета жилы. `chance_mult`/`chance_add`
+    /// M38/M39: бросок бонусного самоцвета жилы. База умножается на
+    /// `gems.chance_mult` конкретной жилы, затем `tool_mult`/`tool_add`
     /// учитывают «Кирку мастера» и «Лампу шахтёра». `None` — камень не
     /// выпал или таблица пуста; иначе id необработанного камня.
     pub fn roll_resource_gem(
         &mut self,
         entity_id: &str,
-        chance_mult: f64,
-        chance_add: f64,
+        tool_mult: f64,
+        tool_add: f64,
     ) -> Option<String> {
         let table = self.resources.get(entity_id)?.gems.clone()?;
-        let chance = Self::gem_chance_with(table.chance, chance_mult, chance_add);
+        let base = table.chance * table.chance_mult;
+        let chance = Self::gem_chance_with(base, tool_mult, tool_add);
         if chance <= 0.0 || self.roll01() >= chance {
             return None;
         }
