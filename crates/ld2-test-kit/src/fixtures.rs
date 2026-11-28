@@ -191,7 +191,6 @@ fn session_config_impl(char_slot_limit: u32) -> SessionConfig {
         extra: Default::default(),
     }
 }
-
 pub fn character_summary() -> CharacterSummary {
     CharacterSummary {
         id: "c1".into(),
@@ -319,7 +318,6 @@ pub fn exit_target(location_id: &str, exit_id: &str) -> Option<LocationSnapshot>
         _ => None,
     }
 }
-
 // ─── Персонаж и снапшот ─────────────────────────────────────────────────────
 
 pub fn staff_item() -> ItemSnapshot {
@@ -332,6 +330,7 @@ pub fn staff_item() -> ItemSnapshot {
         item_type: "staff".into(),
         name: "Ясеневый посох".into(),
         description: None,
+        personal: false,
         rarity: "rare".into(),
         upgrade: 2,
         stats,
@@ -382,6 +381,7 @@ pub fn scroll_item() -> ItemSnapshot {
         item_type: "scroll".into(),
         name: "Свиток огненного шара".into(),
         description: None,
+        personal: false,
         rarity: "common".into(),
         upgrade: 0,
         stats,
@@ -413,6 +413,7 @@ pub fn rune_item(uid: &str) -> ItemSnapshot {
         item_type: "rune".into(),
         name: "Руна льда".into(),
         description: None,
+        personal: false,
         rarity: "common".into(),
         upgrade: 0,
         stats,
@@ -448,6 +449,7 @@ pub fn ingredients() -> Vec<ItemSnapshot> {
             }
             .into(),
             description: None,
+            personal: false,
             rarity: "common".into(),
             upgrade: 0,
             stats: Default::default(),

@@ -178,8 +178,15 @@ async fn auto_attack_log_line_has_hits_as() {
         .await;
     assert_eq!(c.ack(seq).await["result"], "ok", "атака");
 
+    // Бросок попадания случаен: ждём именно успешный удар, иначе
+    // первый evt/combat/hit может оказаться промахом.
     let hit = c
-        .wait(|v| v["type"] == "evt/combat/hit" && v["payload"]["source"] == char_id)
+        .wait(|v| {
+            v["type"] == "evt/combat/hit"
+                && v["payload"]["source"] == char_id
+                && v["payload"]["target"] == "m_3"
+                && v["payload"]["miss"] == false
+        })
         .await;
     let text = hit["payload"]["text"].as_str().expect("текст удара");
     assert!(text.starts_with("Вы бьёте"), "обращение кастеру: {text}");

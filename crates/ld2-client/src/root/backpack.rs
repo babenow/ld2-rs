@@ -1118,6 +1118,7 @@ mod tests {
             item_type: item_type.into(),
             name: name.into(),
             description: None,
+            personal: false,
             rarity: "common".into(),
             upgrade: 0,
             stats: Default::default(),

@@ -285,3 +285,39 @@ async fn trade_cancel_closes_for_both() {
     let offer_id = open_trade(&mut a, &char_b).await;
     assert!(!offer_id.is_empty());
 }
+
+/// M39: персональный предмет нельзя добавить в сделку.
+#[tokio::test]
+async fn personal_item_cannot_be_traded() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut a, _, _) = in_world(&ws).await;
+    let (mut b, _, char_b) = in_world(&ws).await;
+    let lamp = give(&mut a, "artifact_lamp").await;
+    let seq = a
+        .send(
+            "cmd/item.equip",
+            json!({ "item_uid": lamp, "slot": "artifact1" }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(ack["result"], "ok", "надеть лампу: {ack}");
+
+    let offer_id = open_trade(&mut a, &char_b).await;
+    a.wait_event("evt/trade/state").await;
+    b.wait_event("evt/trade/state").await;
+    let seq = a
+        .send(
+            "cmd/trade.add_item",
+            json!({ "offer_id": offer_id, "item_uid": lamp }),
+        )
+        .await;
+    let ack = a.ack(seq).await;
+    assert_eq!(
+        ack["error"]["code"], "E_ITEM_PERSONAL",
+        "персональный предмет в сделке: {ack}"
+    );
+}

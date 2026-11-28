@@ -17,7 +17,7 @@ use ld2_protocol::types::EntityKind;
 use serde_json::json;
 use tracing::warn;
 
-use super::gather::{gather_bonuses, gather_fits};
+use super::gather::{full_item_state_event, gather_bonuses, gather_fits, skinning_bonuses};
 use crate::consts::{ACTION_SKIN, PROFESSION_MINING, PROFESSION_SKINNING};
 use crate::db;
 use crate::state::SharedState;
@@ -273,12 +273,18 @@ pub(super) async fn gather_step(state: &SharedState) {
         // M39: «Кирка мастера» ×2 к камням; «Лампа шахтёра» +2 п.п.
         // и шанс 2 руды. Только для горного дела.
         let mining = node.profession.as_deref() == Some(PROFESSION_MINING);
-        let (gem_mult, gem_add, ore_qty) = if mining {
+        let (gem_mult, gem_add, ore_qty, bound_tools) = if mining {
             gather_bonuses(state, &job.char_id).await
         } else {
-            (1.0, 0.0, 1)
+            (1.0, 0.0, 1, Vec::new())
         };
         let mut texts = Vec::new();
+        // M39: печать персональности на кирке — обновляем её снапшот.
+        for uid in bound_tools {
+            if let Some(text) = full_item_state_event(state, &job.char_id, &uid).await {
+                texts.push(text);
+            }
+        }
         if let Some(text) =
             grant_gather_item(state, &job.char_id, &node.def_id, slots, ore_qty).await
         {
@@ -538,9 +544,21 @@ pub(super) async fn harvest_step(state: &SharedState) {
                 .unwrap_or(1)
                 .max(1) as u32
         };
+        let (loot_mult, loot_add, bound_tools) = if job.action == ACTION_SKIN {
+            skinning_bonuses(state, &job.char_id).await
+        } else {
+            (1.0, 0.0, Vec::new())
+        };
         let finished = {
             let mut world = state.world.lock().expect("мир");
-            world.finish_harvest(&job.corpse_id, &job.action, level, rank)
+            world.finish_harvest(
+                &job.corpse_id,
+                &job.action,
+                level,
+                rank,
+                loot_mult,
+                loot_add,
+            )
         };
         // Итог персонажу — всегда (ok=false: труп исчез/уже разделано).
         let ok = finished.is_some();
@@ -562,6 +580,13 @@ pub(super) async fn harvest_step(state: &SharedState) {
         let Some((corpse, _skin, _inner)) = finished else {
             continue;
         };
+        // M39: печать персональности на ноже — обновляем снапшот.
+        for uid in bound_tools {
+            if let Some(text) = full_item_state_event(state, &job.char_id, &uid).await {
+                let world = state.world.lock().expect("мир");
+                world.send_to_char(&job.char_id, text);
+            }
+        }
         // XP — только за снятие шкуры (освежевание не даёт).
         if job.action == ACTION_SKIN {
             if let Some((_, xp_old, rank_row, _)) = learned {

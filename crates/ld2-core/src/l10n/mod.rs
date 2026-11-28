@@ -507,7 +507,6 @@ pub enum Key {
     SkillGroupStealth,
     SkillGroupPractice,
     SkillGroupSocial,
-
     HkConsumable,
     HotbarNoTarget,
     HotbarCooldown,
@@ -667,6 +666,8 @@ pub enum Key {
     ShopCurrency,
     // M18/F47: бонусы предмета в карточке (ADR-010).
     ItemBonuses,
+    /// M39: персональный предмет (нельзя передавать).
+    ItemPersonal,
     // M18/F44: обучение навыков в диалоге тренера (ADR-009).
     BtnTrain,
     SkillReady,
@@ -693,7 +694,6 @@ pub enum Key {
     /// Кнопка «Удалить все» (очистка цели) в админ-окне.
     AdminClearAll,
 }
-
 pub fn t(lang: Lang, key: Key) -> &'static str {
     match lang {
         Lang::Ru => ru::t(key),
@@ -1311,6 +1311,7 @@ mod tests {
         Key::ShopEmpty,
         Key::ShopCurrency,
         Key::ItemBonuses,
+        Key::ItemPersonal,
         Key::BtnTrain,
         Key::SkillReady,
         Key::TrainingPoints,

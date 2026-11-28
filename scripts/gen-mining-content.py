@@ -3,10 +3,11 @@
 
 Идемпотентно обновляет:
   * content/items.json   — 9 руд, 32 необработанных камня, 96 обработанных,
-                           «Кирка мастера» и «Лампа шахтёра»;
+                           «Кирка мастера», «Лампа шахтёра», «Нож мастера»
+                           и «Фетиш охотника»;
   * content/recipes.json — 96 рецептов ювелира (3 версии на камень);
   * content/locations.json — 5 рудников, жилы, ювелирный стол;
-  * content/shops.json   — резец и лампа у старосты, кирка у оружейника.
+  * content/shops.json   — резец/лампа/фетиш у старосты, кирка/нож у оружейника.
 
 Запуск:  python3 scripts/gen-mining-content.py
 """
@@ -254,7 +255,8 @@ def generated_items() -> list[dict]:
             "id": "pickaxe_master",
             "type": "pickaxe",
             "name": "Кирка мастера",
-            "description": "Пока кирка лежит в инвентаре, шанс найти самоцвет в жиле удваивается.",
+            "description": "Пока кирка лежит в инвентаре, шанс найти самоцвет в жиле удваивается. При первом применении становится персональной.",
+            "personal": True,
             "rarity": "rare",
             "upgrade": 0,
             "stats": {},
@@ -267,7 +269,37 @@ def generated_items() -> list[dict]:
             "id": "artifact_lamp",
             "type": "artifact",
             "name": "Лампа шахтера",
-            "description": "Надетый артефакт: +2 п.п. к шансу найти самоцвет и 5% шанс добыть 2 руды вместо 1.",
+            "description": "Надетый артефакт: +2 п.п. к шансу найти самоцвет и 5% шанс добыть 2 руды вместо 1. При первом надевании становится персональным.",
+            "personal": True,
+            "rarity": "epic",
+            "upgrade": 0,
+            "stats": {},
+            "gold_value": 900,
+            "slot": "artifact",
+        }
+    )
+    # M39: инструменты-модификаторы снятия шкур.
+    items.append(
+        {
+            "id": "skinning_knife_master",
+            "type": "skinning_knife",
+            "name": "Нож мастера",
+            "description": "Пока нож лежит в инвентаре, шанс шкуры и редких трофеев удваивается. При первом применении становится персональным.",
+            "personal": True,
+            "rarity": "rare",
+            "upgrade": 0,
+            "stats": {},
+            "gold_value": 1200,
+            "qty": 1,
+        }
+    )
+    items.append(
+        {
+            "id": "artifact_hunter",
+            "type": "artifact",
+            "name": "Фетиш охотника",
+            "description": "Надетый артефакт: +2 п.п. к шансу шкуры и редких трофеев. При первом надевании становится персональным.",
+            "personal": True,
             "rarity": "epic",
             "upgrade": 0,
             "stats": {},
@@ -543,8 +575,10 @@ def update_shops(shops: dict) -> None:
                 items[:] = [i for i in items if i != "chisel"]
             add_shop_item(npc, "tool_chisel")
             add_shop_item(npc, "artifact_lamp")
+            add_shop_item(npc, "artifact_hunter")
         elif npc.get("id") == "npc_weaponsmith":
             add_shop_item(npc, "pickaxe_master")
+            add_shop_item(npc, "skinning_knife_master")
 
 
 def main() -> None:

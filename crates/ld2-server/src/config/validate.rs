@@ -244,6 +244,12 @@ impl Config {
         if !(0.0..=1.0).contains(&p.mining_lamp_double_ore_chance) {
             out.push("gameplay.professions.mining_lamp_double_ore_chance: должен быть 0..1".into());
         }
+        if p.skinning_master_loot_mult < 1.0 {
+            out.push("gameplay.professions.skinning_master_loot_mult: должен быть ≥ 1.0".into());
+        }
+        if !(0.0..=0.02).contains(&p.skinning_hunter_loot_bonus) {
+            out.push("gameplay.professions.skinning_hunter_loot_bonus: должен быть 0..0.02".into());
+        }
         if self.gameplay.professions.max_level == 0 {
             out.push("gameplay.professions.max_level: должен быть ≥ 1".into());
         }

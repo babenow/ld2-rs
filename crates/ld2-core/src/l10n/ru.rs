@@ -403,7 +403,6 @@ pub(super) fn t(key: Key) -> &'static str {
         SkillGroupStealth => "Ловкость",
         SkillGroupPractice => "Практика",
         SkillGroupSocial => "Социальные",
-
         HkConsumable => "Свиток/зелье",
         HotbarNoTarget => "Выберите цель",
         HotbarCooldown => "Кулдаун {s} с",
@@ -547,6 +546,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ShopEmpty => "Товаров нет",
         ShopCurrency => "Валюта",
         ItemBonuses => "Бонусы",
+        ItemPersonal => "Персональный",
         BtnTrain => "Обучить",
         SkillReady => "возможно повышение ранга",
         TrainingPoints => "{n} очков опыта",

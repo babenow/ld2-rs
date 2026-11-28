@@ -81,6 +81,10 @@ pub struct ContentItemDef {
     /// M39: текст для карточки/тултипа предмета; пусто — без описания.
     #[serde(default)]
     pub description: String,
+    /// M39: персональный предмет — нельзя передавать, при выбросе
+    /// уничтожается (не падает на землю).
+    #[serde(default)]
+    pub personal: bool,
     pub rarity: String,
     #[serde(default)]
     pub upgrade: i32,

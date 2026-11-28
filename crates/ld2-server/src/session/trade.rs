@@ -178,6 +178,14 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
         };
+        // M39: персональный (привязанный) предмет нельзя передавать.
+        if item.personal {
+            return vec![Self::err(
+                seq,
+                ErrorCode::ItemPersonal,
+                "персональный предмет нельзя передавать",
+            )];
+        }
         // R8: надетый предмет в сделку нельзя (перенос сбрасывал бы
         // `equipped_slot` у получателя — бонусы без экипирования).
         if item.equipped_slot.is_some() {
@@ -371,15 +379,19 @@ impl Session {
         for (from, to, side) in sides {
             for (uid, qty) in &side.items {
                 // Предмет всё ещё у стороны? Частичный перенос стака.
-                let cur: Option<(i32, String)> =
-                    sqlx::query_as("SELECT qty, character_id FROM items WHERE uid = $1 FOR UPDATE")
-                        .bind(uid)
-                        .fetch_optional(&mut *tx)
-                        .await
-                        .map_err(|e| format!("читаю {uid}: {e}"))?;
-                let Some((cur_qty, owner)) = cur else {
+                let cur: Option<(i32, String, bool)> = sqlx::query_as(
+                    "SELECT qty, character_id, personal FROM items WHERE uid = $1 FOR UPDATE",
+                )
+                .bind(uid)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| format!("читаю {uid}: {e}"))?;
+                let Some((cur_qty, owner, personal)) = cur else {
                     return Err(format!("предмет {uid} исчез"));
                 };
+                if personal {
+                    return Err(format!("персональный предмет {uid} нельзя передавать"));
+                }
                 if owner != *from {
                     return Err(format!("предмет {uid} не у владельца"));
                 }

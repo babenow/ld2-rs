@@ -4,12 +4,10 @@
 //!
 //! Методы `impl Session` переехали как есть; поля `Session` по-прежнему
 //! приватны для модуля сессии.
-
-use ld2_protocol::names;
-
 use ld2_protocol::cmd::{ItemDrop, ItemEquip, ItemMove, ItemUnequip, ItemUse};
 use ld2_protocol::envelope::Envelope;
 use ld2_protocol::evt::{CharStats, ItemAdded, ItemRemovalReason, ItemRemoved, ItemState};
+use ld2_protocol::names;
 use ld2_protocol::types::{Entity, Requires};
 use ld2_protocol::ErrorCode;
 use tracing::warn;
@@ -715,6 +713,12 @@ impl Session {
             warn!("item.equip (надевание): {e}");
             return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
         }
+        if def.personal && !item.personal {
+            if let Err(e) = db::items::set_personal(&pool, &item.uid).await {
+                warn!("item.equip (печать): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        }
         // M17/F30b: двуручник в правой руке блокирует левую — щит
         // автоматически снимается (как в WoW при смене на двуручное).
         if cmd.slot == SLOT_MAIN_HAND && def.hands >= TWO_HANDS {
@@ -823,12 +827,20 @@ impl Session {
         }) else {
             return vec![Self::err(seq, ErrorCode::ItemGone, "предмета нет")];
         };
+        // M39: определение нужно и для флага персональности, и для
+        // проверки сумки.
+        let def = match db::items::def(pool, &item.def_id).await {
+            Ok(Some(def)) => def,
+            Ok(None) => {
+                return vec![Self::err(seq, ErrorCode::Internal, "нет определения")];
+            }
+            Err(e) => {
+                warn!("item.drop (определение): {e}");
+                return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
+            }
+        };
         // M28: непустую сумку выбрасывать нельзя (содержимое осиротеет).
-        let is_bag = db::items::def(pool, &item.def_id)
-            .await
-            .ok()
-            .flatten()
-            .is_some_and(|d| d.bag_slots.is_some());
+        let is_bag = def.bag_slots.is_some();
         if is_bag {
             match db::items::bag_has_contents(pool, &item.uid).await {
                 Ok(true) => {
@@ -863,17 +875,9 @@ impl Session {
             .lock()
             .expect("мир")
             .char_location(&char_id);
-        if let Some(location_id) = &ground_loc {
-            let def = match db::items::def(pool, &item.def_id).await {
-                Ok(Some(def)) => def,
-                Ok(None) => {
-                    return vec![Self::err(seq, ErrorCode::Internal, "нет определения")];
-                }
-                Err(e) => {
-                    warn!("item.drop (определение): {e}");
-                    return vec![Self::err(seq, ErrorCode::Internal, "внутренняя ошибка")];
-                }
-            };
+        // M39: привязанный персональный предмет не падает на землю —
+        // сразу уничтожается (reason Destroyed ниже).
+        if let Some(location_id) = ground_loc.as_ref().filter(|_| !item.personal) {
             let ttl = self.state.config.world.drop_ttl_s;
             let expires_at = crate::time::now_epoch() + ttl.max(0);
             let (by_name, gender) = self
@@ -947,7 +951,7 @@ impl Session {
                     None,
                     serde_json::to_value(ItemRemoved {
                         uid: item.uid.clone(),
-                        reason: ItemRemovalReason::Dropped,
+                        reason: ItemRemovalReason::for_drop(item.personal),
                     })
                     .unwrap_or_default(),
                 ),

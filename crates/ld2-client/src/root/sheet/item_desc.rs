@@ -69,9 +69,18 @@ pub(crate) fn item_description_body(
     {
         col = col.child(
             div()
-                .text_size(px(crate::ui_tokens::FONT_XS))
-                .text_color(rgb(pal.muted))
+                .text_size(px(crate::ui_tokens::FONT_SM))
+                .text_color(rgb(pal.text))
                 .child(description.to_string()),
+        );
+    }
+    // M39: персональный предмет — заметная строка в карточке.
+    if detail["personal"].as_bool().unwrap_or(false) {
+        col = col.child(
+            div()
+                .text_size(px(crate::ui_tokens::FONT_XS))
+                .text_color(rgb(pal.accent))
+                .child(t(lang, Key::ItemPersonal)),
         );
     }
     // M18/F58f: слоты — вторая строка под «редкость · тип · +N»,

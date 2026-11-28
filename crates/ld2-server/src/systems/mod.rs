@@ -127,6 +127,8 @@ mod tests {
             mining_master_gem_mult: 2.0,
             mining_lamp_gem_bonus: 0.02,
             mining_lamp_double_ore_chance: 0.05,
+            skinning_master_loot_mult: 2.0,
+            skinning_hunter_loot_bonus: 0.02,
             max_level: 250,
             rank_span: 50,
             rank_up_gold_base: 200,

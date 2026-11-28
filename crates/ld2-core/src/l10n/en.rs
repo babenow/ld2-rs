@@ -403,7 +403,6 @@ pub(super) fn t(key: Key) -> &'static str {
         SkillGroupStealth => "Dexterity",
         SkillGroupPractice => "Practice",
         SkillGroupSocial => "Social",
-
         HkConsumable => "Scroll/potion",
         HotbarNoTarget => "Select a target",
         HotbarCooldown => "Cooldown {s}s",
@@ -547,6 +546,7 @@ pub(super) fn t(key: Key) -> &'static str {
         ShopEmpty => "No goods",
         ShopCurrency => "Currency",
         ItemBonuses => "Bonuses",
+        ItemPersonal => "Personal",
         BtnTrain => "Train",
         SkillReady => "rank-up available",
         TrainingPoints => "{n} XP points",
