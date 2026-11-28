@@ -110,6 +110,9 @@ async fn mining_drops_gem_and_jeweler_cuts_it() {
         "ws://{}/ws",
         common::start_server_with(&db_url, |cfg| {
             cfg.world.content_dir = tmp;
+            // M39: тест проверяет лут/гемы, а не шанс добычи.
+            cfg.gameplay.professions.mining_chance_base = 1.0;
+            cfg.gameplay.professions.mining_chance_min = 1.0;
         })
         .await
     );

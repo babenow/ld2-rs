@@ -102,6 +102,19 @@ pub fn harvest_xp_gain(required: u32, char_level: u32) -> i64 {
     ((base * mult).round() as i64).min(HARVEST_XP_MAX)
 }
 
+/// M39: шанс успешной добычи руды. База — при уровне профессии не ниже
+/// жилы; каждый уровень жилы выше снижает шанс, но не ниже минимума.
+pub fn mining_chance(
+    cfg: &crate::config::ProfessionsSection,
+    required: u32,
+    prof_level: u32,
+) -> f64 {
+    let base = cfg.mining_chance_base.clamp(0.0, 1.0);
+    let min = cfg.mining_chance_min.clamp(0.0, base);
+    let diff = f64::from(required.saturating_sub(prof_level));
+    (base - diff * cfg.mining_chance_per_level.max(0.0)).clamp(min, base)
+}
+
 /// M21: снимок профессии для wire (§6): `xp_to_next` — порог
 /// **уровня** (0 на потолке), `extra` несёт `rank_span` и — до
 /// высшего ранга — цену повышения у тренера (`rank_up_gold`).

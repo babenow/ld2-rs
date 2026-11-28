@@ -39,6 +39,8 @@ pub struct GatherJob {
     pub gender: String,
     pub entity_id: String,
     pub name: String,
+    /// M39: шанс успешной добычи (руда); `None` — без проверки.
+    pub chance: Option<f64>,
     /// Epoch-с окончания.
     pub at: i64,
 }
@@ -55,6 +57,25 @@ pub struct HarvestJob {
     pub name: String,
     /// Epoch-с окончания (старт +5 с).
     pub at: i64,
+}
+
+impl HarvestJob {
+    /// M39: итог разделки для wire (аддитивное поле `text` — None).
+    pub fn result(
+        &self,
+        ok: bool,
+        ruined: bool,
+        text: Option<String>,
+    ) -> ld2_protocol::evt::HarvestResult {
+        ld2_protocol::evt::HarvestResult {
+            entity_id: self.corpse_id.clone(),
+            name: self.name.clone(),
+            action: self.action.clone(),
+            ok,
+            ruined,
+            text,
+        }
+    }
 }
 
 /// M38: таблица бонусных самоцветов рудной жилы.

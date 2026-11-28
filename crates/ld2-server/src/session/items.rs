@@ -290,13 +290,7 @@ impl Session {
         // «Шкура испорчена» — только для снятия шкур; освежевание
         // просто отменяется (повтор разрешён).
         let ruined = job.action == ACTION_SKIN;
-        let result = ld2_protocol::evt::HarvestResult {
-            entity_id: job.corpse_id,
-            name: job.name,
-            action: job.action,
-            ok: false,
-            ruined,
-        };
+        let result = job.result(false, ruined, None);
         let text = event_payload_text(names::EVT_HARVEST_RESULT, &result);
         text.map(|t| vec![Out::Text(t)]).unwrap_or_default()
     }

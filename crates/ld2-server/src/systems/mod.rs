@@ -121,6 +121,9 @@ mod tests {
             level_xp_base: 40,
             level_xp_growth: 1.02,
             rank_xp_mult: vec![1.0, 1.2, 1.45, 1.75, 2.1],
+            mining_chance_base: 0.95,
+            mining_chance_per_level: 0.035,
+            mining_chance_min: 0.15,
             max_level: 250,
             rank_span: 50,
             rank_up_gold_base: 200,
@@ -167,6 +170,32 @@ mod tests {
             40,
             "на уровне — база выше потолка"
         );
+    }
+
+    /// M39: шанс добычи руды падает с разницей уровней жилы и
+    /// профессии, но не ниже минимума; при профессии не ниже жилы —
+    /// база (не 100 %).
+    #[test]
+    fn mining_chance_falls_with_level_gap_and_floors() {
+        let cfg = prof_cfg();
+        assert!(
+            (mining_chance(&cfg, 15, 40) - 0.95).abs() < 1e-9,
+            "жила ниже"
+        );
+        assert!((mining_chance(&cfg, 35, 40) - 0.95).abs() < 1e-9, "равный");
+        assert!(
+            (mining_chance(&cfg, 50, 40) - 0.60).abs() < 1e-9,
+            "жила +10: 0.95 − 0.35"
+        );
+        assert!(
+            (mining_chance(&cfg, 100, 80) - 0.25).abs() < 1e-9,
+            "жила +20: 0.95 − 0.70"
+        );
+        assert!(
+            (mining_chance(&cfg, 65, 40) - 0.15).abs() < 1e-9,
+            "пол минимума"
+        );
+        assert!((mining_chance(&cfg, 80, 80) - 0.95).abs() < 1e-9, "не 100%");
     }
 
     /// M21/M39: формула уровня `round(40 × 1.02^L × mult(ранг))` —
