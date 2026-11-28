@@ -204,13 +204,7 @@ pub(super) fn interrupt_on_hit(state: &SharedState, char_id: &str) -> Option<Str
         if ruined {
             world.ruin_skin(&job.corpse_id);
         }
-        HarvestResult {
-            entity_id: job.corpse_id,
-            name: job.name,
-            action: job.action,
-            ok: false,
-            ruined,
-        }
+        job.result(false, ruined, None)
     } else {
         let job = world.cancel_gather(char_id)?;
         HarvestResult {
@@ -219,6 +213,7 @@ pub(super) fn interrupt_on_hit(state: &SharedState, char_id: &str) -> Option<Str
             action: "gather".into(),
             ok: false,
             ruined: false,
+            text: None,
         }
     };
     Some(job_event(names::EVT_HARVEST_RESULT, &result))
@@ -241,17 +236,17 @@ pub(super) async fn gather_step(state: &SharedState) {
             )
         };
         let (Some(location), Some(node)) = (location, node) else {
-            send_gather_result(state, &job, false);
+            send_gather_result(state, &job, false, None);
             continue;
         };
         if node.location_id != location || node.current <= 0 {
-            send_gather_result(state, &job, false);
+            send_gather_result(state, &job, false, None);
             continue;
         }
         let slots = state.config.gameplay.inventory.slots;
         // Место в инвентаре — до уменьшения запаса (окно 5 с).
         if !gather_fits(state, &job.char_id, &node.def_id, slots).await {
-            send_gather_result(state, &job, false);
+            send_gather_result(state, &job, false, None);
             continue;
         }
         let after = {
@@ -259,15 +254,28 @@ pub(super) async fn gather_step(state: &SharedState) {
             world.try_gather(&job.entity_id, &location)
         };
         let Some(after) = after else {
-            send_gather_result(state, &job, false);
+            send_gather_result(state, &job, false, None);
             continue;
         };
+        // M39: шанс добычи — руда может не достаться, но запас жилы
+        // уменьшается в любом случае.
+        if job.chance.is_some_and(|c| !crate::world::roll_chance(c)) {
+            broadcast_resource_node(state, &after);
+            send_gather_result(
+                state,
+                &job,
+                false,
+                Some(format!("Не удалось добыть руду: {}", node.name)),
+            );
+            continue;
+        }
         let mut texts = Vec::new();
         if let Some(text) = grant_gather_item(state, &job.char_id, &node.def_id, slots).await {
             texts.push(text);
         } else {
             // Инвентарь успел заполниться — руда не выдана, сбор сорван.
-            send_gather_result(state, &job, false);
+            broadcast_resource_node(state, &after);
+            send_gather_result(state, &job, false, None);
             continue;
         }
         let gem = {
@@ -289,30 +297,7 @@ pub(super) async fn gather_step(state: &SharedState) {
             for text in texts {
                 world.send_to_char(&job.char_id, text);
             }
-            let node_text = if after.hidden {
-                job_event(
-                    names::EVT_ENTITY_DESPAWN,
-                    &EntityDespawn {
-                        entity_id: after.id.clone(),
-                        location_id: after.location_id.clone(),
-                        kind: Some(EntityKind::Resource),
-                        picked_by: None,
-                        picked_gender: None,
-                        text: None,
-                    },
-                )
-            } else {
-                job_event(
-                    names::EVT_ENTITY_MOVE,
-                    &EntityMove {
-                        entity_id: after.id.clone(),
-                        patch: serde_json::json!({"hp": {"cur": after.current, "max": after.max}})
-                            .as_object()
-                            .cloned()
-                            .unwrap_or_default(),
-                    },
-                )
-            };
+            let node_text = resource_node_event(&after);
             for addr in world.chars_in_location(&after.location_id) {
                 if !node_text.is_empty() {
                     world.send_to_char(&addr, node_text.clone());
@@ -335,7 +320,7 @@ pub(super) async fn gather_step(state: &SharedState) {
                 }
             }
         }
-        send_gather_result(state, &job, true);
+        send_gather_result(state, &job, true, None);
     }
 }
 
@@ -436,8 +421,52 @@ fn job_event<T: serde::Serialize>(ty: &str, payload: &T) -> String {
     crate::session::event_text(ty, None, serde_json::to_value(payload).unwrap_or_default())
 }
 
-fn send_gather_result(state: &SharedState, job: &crate::world::GatherJob, ok: bool) {
-    let text = job_event(
+/// M39: событие запаса жилы (патч/despawn) для всех в локации.
+fn resource_node_event(after: &crate::world::ResourceNode) -> String {
+    if after.hidden {
+        job_event(
+            names::EVT_ENTITY_DESPAWN,
+            &EntityDespawn {
+                entity_id: after.id.clone(),
+                location_id: after.location_id.clone(),
+                kind: Some(EntityKind::Resource),
+                picked_by: None,
+                picked_gender: None,
+                text: None,
+            },
+        )
+    } else {
+        job_event(
+            names::EVT_ENTITY_MOVE,
+            &EntityMove {
+                entity_id: after.id.clone(),
+                patch: serde_json::json!({"hp": {"cur": after.current, "max": after.max}})
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+            },
+        )
+    }
+}
+
+fn broadcast_resource_node(state: &SharedState, after: &crate::world::ResourceNode) {
+    let text = resource_node_event(after);
+    if text.is_empty() {
+        return;
+    }
+    let world = state.world.lock().expect("мир");
+    for addr in world.chars_in_location(&after.location_id) {
+        world.send_to_char(&addr, text.clone());
+    }
+}
+
+fn send_gather_result(
+    state: &SharedState,
+    job: &crate::world::GatherJob,
+    ok: bool,
+    text: Option<String>,
+) {
+    let wire = job_event(
         names::EVT_HARVEST_RESULT,
         &HarvestResult {
             entity_id: job.entity_id.clone(),
@@ -445,11 +474,12 @@ fn send_gather_result(state: &SharedState, job: &crate::world::GatherJob, ok: bo
             action: "gather".into(),
             ok,
             ruined: false,
+            text,
         },
     );
     let world = state.world.lock().expect("мир");
-    if !text.is_empty() {
-        world.send_to_char(&job.char_id, text);
+    if !wire.is_empty() {
+        world.send_to_char(&job.char_id, wire);
     }
 }
 
@@ -507,6 +537,7 @@ pub(super) async fn harvest_step(state: &SharedState) {
             action: job.action.clone(),
             ok,
             ruined: false,
+            text: None,
         };
         let text = crate::session::event_text(names::EVT_HARVEST_RESULT, None, {
             serde_json::to_value(result).unwrap_or_default()

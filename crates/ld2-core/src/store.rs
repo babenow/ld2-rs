@@ -1051,6 +1051,43 @@ mod tests {
         );
     }
 
+    /// M39: неудачная добыча — готовая строка сервера; без неё —
+    /// общий «Сбор прерван».
+    #[test]
+    fn gather_failure_uses_server_text() {
+        let mut store = in_game();
+        let before = store.log.len();
+        store.apply_event(
+            "evt/harvest/result",
+            Some(serde_json::json!({
+                "entity_id": "r1", "name": "Медная жила", "action": "gather",
+                "ok": false, "ruined": false,
+                "text": "Не удалось добыть руду: Медная жила"
+            })),
+        );
+        store.apply_event(
+            "evt/harvest/result",
+            Some(serde_json::json!({
+                "entity_id": "r1", "name": "Медная жила", "action": "gather",
+                "ok": false, "ruined": false
+            })),
+        );
+        let lines: Vec<&str> = store
+            .log
+            .iter()
+            .skip(before)
+            .map(|l| l.text.as_str())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Не удалось добыть руду: Медная жила",
+                "Сбор прерван: Медная жила"
+            ],
+            "строки провала: {lines:?}"
+        );
+    }
+
     /// M14/F4: глобальный кулдаун — 1 с; повтор не укорачивает окно.
     #[test]
     fn global_cooldown_blocks_one_second_and_never_shrinks() {

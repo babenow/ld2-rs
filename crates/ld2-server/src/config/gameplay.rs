@@ -363,6 +363,16 @@ pub struct ProfessionsSection {
     /// геометрию роста числа успешных действий; не задан — дефолт.
     #[serde(default = "default_rank_xp_mult")]
     pub rank_xp_mult: Vec<f64>,
+    /// M39: шанс успешной добычи руды, когда уровень профессии не ниже
+    /// жилы (0..1; 1.0 — без промахов).
+    #[serde(default = "default_mining_chance_base")]
+    pub mining_chance_base: f64,
+    /// M39: снижение шанса за каждый уровень жилы выше профессии.
+    #[serde(default = "default_mining_chance_per_level")]
+    pub mining_chance_per_level: f64,
+    /// M39: минимальный шанс добычи (0..base).
+    #[serde(default = "default_mining_chance_min")]
+    pub mining_chance_min: f64,
     /// Потолок уровня (на нём опыт перестаёт копиться; верхний ранг
     /// «Мастер» заканчивает на этом уровне).
     pub max_level: u32,
@@ -378,4 +388,16 @@ pub struct ProfessionsSection {
 /// 1.75 / 2.1. Список правится в `[gameplay.professions]`.
 fn default_rank_xp_mult() -> Vec<f64> {
     vec![1.0, 1.2, 1.45, 1.75, 2.1]
+}
+
+fn default_mining_chance_base() -> f64 {
+    0.95
+}
+
+fn default_mining_chance_per_level() -> f64 {
+    0.035
+}
+
+fn default_mining_chance_min() -> f64 {
+    0.15
 }

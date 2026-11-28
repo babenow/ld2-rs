@@ -44,6 +44,16 @@ async fn learn(c: &mut ld2_test_kit::WsClient, profession_id: &str) {
     c.wait_event("evt/craft/profession").await;
 }
 
+/// M39: тестовый сервер с фиксированным шансом добычи руды.
+async fn start_with_mining_chance(db_url: &str, chance: f64) -> String {
+    let addr = common::start_server_with(db_url, |cfg| {
+        cfg.gameplay.professions.mining_chance_base = chance;
+        cfg.gameplay.professions.mining_chance_min = chance;
+    })
+    .await;
+    format!("ws://{addr}/ws")
+}
+
 /// M39: волк в лесу агрессивен — урон прерывает сбор (как разделку),
 /// поэтому перед добычей его убиваем.
 async fn kill_wolf(c: &mut ld2_test_kit::WsClient) {
@@ -63,7 +73,7 @@ async fn premium_boosts_profession_xp_on_gather() {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
     };
-    let ws = common::start_ws_server(&db_url).await;
+    let ws = start_with_mining_chance(&db_url, 1.0).await;
     let (mut c, _login, char_id) = in_world(&ws).await;
     give_gold(&mut c, 1000).await;
     learn(&mut c, "mining").await;
@@ -114,7 +124,7 @@ async fn gather_tool_profession_yield_and_exhaustion() {
         eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
         return;
     };
-    let ws = common::start_ws_server(&db_url).await;
+    let ws = start_with_mining_chance(&db_url, 1.0).await;
     let (mut c, _login, char_id) = in_world(&ws).await;
     give_gold(&mut c, 1000).await;
 
@@ -278,6 +288,59 @@ async fn gather_tool_profession_yield_and_exhaustion() {
     assert_eq!(mining["xp"].as_i64().unwrap_or(0), 36, "3×12 XP");
     assert_eq!(mining["rank"], 1, "ранг без тренера не растёт");
     assert_eq!(mining["rank_span"], 50, "границы рангов в extra");
+}
+
+/// M39: шанс добычи может провалиться — жила теряет 1 запас, руды
+/// нет, в журнал уходит строка «Не удалось добыть руду».
+#[tokio::test]
+async fn mining_failure_consumes_vein_and_logs() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = start_with_mining_chance(&db_url, 0.0).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+    give_gold(&mut c, 1000).await;
+    learn(&mut c, "mining").await;
+    let seq = c
+        .send("cmd/location.move", json!({ "exit_id": "e_north" }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "в лес");
+    kill_wolf(&mut c).await;
+    give(&mut c, "pickaxe").await;
+
+    let seq = c
+        .send(
+            "cmd/resource.gather",
+            json!({ "entity_id": "r_forest_ore" }),
+        )
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok", "старт сбора");
+    // Запас жилы уменьшился, несмотря на провал.
+    let moved = c.wait_event("evt/entity/move").await;
+    assert_eq!(moved["payload"]["patch"]["hp"]["cur"], 2);
+    let result = c.wait_event("evt/harvest/result").await;
+    assert_eq!(result["payload"]["ok"], false, "провал: {result}");
+    assert!(
+        result["payload"]["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("Не удалось добыть руду")),
+        "строка провала: {result}"
+    );
+
+    // Руды в рюкзаке нет.
+    let seq = c
+        .send("cmd/state.resync", json!({ "last_state_version": 1 }))
+        .await;
+    assert_eq!(c.ack(seq).await["result"], "ok");
+    let snap = c.wait_event("evt/state/snapshot").await;
+    let inv = snap["payload"]["char"]["inventory"]
+        .as_array()
+        .expect("инвентарь");
+    assert!(
+        !inv.iter().any(|i| i["def_id"] == "ore_copper"),
+        "руда не выдана: {inv:?}"
+    );
 }
 
 #[tokio::test]

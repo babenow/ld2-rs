@@ -222,6 +222,19 @@ impl Config {
         {
             out.push("gameplay.professions.rank_xp_mult: множители не должны убывать".into());
         }
+        let p = &self.gameplay.professions;
+        if !(0.0..=1.0).contains(&p.mining_chance_base) {
+            out.push("gameplay.professions.mining_chance_base: должен быть 0..1".into());
+        }
+        if !(0.0..=1.0).contains(&p.mining_chance_min) {
+            out.push("gameplay.professions.mining_chance_min: должен быть 0..1".into());
+        }
+        if p.mining_chance_min > p.mining_chance_base {
+            out.push("gameplay.professions.mining_chance_min: не больше mining_chance_base".into());
+        }
+        if p.mining_chance_per_level < 0.0 {
+            out.push("gameplay.professions.mining_chance_per_level: должен быть ≥ 0".into());
+        }
         if self.gameplay.professions.max_level == 0 {
             out.push("gameplay.professions.max_level: должен быть ≥ 1".into());
         }

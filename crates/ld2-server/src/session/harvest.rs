@@ -13,7 +13,9 @@ use tracing::warn;
 
 use super::event_payload_text;
 use super::{Out, Session};
-use crate::consts::{ACTION_GUT, ACTION_SKIN, ITEM_SKINNING_KNIFE, PROFESSION_SKINNING};
+use crate::consts::{
+    ACTION_GUT, ACTION_SKIN, ITEM_SKINNING_KNIFE, PROFESSION_MINING, PROFESSION_SKINNING,
+};
 use crate::db;
 
 const MIN_LEVEL: i64 = 1;
@@ -162,13 +164,7 @@ impl Session {
         };
         let mut outs: Vec<Out> = Vec::new();
         if let Some(job) = interrupted {
-            let result = ld2_protocol::evt::HarvestResult {
-                entity_id: job.corpse_id.clone(),
-                name: job.name.clone(),
-                action: job.action.clone(),
-                ok: false,
-                ruined: true,
-            };
+            let result = job.result(false, true, None);
             if let Some(text) = event_payload_text(names::EVT_HARVEST_RESULT, &result) {
                 outs.push(Out::Text(text));
             }
@@ -234,6 +230,7 @@ impl Session {
             }
         }
         // 3) ранг/уровень профессии (профессия должна быть изучена).
+        let mut gather_chance: Option<f64> = None;
         if let Some(prof) = &node.profession {
             let learned = match db::professions::learned(pool, &char_id).await {
                 Ok(v) => v,
@@ -269,6 +266,13 @@ impl Session {
                     ),
                 )];
             }
+            if prof == PROFESSION_MINING {
+                gather_chance = Some(crate::systems::mining_chance(
+                    &self.state.config.gameplay.professions,
+                    node.required_level,
+                    level_u,
+                ));
+            }
         }
         // 4) место в инвентаре до уменьшения запаса (паритет take_loot).
         let slots = self.state.config.gameplay.inventory.slots;
@@ -301,6 +305,7 @@ impl Session {
                 gender,
                 entity_id: cmd.entity_id.clone(),
                 name: node.name.clone(),
+                chance: gather_chance,
                 at,
             });
         }
