@@ -30749,7 +30749,7 @@
       "flags": [
         "pvp"
       ],
-      "text": "Крепи штолен скрипят; в темноте пахнет ржавой водой и серебром.",
+      "text": "Крепи штолен скрипят; в темноте пахнет бронзой, ржавой водой и серебром.",
       "exits": [
         {
           "id": "e_mine_copper",
@@ -30842,6 +30842,68 @@
           "required_level": 50,
           "gems": {
             "chance": 0.07,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_sapphire",
+              "raw_emerald",
+              "raw_onyx"
+            ],
+            "pure": [
+              "raw_stone_crit_chance",
+              "raw_stone_crit_damage",
+              "raw_stone_armor",
+              "raw_stone_dodge"
+            ]
+          }
+        },
+        {
+          "id": "ore_bronze_1",
+          "kind": "resource",
+          "name": "Бронзовая жила",
+          "resource": "ore_bronze",
+          "max": 3,
+          "respawn": {
+            "min_s": 360,
+            "max_s": 570
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 2,
+          "tool": "pickaxe",
+          "required_level": 75,
+          "gems": {
+            "chance": 0.075,
+            "mixed_share": 0.1,
+            "mixed": [
+              "raw_sapphire",
+              "raw_emerald",
+              "raw_onyx"
+            ],
+            "pure": [
+              "raw_stone_crit_chance",
+              "raw_stone_crit_damage",
+              "raw_stone_armor",
+              "raw_stone_dodge"
+            ]
+          }
+        },
+        {
+          "id": "ore_bronze_2",
+          "kind": "resource",
+          "name": "Бронзовая жила",
+          "resource": "ore_bronze",
+          "max": 3,
+          "respawn": {
+            "min_s": 360,
+            "max_s": 570
+          },
+          "despawn_when_empty": false,
+          "profession": "mining",
+          "min_rank": 2,
+          "tool": "pickaxe",
+          "required_level": 75,
+          "gems": {
+            "chance": 0.075,
             "mixed_share": 0.1,
             "mixed": [
               "raw_sapphire",

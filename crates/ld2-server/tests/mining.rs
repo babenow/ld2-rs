@@ -55,6 +55,43 @@ fn temp_content() -> PathBuf {
     tmp
 }
 
+/// M39: бронзовая жила — ранг 2, уровень 75, в «Железных штольнях».
+#[test]
+fn bronze_vein_content_is_configured() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let items: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(src.join("items.json")).expect("items"))
+            .expect("items json");
+    let ore = items["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|i| i["id"] == "ore_bronze")
+        .expect("ore_bronze");
+    assert_eq!(ore["type"], "ore_bronze");
+    assert_eq!(ore["name"], "Бронзовая руда");
+
+    let locs: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(src.join("locations.json")).expect("locations"),
+    )
+    .expect("locations json");
+    let iron = locs["locations"]
+        .as_array()
+        .expect("locations")
+        .iter()
+        .find(|l| l["id"] == "l_mine_iron")
+        .expect("l_mine_iron");
+    let bronze = iron["entities"]
+        .as_array()
+        .expect("entities")
+        .iter()
+        .find(|e| e["id"] == "ore_bronze_1")
+        .expect("ore_bronze_1");
+    assert_eq!(bronze["resource"], "ore_bronze");
+    assert_eq!(bronze["required_level"], 75);
+    assert_eq!(bronze["min_rank"], 2);
+}
+
 async fn give(c: &mut WsClient, def_id: &str) -> String {
     let seq = c
         .send(

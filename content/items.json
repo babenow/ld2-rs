@@ -1883,6 +1883,16 @@
       "qty": 1
     },
     {
+      "id": "ore_bronze",
+      "type": "ore_bronze",
+      "name": "Бронзовая руда",
+      "rarity": "uncommon",
+      "upgrade": 0,
+      "stats": {},
+      "gold_value": 36,
+      "qty": 1
+    },
+    {
       "id": "ore_silver",
       "type": "ore_silver",
       "name": "Серебряная руда",

@@ -54,6 +54,7 @@ ORES = [
     ("ore_copper", "Медная руда", "common", 6, 1, 1, 3, (60, 120)),
     ("ore_tin", "Оловянная руда", "common", 12, 35, 1, 3, (200, 330)),
     ("ore_iron", "Железная руда", "uncommon", 24, 50, 2, 3, (260, 420)),
+    ("ore_bronze", "Бронзовая руда", "uncommon", 36, 75, 2, 3, (360, 570)),
     ("ore_silver", "Серебряная руда", "uncommon", 48, 65, 3, 3, (320, 510)),
     ("ore_gold", "Золотая руда", "rare", 120, 80, 4, 2, (380, 600)),
     ("ore_mithril", "Мифриловая руда", "epic", 300, 100, 5, 2, (460, 720)),
@@ -134,6 +135,7 @@ VEINS = [
     ("ore_copper", COPPER_MIXED, COPPER_PURE, 0.05),
     ("ore_tin", TIN_MIXED, TIN_PURE, 0.06),
     ("ore_iron", IRON_MIXED, IRON_PURE, 0.07),
+    ("ore_bronze", IRON_MIXED, IRON_PURE, 0.075),
     ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.08),
     ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.10),
     ("ore_mithril", ALL_MIXED, ALL_PURE, 0.12),
@@ -324,6 +326,7 @@ def mine_locations() -> list[dict]:
     copper_mixed, copper_pure, copper_chance = VEIN_BY_ORE["ore_copper"]
     tin_mixed, tin_pure, tin_chance = VEIN_BY_ORE["ore_tin"]
     iron_mixed, iron_pure, iron_chance = VEIN_BY_ORE["ore_iron"]
+    bronze_mixed, bronze_pure, bronze_chance = VEIN_BY_ORE["ore_bronze"]
     silver_mixed, silver_pure, silver_chance = VEIN_BY_ORE["ore_silver"]
     gold_mixed, gold_pure, gold_chance = VEIN_BY_ORE["ore_gold"]
     mithril_mixed, mithril_pure, mithril_chance = VEIN_BY_ORE["ore_mithril"]
@@ -351,7 +354,7 @@ def mine_locations() -> list[dict]:
             "name": "Железные штольни",
             "spawn": False,
             "flags": ["pvp"],
-            "text": "Крепи штолен скрипят; в темноте пахнет ржавой водой и серебром.",
+            "text": "Крепи штолен скрипят; в темноте пахнет бронзой, ржавой водой и серебром.",
             "exits": [
                 {"id": "e_mine_copper", "label": "наверх, в медный карьер", "to": "l_mine_copper"},
                 {"id": "e_mine_deep", "label": "спуск в глубины мифрила", "to": "l_mine_mithril"},
@@ -360,6 +363,8 @@ def mine_locations() -> list[dict]:
                 vein_node("ore_iron_1", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
                 vein_node("ore_iron_2", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
                 vein_node("ore_iron_3", "Железная жила", "ore_iron", 3, vein_respawn(50), 50, 2, iron_mixed, iron_pure, iron_chance),
+                vein_node("ore_bronze_1", "Бронзовая жила", "ore_bronze", 3, vein_respawn(75), 75, 2, bronze_mixed, bronze_pure, bronze_chance),
+                vein_node("ore_bronze_2", "Бронзовая жила", "ore_bronze", 3, vein_respawn(75), 75, 2, bronze_mixed, bronze_pure, bronze_chance),
                 vein_node("ore_silver_1", "Серебряная жила", "ore_silver", 3, vein_respawn(65), 65, 3, silver_mixed, silver_pure, silver_chance),
                 vein_node("ore_silver_2", "Серебряная жила", "ore_silver", 3, vein_respawn(65), 65, 3, silver_mixed, silver_pure, silver_chance),
             ],
