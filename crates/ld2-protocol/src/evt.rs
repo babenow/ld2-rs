@@ -12,6 +12,10 @@ use crate::types::{
     JsonMap, LocationSnapshot, PartyState, ProfessionSnapshot, QuestState,
 };
 
+mod journal;
+
+pub use journal::*;
+
 /// Событие: wire-`type` (`evt/<domain>.<event>`) и (де)сериализация payload'а.
 pub trait Event: Serialize + serde::de::DeserializeOwned {
     const TYPE: &'static str;
@@ -200,29 +204,6 @@ pub struct EntityDespawn {
     /// «{name} исчезает»/подбор. Аддитивно §11: старый сервер не шлёт.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-}
-
-/// M20: предмет в локации исчез (TTL выброса) — журнал «{name} исчез».
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemExpired {
-    /// Id наземного предмета (на будущее; журналу нужно name).
-    pub uid: String,
-    pub name: String,
-}
-
-/// M20: выброс предмета в локации — журнал у всех, кто в локации
-/// (§8, аддитивно): «{by} выбросил(а) …» / «Вы выбросили …».
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemDropped {
-    /// Кто бросил (`char_id`) — для строки «Вы …» у себя.
-    pub char_id: String,
-    /// Имя персонажа (для «{by} выбросил(а)»).
-    pub by_name: String,
-    /// `male`|`female` — выбор «выбросил/выбросила».
-    pub gender: String,
-    pub qty: i64,
-    /// Название предмета.
-    pub item_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -689,6 +670,7 @@ impl_events!(
     (ItemDropped, "evt/item/dropped"),
     (ItemExpired, "evt/item/expired"),
     (HarvestResult, "evt/harvest/result"),
+    (ResourceGathered, "evt/resource/gathered"),
     (CharLevelUp, "evt/char/level_up"),
     (DialogOpen, "evt/dialog/open"),
     (UpgradeResult, "evt/upgrade/result"),

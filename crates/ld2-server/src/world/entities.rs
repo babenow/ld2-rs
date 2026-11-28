@@ -34,6 +34,9 @@ pub struct LiveCorpse {
 #[derive(Debug, Clone)]
 pub struct GatherJob {
     pub char_id: String,
+    /// Имя персонажа и пол — для общей строки «{имя} добыл(а) руду».
+    pub char_name: String,
+    pub gender: String,
     pub entity_id: String,
     pub name: String,
     /// Epoch-с окончания.

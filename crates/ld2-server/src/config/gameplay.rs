@@ -358,6 +358,11 @@ pub struct ProfessionsSection {
     /// (согласовано: `40 × 1.02^L`).
     pub level_xp_base: i64,
     pub level_xp_growth: f64,
+    /// M39: множители XP-порога по рангам (1..N): порог уровня
+    /// умножается на значение текущего ранга. Список задаёт мягкую
+    /// геометрию роста числа успешных действий; не задан — дефолт.
+    #[serde(default = "default_rank_xp_mult")]
+    pub rank_xp_mult: Vec<f64>,
     /// Потолок уровня (на нём опыт перестаёт копиться; верхний ранг
     /// «Мастер» заканчивает на этом уровне).
     pub max_level: u32,
@@ -367,4 +372,10 @@ pub struct ProfessionsSection {
     /// (согласовано: `200 × 1.5^ранг`).
     pub rank_up_gold_base: i64,
     pub rank_up_gold_growth: f64,
+}
+
+/// M39: дефолтная мягкая геометрия XP по рангам: 1.0 / 1.2 / 1.45 /
+/// 1.75 / 2.1. Список правится в `[gameplay.professions]`.
+fn default_rank_xp_mult() -> Vec<f64> {
+    vec![1.0, 1.2, 1.45, 1.75, 2.1]
 }

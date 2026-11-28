@@ -336,19 +336,33 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
     let hit = hit.expect("способность попала (4 попытки)");
     let amount = hit["payload"]["amount"].as_i64().expect("amount");
     assert!((1..=20).contains(&amount), "урон способности: {hit}");
-    let hp = c
-        .wait(|v| v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3")
-        .await;
-    assert_eq!(hp["payload"]["hp"]["cur"], 18 - amount, "18 − урон: {hp}");
 
     // 3) Повтор в кулдауне → E_COOLDOWN + retry_after_s (§7).
+    //    Отправляем сразу после попадания, не дожидаясь hp-патча:
+    //    ожидание события под нагрузкой могло выйти за окно кулдауна.
+    //    hp и ack собираем в одном цикле, чтобы не потерять hp.
     let seq = c
         .send(
             "cmd/skill.use",
             json!({ "skill_id": "power_strike", "target_id": "m_3" }),
         )
         .await;
-    let ack = c.ack(seq).await;
+    let (ack, hp) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        let mut ack = None;
+        let mut hp = None;
+        while ack.is_none() || hp.is_none() {
+            let v = c.recv_json().await;
+            if v["type"] == "ack" && v["seq"].as_u64() == Some(u64::from(seq)) {
+                ack = Some(v.clone());
+            }
+            if v["type"] == "evt/entity/hp" && v["payload"]["entity_id"] == "m_3" {
+                hp = Some(v);
+            }
+        }
+        (ack.expect("ack повтора"), hp.expect("hp после удара"))
+    })
+    .await
+    .expect("ack/hp после удара");
     assert_eq!(
         ack["error"]["code"], "E_COOLDOWN",
         "второй удар в кулдауне: {ack}"
@@ -357,6 +371,7 @@ async fn skill_use_power_strike_gate_damage_and_cooldown() {
         ack["error"]["retry_after_s"].as_u64().unwrap_or(0) >= 1,
         "retry_after_s: {ack}"
     );
+    assert_eq!(hp["payload"]["hp"]["cur"], 18 - amount, "18 − урон: {hp}");
 
     // 4) Цель не указана / нет такой цели → E_TARGET_GONE (гейт и кулдаун
     //    проверяются после цели — запрос валидируется целиком).

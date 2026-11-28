@@ -24,7 +24,16 @@ const SKILL_GROUP_WEAPON: &str = "weapon";
 /// M21: порог **уровня** профессии: `round(base × growth^L)` — каждый
 /// уровень дороже (согласованная формула `40 × 1.02^L`).
 pub fn profession_level_xp(cfg: &crate::config::ProfessionsSection, level: u32) -> i64 {
-    ((cfg.level_xp_base as f64) * cfg.level_xp_growth.powi(level as i32)).round() as i64
+    // M39: порог уровня умножается на коэффициент текущего ранга —
+    // число успешных действий растёт от ранга к рангу мягкой геометрией.
+    let rank_idx = (level / cfg.rank_span.max(1)) as usize;
+    let mult = cfg
+        .rank_xp_mult
+        .get(rank_idx)
+        .or_else(|| cfg.rank_xp_mult.last())
+        .copied()
+        .unwrap_or(1.0);
+    ((cfg.level_xp_base as f64) * cfg.level_xp_growth.powi(level as i32) * mult).round() as i64
 }
 
 /// M21/M22: начислить XP профессии → **не больше одного уровня за
