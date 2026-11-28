@@ -193,6 +193,13 @@ fn mining_tools_content_is_configured() {
     assert_eq!(by_id("pickaxe_master")["name"], "Кирка мастера");
     assert_eq!(by_id("artifact_lamp")["type"], "artifact");
     assert_eq!(by_id("artifact_lamp")["slot"], "artifact");
+    for id in ["pickaxe_master", "artifact_lamp"] {
+        let description = by_id(id)["description"].as_str().unwrap_or_default();
+        assert!(
+            description.contains("самоцвет"),
+            "у {id} должно быть описание эффекта: {description:?}"
+        );
+    }
 
     let shops: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(src.join("shops.json")).expect("shops"))
@@ -419,4 +426,32 @@ async fn miner_lamp_doubles_ore() {
         .wait(|v| v["type"] == "evt/item/added" && v["payload"]["item"]["def_id"] == "ore_copper")
         .await;
     assert_eq!(ore["payload"]["item"]["qty"], 2, "лампа: {ore}");
+}
+
+/// M39: описание предметов доходит до клиента в `evt/item/added`.
+#[tokio::test]
+async fn mining_tools_description_reaches_snapshot() {
+    let Some(db_url) = common::test_url() else {
+        eprintln!("пропуск: LD2_TEST_DATABASE_URL не задан");
+        return;
+    };
+    let ws = common::start_ws_server(&db_url).await;
+    let (mut c, _login, _char) = in_world(&ws).await;
+    for id in ["pickaxe_master", "artifact_lamp"] {
+        let seq = c
+            .send(
+                "cmd/chat.send",
+                json!({ "channel": "system", "text": format!("/scenario give {id}") }),
+            )
+            .await;
+        assert_eq!(c.ack(seq).await["result"], "ok", "give {id}");
+        let added = c.wait_event("evt/item/added").await;
+        let description = added["payload"]["item"]["description"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            description.contains("самоцвет"),
+            "{id}: описание не дошло до снапшота: {added}"
+        );
+    }
 }
