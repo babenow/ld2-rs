@@ -149,6 +149,31 @@ fn high_ore_tiers_content_is_configured() {
     }
 }
 
+/// M39: шанс камней из жил снижен — не выше 6 %.
+#[test]
+fn gem_chances_are_at_most_six_percent() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let locs: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(src.join("locations.json")).expect("locations"),
+    )
+    .expect("locations json");
+    let mut seen = 0;
+    for loc in locs["locations"].as_array().expect("locations") {
+        for entity in loc["entities"].as_array().into_iter().flatten() {
+            let Some(chance) = entity["gems"]["chance"].as_f64() else {
+                continue;
+            };
+            seen += 1;
+            assert!(
+                (0.02..=0.06).contains(&chance),
+                "шанс камня {} = {chance}, ожидалось 0.02..=0.06",
+                entity["id"]
+            );
+        }
+    }
+    assert!(seen > 0, "в контенте нет жил с камнями");
+}
+
 async fn give(c: &mut WsClient, def_id: &str) -> String {
     let seq = c
         .send(

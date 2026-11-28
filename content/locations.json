@@ -30600,7 +30600,7 @@
           "tool": "pickaxe",
           "required_level": 1,
           "gems": {
-            "chance": 0.05,
+            "chance": 0.025,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -30632,7 +30632,7 @@
           "tool": "pickaxe",
           "required_level": 1,
           "gems": {
-            "chance": 0.05,
+            "chance": 0.025,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -30664,7 +30664,7 @@
           "tool": "pickaxe",
           "required_level": 1,
           "gems": {
-            "chance": 0.05,
+            "chance": 0.025,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -30696,7 +30696,7 @@
           "tool": "pickaxe",
           "required_level": 35,
           "gems": {
-            "chance": 0.06,
+            "chance": 0.03,
             "mixed_share": 0.1,
             "mixed": [
               "raw_topaz",
@@ -30726,7 +30726,7 @@
           "tool": "pickaxe",
           "required_level": 35,
           "gems": {
-            "chance": 0.06,
+            "chance": 0.03,
             "mixed_share": 0.1,
             "mixed": [
               "raw_topaz",
@@ -30779,7 +30779,7 @@
           "tool": "pickaxe",
           "required_level": 50,
           "gems": {
-            "chance": 0.07,
+            "chance": 0.035,
             "mixed_share": 0.1,
             "mixed": [
               "raw_sapphire",
@@ -30810,7 +30810,7 @@
           "tool": "pickaxe",
           "required_level": 50,
           "gems": {
-            "chance": 0.07,
+            "chance": 0.035,
             "mixed_share": 0.1,
             "mixed": [
               "raw_sapphire",
@@ -30841,7 +30841,7 @@
           "tool": "pickaxe",
           "required_level": 50,
           "gems": {
-            "chance": 0.07,
+            "chance": 0.035,
             "mixed_share": 0.1,
             "mixed": [
               "raw_sapphire",
@@ -30872,7 +30872,7 @@
           "tool": "pickaxe",
           "required_level": 75,
           "gems": {
-            "chance": 0.075,
+            "chance": 0.0375,
             "mixed_share": 0.1,
             "mixed": [
               "raw_sapphire",
@@ -30903,7 +30903,7 @@
           "tool": "pickaxe",
           "required_level": 75,
           "gems": {
-            "chance": 0.075,
+            "chance": 0.0375,
             "mixed_share": 0.1,
             "mixed": [
               "raw_sapphire",
@@ -30957,7 +30957,7 @@
           "tool": "pickaxe",
           "required_level": 100,
           "gems": {
-            "chance": 0.08,
+            "chance": 0.04,
             "mixed_share": 0.1,
             "mixed": [
               "raw_opal"
@@ -30986,7 +30986,7 @@
           "tool": "pickaxe",
           "required_level": 100,
           "gems": {
-            "chance": 0.08,
+            "chance": 0.04,
             "mixed_share": 0.1,
             "mixed": [
               "raw_opal"
@@ -31015,7 +31015,7 @@
           "tool": "pickaxe",
           "required_level": 126,
           "gems": {
-            "chance": 0.1,
+            "chance": 0.05,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -31048,7 +31048,7 @@
           "tool": "pickaxe",
           "required_level": 126,
           "gems": {
-            "chance": 0.1,
+            "chance": 0.05,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -31104,7 +31104,7 @@
           "tool": "pickaxe",
           "required_level": 150,
           "gems": {
-            "chance": 0.1,
+            "chance": 0.05,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -31137,7 +31137,7 @@
           "tool": "pickaxe",
           "required_level": 150,
           "gems": {
-            "chance": 0.1,
+            "chance": 0.05,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -31170,7 +31170,7 @@
           "tool": "pickaxe",
           "required_level": 176,
           "gems": {
-            "chance": 0.11,
+            "chance": 0.055,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -31226,7 +31226,7 @@
           "tool": "pickaxe",
           "required_level": 176,
           "gems": {
-            "chance": 0.11,
+            "chance": 0.055,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -31300,7 +31300,7 @@
           "tool": "pickaxe",
           "required_level": 200,
           "gems": {
-            "chance": 0.12,
+            "chance": 0.06,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",
@@ -31356,7 +31356,7 @@
           "tool": "pickaxe",
           "required_level": 200,
           "gems": {
-            "chance": 0.12,
+            "chance": 0.06,
             "mixed_share": 0.1,
             "mixed": [
               "raw_agate",

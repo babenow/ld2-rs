@@ -134,15 +134,15 @@ ALL_PURE = [f"raw_stone_{key}" for key, _, _, _, _, _ in PURE]
 
 VEINS = [
     # ore_id, mixed, pure, chance
-    ("ore_copper", COPPER_MIXED, COPPER_PURE, 0.05),
-    ("ore_tin", TIN_MIXED, TIN_PURE, 0.06),
-    ("ore_iron", IRON_MIXED, IRON_PURE, 0.07),
-    ("ore_bronze", IRON_MIXED, IRON_PURE, 0.075),
-    ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.08),
-    ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.10),
-    ("ore_platinum", GOLD_MIXED, GOLD_PURE, 0.10),
-    ("ore_adamantite", ALL_MIXED, ALL_PURE, 0.11),
-    ("ore_mithril", ALL_MIXED, ALL_PURE, 0.12),
+    ("ore_copper", COPPER_MIXED, COPPER_PURE, 0.025),
+    ("ore_tin", TIN_MIXED, TIN_PURE, 0.03),
+    ("ore_iron", IRON_MIXED, IRON_PURE, 0.035),
+    ("ore_bronze", IRON_MIXED, IRON_PURE, 0.0375),
+    ("ore_silver", SILVER_MIXED, SILVER_PURE, 0.04),
+    ("ore_gold", GOLD_MIXED, GOLD_PURE, 0.05),
+    ("ore_platinum", GOLD_MIXED, GOLD_PURE, 0.05),
+    ("ore_adamantite", ALL_MIXED, ALL_PURE, 0.055),
+    ("ore_mithril", ALL_MIXED, ALL_PURE, 0.06),
 ]
 VEIN_BY_ORE = {ore: (mixed, pure, chance) for ore, mixed, pure, chance in VEINS}
 
